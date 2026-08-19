@@ -1,11 +1,14 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use gpui::{
-    App, Application, AssetSource, Bounds, Context, SharedString, Window, WindowBounds,
-    WindowOptions, div, prelude::*, px, rgb, size, svg,
+    App, AssetSource, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
+    prelude::*, px, rgb, size, svg,
 };
+use gpui_platform::application;
 
 struct Assets {
     base: PathBuf,
@@ -67,8 +70,8 @@ impl Render for SvgExample {
     }
 }
 
-fn main() {
-    Application::new()
+fn run_example() {
+    application()
         .with_assets(Assets {
             base: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples"),
         })
@@ -84,4 +87,16 @@ fn main() {
             .unwrap();
             cx.activate(true);
         });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

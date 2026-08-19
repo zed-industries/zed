@@ -21,7 +21,6 @@ test-support = ["collections/test-support", "gpui/test-support", "proto/test-sup
 anyhow.workspace = true
 async-tungstenite.workspace = true
 base64.workspace = true
-chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui = { workspace = true, optional = true }

@@ -14,3 +14,9 @@
 {"Get":{"state":"The quick brown fox\njumps ˇover the\nlazy dog\n","mode":"Normal"}}
 {"Key":"k"}
 {"Get":{"state":"The quˇick brown fox\njumps over the\nlazy dog\n","mode":"Normal"}}
+{"Put":{"state":"The quick brown fox\njumps over the\nlazy dˇog\n"}}
+{"Key":"l"}
+{"Get":{"state":"The quick brown fox\njumps over the\nlazy doˇg\n","mode":"Normal"}}
+{"Key":"$"}
+{"Key":"k"}
+{"Get":{"state":"The quick brown fox\njumps over thˇe\nlazy dog\n","mode":"Normal"}}

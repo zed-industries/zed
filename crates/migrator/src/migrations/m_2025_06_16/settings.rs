@@ -34,6 +34,7 @@ fn migrate_context_server_settings(
 
     let mut has_command = false;
     let mut has_settings = false;
+    let mut has_url = false;
     let mut other_keys = 0;
     let mut column = None;
 
@@ -53,6 +54,7 @@ fn migrate_context_server_settings(
                     "source" => return None,
                     "command" => has_command = true,
                     "settings" => has_settings = true,
+                    "url" => has_url = true,
                     _ => other_keys += 1,
                 }
             }
@@ -65,7 +67,7 @@ fn migrate_context_server_settings(
     let start = server_settings.start_byte() + 1;
     let indent = " ".repeat(column.unwrap_or(12));
 
-    if !has_command && !has_settings {
+    if !has_command && !has_settings && !has_url {
         return Some((
             start..start,
             format!(

@@ -1,8 +1,11 @@
+#![cfg_attr(target_family = "wasm", no_main)]
+
 use gpui::{
-    Application, Background, Bounds, ColorSpace, Context, Path, PathBuilder, Pixels, Render,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, canvas, div, linear_color_stop,
-    linear_gradient, point, prelude::*, px, rgb, size,
+    Background, Bounds, ColorSpace, Context, Path, PathBuilder, Pixels, Render, TitlebarOptions,
+    Window, WindowBounds, WindowOptions, canvas, div, linear_color_stop, linear_gradient, point,
+    prelude::*, px, rgb, size,
 };
+use gpui_platform::application;
 
 const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
 const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
@@ -68,8 +71,8 @@ impl Render for PaintingViewer {
     }
 }
 
-fn main() {
-    Application::new().run(|cx| {
+fn run_example() {
+    application().run(|cx| {
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
@@ -89,4 +92,16 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn main() {
+    run_example();
+}
+
+#[cfg(target_family = "wasm")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn start() {
+    gpui_platform::web_init();
+    run_example();
 }

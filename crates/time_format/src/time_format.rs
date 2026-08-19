@@ -86,10 +86,25 @@ fn format_absolute_date(
             macos::format_date(&timestamp)
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if !enhanced_date_formatting {
+            return windows::format_date(&timestamp);
+        }
+
+        let timestamp_date = timestamp.date();
+        let reference_date = reference.date();
+        if timestamp_date == reference_date {
+            "Today".to_string()
+        } else if reference_date.previous_day() == Some(timestamp_date) {
+            "Yesterday".to_string()
+        } else {
+            windows::format_date(&timestamp)
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         let current_locale = CURRENT_LOCALE
             .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
         format_timestamp_naive_date(
@@ -105,10 +120,13 @@ fn format_absolute_time(timestamp: OffsetDateTime) -> String {
     {
         macos::format_time(&timestamp)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        windows::format_time(&timestamp)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         let current_locale = CURRENT_LOCALE
             .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
         format_timestamp_naive_time(
@@ -123,7 +141,7 @@ fn format_absolute_timestamp(
     reference: OffsetDateTime,
     #[allow(unused_variables)] enhanced_date_formatting: bool,
 ) -> String {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
         if !enhanced_date_formatting {
             return format!(
@@ -147,10 +165,9 @@ fn format_absolute_timestamp(
             )
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         format_timestamp_fallback(timestamp, reference)
     }
 }
@@ -176,10 +193,25 @@ fn format_absolute_date_medium(
             macos::format_date_medium(&timestamp)
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        if !enhanced_formatting {
+            return windows::format_date_medium(&timestamp);
+        }
+
+        let timestamp_date = timestamp.date();
+        let reference_date = reference.date();
+        if timestamp_date == reference_date {
+            "Today".to_string()
+        } else if reference_date.previous_day() == Some(timestamp_date) {
+            "Yesterday".to_string()
+        } else {
+            windows::format_date_medium(&timestamp)
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
-        // todo(windows) respect user's date/time preferences
         let current_locale = CURRENT_LOCALE
             .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
         if !enhanced_formatting {
@@ -212,7 +244,11 @@ fn format_absolute_timestamp_medium(
     {
         format_absolute_date_medium(timestamp, reference, false)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        format_absolute_date_medium(timestamp, reference, false)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         // todo(linux) respect user's date/time preferences
         // todo(windows) respect user's date/time preferences
@@ -257,19 +293,31 @@ fn format_relative_date(timestamp: OffsetDateTime, reference: OffsetDateTime) ->
                     match month_diff {
                         0..=1 => "1 month ago".to_string(),
                         2..=11 => format!("{} months ago", month_diff),
-                        _ => {
-                            let timestamp_year = timestamp_date.year();
-                            let reference_year = reference_date.year();
-                            let years = reference_year - timestamp_year;
-                            match years {
-                                1 => "1 year ago".to_string(),
-                                _ => format!("{} years ago", years),
-                            }
+                        // Match git's `show_date_relative` behavior: for dates under 5 years old,
+                        // include both years and months so, for example, 22 months is shown as
+                        // "1 year, 10 months ago" instead of being collapsed to "1 year ago".
+                        12..60 => format_compound_year_month(month_diff),
+                        // Beyond 5 years, round to the nearest year.
+                        months => {
+                            let years = (months + 6) / 12;
+                            format!("{years} years ago")
                         }
                     }
                 }
             }
         }
+    }
+}
+
+fn format_compound_year_month(month_diff: usize) -> String {
+    let years = month_diff / 12;
+    let months = month_diff % 12;
+    let year_unit = if years == 1 { "year" } else { "years" };
+    if months == 0 {
+        format!("{years} {year_unit} ago")
+    } else {
+        let month_unit = if months == 1 { "month" } else { "months" };
+        format!("{years} {year_unit}, {months} {month_unit} ago")
     }
 }
 
@@ -362,7 +410,7 @@ fn format_timestamp_naive_date(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn format_timestamp_naive_date_medium(
     timestamp_local: OffsetDateTime,
     is_12_hour_time: bool,
@@ -417,10 +465,10 @@ pub fn format_timestamp_naive(
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 static CURRENT_LOCALE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTime) -> String {
     let current_locale = CURRENT_LOCALE
         .get_or_init(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
@@ -430,7 +478,7 @@ fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTim
 }
 
 /// Returns `true` if the locale is recognized as a 12-hour time locale.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [
         "es-MX", "es-CO", "es-SV", "es-NI",
@@ -521,6 +569,57 @@ mod macos {
                 kCFDateFormatterNoStyle,
             )
         };
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod windows {
+    use windows::Globalization::DateTimeFormatting::DateTimeFormatter;
+
+    pub fn format_time(timestamp: &time::OffsetDateTime) -> String {
+        format_with_formatter(DateTimeFormatter::ShortTime(), timestamp, true)
+    }
+
+    pub fn format_date(timestamp: &time::OffsetDateTime) -> String {
+        format_with_formatter(DateTimeFormatter::ShortDate(), timestamp, false)
+    }
+
+    pub fn format_date_medium(timestamp: &time::OffsetDateTime) -> String {
+        format_with_formatter(
+            DateTimeFormatter::CreateDateTimeFormatter(windows::core::h!(
+                "month.abbreviated day year.full"
+            )),
+            timestamp,
+            false,
+        )
+    }
+
+    fn format_with_formatter(
+        formatter: windows::core::Result<DateTimeFormatter>,
+        timestamp: &time::OffsetDateTime,
+        is_time: bool,
+    ) -> String {
+        formatter
+            .and_then(|formatter| formatter.Format(to_winrt_datetime(timestamp)))
+            .map(|hstring| hstring.to_string())
+            .unwrap_or_else(|_| {
+                if is_time {
+                    super::format_timestamp_naive_time(*timestamp, true)
+                } else {
+                    super::format_timestamp_naive_date(*timestamp, *timestamp, true)
+                }
+            })
+    }
+
+    fn to_winrt_datetime(timestamp: &time::OffsetDateTime) -> windows::Foundation::DateTime {
+        // DateTime uses 100-nanosecond intervals since January 1, 1601 (UTC).
+        const WINDOWS_EPOCH: time::OffsetDateTime = time::macros::datetime!(1601-01-01 0:00 UTC);
+        let duration_since_winrt_epoch = *timestamp - WINDOWS_EPOCH;
+        let universal_time = duration_since_winrt_epoch.whole_nanoseconds() / 100;
+
+        windows::Foundation::DateTime {
+            UniversalTime: universal_time as i64,
+        }
     }
 }
 
@@ -908,6 +1007,95 @@ mod tests {
         }
 
         assert_eq!(format_relative_date(next_month(), reference), "1 year ago");
+    }
+
+    #[test]
+    fn test_relative_format_years() {
+        let reference = create_offset_datetime(1990, 4, 12, 23, 0, 0);
+
+        // 12 months (exactly 1 year, no remainder)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1989, 4, 12, 23, 0, 0), reference),
+            "1 year ago"
+        );
+
+        // 13 months
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1989, 3, 12, 23, 0, 0), reference),
+            "1 year, 1 month ago"
+        );
+
+        // 22 months (regression test for issue #57907)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1988, 6, 12, 23, 0, 0), reference),
+            "1 year, 10 months ago"
+        );
+
+        // 23 months
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1988, 5, 12, 23, 0, 0), reference),
+            "1 year, 11 months ago"
+        );
+
+        // 24 months (exactly 2 years, no remainder)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1988, 4, 12, 23, 0, 0), reference),
+            "2 years ago"
+        );
+
+        // 25 months
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1988, 3, 12, 23, 0, 0), reference),
+            "2 years, 1 month ago"
+        );
+
+        // 35 months
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1987, 5, 12, 23, 0, 0), reference),
+            "2 years, 11 months ago"
+        );
+
+        // 36 months (exactly 3 years, no remainder)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1987, 4, 12, 23, 0, 0), reference),
+            "3 years ago"
+        );
+
+        // 37 months
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1987, 3, 12, 23, 0, 0), reference),
+            "3 years, 1 month ago"
+        );
+
+        // 59 months (just under 5-year compound cutoff)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1985, 5, 12, 23, 0, 0), reference),
+            "4 years, 11 months ago"
+        );
+
+        // 60 months (5 years exactly; switches to year-only)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1985, 4, 12, 23, 0, 0), reference),
+            "5 years ago"
+        );
+
+        // 65 months (5 years + 5 months → rounds down to 5 years)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1984, 11, 12, 23, 0, 0), reference),
+            "5 years ago"
+        );
+
+        // 66 months (5 years + 6 months → rounds up to 6 years)
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1984, 10, 12, 23, 0, 0), reference),
+            "6 years ago"
+        );
+
+        // 120 months
+        assert_eq!(
+            format_relative_date(create_offset_datetime(1980, 4, 12, 23, 0, 0), reference),
+            "10 years ago"
+        );
     }
 
     #[test]

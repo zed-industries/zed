@@ -37,10 +37,11 @@ async fn test_lsp_log_view(cx: &mut TestAppContext) {
     language_registry.add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -109,7 +110,7 @@ fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
-        theme::init(theme::LoadThemes::JustBase, cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
         release_channel::init(semver::Version::new(0, 0, 0), cx);
     });
 }

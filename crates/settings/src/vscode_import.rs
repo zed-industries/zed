@@ -2,6 +2,7 @@ use crate::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use fs::Fs;
+use gpui::Rgba;
 use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -178,29 +179,38 @@ impl VsCodeSettings {
             base_keymap: Some(BaseKeymapContent::VSCode),
             calls: None,
             collaboration_panel: None,
+            credentials_url: None,
             debugger: None,
             diagnostics: None,
-            disable_ai: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
             file_finder: None,
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
-            global_lsp_settings: None,
+            global_lsp_settings: skip_default(GlobalLspSettingsContent {
+                semantic_token_rules: self.semantic_token_rules(),
+                ..GlobalLspSettingsContent::default()
+            }),
             helix_mode: None,
+            hide_mouse: None,
             image_viewer: None,
+            markdown_preview: None,
             journal: None,
             language_models: None,
             line_indicator_format: None,
             log: None,
-            message_editor: None,
             node: self.node_binary_settings(),
-            notification_panel: None,
+
             outline_panel: self.outline_panel_settings_content(),
             preview_tabs: self.preview_tabs_settings_content(),
             project: self.project_settings_content(),
             project_panel: self.project_panel_settings_content(),
             proxy: self.read_string("http.proxy"),
+            reduce_motion: self.read_enum("workbench.reduceMotion", |s| match s {
+                "on" => Some(ReduceMotionMode::On),
+                "off" => Some(ReduceMotionMode::Off),
+                _ => None,
+            }),
             remote: RemoteSettingsContent::default(),
             repl: None,
             server_url: None,
@@ -216,6 +226,9 @@ impl VsCodeSettings {
             vim_mode: None,
             workspace: self.workspace_settings_content(),
             which_key: None,
+            modeline_lines: None,
+            feature_flags: None,
+            instrumentation: None,
         }
     }
 
@@ -258,14 +271,19 @@ impl VsCodeSettings {
             fast_scroll_sensitivity: self.read_f32("editor.fastScrollSensitivity"),
             sticky_scroll: self.sticky_scroll_content(),
             go_to_definition_fallback: None,
+            go_to_definition_scroll_strategy: None,
+            lsp_results_location: None,
             gutter: self.gutter_content(),
-            hide_mouse: None,
             horizontal_scroll_margin: None,
             hover_popover_delay: self.read_u64("editor.hover.delay").map(Into::into),
             hover_popover_enabled: self.read_bool("editor.hover.enabled"),
+            hover_popover_sticky: self.read_bool("editor.hover.sticky"),
+            hover_popover_hiding_delay: self.read_u64("editor.hover.hidingDelay").map(Into::into),
             inline_code_actions: None,
+            code_lens: None,
             jupyter: None,
             lsp_document_colors: None,
+            lsp_document_links: self.read_bool("editor.links"),
             lsp_highlight_debounce: None,
             middle_click_paste: None,
             minimap: self.minimap_content(),
@@ -282,6 +300,7 @@ impl VsCodeSettings {
             }),
             rounded_selection: self.read_bool("editor.roundedSelection"),
             scroll_beyond_last_line: None,
+            mouse_wheel_zoom: self.read_bool("editor.mouseWheelZoom"),
             scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),
             scrollbar: self.scrollbar_content(),
             search: self.search_content(),
@@ -303,6 +322,9 @@ impl VsCodeSettings {
             vertical_scroll_margin: self.read_f32("editor.cursorSurroundingLines"),
             completion_menu_scrollbar: None,
             completion_detail_alignment: None,
+            completion_menu_item_kind: None,
+            diff_view_style: None,
+            minimum_split_diff_width: None,
         }
     }
 
@@ -322,11 +344,13 @@ impl VsCodeSettings {
             min_line_number_digits: None,
             runnables: None,
             breakpoints: None,
+            bookmarks: None,
             folds: self.read_enum("editor.showFoldingControls", |s| match s {
                 "always" | "mouseover" => Some(true),
                 "never" => Some(false),
                 _ => None,
             }),
+            git_gutter_width: None,
         })
     }
 
@@ -357,14 +381,112 @@ impl VsCodeSettings {
         })
     }
 
+    fn semantic_token_rules(&self) -> Option<SemanticTokenRules> {
+        let customizations = self
+            .read_value("editor.semanticTokenColorCustomizations")?
+            .as_object()?;
+
+        skip_default(SemanticTokenRules {
+            rules: customizations
+                .get("rules")
+                .and_then(|v| {
+                    Some(
+                        v.as_object()?
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                let v = v.as_object()?;
+
+                                let mut underline = v
+                                    .get("underline")
+                                    .and_then(|b| b.as_bool())
+                                    .unwrap_or(false);
+                                let strikethrough = v
+                                    .get("strikethrough")
+                                    .and_then(|b| b.as_bool())
+                                    .unwrap_or(false);
+                                let mut font_weight =
+                                    v.get("bold").and_then(|b| b.as_bool()).map(|b| {
+                                        if b {
+                                            SemanticTokenFontWeight::Bold
+                                        } else {
+                                            SemanticTokenFontWeight::Normal
+                                        }
+                                    });
+                                let mut font_style =
+                                    v.get("italic").and_then(|b| b.as_bool()).map(|b| {
+                                        if b {
+                                            SemanticTokenFontStyle::Italic
+                                        } else {
+                                            SemanticTokenFontStyle::Normal
+                                        }
+                                    });
+
+                                match v.get("fontStyle").and_then(|s| s.as_str()).unwrap_or("") {
+                                    "bold" => {
+                                        font_style = Some(SemanticTokenFontStyle::Normal);
+                                        font_weight = Some(SemanticTokenFontWeight::Bold);
+                                    }
+                                    "italic" => {
+                                        font_style = Some(SemanticTokenFontStyle::Italic);
+                                        font_weight = Some(SemanticTokenFontWeight::Normal);
+                                    }
+                                    "underline" => {
+                                        underline = true;
+                                    }
+                                    "bold italic" | "italic bold" => {
+                                        font_style = Some(SemanticTokenFontStyle::Italic);
+                                        font_weight = Some(SemanticTokenFontWeight::Bold);
+                                    }
+                                    "normal" => {
+                                        font_style = Some(SemanticTokenFontStyle::Normal);
+                                        font_weight = Some(SemanticTokenFontWeight::Normal);
+                                    }
+                                    _ => {}
+                                }
+
+                                let foreground = v
+                                    .get("foreground")
+                                    .and_then(|v| Rgba::try_from(v.as_str()?).ok())
+                                    .map(|s| s.to_owned());
+                                let background = v
+                                    .get("background")
+                                    .and_then(|v| Rgba::try_from(v.as_str()?).ok())
+                                    .map(|s| s.to_owned());
+
+                                Some(SemanticTokenRule {
+                                    token_type: Some(k.clone()),
+                                    token_modifiers: vec![],
+                                    style: vec![],
+                                    underline: if underline {
+                                        Some(SemanticTokenColorOverride::InheritForeground(true))
+                                    } else {
+                                        None
+                                    },
+                                    strikethrough: if strikethrough {
+                                        Some(SemanticTokenColorOverride::InheritForeground(true))
+                                    } else {
+                                        None
+                                    },
+                                    foreground_color: foreground,
+                                    background_color: background,
+                                    font_weight,
+                                    font_style,
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or_default(),
+        })
+    }
+
     fn minimap_content(&self) -> Option<MinimapContent> {
-        let minimap_enabled = self.read_bool("editor.minimap.enabled");
-        let autohide = self.read_bool("editor.minimap.autohide");
+        let minimap_enabled = self.read_bool("editor.minimap.enabled").unwrap_or(true);
+        let autohide = self.read_bool("editor.minimap.autohide").unwrap_or(false);
         let show = match (minimap_enabled, autohide) {
-            (Some(true), Some(false)) => Some(ShowMinimap::Always),
-            (Some(true), _) => Some(ShowMinimap::Auto),
-            (Some(false), _) => Some(ShowMinimap::Never),
-            _ => None,
+            (true, false) => Some(ShowMinimap::Always),
+            (true, true) => Some(ShowMinimap::Auto),
+            (false, _) => Some(ShowMinimap::Never),
         };
 
         skip_default(MinimapContent {
@@ -392,7 +514,6 @@ impl VsCodeSettings {
     fn project_settings_content(&self) -> ProjectSettingsContent {
         ProjectSettingsContent {
             all_languages: AllLanguageSettingsContent {
-                features: None,
                 edit_predictions: self.edit_predictions_settings_content(),
                 defaults: self.default_language_settings_content(),
                 languages: Default::default(),
@@ -405,8 +526,8 @@ impl VsCodeSettings {
             context_servers: self.context_servers(),
             context_server_timeout: None,
             load_direnv: None,
-            slash_commands: None,
             git_hosting_providers: None,
+            disable_ai: None,
         }
     }
 
@@ -431,12 +552,24 @@ impl VsCodeSettings {
             edit_predictions_disabled_in: None,
             enable_language_server: None,
             ensure_final_newline_on_save: self.read_bool("files.insertFinalNewline"),
+            line_ending: self.read_enum("files.eol", |s| match s {
+                "\n" => Some(LineEndingSetting::PreferLf),
+                "\r\n" => Some(LineEndingSetting::PreferCrlf),
+                "auto" => Some(LineEndingSetting::Detect),
+                _ => None,
+            }),
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,
-            format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
-                if b {
-                    FormatOnSave::On
+            // In VS Code, `editor.formatOnSaveMode` only applies when `editor.formatOnSave` is enabled.
+            format_on_save: self.read_bool("editor.formatOnSave").map(|enabled| {
+                if enabled {
+                    self.read_enum("editor.formatOnSaveMode", |s| match s {
+                        "modificationsIfAvailable" => Some(FormatOnSave::ModificationsIfAvailable),
+                        "modifications" => Some(FormatOnSave::Modifications),
+                        _ => None,
+                    })
+                    .unwrap_or(FormatOnSave::On)
                 } else {
                     FormatOnSave::Off
                 }
@@ -450,6 +583,17 @@ impl VsCodeSettings {
             inlay_hints: None,
             jsx_tag_auto_close: None,
             language_servers: None,
+            semantic_tokens: self
+                .read_bool("editor.semanticHighlighting.enabled")
+                .map(|enabled| {
+                    if enabled {
+                        SemanticTokens::Full
+                    } else {
+                        SemanticTokens::Off
+                    }
+                }),
+            document_folding_ranges: None,
+            document_symbols: None,
             linked_edits: self.read_bool("editor.linkedEditing"),
             preferred_line_length: self.read_u32("editor.wordWrapColumn"),
             prettier: None,
@@ -499,15 +643,19 @@ impl VsCodeSettings {
         }
     }
 
-    fn file_types(&self) -> Option<HashMap<Arc<str>, ExtendingVec<String>>> {
+    fn file_types(&self) -> Option<FileTypeMap> {
         // vscodes file association map is inverted from ours, so we flip the mapping before merging
-        let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
+        let mut associations: HashMap<Arc<str>, ExtendingSet<String>> = HashMap::default();
         let map = self.read_value("files.associations")?.as_object()?;
         for (k, v) in map {
             let Some(v) = v.as_str() else { continue };
-            associations.entry(v.into()).or_default().0.push(k.clone());
+            associations
+                .entry(v.into())
+                .or_default()
+                .0
+                .insert(k.clone());
         }
-        skip_default(associations)
+        skip_default(FileTypeMap(associations))
     }
 
     fn edit_predictions_settings_content(&self) -> Option<EditPredictionSettingsContent> {
@@ -576,6 +724,7 @@ impl VsCodeSettings {
                     k.clone().into(),
                     ContextServerSettingsContent::Stdio {
                         enabled: true,
+                        remote: false,
                         command: serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
                             .ok()
                             .map(|cmd| ContextServerCommand {
@@ -646,12 +795,14 @@ impl VsCodeSettings {
             show_tab_bar_buttons: self
                 .read_str("workbench.editor.editorActionsLocation")
                 .and_then(|str| if str == "hidden" { Some(false) } else { None }),
+            show_pinned_tabs_in_separate_row: None,
         })
     }
 
     fn status_bar_settings_content(&self) -> Option<StatusBarSettingsContent> {
         skip_default(StatusBarSettingsContent {
             show: self.read_bool("workbench.statusBar.visible"),
+            show_active_file: None,
             active_language_button: None,
             cursor_position_button: None,
             line_endings_button: None,
@@ -663,6 +814,7 @@ impl VsCodeSettings {
         let mut project_panel_settings = ProjectPanelSettingsContent {
             auto_fold_dirs: self.read_bool("explorer.compactFolders"),
             auto_reveal_entries: self.read_bool("explorer.autoReveal"),
+            bold_folder_labels: None,
             button: None,
             default_width: None,
             dock: None,
@@ -676,14 +828,33 @@ impl VsCodeSettings {
             hide_root: None,
             indent_guides: None,
             indent_size: None,
-            scrollbar: None,
+            scrollbar: self.read_bool("workbench.list.horizontalScrolling").map(
+                |horizontal_scrolling| ProjectPanelScrollbarSettingsContent {
+                    show: None,
+                    horizontal_scroll: Some(horizontal_scrolling),
+                },
+            ),
             show_diagnostics: self
                 .read_bool("problems.decorations.enabled")
                 .and_then(|b| if b { Some(ShowDiagnostics::Off) } else { None }),
-            sort_mode: None,
+            sort_mode: self.read_enum("explorer.sortOrder", |s| match s {
+                "default" | "foldersNestsFiles" => Some(ProjectPanelSortMode::DirectoriesFirst),
+                "mixed" => Some(ProjectPanelSortMode::Mixed),
+                "filesFirst" => Some(ProjectPanelSortMode::FilesFirst),
+                _ => None,
+            }),
+            sort_order: self.read_enum("explorer.sortOrderLexicographicOptions", |s| match s {
+                "default" => Some(ProjectPanelSortOrder::Default),
+                "upper" => Some(ProjectPanelSortOrder::Upper),
+                "lower" => Some(ProjectPanelSortOrder::Lower),
+                "unicode" => Some(ProjectPanelSortOrder::Unicode),
+                _ => None,
+            }),
             starts_open: None,
             sticky_scroll: None,
             auto_open: None,
+            diagnostic_badges: None,
+            git_status_indicator: None,
         };
 
         if let (Some(false), Some(false)) = (
@@ -708,6 +879,7 @@ impl VsCodeSettings {
             Some(TelemetrySettingsContent {
                 metrics: Some(metrics),
                 diagnostics: Some(diagnostics),
+                anthropic_retention: None,
             })
         })
     }
@@ -736,6 +908,7 @@ impl VsCodeSettings {
             default_height: None,
             default_width: None,
             dock: None,
+            starts_open: None,
             font_fallbacks,
             font_family,
             font_features: None,
@@ -744,16 +917,34 @@ impl VsCodeSettings {
                 .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
+            open_links_in_mouse_mode: None,
             line_height: self
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
             max_scroll_history_lines: self.read_usize("terminal.integrated.scrollback"),
+            bell: self
+                .read_value("accessibility.signals.terminalBell")
+                .and_then(|v| Some(v.get("sound")?.as_str()? == "on"))
+                .or_else(|| {
+                    // Older deprecated setting, might as well still support it:
+                    self.read_value("terminal.integrated.enableBell")
+                        .map(|v| v.as_bool() == Some(true) || v.as_str() == Some("both"))
+                })
+                .map(|enabled| {
+                    if enabled {
+                        TerminalBell::System
+                    } else {
+                        TerminalBell::Off
+                    }
+                }),
             minimum_contrast: None,
             option_as_meta: self.read_bool("terminal.integrated.macOptionIsMeta"),
             project: self.project_terminal_settings_content(),
             scrollbar: None,
             scroll_multiplier: None,
             toolbar: None,
+            show_count_badge: None,
+            flexible: None,
         })
     }
 
@@ -801,11 +992,18 @@ impl VsCodeSettings {
             buffer_font_family,
             buffer_font_fallbacks,
             buffer_font_size: self.read_f32("editor.fontSize").map(FontSize::from),
-            buffer_font_weight: self.read_f32("editor.fontWeight").map(|w| w.into()),
+            buffer_font_weight: self.read_f32("editor.fontWeight").map(FontWeightContent),
             buffer_line_height: None,
             buffer_font_features: None,
+            agent_ui_font_family: None,
             agent_ui_font_size: None,
+            agent_buffer_font_family: None,
             agent_buffer_font_size: None,
+            git_commit_buffer_font_size: None,
+            markdown_preview_font_family: None,
+            markdown_preview_code_font_family: None,
+            markdown_preview_font_size: None,
+            markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
             ui_density: None,
@@ -818,6 +1016,7 @@ impl VsCodeSettings {
     fn workspace_settings_content(&self) -> WorkspaceSettingsContent {
         WorkspaceSettingsContent {
             active_pane_modifiers: self.active_pane_modifiers(),
+            accessible_mode: None,
             text_rendering_mode: None,
             autosave: self.read_enum("files.autoSave", |s| match s {
                 "off" => Some(AutosaveSetting::Off),
@@ -834,7 +1033,10 @@ impl VsCodeSettings {
             }),
             bottom_dock_layout: None,
             centered_layout: None,
+            cli_default_open_behavior: None,
+            default_open_behavior: None,
             close_on_file_delete: None,
+            close_panel_on_toggle: None,
             command_aliases: Default::default(),
             confirm_quit: self.read_enum("window.confirmBeforeClose", |s| match s {
                 "always" | "keyboardOnly" => Some(true),
@@ -859,9 +1061,16 @@ impl VsCodeSettings {
             restore_on_startup: None,
             window_decorations: None,
             show_call_status_icon: None,
-            use_system_path_prompts: self.read_bool("files.simpleDialog.enable"),
+            use_system_path_prompts: self.read_bool("files.simpleDialog.enable").map(|b| !b),
             use_system_prompts: None,
             use_system_window_tabs: self.read_bool("window.nativeTabs"),
+            fullscreen_mode: self.read_bool("window.nativeFullScreen").map(|b| {
+                if b {
+                    FullscreenMode::Native
+                } else {
+                    FullscreenMode::Simple
+                }
+            }),
             when_closing_with_no_tabs: self.read_bool("window.closeWhenEmpty").map(|b| {
                 if b {
                     CloseWindowWhenNoItems::CloseWindow
@@ -870,6 +1079,7 @@ impl VsCodeSettings {
                 }
             }),
             zoomed_padding: None,
+            focus_follows_mouse: None,
         }
     }
 
@@ -888,8 +1098,8 @@ impl VsCodeSettings {
 
     fn worktree_settings_content(&self) -> WorktreeSettingsContent {
         WorktreeSettingsContent {
-            project_name: None,
             prevent_sharing_in_public_channels: false,
+            file_scan_depth: None,
             file_scan_exclusions: self
                 .read_value("files.watcherExclude")
                 .and_then(|v| v.as_array())
@@ -898,7 +1108,8 @@ impl VsCodeSettings {
                         .filter_map(|n| n.as_str().map(str::to_owned))
                         .collect::<Vec<_>>()
                 })
-                .filter(|r| !r.is_empty()),
+                .filter(|r| !r.is_empty())
+                .map(SplicingVec::from),
             file_scan_inclusions: self
                 .read_value("files.watcherInclude")
                 .and_then(|v| v.as_array())
@@ -908,6 +1119,7 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|r| !r.is_empty()),
+            scan_symlinks: None,
             private_files: None,
             hidden_files: None,
             read_only_files: self
@@ -934,5 +1146,34 @@ fn skip_default<T: Default + PartialEq>(value: T) -> Option<T> {
         None
     } else {
         Some(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn imported_reduce_motion(content: &str) -> Option<ReduceMotionMode> {
+        VsCodeSettings::from_str(content, VsCodeSettingsSource::VsCode)
+            .unwrap()
+            .settings_content()
+            .reduce_motion
+    }
+
+    #[test]
+    fn test_import_reduce_motion() {
+        assert_eq!(
+            imported_reduce_motion(r#"{ "workbench.reduceMotion": "on" }"#),
+            Some(ReduceMotionMode::On)
+        );
+        assert_eq!(
+            imported_reduce_motion(r#"{ "workbench.reduceMotion": "off" }"#),
+            Some(ReduceMotionMode::Off)
+        );
+        assert_eq!(
+            imported_reduce_motion(r#"{ "workbench.reduceMotion": "auto" }"#),
+            None
+        );
+        assert_eq!(imported_reduce_motion("{}"), None);
     }
 }

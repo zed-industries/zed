@@ -20,12 +20,13 @@ use futures::{
         mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    future::{BoxFuture, Shared},
+    future::{BoxFuture, Shared, WeakShared},
     select, select_biased,
+    stream::BoxStream,
 };
 use gpui::{
     App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
-    EventEmitter, FutureExt, Global, Task, WeakEntity,
+    EventEmitter, FutureExt, Global, Task, TaskExt, WeakEntity,
 };
 use parking_lot::Mutex;
 
@@ -70,6 +71,16 @@ impl RemoteOs {
     pub fn is_windows(&self) -> bool {
         matches!(self, RemoteOs::Windows)
     }
+
+    /// A human-readable OS name for telemetry. Matches `client::telemetry::os_name`
+    /// ignoring the compositor (as we run headless on remotes).
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            RemoteOs::Linux => "Linux",
+            RemoteOs::MacOs => "macOS",
+            RemoteOs::Windows => "Windows",
+        }
+    }
 }
 
 impl std::fmt::Display for RemoteOs {
@@ -112,11 +123,21 @@ pub struct CommandTemplate {
     pub env: HashMap<String, String>,
 }
 
+/// Whether a command should be run with TTY allocation for interactive use.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interactive {
+    /// Allocate a pseudo-TTY for interactive terminal use.
+    Yes,
+    /// Do not allocate a TTY - for commands that communicate via piped stdio.
+    No,
+}
+
 pub trait RemoteClientDelegate: Send + Sync {
     fn ask_password(
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     );
     fn get_download_url(
@@ -142,7 +163,7 @@ const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 const INITIAL_CONNECTION_TIMEOUT: Duration =
     Duration::from_secs(if cfg!(debug_assertions) { 5 } else { 60 });
 
-const MAX_RECONNECT_ATTEMPTS: usize = 3;
+pub const MAX_RECONNECT_ATTEMPTS: usize = 3;
 
 enum State {
     Connecting,
@@ -241,7 +262,7 @@ impl State {
                 heartbeat_task,
                 ..
             } => Self::Connected {
-                remote_connection: remote_connection,
+                remote_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task,
@@ -310,12 +331,14 @@ pub struct RemoteClient {
     unique_identifier: String,
     connection_options: RemoteConnectionOptions,
     path_style: PathStyle,
+    platform: RemotePlatform,
+    os_version: Option<String>,
     state: Option<State>,
 }
 
 #[derive(Debug)]
 pub enum RemoteClientEvent {
-    Disconnected,
+    Disconnected { server_not_running: bool },
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
@@ -368,6 +391,20 @@ pub async fn connect(
     .map_err(|e| e.cloned())
 }
 
+/// Returns `true` if the global [`ConnectionPool`] already has a live
+/// connection for the given options. Callers can use this to decide
+/// whether to show interactive UI (e.g., a password modal) before
+/// connecting.
+pub fn has_active_connection(opts: &RemoteConnectionOptions, cx: &App) -> bool {
+    cx.try_global::<ConnectionPool>().is_some_and(|pool| {
+        matches!(
+            pool.connections.get(opts),
+            Some(ConnectionPoolEntry::Connected(remote))
+                if remote.upgrade().is_some_and(|r| !r.has_been_killed())
+        )
+    })
+}
+
 impl RemoteClient {
     pub fn new(
         unique_identifier: ConnectionIdentifier,
@@ -394,11 +431,17 @@ impl RemoteClient {
                 });
 
                 let path_style = remote_connection.path_style();
+                let platform = remote_connection.remote_platform();
+                let os_version = remote_connection.remote_os_version();
+                let connection_options = remote_connection.connection_options();
+                let connection_type = connection_options.connection_type();
                 let this = cx.new(|_| Self {
                     client: client.clone(),
                     unique_identifier: unique_identifier.clone(),
-                    connection_options: remote_connection.connection_options(),
+                    connection_options,
                     path_style,
+                    platform,
+                    os_version: os_version.clone(),
                     state: Some(State::Connecting),
                 });
 
@@ -433,18 +476,20 @@ impl RemoteClient {
                         return Err(error);
                     }
                     Err(_) => {
-                        let mut error =
-                            "remote client did not become ready within the timeout".to_owned();
+                        let mut error = String::new();
                         if let Some(status) = io_task.now_or_never() {
+                            error.push_str("Client exited with ");
                             match status {
                                 Ok(exit_code) => {
-                                    error.push_str(&format!(", exit_code={exit_code:?}"))
+                                    error.push_str(&format!("exit_code {exit_code:?}"))
                                 }
-                                Err(e) => error.push_str(&format!(", error={e:?}")),
+                                Err(e) => error.push_str(&format!("error {e:?}")),
                             }
+                        } else {
+                            error.push_str("client did not become ready within the timeout");
                         }
                         let error = anyhow::anyhow!("{error}");
-                        log::error!("failed to establish connection: {}", error);
+                        log::error!("failed to establish connection: {error}");
                         return Err(error);
                     }
                 }
@@ -464,6 +509,18 @@ impl RemoteClient {
                         heartbeat_task,
                     });
                 });
+
+                // Use the same `remote_*` property schema as the forwarded
+                // remote events (see `client::telemetry::report_remote_event`)
+                // so all remote-origin telemetry can be queried uniformly.
+                telemetry::event!(
+                    "Remote Connection Established",
+                    remote = true,
+                    remote_connection_type = connection_type,
+                    remote_os_name = platform.os.display_name(),
+                    remote_os_version = os_version,
+                    remote_architecture = platform.arch.as_str(),
+                );
 
                 Ok(Some(this))
             });
@@ -533,13 +590,17 @@ impl RemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
-            log::info!("aborting reconnect, because not in state that allows reconnecting");
-            let error = if let Some(state) = self.state.as_ref() {
-                format!("invalid state, cannot reconnect while in state {state}")
+            let state = if let Some(state) = self.state.as_ref() {
+                state.to_string()
             } else {
                 "no state set".to_string()
             };
-            anyhow::bail!(error);
+            log::info!(
+                "aborting reconnect, because not in state that allows reconnecting: {state}"
+            );
+            anyhow::bail!(
+                "aborting reconnect, because not in state that allows reconnecting: {state}"
+            );
         }
 
         let state = self.state.take().unwrap();
@@ -654,7 +715,7 @@ impl RemoteClient {
             };
 
             State::Connected {
-                remote_connection: remote_connection,
+                remote_connection,
                 delegate,
                 multiplex_task,
                 heartbeat_task: Self::heartbeat(this.clone(), connection_activity_rx, cx),
@@ -826,8 +887,8 @@ impl RemoteClient {
                                 })?;
                             }
                         }
-                    } else if exit_code > 0 {
-                        log::error!("proxy process terminated unexpectedly");
+                    } else {
+                        log::error!("proxy process terminated unexpectedly: {exit_code}");
                         this.update(cx, |this, cx| {
                             this.reconnect(cx).ok();
                         })?;
@@ -861,14 +922,16 @@ impl RemoteClient {
     }
 
     fn set_state(&mut self, state: State, cx: &mut Context<Self>) {
-        log::info!("setting state to '{}'", &state);
+        log::info!("setting state to '{state}'");
 
         let is_reconnect_exhausted = state.is_reconnect_exhausted();
         let is_server_not_running = state.is_server_not_running();
         self.state.replace(state);
 
         if is_reconnect_exhausted || is_server_not_running {
-            cx.emit(RemoteClientEvent::Disconnected);
+            cx.emit(RemoteClientEvent::Disconnected {
+                server_not_running: is_server_not_running,
+            });
         }
         cx.notify();
     }
@@ -886,6 +949,11 @@ impl RemoteClient {
             .map_or(false, |connection| connection.shares_network_interface())
     }
 
+    pub fn has_wsl_interop(&self) -> bool {
+        self.remote_connection()
+            .map_or(false, |connection| connection.has_wsl_interop())
+    }
+
     pub fn build_command(
         &self,
         program: Option<String>,
@@ -893,11 +961,12 @@ impl RemoteClient {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let Some(connection) = self.remote_connection() else {
             return Err(anyhow!("no remote connection"));
         };
-        connection.build_command(program, args, env, working_dir, port_forward)
+        connection.build_command(program, args, env, working_dir, port_forward, interactive)
     }
 
     pub fn build_forward_ports_command(
@@ -956,6 +1025,87 @@ impl RemoteClient {
         self.path_style
     }
 
+    /// The platform (OS and architecture) of the remote host, detected during
+    /// connection setup.
+    pub fn remote_platform(&self) -> RemotePlatform {
+        self.platform
+    }
+
+    /// The OS version of the remote host (e.g. `"ubuntu 24.04"`), detected
+    /// during connection setup. `None` if it could not be determined.
+    pub fn remote_os_version(&self) -> Option<String> {
+        self.os_version.clone()
+    }
+
+    /// A stable identifier for the kind of remote connection (e.g. `"ssh"`,
+    /// `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        self.connection_options.connection_type()
+    }
+
+    /// Forcibly disconnects from the remote server by killing the underlying connection.
+    /// This will trigger the reconnection logic if reconnection attempts remain.
+    /// Useful for testing reconnection behavior in real environments.
+    pub fn force_disconnect(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(connection) = self.remote_connection() else {
+            return Task::ready(Err(anyhow!("no active remote connection to disconnect")));
+        };
+
+        log::info!("force_disconnect: killing remote connection");
+
+        cx.spawn(async move |_, _| {
+            connection.kill().await?;
+            Ok(())
+        })
+    }
+
+    /// Simulates a timeout by pausing heartbeat responses.
+    /// This will cause heartbeat failures and eventually trigger reconnection
+    /// after MAX_MISSED_HEARTBEATS are missed.
+    /// Useful for testing timeout behavior in real environments.
+    pub fn force_heartbeat_timeout(&mut self, attempts: usize, cx: &mut Context<Self>) {
+        log::info!("force_heartbeat_timeout: triggering heartbeat failure state");
+
+        if let Some(State::Connected {
+            remote_connection,
+            delegate,
+            multiplex_task,
+            heartbeat_task,
+        }) = self.state.take()
+        {
+            self.set_state(
+                if attempts == 0 {
+                    State::HeartbeatMissed {
+                        missed_heartbeats: MAX_MISSED_HEARTBEATS,
+                        remote_connection,
+                        delegate,
+                        multiplex_task,
+                        heartbeat_task,
+                    }
+                } else {
+                    State::ReconnectFailed {
+                        remote_connection,
+                        delegate,
+                        error: anyhow!("forced heartbeat timeout"),
+                        attempts,
+                    }
+                },
+                cx,
+            );
+
+            self.reconnect(cx)
+                .context("failed to start reconnect after forced timeout")
+                .log_err();
+        } else {
+            log::warn!("force_heartbeat_timeout: not in Connected state, ignoring");
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn force_server_not_running(&mut self, cx: &mut Context<Self>) {
+        self.set_state(State::ServerNotRunning, cx);
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut App) -> Task<()> {
         let opts = self.connection_options();
@@ -1001,6 +1151,24 @@ impl RemoteClient {
         (opts.into(), server_client, connect_guard)
     }
 
+    /// Registers a new mock server for existing connection options.
+    ///
+    /// Use this to simulate reconnection: after forcing a disconnect, register
+    /// a new server so the next `connect()` call succeeds.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_server_with_opts(
+        opts: &RemoteConnectionOptions,
+        client_cx: &mut gpui::TestAppContext,
+        server_cx: &mut gpui::TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
+        use crate::transport::mock::MockConnection;
+        let mock_opts = match opts {
+            RemoteConnectionOptions::Mock(mock_opts) => mock_opts.clone(),
+            _ => panic!("fake_server_with_opts requires Mock connection options"),
+        };
+        MockConnection::new_with_opts(mock_opts, client_cx, server_cx)
+    }
+
     /// Creates a `RemoteClient` connected to a mock server.
     ///
     /// Call `fake_server` first to get the connection options, set up the
@@ -1033,7 +1201,7 @@ impl RemoteClient {
             .unwrap()
     }
 
-    fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
+    pub fn remote_connection(&self) -> Option<Arc<dyn RemoteConnection>> {
         self.state
             .as_ref()
             .and_then(|state| state.remote_connection())
@@ -1041,7 +1209,7 @@ impl RemoteClient {
 }
 
 enum ConnectionPoolEntry {
-    Connecting(Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
+    Connecting(WeakShared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
     Connected(Weak<dyn RemoteConnection>),
 }
 
@@ -1062,21 +1230,30 @@ impl ConnectionPool {
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
-                delegate.set_status(
-                    Some("Waiting for existing connection attempt"),
-                    &mut cx.to_async(),
-                );
-                return task.clone();
+                if let Some(task) = task.upgrade() {
+                    log::debug!("Connecting task is still alive");
+                    cx.spawn(async move |cx| {
+                        delegate.set_status(Some("Waiting for existing connection attempt"), cx)
+                    })
+                    .detach();
+                    return task;
+                }
+                log::debug!("Connecting task is dead, removing it and restarting a connection");
+                self.connections.remove(&opts);
             }
             Some(ConnectionPoolEntry::Connected(remote)) => {
                 if let Some(remote) = remote.upgrade()
                     && !remote.has_been_killed()
                 {
+                    log::debug!("Connection is still alive");
                     return Task::ready(Ok(remote)).shared();
                 }
+                log::debug!("Connection is dead, removing it and restarting a connection");
                 self.connections.remove(&opts);
             }
-            None => {}
+            None => {
+                log::debug!("No existing connection found, starting a new one");
+            }
         }
 
         let task = cx
@@ -1134,14 +1311,15 @@ impl ConnectionPool {
                 }
             })
             .shared();
-
-        self.connections
-            .insert(opts.clone(), ConnectionPoolEntry::Connecting(task.clone()));
+        if let Some(task) = task.downgrade() {
+            self.connections
+                .insert(opts.clone(), ConnectionPoolEntry::Connecting(task));
+        }
         task
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
@@ -1153,12 +1331,230 @@ pub enum RemoteConnectionOptions {
 impl RemoteConnectionOptions {
     pub fn display_name(&self) -> String {
         match self {
-            RemoteConnectionOptions::Ssh(opts) => opts.host.to_string(),
+            RemoteConnectionOptions::Ssh(opts) => opts
+                .nickname
+                .clone()
+                .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
-            RemoteConnectionOptions::Docker(opts) => opts.name.clone(),
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    format!("[podman] {}", opts.name)
+                } else {
+                    opts.name.clone()
+                }
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(opts) => format!("mock-{}", opts.id),
         }
+    }
+
+    /// A stable identifier for the kind of remote connection, suitable for
+    /// telemetry (e.g. `"ssh"`, `"wsl"`, `"docker"`, `"podman"`).
+    pub fn connection_type(&self) -> &'static str {
+        match self {
+            RemoteConnectionOptions::Ssh(_) => "ssh",
+            RemoteConnectionOptions::Wsl(_) => "wsl",
+            RemoteConnectionOptions::Docker(opts) => {
+                if opts.use_podman {
+                    "podman"
+                } else {
+                    "docker"
+                }
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => "mock",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use rpc::{ErrorCodeExt, proto::ErrorCode};
+
+    #[test]
+    fn test_ssh_display_name_prefers_nickname() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            nickname: Some("My Cool Project".to_string()),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "My Cool Project");
+    }
+
+    #[test]
+    fn test_ssh_display_name_falls_back_to_host() {
+        let options = RemoteConnectionOptions::Ssh(SshConnectionOptions {
+            host: "1.2.3.4".into(),
+            ..Default::default()
+        });
+
+        assert_eq!(options.display_name(), "1.2.3.4");
+    }
+
+    #[test]
+    fn test_connection_type() {
+        assert_eq!(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions::default()).connection_type(),
+            "ssh"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })
+            .connection_type(),
+            "wsl"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                ..Default::default()
+            })
+            .connection_type(),
+            "docker"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                ..Default::default()
+            })
+            .connection_type(),
+            "podman"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_request_stream_terminates_on_error(cx: &mut TestAppContext) {
+        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        // The client sends RemoteStarted on startup; drain the outgoing channel
+        // so it doesn't block.
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        let request_id = 0;
+
+        incoming_tx
+            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
+            .unwrap();
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(
+            proto::Test::from_envelope(first).unwrap(),
+            proto::Test { id: 1 }
+        );
+
+        // Send an Error without a trailing EndStream. The Error alone should
+        // terminate the stream.
+        incoming_tx
+            .unbounded_send(
+                ErrorCode::Internal
+                    .message("boom".to_string())
+                    .to_proto()
+                    .into_envelope(101, Some(request_id), None),
+            )
+            .unwrap();
+
+        let second = stream.next().await.unwrap();
+        let error = second.unwrap_err();
+        assert!(
+            format!("{error}").contains("boom"),
+            "expected error to surface server message, got: {error}"
+        );
+
+        assert!(stream.next().await.is_none());
+        assert_eq!(client.stream_response_channels.lock().len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_response_cleans_up_channel(
+        cx: &mut TestAppContext,
+    ) {
+        let (_incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "dropping a stream before any responses arrive should remove response channel bookkeeping"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_channel_client_dropping_stream_request_before_completion(
+        cx: &mut TestAppContext,
+    ) {
+        let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+        let client =
+            cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "test-client", false));
+
+        let _drain_outgoing = cx
+            .executor()
+            .spawn(async move { while outgoing_rx.next().await.is_some() {} });
+
+        let mut stream = client
+            .request_stream_dynamic(proto::Test { id: 0 }.into_envelope(0, None, None), "Test")
+            .await
+            .unwrap();
+
+        let request_id = 0;
+
+        incoming_tx
+            .unbounded_send(proto::Test { id: 1 }.into_envelope(100, Some(request_id), None))
+            .unwrap();
+        let _ = stream.next().await.unwrap().unwrap();
+
+        assert_eq!(client.stream_response_channels.lock().len(), 1);
+
+        drop(stream);
+
+        // Inject an orphaned non-terminal response. The read loop should detect
+        // that the consumer has been dropped and clean up its bookkeeping (no
+        // EndStream sent here on purpose, otherwise the cleanup would happen
+        // via the terminal-response path and mask the bug under test).
+        incoming_tx
+            .unbounded_send(proto::Test { id: 2 }.into_envelope(101, Some(request_id), None))
+            .unwrap();
+
+        cx.run_until_parked();
+
+        assert_eq!(
+            client.stream_response_channels.lock().len(),
+            0,
+            "stream channel should be removed once the consumer has dropped the stream"
+        );
     }
 }
 
@@ -1220,6 +1616,7 @@ pub trait RemoteConnection: Send + Sync {
         env: &HashMap<String, String>,
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
+        interactive: Interactive,
     ) -> Result<CommandTemplate>;
     fn build_forward_ports_command(
         &self,
@@ -1227,6 +1624,11 @@ pub trait RemoteConnection: Send + Sync {
     ) -> Result<CommandTemplate>;
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
+    /// The remote platform (OS and architecture), detected during connection setup.
+    fn remote_platform(&self) -> RemotePlatform;
+    /// The remote host's OS version (e.g. `"ubuntu 24.04"` or `"15.6.1"`),
+    /// detected during connection setup. `None` if it could not be determined.
+    fn remote_os_version(&self) -> Option<String>;
     fn shell(&self) -> String;
     fn default_system_shell(&self) -> String;
     fn has_wsl_interop(&self) -> bool;
@@ -1236,8 +1638,10 @@ pub trait RemoteConnection: Send + Sync {
 }
 
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
+type StreamResponseChannels =
+    Arc<Mutex<HashMap<MessageId, UnboundedSender<(Result<Envelope>, oneshot::Sender<()>)>>>>;
 
-struct Signal<T> {
+struct Signal<T: 'static> {
     tx: Mutex<Option<oneshot::Sender<T>>>,
     rx: Shared<Task<Option<T>>>,
 }
@@ -1273,12 +1677,14 @@ pub(crate) struct ChannelClient {
     outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
     response_channels: ResponseChannels,
+    stream_response_channels: StreamResponseChannels,
     message_handlers: Mutex<ProtoMessageHandlerSet>,
     max_received: AtomicU32,
     name: &'static str,
     task: Mutex<Task<Result<()>>>,
     remote_started: Signal<()>,
     has_wsl_interop: bool,
+    executor: BackgroundExecutor,
 }
 
 impl ChannelClient {
@@ -1294,9 +1700,11 @@ impl ChannelClient {
             next_message_id: AtomicU32::new(0),
             max_received: AtomicU32::new(0),
             response_channels: ResponseChannels::default(),
+            stream_response_channels: StreamResponseChannels::default(),
             message_handlers: Default::default(),
             buffer: Mutex::new(VecDeque::new()),
             name,
+            executor: cx.background_executor().clone(),
             task: Mutex::new(Self::start_handling_messages(
                 this.clone(),
                 incoming_rx,
@@ -1366,13 +1774,40 @@ impl ChannelClient {
 
                 if let Some(request_id) = incoming.responding_to {
                     let request_id = MessageId(request_id);
+                    // An incoming response with no payload is malformed; drop
+                    // it. The request future and any stream consumers will
+                    // remain pending until either a real response arrives or
+                    // the connection is torn down.
+                    if incoming.payload.is_none() {
+                        continue;
+                    }
                     let sender = this.response_channels.lock().remove(&request_id);
                     if let Some(sender) = sender {
                         let (tx, rx) = oneshot::channel();
-                        if incoming.payload.is_some() {
-                            sender.send((incoming, tx)).ok();
-                        }
+                        sender.send((incoming, tx)).ok();
                         rx.await.ok();
+                    } else {
+                        let terminal_stream_response = matches!(
+                            &incoming.payload,
+                            Some(proto::envelope::Payload::Error(_))
+                                | Some(proto::envelope::Payload::EndStream(_))
+                        );
+                        let sender = if terminal_stream_response {
+                            this.stream_response_channels.lock().remove(&request_id)
+                        } else {
+                            this.stream_response_channels
+                                .lock()
+                                .get(&request_id)
+                                .cloned()
+                        };
+                        if let Some(sender) = sender {
+                            let (tx, rx) = oneshot::channel();
+                            if sender.unbounded_send((Ok(incoming), tx)).is_err() {
+                                this.stream_response_channels.lock().remove(&request_id);
+                                continue;
+                            }
+                            rx.await.ok();
+                        }
                     }
                 } else if let Some(envelope) =
                     build_typed_envelope(peer_id, Instant::now(), incoming)
@@ -1480,7 +1915,7 @@ impl ChannelClient {
                 Ok(())
             },
             async {
-                smol::Timer::after(timeout).await;
+                self.executor.timer(timeout).await;
                 anyhow::bail!("Timed out resyncing remote client")
             },
         )
@@ -1494,7 +1929,7 @@ impl ChannelClient {
                 Ok(())
             },
             async {
-                smol::Timer::after(timeout).await;
+                self.executor.timer(timeout).await;
                 anyhow::bail!("Timed out pinging remote client")
             },
         )
@@ -1537,6 +1972,55 @@ impl ChannelClient {
         }
     }
 
+    fn request_stream_dynamic(
+        &self,
+        mut envelope: proto::Envelope,
+        type_name: &'static str,
+    ) -> impl 'static + Future<Output = Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        envelope.id = self.next_message_id.fetch_add(1, SeqCst);
+        let message_id = MessageId(envelope.id);
+        let (tx, rx) = mpsc::unbounded();
+        let stream_response_channels = self.stream_response_channels.clone();
+        stream_response_channels.lock().insert(message_id, tx);
+
+        let result = self.send_buffered(envelope);
+        async move {
+            if let Err(error) = &result {
+                log::error!("failed to send message: {error}");
+                anyhow::bail!("failed to send message: {error}");
+            }
+
+            let cleanup_stream_response_channel = util::defer({
+                let stream_response_channels = stream_response_channels.clone();
+                move || {
+                    stream_response_channels.lock().remove(&message_id);
+                }
+            });
+
+            Ok(rx
+                .filter_map(move |(response, _barrier)| {
+                    // Keep the cleanup guard alive until the returned stream is dropped.
+                    let _keep_cleanup_guard_alive = &cleanup_stream_response_channel;
+                    futures::future::ready(match response {
+                        Ok(response) => {
+                            if let Some(proto::envelope::Payload::Error(error)) = &response.payload
+                            {
+                                Some(Err(RpcError::from_proto(error, type_name)))
+                            } else if let Some(proto::envelope::Payload::EndStream(_)) =
+                                &response.payload
+                            {
+                                None
+                            } else {
+                                Some(Ok(response))
+                            }
+                        }
+                        Err(error) => Some(Err(error)),
+                    })
+                })
+                .boxed())
+        }
+    }
+
     pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         self.send_buffered(envelope)
@@ -1565,6 +2049,14 @@ impl ProtoClient for ChannelClient {
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<proto::Envelope>> {
         self.request_dynamic(envelope, request_type, true).boxed()
+    }
+
+    fn request_stream(
+        &self,
+        envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<proto::Envelope>>>> {
+        self.request_stream_dynamic(envelope, request_type).boxed()
     }
 
     fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {

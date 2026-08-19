@@ -11,6 +11,10 @@ impl<T> Patch<T>
 where
     T: 'static + Clone + Copy + Ord + Default,
 {
+    pub const fn empty() -> Self {
+        Self(Vec::new())
+    }
+
     pub fn new(edits: Vec<Edit<T>>) -> Self {
         #[cfg(debug_assertions)]
         {
@@ -52,7 +56,10 @@ where
         if edit.is_empty() {
             return;
         }
+        self.push_maybe_empty(edit);
+    }
 
+    pub fn push_maybe_empty(&mut self, edit: Edit<T>) {
         if let Some(last) = self.0.last_mut() {
             if last.old.end >= edit.old.start {
                 last.old.end = edit.old.end;
@@ -223,6 +230,46 @@ where
             }
         } else {
             old
+        }
+    }
+
+    /// Returns the edit that touches the given old position.
+    ///
+    /// An edit is considered to touch the given old position if edit.old.start <= old <= edit.old.end (note, inclusive on the right).
+    ///
+    /// If there are no edits touching the given old position, an empty edit with appropriate (empty) old and new ranges is returned.
+    pub fn edit_for_old_position(&self, old: T) -> Edit<T> {
+        let edits = self.edits();
+
+        let ix = match edits.binary_search_by(|probe| probe.old.start.cmp(&old)) {
+            Ok(ix) => ix,
+            Err(ix) => {
+                if ix == 0 {
+                    return Edit {
+                        old: old..old,
+                        new: old..old,
+                    };
+                } else {
+                    ix - 1
+                }
+            }
+        };
+
+        if let Some(edit) = edits.get(ix) {
+            if old > edit.old.end {
+                let translated = edit.new.end + (old - edit.old.end);
+                Edit {
+                    new: translated..translated,
+                    old: old..old,
+                }
+            } else {
+                edit.clone()
+            }
+        } else {
+            Edit {
+                old: old..old,
+                new: old..old,
+            }
         }
     }
 }
@@ -551,15 +598,15 @@ mod tests {
             patches.push(Patch(edits));
         }
 
-        log::info!("old patch: {:?}", &patches[0]);
-        log::info!("new patch: {:?}", &patches[1]);
+        log::info!("old patch: {:?}", patches[0]);
+        log::info!("new patch: {:?}", patches[1]);
         log::info!("initial chars: {:?}", initial_chars);
         log::info!("final chars: {:?}", expected_chars);
 
         // Compose the patches, and verify that it has the same effect as applying the
         // two patches separately.
         let composed = patches[0].compose(&patches[1]);
-        log::info!("composed patch: {:?}", &composed);
+        log::info!("composed patch: {composed:?}");
 
         let mut actual_chars = initial_chars;
         for edit in composed.0 {

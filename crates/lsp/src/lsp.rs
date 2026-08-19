@@ -6,9 +6,10 @@ pub use lsp_types::*;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use futures::{
-    AsyncRead, AsyncWrite, Future, FutureExt,
+    AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot::{self, Canceled},
-    io::BufWriter,
+    future::{self, Either},
+    io::{BufReader, BufWriter},
     select,
 };
 use gpui::{App, AppContext as _, AsyncApp, BackgroundExecutor, SharedString, Task};
@@ -18,13 +19,12 @@ use postage::{barrier, prelude::Stream};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json, value::RawValue};
-use smol::{
-    channel,
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::Child,
-};
+use util::command::{Child, Stdio};
 
+use gpui_util::{ResultExt, TryFutureExt};
+use std::path::Path;
 use std::{
+    any::TypeId,
     collections::BTreeSet,
     ffi::{OsStr, OsString},
     fmt,
@@ -39,17 +39,46 @@ use std::{
     task::Poll,
     time::{Duration, Instant},
 };
-use std::{path::Path, process::Stdio};
-use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
+use util::{ConnectionResult, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+/// The default amount of time to wait while initializing or fetching LSP servers, in seconds.
+///
+/// Should not be used (in favor of DEFAULT_LSP_REQUEST_TIMEOUT) and is exported solely for use inside ProjectSettings defaults.
+pub const DEFAULT_LSP_REQUEST_TIMEOUT_SECS: u64 = 120;
+/// A timeout representing the value of [DEFAULT_LSP_REQUEST_TIMEOUT_SECS].
+///
+/// Should **only be used** in tests and as a fallback when a corresponding config value cannot be obtained!
+pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration =
+    Duration::from_secs(DEFAULT_LSP_REQUEST_TIMEOUT_SECS);
+
+/// The shutdown timeout for LSP servers (including Prettier/Copilot).
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub fn workspace_folder_for_uri(uri: Uri) -> WorkspaceFolder {
+    let name = uri
+        .to_file_path()
+        .ok()
+        .map(|path| {
+            let name = path.file_name().unwrap_or(path.as_os_str());
+            name.to_string_lossy().into_owned()
+        })
+        .filter(|name| !name.is_empty())
+        .or_else(|| {
+            uri.path_segments()
+                .and_then(|mut segments| segments.rfind(|segment| !segment.is_empty()))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| uri.as_str().to_owned());
+
+    WorkspaceFolder { uri, name }
+}
+
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
-type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
+type PendingRespondTasks = Arc<Mutex<HashMap<RequestId, Task<()>>>>;
+type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>) -> Task<()>>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
 /// Kind of language server stdio given to an IO handler.
@@ -86,8 +115,8 @@ struct NotificationSerializer(Box<dyn FnOnce() -> String + Send + Sync>);
 pub struct LanguageServer {
     server_id: LanguageServerId,
     next_id: AtomicI32,
-    outbound_tx: channel::Sender<String>,
-    notification_tx: channel::Sender<NotificationSerializer>,
+    outbound_tx: async_channel::Sender<String>,
+    notification_tx: async_channel::Sender<NotificationSerializer>,
     name: LanguageServerName,
     version: Option<SharedString>,
     process_name: Arc<str>,
@@ -100,6 +129,9 @@ pub struct LanguageServer {
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+    /// Tasks spawned by `on_custom_request` to compute responses. Tracked so that
+    /// incoming `$/cancelRequest` notifications can cancel them by dropping the task.
+    pending_respond_tasks: PendingRespondTasks,
     io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     executor: BackgroundExecutor,
     #[allow(clippy::type_complexity)]
@@ -182,7 +214,7 @@ impl PartialEq<str> for LanguageServerName {
 pub enum Subscription {
     Notification {
         method: &'static str,
-        notification_handlers: Option<Arc<Mutex<HashMap<&'static str, NotificationHandler>>>>,
+        notification_handlers: Option<Weak<Mutex<HashMap<&'static str, NotificationHandler>>>>,
     },
     Io {
         id: i32,
@@ -200,14 +232,38 @@ pub enum RequestId {
     Str(String),
 }
 
+fn is_unit<T: 'static>(_: &T) -> bool {
+    TypeId::of::<T>() == TypeId::of::<()>()
+}
+
+fn deserialize_params<T: DeserializeOwned + 'static>(params: Value) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_value(Value::Null)
+    } else {
+        serde_json::from_value(params)
+    }
+}
+
+fn deserialize_result<T: DeserializeOwned + 'static>(result: &str) -> serde_json::Result<T> {
+    if TypeId::of::<T>() == TypeId::of::<()>() {
+        serde_json::from_str("null")
+    } else {
+        serde_json::from_str(result)
+    }
+}
+
 /// Language server protocol RPC request message.
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
 #[derive(Serialize, Deserialize)]
-pub struct Request<'a, T> {
+pub struct Request<'a, T>
+where
+    T: 'static,
+{
     jsonrpc: &'static str,
     id: RequestId,
     method: &'a str,
+    #[serde(default, skip_serializing_if = "is_unit")]
     params: T,
 }
 
@@ -216,9 +272,9 @@ pub struct Request<'a, T> {
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
     id: RequestId,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     error: Option<Error>,
-    #[serde(borrow)]
+    #[serde(borrow, skip_serializing_if = "Option::is_none")]
     result: Option<&'a RawValue>,
 }
 
@@ -245,10 +301,14 @@ enum LspResult<T> {
 ///
 /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
 #[derive(Serialize, Deserialize)]
-struct Notification<'a, T> {
+struct Notification<'a, T>
+where
+    T: 'static,
+{
     jsonrpc: &'static str,
     #[serde(borrow)]
     method: &'a str,
+    #[serde(default, skip_serializing_if = "is_unit")]
     params: T,
 }
 
@@ -305,7 +365,7 @@ where
 }
 
 /// Combined capabilities of the server and the adapter.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdapterServerCapabilities {
     // Reported capabilities by the server
     pub server_capabilities: ServerCapabilities,
@@ -313,8 +373,59 @@ pub struct AdapterServerCapabilities {
     pub code_action_kinds: Option<Vec<CodeActionKind>>,
 }
 
+// See the VSCode docs [1] and the LSP Spec [2]
+//
+// [1]: https://code.visualstudio.com/api/language-extensions/semantic-highlight-guide#standard-token-types-and-modifiers
+// [2]: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#semanticTokenTypes
+pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
+    SemanticTokenType::NAMESPACE,
+    SemanticTokenType::CLASS,
+    SemanticTokenType::ENUM,
+    SemanticTokenType::INTERFACE,
+    SemanticTokenType::STRUCT,
+    SemanticTokenType::TYPE_PARAMETER,
+    SemanticTokenType::TYPE,
+    SemanticTokenType::PARAMETER,
+    SemanticTokenType::VARIABLE,
+    SemanticTokenType::PROPERTY,
+    SemanticTokenType::ENUM_MEMBER,
+    SemanticTokenType::DECORATOR,
+    SemanticTokenType::FUNCTION,
+    SemanticTokenType::METHOD,
+    SemanticTokenType::MACRO,
+    SemanticTokenType::new("label"), // Not in the spec, but in the docs.
+    SemanticTokenType::COMMENT,
+    SemanticTokenType::STRING,
+    SemanticTokenType::KEYWORD,
+    SemanticTokenType::NUMBER,
+    SemanticTokenType::REGEXP,
+    SemanticTokenType::OPERATOR,
+    SemanticTokenType::MODIFIER, // Only in the spec, not in the docs.
+    // Language specific things below.
+    // C#
+    SemanticTokenType::EVENT,
+    // Rust
+    SemanticTokenType::new("lifetime"),
+];
+pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
+    SemanticTokenModifier::DECLARATION,
+    SemanticTokenModifier::DEFINITION,
+    SemanticTokenModifier::READONLY,
+    SemanticTokenModifier::STATIC,
+    SemanticTokenModifier::DEPRECATED,
+    SemanticTokenModifier::ABSTRACT,
+    SemanticTokenModifier::ASYNC,
+    SemanticTokenModifier::MODIFICATION,
+    SemanticTokenModifier::DOCUMENTATION,
+    SemanticTokenModifier::DEFAULT_LIBRARY,
+    // Language specific things below.
+    // Rust
+    SemanticTokenModifier::new("constant"),
+];
+
 impl LanguageServer {
     /// Starts a language server process.
+    /// A request_timeout of zero or Duration::MAX indicates an indefinite timeout.
     pub fn new(
         stderr_capture: Arc<Mutex<Option<String>>>,
         server_id: LanguageServerId,
@@ -337,9 +448,9 @@ impl LanguageServer {
             {:?}, working directory: {:?}, args: {:?}",
             binary.path,
             working_dir,
-            &binary.arguments
+            binary.arguments
         );
-        let mut command = util::command::new_smol_command(&binary.path);
+        let mut command = util::command::new_command(&binary.path);
         command
             .current_dir(working_dir)
             .args(&binary.arguments)
@@ -404,12 +515,13 @@ impl LanguageServer {
         Stderr: AsyncRead + Unpin + Send + 'static,
         F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
-        let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
+        let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
         let notification_handlers =
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
+        let pending_respond_tasks = PendingRespondTasks::default();
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
         let stdout_input_task = cx.spawn({
@@ -437,12 +549,14 @@ impl LanguageServer {
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
+            let pending_respond_tasks = pending_respond_tasks.clone();
             async move |cx| {
                 Self::handle_incoming_messages(
                     stdout,
                     unhandled_notification_wrapper,
                     notification_handlers,
                     response_handlers,
+                    pending_respond_tasks,
                     io_handlers,
                     cx,
                 )
@@ -481,7 +595,8 @@ impl LanguageServer {
         }
         .into();
 
-        let (notification_tx, notification_rx) = channel::unbounded::<NotificationSerializer>();
+        let (notification_tx, notification_rx) =
+            async_channel::unbounded::<NotificationSerializer>();
         cx.background_spawn({
             let outbound_tx = outbound_tx.clone();
             async move {
@@ -500,6 +615,7 @@ impl LanguageServer {
             notification_handlers,
             notification_tx,
             response_handlers,
+            pending_respond_tasks,
             io_handlers,
             name: server_name,
             version: None,
@@ -533,15 +649,15 @@ impl LanguageServer {
         on_unhandled_notification: impl AsyncFn(NotificationOrRequest) + 'static + Send,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        pending_respond_tasks: PendingRespondTasks,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
-        use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
-        let _clear_response_handlers = util::defer({
+        let _clear_response_handlers = gpui_util::defer({
             let response_handlers = response_handlers.clone();
             move || {
                 response_handlers.lock().take();
@@ -555,6 +671,19 @@ impl LanguageServer {
         );
 
         while let Some(msg) = input_handler.incoming_messages.next().await {
+            if msg.method == <notification::Cancel as notification::Notification>::METHOD {
+                if let Some(params) = msg.params {
+                    if let Ok(cancel_params) = serde_json::from_value::<CancelParams>(params) {
+                        let id = match cancel_params.id {
+                            NumberOrString::Number(id) => RequestId::Int(id),
+                            NumberOrString::String(id) => RequestId::Str(id),
+                        };
+                        pending_respond_tasks.lock().remove(&id);
+                    }
+                }
+                continue;
+            }
+
             let unhandled_message = {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
@@ -570,7 +699,7 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
         input_handler.loop_handle.await
     }
@@ -606,13 +735,13 @@ impl LanguageServer {
             }
 
             // Don't starve the main thread when receiving lots of messages at once.
-            smol::future::yield_now().await;
+            futures_lite::future::yield_now().await;
         }
     }
 
     async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
-        outbound_rx: channel::Receiver<String>,
+        outbound_rx: async_channel::Receiver<String>,
         output_done_tx: barrier::Sender,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -646,23 +775,20 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
+    pub fn default_initialize_params(
+        &self,
+        pull_diagnostics: bool,
+        augments_syntax_tokens: bool,
+        cx: &App,
+    ) -> InitializeParams {
         let workspace_folders = self.workspace_folders.as_ref().map_or_else(
-            || {
-                vec![WorkspaceFolder {
-                    name: Default::default(),
-                    uri: self.root_uri.clone(),
-                }]
-            },
+            || vec![workspace_folder_for_uri(self.root_uri.clone())],
             |folders| {
                 folders
                     .lock()
                     .iter()
                     .cloned()
-                    .map(|uri| WorkspaceFolder {
-                        name: Default::default(),
-                        uri,
-                    })
+                    .map(workspace_folder_for_uri)
                     .collect()
             },
         );
@@ -670,7 +796,12 @@ impl LanguageServer {
         #[allow(deprecated)]
         InitializeParams {
             process_id: Some(std::process::id()),
-            root_path: None,
+            root_path: Some(
+                self.root_uri
+                    .to_file_path()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| self.root_uri.path().to_string()),
+            ),
             root_uri: Some(self.root_uri.clone()),
             initialization_options: None,
             capabilities: ClientCapabilities {
@@ -696,10 +827,11 @@ impl LanguageServer {
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
-                    diagnostics: Some(DiagnosticWorkspaceClientCapabilities {
-                        refresh_support: Some(true),
-                    })
-                    .filter(|_| pull_diagnostics),
+                    diagnostics: pull_diagnostics.then_some(
+                        DiagnosticWorkspaceClientCapabilities {
+                            refresh_support: Some(true),
+                        },
+                    ),
                     code_lens: Some(CodeLensWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
@@ -722,6 +854,9 @@ impl LanguageServer {
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
                         dynamic_registration: Some(true),
+                    }),
+                    semantic_tokens: Some(SemanticTokensWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
                     }),
                     ..WorkspaceClientCapabilities::default()
                 }),
@@ -823,6 +958,20 @@ impl LanguageServer {
                         }),
                         dynamic_registration: Some(true),
                     }),
+                    semantic_tokens: Some(SemanticTokensClientCapabilities {
+                        dynamic_registration: Some(true),
+                        requests: SemanticTokensClientCapabilitiesRequests {
+                            range: None,
+                            full: Some(SemanticTokensFullOptions::Delta { delta: Some(true) }),
+                        },
+                        token_types: SEMANTIC_TOKEN_TYPES.to_vec(),
+                        token_modifiers: SEMANTIC_TOKEN_MODIFIERS.to_vec(),
+                        formats: vec![TokenFormat::RELATIVE],
+                        overlapping_token_support: Some(true),
+                        multiline_token_support: Some(true),
+                        server_cancel_support: Some(true),
+                        augments_syntax_tokens: Some(augments_syntax_tokens),
+                    }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
                         version_support: Some(true),
@@ -868,13 +1017,31 @@ impl LanguageServer {
                         dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
-                    diagnostic: Some(DiagnosticClientCapabilities {
+                    diagnostic: pull_diagnostics.then_some(DiagnosticClientCapabilities {
                         dynamic_registration: Some(true),
                         related_document_support: Some(true),
-                    })
-                    .filter(|_| pull_diagnostics),
+                    }),
                     color_provider: Some(DocumentColorClientCapabilities {
                         dynamic_registration: Some(true),
+                    }),
+                    document_link: Some(DocumentLinkClientCapabilities {
+                        dynamic_registration: Some(true),
+                        tooltip_support: Some(true),
+                    }),
+                    folding_range: Some(FoldingRangeClientCapabilities {
+                        dynamic_registration: Some(true),
+                        line_folding_only: Some(false),
+                        range_limit: None,
+                        folding_range: Some(FoldingRangeCapability {
+                            collapsed_text: Some(true),
+                        }),
+                        folding_range_kind: Some(FoldingRangeKindCapability {
+                            value_set: Some(vec![
+                                FoldingRangeKind::Comment,
+                                FoldingRangeKind::Region,
+                                FoldingRangeKind::Imports,
+                            ]),
+                        }),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
@@ -913,11 +1080,12 @@ impl LanguageServer {
         mut self,
         params: InitializeParams,
         configuration: Arc<DidChangeConfigurationParams>,
+        timeout: Duration,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
         cx.background_spawn(async move {
             let response = self
-                .request::<request::Initialize>(params)
+                .request::<request::Initialize>(params, timeout)
                 .await
                 .into_response()
                 .with_context(|| {
@@ -941,62 +1109,61 @@ impl LanguageServer {
 
     /// Sends a shutdown request to the language server process and prepares the [`LanguageServer`] to be dropped.
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Option<()>> + use<>> {
-        if let Some(tasks) = self.io_tasks.lock().take() {
-            let response_handlers = self.response_handlers.clone();
-            let next_id = AtomicI32::new(self.next_id.load(SeqCst));
-            let outbound_tx = self.outbound_tx.clone();
-            let executor = self.executor.clone();
-            let notification_serializers = self.notification_tx.clone();
-            let mut output_done = self.output_done_rx.lock().take().unwrap();
-            let shutdown_request = Self::request_internal::<request::Shutdown>(
-                &next_id,
-                &response_handlers,
-                &outbound_tx,
-                &notification_serializers,
-                &executor,
-                (),
-            );
+        let tasks = self.io_tasks.lock().take()?;
 
-            let server = self.server.clone();
-            let name = self.name.clone();
-            let server_id = self.server_id;
-            let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(async move {
-                log::debug!("language server shutdown started");
+        let response_handlers = self.response_handlers.clone();
+        let next_id = AtomicI32::new(self.next_id.load(SeqCst));
+        let outbound_tx = self.outbound_tx.clone();
+        let executor = self.executor.clone();
+        let notification_serializers = self.notification_tx.clone();
+        let mut output_done = self.output_done_rx.lock().take().unwrap();
+        let shutdown_request = Self::request_internal::<request::Shutdown>(
+            &next_id,
+            &response_handlers,
+            &outbound_tx,
+            &notification_serializers,
+            &executor,
+            SERVER_SHUTDOWN_TIMEOUT,
+            (),
+        );
 
-                select! {
-                    request_result = shutdown_request.fuse() => {
-                        match request_result {
-                            ConnectionResult::Timeout => {
-                                log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
-                            },
-                            ConnectionResult::ConnectionReset => {
-                                log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
-                            },
-                            ConnectionResult::Result(Err(e)) => {
-                                log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
-                            },
-                            ConnectionResult::Result(Ok(())) => {}
-                        }
+        let server = self.server.clone();
+        let name = self.name.clone();
+        let server_id = self.server_id;
+        let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
+        Some(async move {
+            log::debug!("language server shutdown started");
+
+            select! {
+                request_result = shutdown_request.fuse() => {
+                    match request_result {
+                        ConnectionResult::Timeout => {
+                            log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                        },
+                        ConnectionResult::ConnectionReset => {
+                            log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
+                        },
+                        ConnectionResult::Result(Err(e)) => {
+                            log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
+                        },
+                        ConnectionResult::Result(Ok(())) => {}
                     }
-
-                    _ = timer => {
-                        log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
-                    },
                 }
 
-                response_handlers.lock().take();
-                Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
-                notification_serializers.close();
-                output_done.recv().await;
-                server.lock().take().map(|mut child| child.kill());
-                drop(tasks);
-                log::debug!("language server shutdown finished");
-                Some(())
-            })
-        } else {
-            None
-        }
+                _ = timer => {
+                    log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                },
+            }
+
+            response_handlers.lock().take();
+            Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
+            notification_serializers.close();
+            output_done.recv().await;
+            server.lock().take().map(|mut child| child.kill());
+            drop(tasks);
+            log::debug!("language server shutdown finished");
+            Some(())
+        })
     }
 
     /// Register a handler to handle incoming LSP notifications.
@@ -1058,12 +1225,12 @@ impl LanguageServer {
     fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
     where
         F: 'static + FnMut(Params, &mut AsyncApp) + Send,
-        Params: DeserializeOwned,
+        Params: DeserializeOwned + 'static,
     {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |_, params, cx| {
-                if let Some(params) = serde_json::from_value(params).log_err() {
+                if let Some(params) = deserialize_params(params).log_err() {
                     f(params, cx);
                 }
             }),
@@ -1074,7 +1241,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: Some(self.notification_handlers.clone()),
+            notification_handlers: Some(Arc::downgrade(&self.notification_handlers)),
         }
     }
 
@@ -1087,41 +1254,44 @@ impl LanguageServer {
         Res: Serialize,
     {
         let outbound_tx = self.outbound_tx.clone();
+        let pending_respond_tasks = self.pending_respond_tasks.clone();
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    match serde_json::from_value(params) {
+                    match deserialize_params(params) {
                         Ok(params) => {
                             let response = f(params, cx);
-                            cx.foreground_executor()
-                                .spawn({
-                                    let outbound_tx = outbound_tx.clone();
-                                    async move {
-                                        let response = match response.await {
-                                            Ok(result) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Ok(Some(result)),
-                                            },
-                                            Err(error) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Error(Some(Error {
-                                                    code: lsp_types::error_codes::REQUEST_FAILED,
-                                                    message: error.to_string(),
-                                                    data: None,
-                                                })),
-                                            },
-                                        };
-                                        if let Some(response) =
-                                            serde_json::to_string(&response).log_err()
-                                        {
-                                            outbound_tx.try_send(response).ok();
-                                        }
+                            let task = cx.foreground_executor().spawn({
+                                let outbound_tx = outbound_tx.clone();
+                                let pending_respond_tasks = pending_respond_tasks.clone();
+                                let id = id.clone();
+                                async move {
+                                    let response = match response.await {
+                                        Ok(result) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id: id.clone(),
+                                            value: LspResult::Ok(Some(result)),
+                                        },
+                                        Err(error) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id: id.clone(),
+                                            value: LspResult::Error(Some(Error {
+                                                code: lsp_types::error_codes::REQUEST_FAILED,
+                                                message: error.to_string(),
+                                                data: None,
+                                            })),
+                                        },
+                                    };
+                                    if let Some(response) =
+                                        serde_json::to_string(&response).log_err()
+                                    {
+                                        outbound_tx.try_send(response).ok();
                                     }
-                                })
-                                .detach();
+                                    pending_respond_tasks.lock().remove(&id);
+                                }
+                            });
+                            pending_respond_tasks.lock().insert(id, task);
                         }
 
                         Err(error) => {
@@ -1150,7 +1320,7 @@ impl LanguageServer {
         );
         Subscription::Notification {
             method,
-            notification_handlers: Some(self.notification_handlers.clone()),
+            notification_handlers: Some(Arc::downgrade(&self.notification_handlers)),
         }
     }
 
@@ -1164,6 +1334,30 @@ impl LanguageServer {
         self.version.clone()
     }
 
+    /// Get the readable version of the running language server.
+    pub fn readable_version(&self) -> Option<SharedString> {
+        match self.name().as_ref() {
+            "gopls" => {
+                // Gopls returns a detailed JSON object as its version string; we must parse it to extract the semantic version.
+                // Example: `{"GoVersion":"go1.26.0","Path":"golang.org/x/tools/gopls","Main":{},"Deps":[],"Settings":[],"Version":"v0.21.1"}`
+                self.version
+                    .as_ref()
+                    .and_then(|obj| {
+                        #[derive(Deserialize)]
+                        struct GoplsVersion<'a> {
+                            #[serde(rename = "Version")]
+                            version: &'a str,
+                        }
+                        let parsed: GoplsVersion = serde_json::from_str(obj.as_str()).ok()?;
+                        Some(parsed.version.trim_start_matches("v").to_owned().into())
+                    })
+                    .or_else(|| self.version.clone())
+            }
+            _ => self.version.clone(),
+        }
+    }
+
+    /// Get the process name of the running language server.
     pub fn process_name(&self) -> &str {
         &self.process_name
     }
@@ -1182,30 +1376,39 @@ impl LanguageServer {
         }
     }
 
+    /// Update the capabilities of the running language server.
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
     }
 
+    /// Get the individual configuration settings for the running language server.
+    /// Does not include globally applied settings (which are stored in ProjectSettings::GlobalLspSettings).
     pub fn configuration(&self) -> &Value {
         &self.configuration.settings
     }
 
-    /// Get the id of the running language server.
+    /// Get the ID of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
     }
 
-    /// Language server's binary information.
+    /// Get the process ID of the running language server, if available.
+    pub fn process_id(&self) -> Option<u32> {
+        self.server.lock().as_ref().map(|child| child.id())
+    }
+
+    /// Get the binary information of the running language server.
     pub fn binary(&self) -> &LanguageServerBinary {
         &self.binary
     }
 
-    /// Sends a RPC request to the language server.
+    /// Send a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request<T: request::Request>(
         &self,
         params: T::Params,
+        request_timeout: Duration,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
         T::Result: 'static + Send,
@@ -1216,12 +1419,13 @@ impl LanguageServer {
             &self.outbound_tx,
             &self.notification_tx,
             &self.executor,
+            request_timeout,
             params,
         )
     }
 
-    /// Sends a RPC request to the language server, with a custom timer, a future which when becoming
-    /// ready causes the request to be timed out with the future's output message.
+    /// Send a RPC request to the language server with a custom timer.
+    /// Once the attached future becomes ready, the request will time out with the provided output message.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
     pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
@@ -1245,9 +1449,9 @@ impl LanguageServer {
 
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
-        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
         timer: U,
         params: T::Params,
@@ -1264,7 +1468,7 @@ impl LanguageServer {
             method: T::METHOD,
             params,
         })
-        .unwrap();
+        .expect("LSP message should be serializable to JSON");
 
         let (tx, rx) = oneshot::channel();
         let handle_response = response_handlers
@@ -1279,7 +1483,7 @@ impl LanguageServer {
                         executor
                             .spawn(async move {
                                 let response = match result {
-                                    Ok(response) => match serde_json::from_str(&response) {
+                                    Ok(response) => match deserialize_result(&response) {
                                         Ok(deserialized) => Ok(deserialized),
                                         Err(error) => {
                                             log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
@@ -1288,9 +1492,8 @@ impl LanguageServer {
                                     }
                                     Err(error) => Err(anyhow!("{}", error.message)),
                                 };
-                                _ = tx.send(response);
+                                tx.send(response).ok();
                             })
-                            .detach();
                     }),
                 );
             });
@@ -1299,6 +1502,7 @@ impl LanguageServer {
             .try_send(message)
             .context("failed to write to language server's stdin");
 
+        let response_handlers = Arc::clone(response_handlers);
         let notification_serializers = notification_serializers.downgrade();
         let started = Instant::now();
         LspRequest::new(id, async move {
@@ -1309,7 +1513,7 @@ impl LanguageServer {
                 return ConnectionResult::Result(Err(e));
             }
 
-            let cancel_on_drop = util::defer(move || {
+            let cancel_on_drop = gpui_util::defer(move || {
                 if let Some(notification_serializers) = notification_serializers.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &notification_serializers,
@@ -1338,7 +1542,16 @@ impl LanguageServer {
 
                 message = timer.fuse() => {
                     log::error!("Cancelled LSP request task for {method:?} id {id} {message}");
-                    ConnectionResult::Timeout
+                    match response_handlers
+                        .lock()
+                        .as_mut()
+                        .context("server shut down") {
+                            Ok(handlers) => {
+                                handlers.remove(&RequestId::Int(id));
+                                ConnectionResult::Timeout
+                            }
+                            Err(e) => ConnectionResult::Result(Err(e)),
+                        }
                 }
             }
         })
@@ -1346,10 +1559,11 @@ impl LanguageServer {
 
     fn request_internal<T>(
         next_id: &AtomicI32,
-        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
-        outbound_tx: &channel::Sender<String>,
-        notification_serializers: &channel::Sender<NotificationSerializer>,
+        response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        outbound_tx: &async_channel::Sender<String>,
+        notification_serializers: &async_channel::Sender<NotificationSerializer>,
         executor: &BackgroundExecutor,
+        request_timeout: Duration,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
@@ -1362,15 +1576,31 @@ impl LanguageServer {
             outbound_tx,
             notification_serializers,
             executor,
-            Self::default_request_timer(executor.clone()),
+            Self::request_timeout_future(executor.clone(), request_timeout),
             params,
         )
     }
 
-    pub fn default_request_timer(executor: BackgroundExecutor) -> impl Future<Output = String> {
-        executor
-            .timer(LSP_REQUEST_TIMEOUT)
-            .map(|_| format!("which took over {LSP_REQUEST_TIMEOUT:?}"))
+    /// Internal function to return a Future from a configured timeout duration.
+    /// If the duration is zero or `Duration::MAX`, the returned future never completes.
+    fn request_timeout_future(
+        executor: BackgroundExecutor,
+        request_timeout: Duration,
+    ) -> impl Future<Output = String> {
+        if request_timeout == Duration::MAX || request_timeout == Duration::ZERO {
+            return Either::Left(future::pending::<String>());
+        }
+
+        Either::Right(
+            executor
+                .timer(request_timeout)
+                .map(move |_| format!("which took over {request_timeout:?}")),
+        )
+    }
+
+    /// Obtain a request timer for the LSP.
+    pub fn request_timer(&self, timeout: Duration) -> impl Future<Output = String> {
+        Self::request_timeout_future(self.executor.clone(), timeout)
     }
 
     /// Sends a RPC notification to the language server.
@@ -1382,7 +1612,7 @@ impl LanguageServer {
     }
 
     fn notify_internal<T: notification::Notification>(
-        outbound_tx: &channel::Sender<NotificationSerializer>,
+        outbound_tx: &async_channel::Sender<NotificationSerializer>,
         params: T::Params,
     ) -> Result<()> {
         let serializer = NotificationSerializer(Box::new(move || {
@@ -1422,10 +1652,7 @@ impl LanguageServer {
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
-                    added: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    added: vec![workspace_folder_for_uri(uri)],
                     removed: vec![],
                 },
             };
@@ -1457,10 +1684,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
                     added: vec![],
-                    removed: vec![WorkspaceFolder {
-                        uri,
-                        name: String::default(),
-                    }],
+                    removed: vec![workspace_folder_for_uri(uri)],
                 },
             };
             self.notify::<DidChangeWorkspaceFolders>(params).ok();
@@ -1475,18 +1699,14 @@ impl LanguageServer {
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
             .difference(&old_workspace_folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
 
         let removed: Vec<_> = old_workspace_folders
             .difference(&folders)
-            .map(|uri| WorkspaceFolder {
-                uri: uri.clone(),
-                name: String::default(),
-            })
+            .cloned()
+            .map(workspace_folder_for_uri)
             .collect();
         *workspace_folders = folders;
         let should_notify = !added.is_empty() || !removed.is_empty();
@@ -1597,7 +1817,7 @@ impl Drop for Subscription {
                 method,
                 notification_handlers,
             } => {
-                if let Some(handlers) = notification_handlers {
+                if let Some(handlers) = notification_handlers.as_ref().and_then(|h| h.upgrade()) {
                     handlers.lock().remove(method);
                 }
             }
@@ -1616,7 +1836,7 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
-    notifications_rx: channel::Receiver<(String, String)>,
+    notifications_rx: async_channel::Receiver<(String, String)>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1631,7 +1851,7 @@ impl FakeLanguageServer {
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
-        let (notifications_tx, notifications_rx) = channel::unbounded();
+        let (notifications_tx, notifications_rx) = async_channel::unbounded();
 
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
@@ -1741,18 +1961,20 @@ impl FakeLanguageServer {
     }
 
     /// See [`LanguageServer::request`].
-    pub async fn request<T>(&self, params: T::Params) -> ConnectionResult<T::Result>
+    pub async fn request<T>(
+        &self,
+        params: T::Params,
+        timeout: Duration,
+    ) -> ConnectionResult<T::Result>
     where
         T: request::Request,
         T::Result: 'static + Send,
     {
-        self.server.executor.start_waiting();
-        self.server.request::<T>(params).await
+        self.server.request::<T>(params, timeout).await
     }
 
     /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
-        self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 
@@ -1789,10 +2011,14 @@ impl FakeLanguageServer {
                 let responded_tx = responded_tx.clone();
                 let executor = cx.background_executor().clone();
                 async move {
+                    let _guard = gpui_util::defer({
+                        let responded_tx = responded_tx.clone();
+                        move || {
+                            responded_tx.unbounded_send(()).ok();
+                        }
+                    });
                     executor.simulate_random_delay().await;
-                    let result = result.await;
-                    responded_tx.unbounded_send(()).ok();
-                    result
+                    result.await
                 }
             })
             .detach();
@@ -1830,18 +2056,23 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has started work and notifies about its progress with the specified token.
     pub async fn start_progress(&self, token: impl Into<String>) {
-        self.start_progress_with(token, Default::default()).await
+        self.start_progress_with(token, Default::default(), Default::default())
+            .await
     }
 
     pub async fn start_progress_with(
         &self,
         token: impl Into<String>,
         progress: WorkDoneProgressBegin,
+        request_timeout: Duration,
     ) {
         let token = token.into();
-        self.request::<request::WorkDoneProgressCreate>(WorkDoneProgressCreateParams {
-            token: NumberOrString::String(token.clone()),
-        })
+        self.request::<request::WorkDoneProgressCreate>(
+            WorkDoneProgressCreateParams {
+                token: NumberOrString::String(token.clone()),
+            },
+            request_timeout,
+        )
         .await
         .into_response()
         .unwrap();
@@ -1866,7 +2097,7 @@ mod tests {
     use gpui::TestAppContext;
     use std::str::FromStr;
 
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn init_logger() {
         zlog::init_test();
     }
@@ -1888,8 +2119,8 @@ mod tests {
             &mut cx.to_async(),
         );
 
-        let (message_tx, message_rx) = channel::unbounded();
-        let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
+        let (message_tx, message_rx) = async_channel::unbounded();
+        let (diagnostics_tx, diagnostics_rx) = async_channel::unbounded();
         server
             .on_notification::<notification::ShowMessage, _>(move |params, _| {
                 message_tx.try_send(params).unwrap()
@@ -1903,11 +2134,16 @@ mod tests {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(false, cx);
+                let params = server.default_initialize_params(false, false, cx);
                 let configuration = DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
-                server.initialize(params, configuration.into(), cx)
+                server.initialize(
+                    params,
+                    configuration.into(),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -1953,6 +2189,155 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_subscription_leaks_handlers_after_server_drop(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, mut fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        let detached_payload = Arc::new(());
+        let detached_payload_handle = Arc::downgrade(&detached_payload);
+        server
+            .on_notification::<notification::ShowMessage, _>(move |_, _| {
+                let _payload = &detached_payload;
+            })
+            .detach();
+
+        let retained_payload = Arc::new(());
+        let retained_payload_handle = Arc::downgrade(&retained_payload);
+        let subscription =
+            server.on_notification::<notification::PublishDiagnostics, _>(move |_, _| {
+                let _payload = &retained_payload;
+            });
+
+        let server = cx
+            .update(|cx| {
+                let params = server.default_initialize_params(false, false, cx);
+                let configuration = DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                server.initialize(
+                    params,
+                    configuration.into(),
+                    DEFAULT_LSP_REQUEST_TIMEOUT,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        drop(server);
+        cx.run_until_parked();
+        fake.receive_notification::<notification::Exit>().await;
+        drop(fake);
+        cx.run_until_parked();
+
+        assert!(
+            detached_payload_handle.upgrade().is_none(),
+            "detached handler was kept alive after the server was dropped, \
+            because an unrelated retained subscription pins the whole handler map"
+        );
+        assert!(
+            retained_payload_handle.upgrade().is_none(),
+            "handler with a retained subscription was kept alive after the server was dropped"
+        );
+
+        drop(subscription);
+        assert!(detached_payload_handle.upgrade().is_none());
+        assert!(retained_payload_handle.upgrade().is_none());
+    }
+
+    #[gpui::test]
+    async fn test_unit_params_request_with_empty_object_params(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum DiagnosticRefreshWithRawParams {}
+
+        impl request::Request for DiagnosticRefreshWithRawParams {
+            type Params = Value;
+            type Result = ();
+            const METHOD: &'static str = request::WorkspaceDiagnosticRefresh::METHOD;
+        }
+
+        let (refresh_tx, refresh_rx) = async_channel::unbounded();
+        server
+            .on_request::<request::WorkspaceDiagnosticRefresh, _, _>(move |(), _| {
+                let refresh_tx = refresh_tx.clone();
+                async move {
+                    refresh_tx.try_send(()).unwrap();
+                    Ok(())
+                }
+            })
+            .detach();
+
+        for params in [serde_json::json!({}), Value::Null] {
+            let response = fake
+                .request::<DiagnosticRefreshWithRawParams>(params, DEFAULT_LSP_REQUEST_TIMEOUT)
+                .await;
+            assert_eq!(response.into_response().unwrap(), ());
+            assert_eq!(refresh_rx.recv().await, Ok(()));
+        }
+    }
+
+    #[gpui::test]
+    async fn test_unit_result_response_with_empty_object(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: Vec::new(),
+                env: None,
+            },
+            "the-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+
+        enum ShutdownWithRawResult {}
+
+        impl request::Request for ShutdownWithRawResult {
+            type Params = Value;
+            type Result = Value;
+            const METHOD: &'static str = request::Shutdown::METHOD;
+        }
+
+        fake.set_request_handler::<ShutdownWithRawResult, _, _>(|_, _| async move {
+            Ok(serde_json::json!({}))
+        });
+
+        let response = server
+            .request::<request::Shutdown>((), DEFAULT_LSP_REQUEST_TIMEOUT)
+            .await;
+        assert_eq!(response.into_response().unwrap(), ());
+    }
+
+    #[gpui::test]
     fn test_deserialize_string_digit_id() {
         let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
         let notification = serde_json::from_str::<NotificationOrRequest>(json)
@@ -1980,6 +2365,24 @@ mod tests {
     }
 
     #[test]
+    fn test_serialize_error_response_has_no_result() {
+        let response = AnyResponse {
+            jsonrpc: JSON_RPC_VERSION,
+            id: RequestId::Int(0),
+            error: Some(Error {
+                code: -32601,
+                message: "Unrecognized method".to_string(),
+                data: None,
+            }),
+            result: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&response).unwrap(),
+            "{\"jsonrpc\":\"2.0\",\"id\":0,\"error\":{\"code\":-32601,\"message\":\"Unrecognized method\",\"data\":null}}"
+        );
+    }
+
+    #[test]
     fn test_serialize_has_no_nulls() {
         // Ensure we're not setting both result and error variants. (ticket #10595)
         let no_tag = Response::<u32> {
@@ -2000,5 +2403,51 @@ mod tests {
             serde_json::to_string(&no_tag).unwrap(),
             "{\"jsonrpc\":\"\",\"id\":0,\"error\":null}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_default_initialize_params(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            release_channel::init(semver::Version::new(0, 0, 0), cx);
+        });
+        let (server, _fake) = FakeLanguageServer::new(
+            LanguageServerId(0),
+            LanguageServerBinary {
+                path: "path/to/language-server".into(),
+                arguments: vec![],
+                env: None,
+            },
+            "test-lsp".to_string(),
+            Default::default(),
+            &mut cx.to_async(),
+        );
+        let project_uri = Uri::from_file_path(std::env::temp_dir().join("my project"))
+            .expect("workspace folder URI should be valid");
+        server.set_workspace_folders(BTreeSet::from_iter([project_uri.clone()]));
+
+        let params = cx.update(|cx| server.default_initialize_params(false, false, cx));
+
+        #[allow(deprecated)]
+        let root_uri = params.root_uri.expect("root_uri should be set");
+        #[allow(deprecated)]
+        let root_path = params.root_path.expect("root_path should be set");
+
+        let expected_path = root_uri
+            .to_file_path()
+            .expect("root_uri should be a valid file path");
+        assert_eq!(
+            root_path,
+            expected_path.to_string_lossy(),
+            "root_path should be derived from root_uri"
+        );
+        let workspace_folders = params
+            .workspace_folders
+            .expect("workspace folders should be set");
+
+        let expected_workspace_folders = vec![WorkspaceFolder {
+            uri: project_uri,
+            name: "my project".to_string(),
+        }];
+        assert_eq!(workspace_folders, expected_workspace_folders);
     }
 }

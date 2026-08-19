@@ -30,7 +30,8 @@
 //! ```
 
 use crate::remote_client::{
-    ChannelClient, CommandTemplate, RemoteClientDelegate, RemoteConnection, RemoteConnectionOptions,
+    ChannelClient, CommandTemplate, Interactive, RemoteClientDelegate, RemoteConnection,
+    RemoteConnectionOptions,
 };
 use anyhow::Result;
 use async_trait::async_trait;
@@ -55,7 +56,7 @@ use std::{
 use util::paths::{PathStyle, RemotePathBuf};
 
 /// Unique identifier for a mock connection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MockConnectionOptions {
     pub id: u64,
 }
@@ -97,7 +98,7 @@ unsafe impl Sync for SendableCx {}
 /// it retrieves the connection from this registry.
 #[derive(Default)]
 pub struct MockConnectionRegistry {
-    pending: HashMap<MockConnectionOptions, (oneshot::Receiver<()>, Arc<MockRemoteConnection>)>,
+    pending: HashMap<u64, (oneshot::Receiver<()>, Arc<MockRemoteConnection>)>,
 }
 
 impl Global for MockConnectionRegistry {}
@@ -108,7 +109,7 @@ impl MockConnectionRegistry {
         &mut self,
         opts: &MockConnectionOptions,
     ) -> Option<impl Future<Output = Arc<MockRemoteConnection>> + use<>> {
-        let (guard, con) = self.pending.remove(opts)?;
+        let (guard, con) = self.pending.remove(&opts.id)?;
         Some(async move {
             _ = guard.await;
             con
@@ -144,7 +145,21 @@ impl MockConnection {
         static NEXT_ID: AtomicU64 = AtomicU64::new(0);
         let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
         let opts = MockConnectionOptions { id };
+        let (server_client, connect_guard) =
+            Self::new_with_opts(opts.clone(), client_cx, server_cx);
+        (opts, server_client, connect_guard)
+    }
 
+    /// Creates a mock connection pair for existing `MockConnectionOptions`.
+    ///
+    /// This is useful when simulating reconnection: after a connection is torn
+    /// down, register a new mock server under the same options so the next
+    /// `ConnectionPool::connect` call finds it.
+    pub(crate) fn new_with_opts(
+        opts: MockConnectionOptions,
+        client_cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) -> (AnyProtoClient, ConnectGuard) {
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
         let server_client = server_cx
@@ -161,10 +176,10 @@ impl MockConnection {
         client_cx.update(|cx| {
             cx.default_global::<MockConnectionRegistry>()
                 .pending
-                .insert(opts.clone(), (rx, connection));
+                .insert(opts.id, (rx, connection));
         });
 
-        (opts, server_client.into(), tx)
+        (server_client.into(), tx)
     }
 }
 
@@ -185,6 +200,7 @@ impl RemoteConnection for MockRemoteConnection {
         env: &HashMap<String, String>,
         _working_dir: Option<String>,
         _port_forward: Option<(u16, String, u16)>,
+        _interactive: Interactive,
     ) -> Result<CommandTemplate> {
         let shell_program = program.unwrap_or_else(|| "sh".to_string());
         let mut shell_args = Vec::new();
@@ -276,6 +292,17 @@ impl RemoteConnection for MockRemoteConnection {
         PathStyle::local()
     }
 
+    fn remote_platform(&self) -> crate::RemotePlatform {
+        crate::RemotePlatform {
+            os: crate::RemoteOs::Linux,
+            arch: crate::RemoteArch::X86_64,
+        }
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+
     fn shell(&self) -> String {
         "sh".to_owned()
     }
@@ -297,6 +324,7 @@ impl RemoteClientDelegate for MockDelegate {
         &self,
         _prompt: String,
         _sender: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
+        _cancellation: futures::channel::oneshot::Receiver<()>,
         _cx: &mut AsyncApp,
     ) {
         unreachable!("MockDelegate::ask_password should not be called in tests")

@@ -1,24 +1,24 @@
 use crate::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice,
 };
 use anyhow::anyhow;
-use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
+use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::Result;
 use parking_lot::Mutex;
-use smol::stream::StreamExt;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
 };
 
 #[derive(Clone)]
 pub struct FakeLanguageModelProvider {
     id: LanguageModelProviderId,
     name: LanguageModelProviderName,
+    models: Vec<Arc<dyn LanguageModel>>,
 }
 
 impl Default for FakeLanguageModelProvider {
@@ -26,6 +26,7 @@ impl Default for FakeLanguageModelProvider {
         Self {
             id: LanguageModelProviderId::from("fake".to_string()),
             name: LanguageModelProviderName::from("Fake".to_string()),
+            models: vec![Arc::new(FakeLanguageModel::default())],
         }
     }
 }
@@ -48,15 +49,15 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(Arc::new(FakeLanguageModel::default()))
+        self.models.first().cloned()
     }
 
     fn default_fast_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(Arc::new(FakeLanguageModel::default()))
+        self.models.first().cloned()
     }
 
     fn provided_models(&self, _: &App) -> Vec<Arc<dyn LanguageModel>> {
-        vec![Arc::new(FakeLanguageModel::default())]
+        self.models.clone()
     }
 
     fn is_authenticated(&self, _: &App) -> bool {
@@ -67,23 +68,23 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        _: &mut App,
-    ) -> AnyView {
-        unimplemented!()
-    }
-
-    fn reset_credentials(&self, _: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+    fn settings_view(&self, _: &mut App) -> Option<crate::ProviderSettingsView> {
+        None
     }
 }
 
 impl FakeLanguageModelProvider {
     pub fn new(id: LanguageModelProviderId, name: LanguageModelProviderName) -> Self {
-        Self { id, name }
+        Self {
+            id,
+            name,
+            models: vec![Arc::new(FakeLanguageModel::default())],
+        }
+    }
+
+    pub fn with_models(mut self, models: Vec<Arc<dyn LanguageModel>>) -> Self {
+        self.models = models;
+        self
     }
 
     pub fn test_model(&self) -> FakeLanguageModel {
@@ -100,6 +101,8 @@ pub struct ToolUseRequest {
 }
 
 pub struct FakeLanguageModel {
+    id: LanguageModelId,
+    name: LanguageModelName,
     provider_id: LanguageModelProviderId,
     provider_name: LanguageModelProviderName,
     current_completion_txs: Mutex<
@@ -111,26 +114,86 @@ pub struct FakeLanguageModel {
         )>,
     >,
     forbid_requests: AtomicBool,
+    supports_thinking: AtomicBool,
+    supports_disabling_thinking: AtomicBool,
+    supports_streaming_tools: AtomicBool,
+    supports_images: AtomicBool,
+    supports_server_side_compaction: AtomicBool,
+    max_token_count: AtomicU64,
+    max_output_tokens: AtomicU64,
 }
 
 impl Default for FakeLanguageModel {
     fn default() -> Self {
         Self {
+            id: LanguageModelId::from("fake".to_string()),
+            name: LanguageModelName::from("Fake".to_string()),
             provider_id: LanguageModelProviderId::from("fake".to_string()),
             provider_name: LanguageModelProviderName::from("Fake".to_string()),
             current_completion_txs: Mutex::new(Vec::new()),
             forbid_requests: AtomicBool::new(false),
+            supports_thinking: AtomicBool::new(false),
+            supports_disabling_thinking: AtomicBool::new(true),
+            supports_streaming_tools: AtomicBool::new(false),
+            supports_images: AtomicBool::new(false),
+            supports_server_side_compaction: AtomicBool::new(false),
+            max_token_count: AtomicU64::new(1_000_000),
+            max_output_tokens: AtomicU64::new(0),
         }
     }
 }
 
 impl FakeLanguageModel {
+    pub fn with_id_and_thinking(
+        provider_id: &str,
+        id: &str,
+        name: &str,
+        supports_thinking: bool,
+    ) -> Self {
+        Self {
+            id: LanguageModelId::from(id.to_string()),
+            name: LanguageModelName::from(name.to_string()),
+            provider_id: LanguageModelProviderId::from(provider_id.to_string()),
+            supports_thinking: AtomicBool::new(supports_thinking),
+            ..Default::default()
+        }
+    }
+
     pub fn allow_requests(&self) {
         self.forbid_requests.store(false, SeqCst);
     }
 
     pub fn forbid_requests(&self) {
         self.forbid_requests.store(true, SeqCst);
+    }
+
+    pub fn set_supports_thinking(&self, supports: bool) {
+        self.supports_thinking.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_disabling_thinking(&self, supports: bool) {
+        self.supports_disabling_thinking.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_streaming_tools(&self, supports: bool) {
+        self.supports_streaming_tools.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_images(&self, supports: bool) {
+        self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_server_side_compaction(&self, supports: bool) {
+        self.supports_server_side_compaction.store(supports, SeqCst);
+    }
+
+    pub fn set_max_token_count(&self, count: u64) {
+        self.max_token_count.store(count, SeqCst);
+    }
+
+    pub fn set_max_output_tokens(&self, count: Option<u64>) {
+        self.max_output_tokens
+            .store(count.unwrap_or_default(), SeqCst);
     }
 
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
@@ -215,11 +278,11 @@ impl FakeLanguageModel {
 
 impl LanguageModel for FakeLanguageModel {
     fn id(&self) -> LanguageModelId {
-        LanguageModelId::from("fake".to_string())
+        self.id.clone()
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from("Fake".to_string())
+        self.name.clone()
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
@@ -239,7 +302,23 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.supports_images.load(SeqCst)
+    }
+
+    fn supports_server_side_compaction(&self) -> bool {
+        self.supports_server_side_compaction.load(SeqCst)
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.supports_thinking.load(SeqCst)
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        self.supports_disabling_thinking.load(SeqCst)
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        self.supports_streaming_tools.load(SeqCst)
     }
 
     fn telemetry_id(&self) -> String {
@@ -247,11 +326,16 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        1000000
+        self.max_token_count.load(SeqCst)
     }
 
-    fn count_tokens(&self, _: LanguageModelRequest, _: &App) -> BoxFuture<'static, Result<u64>> {
-        futures::future::ready(Ok(0)).boxed()
+    fn max_output_tokens(&self) -> Option<u64> {
+        let max_output_tokens = self.max_output_tokens.load(SeqCst);
+        if max_output_tokens == 0 {
+            None
+        } else {
+            Some(max_output_tokens)
+        }
     }
 
     fn stream_completion(

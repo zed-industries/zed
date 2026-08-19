@@ -1,7 +1,7 @@
-use editor::EditorSettings;
+use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::{App, Pixels};
-use settings::RegisterSetting;
 pub use settings::{DockSide, Settings, ShowIndentGuides};
+use settings::{IntoGpui, RegisterSetting};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Debug, Clone, Copy, PartialEq, RegisterSetting)]
@@ -33,9 +33,13 @@ pub struct IndentGuidesSettings {
     pub show: ShowIndentGuides,
 }
 
-impl ScrollbarVisibility for OutlinePanelSettings {
+#[derive(Default)]
+pub(crate) struct OutlinePanelSettingsScrollbarProxy;
+
+impl ScrollbarVisibility for OutlinePanelSettingsScrollbarProxy {
     fn visibility(&self, cx: &App) -> ShowScrollbar {
-        self.scrollbar
+        OutlinePanelSettings::get_global(cx)
+            .scrollbar
             .show
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
@@ -46,25 +50,30 @@ impl Settings for OutlinePanelSettings {
         let panel = content.outline_panel.as_ref().unwrap();
         Self {
             button: panel.button.unwrap(),
-            default_width: panel.default_width.map(gpui::px).unwrap(),
+            default_width: panel.default_width.unwrap().into_gpui(),
             dock: panel.dock.unwrap(),
             file_icons: panel.file_icons.unwrap(),
             folder_icons: panel.folder_icons.unwrap(),
             git_status: panel.git_status.unwrap()
                 && content
                     .git
+                    .as_ref()
                     .unwrap()
                     .enabled
                     .unwrap()
                     .is_git_status_enabled(),
-            indent_size: panel.indent_size.unwrap(),
+            indent_size: *panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: panel.indent_guides.unwrap().show.unwrap(),
             },
             auto_reveal_entries: panel.auto_reveal_entries.unwrap(),
             auto_fold_dirs: panel.auto_fold_dirs.unwrap(),
             scrollbar: ScrollbarSettings {
-                show: panel.scrollbar.unwrap().show.map(Into::into),
+                show: panel
+                    .scrollbar
+                    .unwrap()
+                    .show
+                    .map(ui_scrollbar_settings_from_raw),
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
         }

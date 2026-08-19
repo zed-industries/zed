@@ -19,6 +19,7 @@
     "context": "Editor && mode == full",
     "bindings": {
       "ctrl-shift-l": "language_selector::Toggle",
+      "ctrl-shift-n": "encoding_selector::Toggle",
       "cmd-|": "pane::RevealInProjectPanel",
       "cmd-b": "editor::GoToDefinition",
       "alt-cmd-b": "editor::GoToDefinitionSplit",

@@ -1,3 +1,8 @@
+---
+title: GDScript
+description: "Configure GDScript language support in Zed, including language servers, formatting, and debugging."
+---
+
 # GDScript
 
 Godot [GDScript](https://gdscript.com/) language support in Zed is provided by the community-maintained [GDScript extension](https://github.com/GDQuest/zed-gdscript).

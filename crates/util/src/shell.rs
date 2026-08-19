@@ -121,116 +121,11 @@ pub fn get_windows_bash() -> Option<String> {
 }
 
 pub fn get_windows_system_shell() -> String {
-    use std::path::PathBuf;
+    #[cfg(windows)]
+    return gpui_util::get_windows_system_shell();
 
-    fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
-        #[cfg(target_pointer_width = "64")]
-        let env_var = if find_alternate {
-            "ProgramFiles(x86)"
-        } else {
-            "ProgramFiles"
-        };
-
-        #[cfg(target_pointer_width = "32")]
-        let env_var = if find_alternate {
-            "ProgramW6432"
-        } else {
-            "ProgramFiles"
-        };
-
-        let install_base_dir = PathBuf::from(std::env::var_os(env_var)?).join("PowerShell");
-        install_base_dir
-            .read_dir()
-            .ok()?
-            .filter_map(Result::ok)
-            .filter(|entry| matches!(entry.file_type(), Ok(ft) if ft.is_dir()))
-            .filter_map(|entry| {
-                let dir_name = entry.file_name();
-                let dir_name = dir_name.to_string_lossy();
-
-                let version = if find_preview {
-                    let dash_index = dir_name.find('-')?;
-                    if &dir_name[dash_index + 1..] != "preview" {
-                        return None;
-                    };
-                    dir_name[..dash_index].parse::<u32>().ok()?
-                } else {
-                    dir_name.parse::<u32>().ok()?
-                };
-
-                let exe_path = entry.path().join("pwsh.exe");
-                if exe_path.exists() {
-                    Some((version, exe_path))
-                } else {
-                    None
-                }
-            })
-            .max_by_key(|(version, _)| *version)
-            .map(|(_, path)| path)
-    }
-
-    fn find_pwsh_in_msix(find_preview: bool) -> Option<PathBuf> {
-        let msix_app_dir =
-            PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join("Microsoft\\WindowsApps");
-        if !msix_app_dir.exists() {
-            return None;
-        }
-
-        let prefix = if find_preview {
-            "Microsoft.PowerShellPreview_"
-        } else {
-            "Microsoft.PowerShell_"
-        };
-        msix_app_dir
-            .read_dir()
-            .ok()?
-            .filter_map(|entry| {
-                let entry = entry.ok()?;
-                if !matches!(entry.file_type(), Ok(ft) if ft.is_dir()) {
-                    return None;
-                }
-
-                if !entry.file_name().to_string_lossy().starts_with(prefix) {
-                    return None;
-                }
-
-                let exe_path = entry.path().join("pwsh.exe");
-                exe_path.exists().then_some(exe_path)
-            })
-            .next()
-    }
-
-    fn find_pwsh_in_scoop() -> Option<PathBuf> {
-        let pwsh_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\pwsh.exe");
-        pwsh_exe.exists().then_some(pwsh_exe)
-    }
-
-    static SYSTEM_SHELL: LazyLock<String> = LazyLock::new(|| {
-        let locations = [
-            || find_pwsh_in_programfiles(false, false),
-            || find_pwsh_in_programfiles(true, false),
-            || find_pwsh_in_msix(false),
-            || find_pwsh_in_programfiles(false, true),
-            || find_pwsh_in_msix(true),
-            || find_pwsh_in_programfiles(true, true),
-            || find_pwsh_in_scoop(),
-            || which::which_global("pwsh.exe").ok(),
-            || which::which_global("powershell.exe").ok(),
-        ];
-
-        locations
-            .into_iter()
-            .find_map(|f| f())
-            .map(|p| p.to_string_lossy().trim().to_owned())
-            .inspect(|shell| log::info!("Found powershell in: {}", shell))
-            .unwrap_or_else(|| {
-                log::warn!("Powershell not found, falling back to `cmd`");
-                "cmd.exe".to_string()
-            })
-    });
-
-    (*SYSTEM_SHELL).clone()
+    #[cfg(not(windows))]
+    return "cmd.exe".to_string();
 }
 
 impl fmt::Display for ShellKind {
@@ -254,6 +149,46 @@ impl fmt::Display for ShellKind {
 impl ShellKind {
     pub fn system() -> Self {
         Self::new(&get_system_shell(), cfg!(windows))
+    }
+
+    /// Returns whether this shell's command chaining syntax can be parsed by brush-parser.
+    ///
+    /// This is used to determine if we can safely parse shell commands to extract sub-commands
+    /// for security purposes (e.g., preventing shell injection in "always allow" patterns).
+    ///
+    /// The brush-parser handles `;` (sequential execution) and `|` (piping), which are
+    /// supported by all common shells. It also handles `&&` and `||` for conditional
+    /// execution, `$()` and backticks for command substitution, and process substitution.
+    ///
+    /// # Shell Notes
+    ///
+    /// - **Nushell**: Uses `;` for sequential execution. The `and`/`or` keywords are boolean
+    ///   operators on values (e.g., `$true and $false`), not command chaining operators.
+    /// - **Elvish**: Uses `;` to separate pipelines, which brush-parser handles. Elvish does
+    ///   not have `&&` or `||` operators. Its `and`/`or` are special commands that operate
+    ///   on values, not command chaining (e.g., `and $true $false`).
+    /// - **Rc (Plan 9)**: Uses `;` for sequential execution and `|` for piping. Does not
+    ///   have `&&`/`||` operators for conditional chaining.
+    /// All current shell variants are listed here because brush-parser can handle
+    /// their syntax. If a new `ShellKind` variant is added, evaluate whether
+    /// brush-parser can safely parse its command chaining syntax before including
+    /// it. Omitting a variant will cause `tool_permissions::from_input` to deny
+    /// terminal commands that have `always_allow` patterns configured.
+    pub fn supports_posix_chaining(&self) -> bool {
+        matches!(
+            self,
+            ShellKind::Posix
+                | ShellKind::Fish
+                | ShellKind::PowerShell
+                | ShellKind::Pwsh
+                | ShellKind::Cmd
+                | ShellKind::Xonsh
+                | ShellKind::Csh
+                | ShellKind::Tcsh
+                | ShellKind::Nushell
+                | ShellKind::Elvish
+                | ShellKind::Rc
+        )
     }
 
     pub fn new(program: impl AsRef<Path>, is_windows: bool) -> Self {
@@ -482,9 +417,8 @@ impl ShellKind {
             | ShellKind::Rc
             | ShellKind::Fish
             | ShellKind::Pwsh
-            | ShellKind::PowerShell
             | ShellKind::Xonsh => "&&",
-            ShellKind::Nushell | ShellKind::Elvish => ";",
+            ShellKind::PowerShell | ShellKind::Nushell | ShellKind::Elvish => ";",
         }
     }
 
@@ -643,11 +577,7 @@ impl ShellKind {
     pub fn quote_cmd(arg: &str) -> Cow<'_, str> {
         let crt_quoted = Self::quote_windows(arg, true);
 
-        let needs_cmd_escaping = crt_quoted.contains('"')
-            || crt_quoted.contains('%')
-            || crt_quoted
-                .chars()
-                .any(|c| matches!(c, '^' | '<' | '>' | '&' | '|' | '(' | ')'));
+        let needs_cmd_escaping = crt_quoted.contains(['"', '%', '^', '<', '>', '&', '|', '(', ')']);
 
         if !needs_cmd_escaping {
             return crt_quoted;
@@ -976,5 +906,41 @@ mod tests {
                 .into_owned(),
             "uname".to_string()
         );
+    }
+
+    #[test]
+    fn test_try_quote_single_quote_paths() {
+        let path_with_quote = r"C:\Temp\O'Brien\repo";
+        let shlex_shells = [
+            ShellKind::Posix,
+            ShellKind::Fish,
+            ShellKind::Csh,
+            ShellKind::Tcsh,
+            ShellKind::Rc,
+            ShellKind::Xonsh,
+            ShellKind::Elvish,
+            ShellKind::Nushell,
+        ];
+
+        for shell_kind in shlex_shells {
+            let quoted = shell_kind.try_quote(path_with_quote).unwrap().into_owned();
+            assert_ne!(quoted, path_with_quote);
+            assert_eq!(
+                shlex::split(&quoted),
+                Some(vec![path_with_quote.to_string()])
+            );
+
+            if shell_kind == ShellKind::Nushell {
+                let prefixed = shell_kind.prepend_command_prefix(&quoted);
+                assert!(prefixed.starts_with('^'));
+            }
+        }
+
+        for shell_kind in [ShellKind::PowerShell, ShellKind::Pwsh] {
+            let quoted = shell_kind.try_quote(path_with_quote).unwrap().into_owned();
+            assert!(quoted.starts_with('\''));
+            assert!(quoted.ends_with('\''));
+            assert!(quoted.contains("O''Brien"));
+        }
     }
 }

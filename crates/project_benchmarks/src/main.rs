@@ -5,7 +5,8 @@ use askpass::EncryptedPassword;
 use clap::Parser;
 use client::{Client, UserStore};
 use futures::channel::oneshot;
-use gpui::{AppContext as _, Application};
+use gpui::AppContext as _;
+use gpui::TaskExt;
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -48,6 +49,7 @@ impl RemoteClientDelegate for BenchmarkRemoteClient {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        _cancellation: oneshot::Receiver<()>,
         _cx: &mut gpui::AsyncApp,
     ) {
         eprintln!("SSH asking for password: {}", prompt);
@@ -125,7 +127,7 @@ fn main() -> Result<(), anyhow::Error> {
             None,
         )
     }?;
-    Application::headless().run(|cx| {
+    gpui_platform::headless().run(|cx| {
         release_channel::init_test(semver::Version::new(0, 0, 0), ReleaseChannel::Dev, cx);
         settings::init(cx);
         let client = Client::production(cx);
@@ -140,7 +142,7 @@ fn main() -> Result<(), anyhow::Error> {
 
             cx.spawn(async move |cx| {
                 let project = if let Some(ssh_target) = args.ssh {
-                    println!("Setting up SSH connection for {}", &ssh_target);
+                    println!("Setting up SSH connection for {ssh_target}");
                     let ssh_connection_options = SshConnectionOptions::parse_command_line(&ssh_target)?;
 
                     let connection_options = remote::RemoteConnectionOptions::from(ssh_connection_options);
@@ -160,7 +162,10 @@ fn main() -> Result<(), anyhow::Error> {
                     registry,
                     fs,
                     Some(Default::default()),
-                    false,
+                    project::LocalProjectFlags {
+                        init_worktree_trust: false,
+                        ..Default::default()
+                    },
                     cx,
                 ))
                 };
@@ -207,11 +212,13 @@ fn main() -> Result<(), anyhow::Error> {
                         first_match = Some(time);
                         println!("First match found after {time:?}");
                     }
-                    if let SearchResult::Buffer { ranges, .. } = match_result {
-                        matched_files += 1;
-                        matched_chunks += ranges.len();
-                    } else {
-                        break;
+                    match match_result {
+                        SearchResult::Buffer { ranges, .. } => {
+                            matched_files += 1;
+                            matched_chunks += ranges.len();
+                        }
+                        SearchResult::LimitReached => break,
+                        SearchResult::WaitingForScan | SearchResult::Searching => continue,
                     }
                 }
                 let elapsed = timer.elapsed();

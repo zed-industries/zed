@@ -12,7 +12,7 @@ prHygiene({
   },
 });
 
-const RELEASE_NOTES_PATTERN = /Release Notes:\r?\n\s+-/gm;
+const RELEASE_NOTES_PATTERN = /Release Notes:(\r?\n)+- /gm;
 const body = danger.github.pr.body;
 
 const hasReleaseNotes = RELEASE_NOTES_PATTERN.test(body);
@@ -61,38 +61,35 @@ if (includesIssueUrl) {
   );
 }
 
-const PROMPT_PATHS = [
-  "assets/prompts/content_prompt.hbs",
-  "assets/prompts/terminal_assistant_prompt.hbs",
-  "crates/agent_settings/src/prompts/summarize_thread_detailed_prompt.txt",
-  "crates/agent_settings/src/prompts/summarize_thread_prompt.txt",
-  "crates/agent/src/templates/create_file_prompt.hbs",
-  "crates/agent/src/templates/edit_file_prompt_xml.hbs",
-  "crates/agent/src/templates/edit_file_prompt_diff_fenced.hbs",
-  "crates/git_ui/src/commit_message_prompt.txt",
+const SCHEMA_CHANGE_ATTESTATION =
+  "The corresponding database schema migration has been created in the Cloud repo and applied to the production database.";
+
+const MIGRATION_SCHEMA_FILES = [
+  "crates/collab/migrations/20251208000000_test_schema.sql",
+  "crates/collab/migrations.sqlite/20221109000000_test_schema.sql",
 ];
 
-const PROMPT_CHANGE_ATTESTATION = "I have ensured the LLM Worker works with these prompt changes.";
-
-const modifiedPrompts = danger.git.modified_files.filter((file) =>
-  PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
+const modifiedSchemaFiles = danger.git.modified_files.filter((file) =>
+  MIGRATION_SCHEMA_FILES.some((schemaFilePath) => file.endsWith(schemaFilePath)),
 );
 
-for (const promptPath of modifiedPrompts) {
-  if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
+if (modifiedSchemaFiles.length > 0) {
+  if (body.includes(SCHEMA_CHANGE_ATTESTATION)) {
     message(
       [
-        `This PR contains changes to "${promptPath}".`,
-        "The author has attested the LLM Worker works with the changes to this prompt.",
+        "This PR modifies database schema files.",
+        "",
+        `The author has attested that ${SCHEMA_CHANGE_ATTESTATION.substring(0, 1).toLowerCase() + SCHEMA_CHANGE_ATTESTATION.substring(1)}`,
       ].join("\n"),
     );
   } else {
+    const modifiedSchemaFilesStr = modifiedSchemaFiles.map((path) => "`" + path + "`").join(", ");
     fail(
       [
-        `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
-        "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
-        `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
-      ].join("\n"),
+        `This PR modifies database schema files (${modifiedSchemaFilesStr}), which requires creating a schema migration in the Cloud repository.`,
+        "Once the schema migration has been created and applied, please add the following attestation to your PR description: ",
+        `"${SCHEMA_CHANGE_ATTESTATION}"`,
+      ].join("\n\n"),
     );
   }
 }

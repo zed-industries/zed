@@ -1,3 +1,8 @@
+---
+title: How to Migrate from PyCharm to Zed
+description: "Guide for migrating from PyCharm to Zed, including settings and keybindings."
+---
+
 # How to Migrate from PyCharm to Zed
 
 This guide covers how to set up Zed if you're coming from PyCharm, including keybindings, settings, and the differences you should expect.
@@ -36,24 +41,13 @@ If you're coming from PyCharm, the fastest way to feel at home is to use the Jet
 2. Search for `Base Keymap`
 3. Select `JetBrains`
 
-Or add this directly to your `settings.json`:
-
-```json
-{
-  "base_keymap": "JetBrains"
-}
-```
-
 This maps familiar shortcuts like `Shift Shift` for Search Everywhere, `Cmd+O` for Go to Class, and `Cmd+Shift+A` for Find Action.
+
+In editors, the JetBrains keymap also makes `Alt+Left` / `Alt+Right` and `Shift+Alt+Left` / `Shift+Alt+Right` move and select by subword, so identifiers like `camelCase` and `snake_case` behave like PyCharm's CamelHumps navigation.
 
 ## Set Up Editor Preferences
 
-You can configure settings manually in the Settings Editor.
-
-To edit your settings:
-
-1. `Cmd+,` to open the Settings Editor.
-2. Run `zed: open settings` in the Command Palette.
+You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Settings PyCharm users typically configure first:
 
@@ -84,7 +78,7 @@ Once inside a project:
 - Use `Cmd+Shift+A` or `Shift Shift` to open the Command Palette (like PyCharm's "Search Everywhere")
 - Use `Cmd+O` to search for symbols (like PyCharm's "Go to Symbol")
 
-Open buffers appear as tabs across the top. The sidebar shows your file tree and Git status. Toggle it with `Cmd+1` (just like PyCharm's Project tool window).
+Open buffers appear as tabs across the top. The Project Panel shows your file tree and Git status. Toggle it with `Cmd+1` (just like PyCharm's Project tool window).
 
 ## Differences in Keybindings
 
@@ -92,26 +86,28 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 ### Common Shared Keybindings
 
-| Action                        | Shortcut                |
-| ----------------------------- | ----------------------- |
-| Search Everywhere             | `Shift Shift`           |
-| Find Action / Command Palette | `Cmd + Shift + A`       |
-| Go to File                    | `Cmd + Shift + O`       |
-| Go to Symbol                  | `Cmd + O`               |
-| Recent Files                  | `Cmd + E`               |
-| Go to Definition              | `Cmd + B`               |
-| Find Usages                   | `Alt + F7`              |
-| Rename Symbol                 | `Shift + F6`            |
-| Reformat Code                 | `Cmd + Alt + L`         |
-| Toggle Project Panel          | `Cmd + 1`               |
-| Toggle Terminal               | `Alt + F12`             |
-| Duplicate Line                | `Cmd + D`               |
-| Delete Line                   | `Cmd + Backspace`       |
-| Move Line Up/Down             | `Shift + Alt + Up/Down` |
-| Expand/Shrink Selection       | `Alt + Up/Down`         |
-| Comment Line                  | `Cmd + /`               |
-| Go Back / Forward             | `Cmd + [` / `Cmd + ]`   |
-| Toggle Breakpoint             | `Ctrl + F8`             |
+| Action                        | Shortcut                   |
+| ----------------------------- | -------------------------- |
+| Search Everywhere             | `Shift Shift`              |
+| Find Action / Command Palette | `Cmd + Shift + A`          |
+| Go to File                    | `Cmd + Shift + O`          |
+| Go to Symbol                  | `Cmd + O`                  |
+| Recent Files                  | `Cmd + E`                  |
+| Go to Definition              | `Cmd + B`                  |
+| Find Usages                   | `Alt + F7`                 |
+| Rename Symbol                 | `Shift + F6`               |
+| Reformat Code                 | `Cmd + Alt + L`            |
+| Toggle Project Panel          | `Cmd + 1`                  |
+| Toggle Terminal               | `Alt + F12`                |
+| Duplicate Line                | `Cmd + D`                  |
+| Delete Line                   | `Cmd + Backspace`          |
+| Move Line Up/Down             | `Shift + Alt + Up/Down`    |
+| Expand/Shrink Selection       | `Alt + Up/Down`            |
+| Move by subword               | `Alt + Left/Right`         |
+| Select by subword             | `Shift + Alt + Left/Right` |
+| Comment Line                  | `Cmd + /`                  |
+| Go Back / Forward             | `Cmd + [` / `Cmd + ]`      |
+| Toggle Breakpoint             | `Ctrl + F8`                |
 
 ### Different Keybindings (PyCharm → Zed)
 
@@ -127,13 +123,13 @@ If you chose the JetBrains keymap during onboarding, most of your shortcuts shou
 
 | Action            | Shortcut                   | Notes                          |
 | ----------------- | -------------------------- | ------------------------------ |
-| Toggle Right Dock | `Cmd + R`                  | Assistant panel, notifications |
+| Toggle Right Dock | `Cmd + R`                  | Agent panel, notifications     |
 | Split Panes       | `Cmd + K`, then arrow keys | Create splits in any direction |
 
 ### How to Customize Keybindings
 
 - Open the Command Palette (`Cmd+Shift+A` or `Shift Shift`)
-- Run `Zed: Open Keymap Editor`
+- Run {#action zed::OpenKeymap}
 
 This opens a list of all available bindings. You can override individual shortcuts or remove conflicts.
 
@@ -145,7 +141,7 @@ Zed also supports key sequences (multi-key shortcuts).
 
 If you've used PyCharm on large projects, you know the wait: "Indexing..." can take anywhere from 30 seconds to several minutes depending on project size and dependencies. PyCharm builds a comprehensive index of your entire codebase to power its code intelligence, and it re-indexes when dependencies change or when you install new packages.
 
-Zed doesn't index. You open a folder and start working immediately. File search and navigation work instantly regardless of project size. For many PyCharm users, this alone is reason enough to switch—no more waiting, no more "Indexing paused" interruptions.
+Zed doesn't index. You open a folder and start working immediately. File search and navigation stay fast regardless of project size, without waiting through indexing pauses.
 
 PyCharm's index powers features like finding all usages across your entire codebase, understanding class hierarchies, and detecting unused imports project-wide. Zed delegates this work to language servers, which may not analyze as deeply or as broadly.
 
@@ -219,7 +215,7 @@ This means:
 **How to adapt:**
 
 - Create a `.zed/settings.json` in your project root for project-specific settings
-- Define common commands in `tasks.json` (open via Command Palette: `zed: open tasks`):
+- Define common commands in `tasks.json` (open via Command Palette: {#action zed::OpenTasks}):
 
 ```json
 [
@@ -321,13 +317,12 @@ The test output appears in the terminal panel. For pytest, use `--tb=short` for 
 
 ### Extensions vs. Plugins
 
-PyCharm has a plugin ecosystem covering everything from additional language support to database tools to deployment integrations.
+PyCharm has a large plugin catalog covering everything from additional language support to database tools to deployment integrations.
 
-Zed's extension ecosystem is smaller and more focused:
+Zed's extension catalog is smaller and more focused:
 
 - Language support and syntax highlighting
 - Themes
-- Slash commands for AI
 - Context servers
 
 Several features that require plugins in PyCharm are built into Zed:
@@ -377,9 +372,9 @@ Once signed in, just start typing. Zed will offer suggestions inline for you to 
 
 To use other AI models in Zed, you have several options:
 
-- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/accounts.html) and subscription to [Zed Pro](https://zed.dev/docs/ai/subscription.html).
-- Bring your own [API keys](https://zed.dev/docs/ai/llm-providers.html), no authentication needed
-- Use [external agents like Claude Code](https://zed.dev/docs/ai/external-agents.html)
+- Use Zed's hosted models, with higher rate limits. Requires [authentication](https://zed.dev/docs/authentication) and access through [Zed Pro](https://zed.dev/docs/account/zed-hosted-models.html).
+- Bring your own [API keys](https://zed.dev/docs/ai/use-api-access.html), no authentication needed
+- Use [External Agents like Claude Agent](https://zed.dev/docs/ai/external-agents.html)
 
 ## Advanced Config and Productivity Tweaks
 
@@ -399,7 +394,7 @@ Here are a few useful tweaks:
 "load_direnv": "shell_hook"
 ```
 
-**Customize virtual environment detection:**
+**Customize virtual environment detection** (requires manual JSON editing):
 
 ```json
 {
@@ -430,7 +425,7 @@ Options are `"off"`, `"basic"`, `"standard"` (default), `"strict"`, or `"all"`.
 
 Now that you're set up, here are some resources to help you get the most out of Zed:
 
-- [Configuring Zed](../configuring-zed.md) — Customize settings, themes, and editor behavior
+- [All Settings](../reference/all-settings.md) — Customize settings, themes, and editor behavior
 - [Key Bindings](../key-bindings.md) — Learn how to customize and extend your keymap
 - [Tasks](../tasks.md) — Set up build and run commands for your projects
 - [AI Features](../ai/overview.md) — Explore Zed's AI capabilities beyond code completion

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::OnceLock};
+use std::{env::consts, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -374,11 +374,29 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 }
             };
             let adapter_dir = version_path.join("extension").join("adapter");
-            let path = adapter_dir.join("codelldb").to_string_lossy().into_owned();
+            let path = adapter_dir
+                .join(format!("codelldb{}", consts::EXE_SUFFIX))
+                .to_string_lossy()
+                .into_owned();
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };
         let mut json_config = config.config.clone();
+
+        // Auto-detect Rust projects and add sourceLanguages if not present.
+        // This enables panic breakpoints to work correctly with CodeLLDB.
+        if let Some(config_obj) = json_config.as_object_mut() {
+            if !config_obj.contains_key("sourceLanguages") {
+                // Check if this looks like a Rust binary (Cargo build output)
+                if let Some(program) = config_obj.get("program").and_then(|p| p.as_str()) {
+                    let path_str = program.replace('\\', "/");
+                    if path_str.contains("/target/debug/") || path_str.contains("/target/release/")
+                    {
+                        config_obj.insert("sourceLanguages".to_owned(), json!(["rust"]));
+                    }
+                }
+            }
+        }
 
         Ok(DebugAdapterBinary {
             command: Some(command.unwrap()),

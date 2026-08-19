@@ -169,6 +169,7 @@ impl GitHostingProvider for Chromium {
         _repo_owner: &str,
         repo: &str,
         commit: SharedString,
+        _author_email: Option<SharedString>,
         http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
         let commit = commit.to_string();
@@ -181,7 +182,7 @@ impl GitHostingProvider for Chromium {
 
         let mut avatar_url = Url::parse(&format!(
             "{CHROMIUM_REVIEW_URL}/accounts/{}/avatar",
-            &author.id
+            author.id
         ))?;
         avatar_url.set_query(Some("size=128"));
 

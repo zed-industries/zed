@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::ZedPredictUpsell;
+use crate::{EditPredictionStore, ZedPredictUpsell};
 use ai_onboarding::EditPredictionOnboarding;
 use client::{Client, UserStore};
 use db::kvp::Dismissable;
@@ -11,7 +11,7 @@ use gpui::{
 };
 use language::language_settings::EditPredictionProvider;
 use settings::update_settings_file;
-use ui::{Vector, VectorName, prelude::*};
+use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 
 #[macro_export]
@@ -36,9 +36,9 @@ pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx:
         settings
             .project
             .all_languages
-            .features
+            .edit_predictions
             .get_or_insert(Default::default())
-            .edit_prediction_provider = Some(provider);
+            .provider = Some(provider);
     });
 }
 
@@ -50,14 +50,18 @@ impl ZedPredictModal {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |_window, cx| {
             let weak_entity = cx.weak_entity();
+            let copilot = EditPredictionStore::try_global(cx)
+                .and_then(|store| store.read(cx).copilot_for_project(&project));
             Self {
                 onboarding: cx.new(|cx| {
                     EditPredictionOnboarding::new(
                         user_store.clone(),
                         client.clone(),
-                        copilot::Copilot::global(cx)
+                        copilot
+                            .as_ref()
                             .is_some_and(|copilot| copilot.read(cx).status().is_configured()),
                         Arc::new({
                             let this = weak_entity.clone();
@@ -73,7 +77,9 @@ impl ZedPredictModal {
                                 ZedPredictUpsell::set_dismissed(true, cx);
                                 set_edit_prediction_provider(EditPredictionProvider::Copilot, cx);
                                 this.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
-                                copilot::initiate_sign_in(window, cx);
+                                if let Some(copilot) = copilot.clone() {
+                                    copilot_ui::initiate_sign_in(copilot, window, cx);
+                                }
                             }
                         }),
                         cx,
@@ -113,6 +119,7 @@ impl Render for ZedPredictModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_height = window.viewport_size().height;
         let max_height = window_height - px(200.);
+        let color = cx.theme().colors();
 
         v_flex()
             .id("edit-prediction-onboarding")
@@ -121,7 +128,7 @@ impl Render for ZedPredictModal {
             .w(px(550.))
             .h_full()
             .max_h(max_height)
-            .p_4()
+            .p_1()
             .gap_2()
             .elevation_3(cx)
             .track_focus(&self.focus_handle(cx))
@@ -136,32 +143,19 @@ impl Render for ZedPredictModal {
             }))
             .child(
                 div()
-                    .opacity(0.5)
-                    .absolute()
-                    .top(px(-8.0))
-                    .right_0()
-                    .w(px(400.))
-                    .h(px(92.))
-                    .child(
-                        Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.))
-                            .color(Color::Custom(cx.theme().colors().text.alpha(0.32))),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .right_0()
-                    .w(px(660.))
-                    .h(px(401.))
-                    .overflow_hidden()
+                    .p_3()
+                    .size_full()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .rounded(px(5.))
                     .bg(linear_gradient(
-                        75.,
-                        linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
-                        linear_color_stop(cx.theme().colors().panel_background, 0.45),
-                    )),
+                        360.,
+                        linear_color_stop(color.panel_background, 1.0),
+                        linear_color_stop(color.editor_background, 0.45),
+                    ))
+                    .child(self.onboarding.clone()),
             )
-            .child(h_flex().absolute().top_2().right_2().child(
+            .child(h_flex().absolute().top_3().right_3().child(
                 IconButton::new("cancel", IconName::Close).on_click(cx.listener(
                     |_, _: &ClickEvent, _window, cx| {
                         onboarding_event!("Cancelled", trigger = "X click");
@@ -169,6 +163,5 @@ impl Render for ZedPredictModal {
                     },
                 )),
             ))
-            .child(self.onboarding.clone())
     }
 }

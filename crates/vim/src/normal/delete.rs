@@ -6,7 +6,7 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    Bias, DisplayPoint,
+    Bias, DisplayPoint, EditPredictionRequestTrigger,
     display_map::{DisplaySnapshot, ToDisplayPoint},
 };
 use gpui::{Context, Window};
@@ -24,14 +24,14 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let text_layout_details = editor.text_layout_details(window);
+            let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_columns: HashMap<_, _> = Default::default();
                 let mut motion_kind = None;
                 let mut ranges_to_copy = Vec::new();
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
                         let kind = motion.expand_selection(
@@ -68,12 +68,12 @@ impl Vim {
                 });
                 let Some(kind) = motion_kind else { return };
                 vim.copy_ranges(editor, kind, false, ranges_to_copy, window, cx);
-                editor.insert("", window, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head();
                         if kind.linewise()
                             && let Some(column) = original_columns.get(&selection.id)
@@ -84,7 +84,13 @@ impl Vim {
                         selection.collapse_to(cursor, selection.goal)
                     });
                 });
-                editor.refresh_edit_prediction(true, false, window, cx);
+                editor.refresh_edit_prediction(
+                    true,
+                    false,
+                    EditPredictionRequestTrigger::BufferEdit,
+                    window,
+                    cx,
+                );
             });
         });
     }
@@ -112,7 +118,7 @@ impl Vim {
                 let target_mode = object.target_visual_mode(vim.mode, around);
 
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let cursor_point = selection.head().to_point(map);
                         if target_mode == Mode::VisualLine {
                             column_before_move.insert(selection.id, cursor_point.column);
@@ -169,12 +175,12 @@ impl Vim {
                     });
                 });
                 vim.copy_selections_content(editor, MotionKind::Exclusive, window, cx);
-                editor.insert("", window, cx);
+                editor.delete_selections_with_linked_edits(window, cx);
 
                 // Fixup cursor position after the deletion
                 editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Default::default(), window, cx, |s| {
-                    s.move_with(|map, selection| {
+                    s.move_with(&mut |map, selection| {
                         let mut cursor = selection.head();
                         if should_move_to_start.contains(&selection.id) {
                             *cursor.column_mut() = 0;
@@ -192,7 +198,13 @@ impl Vim {
                         selection.collapse_to(cursor, selection.goal)
                     });
                 });
-                editor.refresh_edit_prediction(true, false, window, cx);
+                editor.refresh_edit_prediction(
+                    true,
+                    false,
+                    EditPredictionRequestTrigger::BufferEdit,
+                    window,
+                    cx,
+                );
             });
         });
     }

@@ -1,10 +1,6 @@
 use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope};
 use anyhow::{Context, anyhow};
-use imara_diff::{
-    Algorithm, Sink, diff,
-    intern::{InternedInput, Interner, Token},
-    sources::lines_with_terminator,
-};
+use imara_diff::{Algorithm, Diff, InternedInput, Interner, Token, sources::lines};
 use std::{fmt::Write, iter, ops::Range, sync::Arc};
 
 const MAX_WORD_DIFF_LEN: usize = 512;
@@ -23,12 +19,30 @@ pub fn unified_diff_with_offsets(
     old_start_line: u32,
     new_start_line: u32,
 ) -> String {
-    let input = InternedInput::new(old_text, new_text);
-    diff(
-        Algorithm::Histogram,
-        &input,
-        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line),
-    )
+    unified_diff_with_context(old_text, new_text, old_start_line, new_start_line, 3)
+}
+
+/// Computes a diff between two strings, returning a unified diff string with
+/// hunk headers adjusted to reflect the given starting line numbers (zero-indexed),
+/// and a configurable number of context lines around changes.
+pub fn unified_diff_with_context(
+    old_text: &str,
+    new_text: &str,
+    old_start_line: u32,
+    new_start_line: u32,
+    context_lines: u32,
+) -> String {
+    // The builder appends its own line terminators, so tokenize without them.
+    let mut input = InternedInput::default();
+    input.update_before(old_text.lines());
+    input.update_after(new_text.lines());
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    let mut builder =
+        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines);
+    for hunk in diff.hunks() {
+        builder.process_change(hunk.before, hunk.after);
+    }
+    builder.finish()
 }
 
 /// A unified diff builder that applies line number offsets to hunk headers.
@@ -45,13 +59,19 @@ struct OffsetUnifiedDiffBuilder<'a> {
 
     old_line_offset: u32,
     new_line_offset: u32,
+    context_lines: u32,
 
     buffer: String,
     dst: String,
 }
 
 impl<'a> OffsetUnifiedDiffBuilder<'a> {
-    fn new(input: &'a InternedInput<&'a str>, old_line_offset: u32, new_line_offset: u32) -> Self {
+    fn new(
+        input: &'a InternedInput<&'a str>,
+        old_line_offset: u32,
+        new_line_offset: u32,
+        context_lines: u32,
+    ) -> Self {
         Self {
             before_hunk_start: 0,
             after_hunk_start: 0,
@@ -59,6 +79,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             after_hunk_len: 0,
             old_line_offset,
             new_line_offset,
+            context_lines,
             buffer: String::with_capacity(8),
             dst: String::new(),
             interner: &input.interner,
@@ -79,7 +100,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             return;
         }
 
-        let end = (self.pos + 3).min(self.before.len() as u32);
+        let end = (self.pos + self.context_lines).min(self.before.len() as u32);
         self.update_pos(end, end);
 
         writeln!(
@@ -91,7 +112,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             self.after_hunk_len,
         )
         .unwrap();
-        write!(&mut self.dst, "{}", &self.buffer).unwrap();
+        write!(&mut self.dst, "{}", self.buffer).unwrap();
         self.buffer.clear();
         self.before_hunk_len = 0;
         self.after_hunk_len = 0;
@@ -106,17 +127,15 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
     }
 }
 
-impl Sink for OffsetUnifiedDiffBuilder<'_> {
-    type Out = String;
-
+impl OffsetUnifiedDiffBuilder<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        if before.start - self.pos > 6 {
+        if before.start - self.pos > self.context_lines * 2 {
             self.flush();
         }
         if self.before_hunk_len == 0 && self.after_hunk_len == 0 {
-            self.pos = before.start.saturating_sub(3);
+            self.pos = before.start.saturating_sub(self.context_lines);
             self.before_hunk_start = self.pos;
-            self.after_hunk_start = after.start.saturating_sub(3);
+            self.after_hunk_start = after.start.saturating_sub(self.context_lines);
         }
         self.update_pos(before.start, before.end);
         self.before_hunk_len += before.end - before.start;
@@ -128,7 +147,7 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
         self.print_tokens(&self.after[after.start as usize..after.end as usize], '+');
     }
 
-    fn finish(mut self) -> Self::Out {
+    fn finish(mut self) -> String {
         self.flush();
         self.dst
     }
@@ -138,11 +157,8 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
 /// ranges.
 pub fn line_diff(old_text: &str, new_text: &str) -> Vec<(Range<u32>, Range<u32>)> {
     let mut edits = Vec::new();
-    let input = InternedInput::new(
-        lines_with_terminator(old_text),
-        lines_with_terminator(new_text),
-    );
-    diff_internal(&input, |_, _, old_rows, new_rows| {
+    let input = InternedInput::new(lines(old_text), lines(new_text));
+    diff_internal(&input, &mut |_, _, old_rows, new_rows| {
         edits.push((old_rows, new_rows));
     });
     edits
@@ -174,7 +190,7 @@ pub fn word_diff_ranges(
     let mut old_ranges: Vec<Range<usize>> = Vec::new();
     let mut new_ranges: Vec<Range<usize>> = Vec::new();
 
-    diff_internal(&input, |old_byte_range, new_byte_range, _, _| {
+    diff_internal(&input, &mut |old_byte_range, new_byte_range, _, _| {
         if !old_byte_range.is_empty() {
             if let Some(last) = old_ranges.last_mut()
                 && last.end >= old_byte_range.start
@@ -197,6 +213,25 @@ pub fn word_diff_ranges(
     });
 
     (old_ranges, new_ranges)
+}
+
+/// Computes character-level diff between two strings.
+///
+/// Usually, you should use `text_diff`, which performs a word-wise diff.
+pub fn char_diff<'a>(old_text: &'a str, new_text: &'a str) -> Vec<(Range<usize>, &'a str)> {
+    let mut input: InternedInput<&str> = InternedInput::default();
+    input.update_before(tokenize_chars(old_text));
+    input.update_after(tokenize_chars(new_text));
+    let mut edits: Vec<(Range<usize>, &str)> = Vec::new();
+    diff_internal(&input, &mut |old_byte_range, new_byte_range, _, _| {
+        let replacement = if new_byte_range.is_empty() {
+            ""
+        } else {
+            &new_text[new_byte_range]
+        };
+        edits.push((old_byte_range, replacement));
+    });
+    edits
 }
 
 pub struct DiffOptions {
@@ -225,53 +260,50 @@ pub fn text_diff_with_options(
     let empty: Arc<str> = Arc::default();
     let mut edits = Vec::new();
     let mut hunk_input = InternedInput::default();
-    let input = InternedInput::new(
-        lines_with_terminator(old_text),
-        lines_with_terminator(new_text),
-    );
-    diff_internal(
-        &input,
-        |old_byte_range, new_byte_range, old_rows, new_rows| {
-            if should_perform_word_diff_within_hunk(
-                &old_rows,
-                &old_byte_range,
-                &new_rows,
-                &new_byte_range,
-                &options,
-            ) {
-                let old_offset = old_byte_range.start;
-                let new_offset = new_byte_range.start;
-                hunk_input.clear();
-                hunk_input.update_before(tokenize(
-                    &old_text[old_byte_range],
-                    options.language_scope.clone(),
-                ));
-                hunk_input.update_after(tokenize(
-                    &new_text[new_byte_range],
-                    options.language_scope.clone(),
-                ));
-                diff_internal(&hunk_input, |old_byte_range, new_byte_range, _, _| {
-                    let old_byte_range =
-                        old_offset + old_byte_range.start..old_offset + old_byte_range.end;
-                    let new_byte_range =
-                        new_offset + new_byte_range.start..new_offset + new_byte_range.end;
-                    let replacement_text = if new_byte_range.is_empty() {
-                        empty.clone()
-                    } else {
-                        new_text[new_byte_range].into()
-                    };
-                    edits.push((old_byte_range, replacement_text));
-                });
-            } else {
+    let input = InternedInput::new(lines(old_text), lines(new_text));
+    diff_internal(&input, &mut |old_byte_range,
+                                new_byte_range,
+                                old_rows,
+                                new_rows| {
+        if should_perform_word_diff_within_hunk(
+            &old_rows,
+            &old_byte_range,
+            &new_rows,
+            &new_byte_range,
+            &options,
+        ) {
+            let old_offset = old_byte_range.start;
+            let new_offset = new_byte_range.start;
+            hunk_input.clear();
+            hunk_input.update_before(tokenize(
+                &old_text[old_byte_range],
+                options.language_scope.clone(),
+            ));
+            hunk_input.update_after(tokenize(
+                &new_text[new_byte_range],
+                options.language_scope.clone(),
+            ));
+            diff_internal(&hunk_input, &mut |old_byte_range, new_byte_range, _, _| {
+                let old_byte_range =
+                    old_offset + old_byte_range.start..old_offset + old_byte_range.end;
+                let new_byte_range =
+                    new_offset + new_byte_range.start..new_offset + new_byte_range.end;
                 let replacement_text = if new_byte_range.is_empty() {
                     empty.clone()
                 } else {
                     new_text[new_byte_range].into()
                 };
                 edits.push((old_byte_range, replacement_text));
-            }
-        },
-    );
+            });
+        } else {
+            let replacement_text = if new_byte_range.is_empty() {
+                empty.clone()
+            } else {
+                new_text[new_byte_range].into()
+            };
+            edits.push((old_byte_range, replacement_text));
+        }
+    });
     edits
 }
 
@@ -279,6 +311,12 @@ pub fn apply_diff_patch(base_text: &str, patch: &str) -> Result<String, anyhow::
     let patch = diffy::Patch::from_str(patch).context("Failed to parse patch")?;
     let result = diffy::apply(base_text, &patch);
     result.map_err(|err| anyhow!(err))
+}
+
+pub fn apply_reversed_diff_patch(base_text: &str, patch: &str) -> Result<String, anyhow::Error> {
+    let patch = diffy::Patch::from_str(patch).context("Failed to parse patch")?;
+    let reversed = patch.reverse();
+    diffy::apply(base_text, &reversed).map_err(|err| anyhow!(err))
 }
 
 fn should_perform_word_diff_within_hunk(
@@ -298,41 +336,48 @@ fn should_perform_word_diff_within_hunk(
 
 fn diff_internal(
     input: &InternedInput<&str>,
-    mut on_change: impl FnMut(Range<usize>, Range<usize>, Range<u32>, Range<u32>),
+    on_change: &mut dyn FnMut(Range<usize>, Range<usize>, Range<u32>, Range<u32>),
 ) {
     let mut old_offset = 0;
     let mut new_offset = 0;
     let mut old_token_ix = 0;
     let mut new_token_ix = 0;
-    diff(
-        Algorithm::Histogram,
-        input,
-        |old_tokens: Range<u32>, new_tokens: Range<u32>| {
-            old_offset += token_len(
-                input,
-                &input.before[old_token_ix as usize..old_tokens.start as usize],
-            );
-            new_offset += token_len(
-                input,
-                &input.after[new_token_ix as usize..new_tokens.start as usize],
-            );
-            let old_len = token_len(
-                input,
-                &input.before[old_tokens.start as usize..old_tokens.end as usize],
-            );
-            let new_len = token_len(
-                input,
-                &input.after[new_tokens.start as usize..new_tokens.end as usize],
-            );
-            let old_byte_range = old_offset..old_offset + old_len;
-            let new_byte_range = new_offset..new_offset + new_len;
-            old_token_ix = old_tokens.end;
-            new_token_ix = new_tokens.end;
-            old_offset = old_byte_range.end;
-            new_offset = new_byte_range.end;
-            on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
-        },
-    );
+    let diff = Diff::compute(Algorithm::Histogram, input);
+    for hunk in diff.hunks() {
+        let old_tokens = hunk.before;
+        let new_tokens = hunk.after;
+        old_offset += token_len(
+            input,
+            &input.before[old_token_ix as usize..old_tokens.start as usize],
+        );
+        new_offset += token_len(
+            input,
+            &input.after[new_token_ix as usize..new_tokens.start as usize],
+        );
+        let old_len = token_len(
+            input,
+            &input.before[old_tokens.start as usize..old_tokens.end as usize],
+        );
+        let new_len = token_len(
+            input,
+            &input.after[new_tokens.start as usize..new_tokens.end as usize],
+        );
+        let old_byte_range = old_offset..old_offset + old_len;
+        let new_byte_range = new_offset..new_offset + new_len;
+        old_token_ix = old_tokens.end;
+        new_token_ix = new_tokens.end;
+        old_offset = old_byte_range.end;
+        new_offset = new_byte_range.end;
+        on_change(old_byte_range, new_byte_range, old_tokens, new_tokens);
+    }
+}
+
+fn tokenize_chars(text: &str) -> impl Iterator<Item = &str> {
+    let mut chars = text.char_indices().peekable();
+    iter::from_fn(move || {
+        let (start, c) = chars.next()?;
+        Some(&text[start..start + c.len_utf8()])
+    })
 }
 
 fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<Item = &str> {
@@ -443,6 +488,34 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_reversed_diff_patch() {
+        let old_text = "one two\nthree four five\nsix seven eight nine\nten\n";
+        let new_text = "one two\nthree FOUR five\nsix SEVEN eight nine\nten\nELEVEN\n";
+        let patch = unified_diff(old_text, new_text);
+        assert_eq!(
+            apply_reversed_diff_patch(new_text, &patch).unwrap(),
+            old_text
+        );
+    }
+
+    #[test]
+    fn test_char_diff() {
+        assert_eq!(char_diff("", ""), vec![]);
+        assert_eq!(char_diff("", "abc"), vec![(0..0, "abc")]);
+        assert_eq!(char_diff("abc", ""), vec![(0..3, "")]);
+        assert_eq!(char_diff("ac", "abc"), vec![(1..1, "b")]); // "b" inserted
+        assert_eq!(char_diff("abc", "ac"), vec![(1..2, "")]); // "b" deleted
+        assert_eq!(char_diff("abc", "adc"), vec![(1..2, "d")]); // "b" replaced with "d"
+        assert_eq!(char_diff("日", "日本語"), vec![(3..3, "本語")]); // "本語" inserted
+        assert_eq!(char_diff("日本語", "日"), vec![(3..9, "")]); // "本語" deleted
+        assert_eq!(char_diff("🎉", "🎉🎊🎈"), vec![(4..4, "🎊🎈")]); // "🎊🎈" inserted
+        assert_eq!(
+            char_diff("test日本", "test日本語です"),
+            vec![(10..10, "語です")]
+        );
+    }
+
+    #[test]
     fn test_unified_diff_with_offsets() {
         let old_text = "foo\nbar\nbaz\n";
         let new_text = "foo\nBAR\nbaz\n";
@@ -466,5 +539,30 @@ mod tests {
             diff_with_offset,
             format!("@@ -100,3 +105,3 @@\n{}", expected_diff_body)
         );
+    }
+
+    #[test]
+    fn test_unified_diff_with_context() {
+        // Test that full context includes all lines from the start
+        let old_text = "line1\nline2\nline3\nline4\nline5\nCHANGE_ME\nline7\nline8\n";
+        let new_text = "line1\nline2\nline3\nline4\nline5\nCHANGED\nline7\nline8\n";
+
+        // With default 3 lines of context, the diff starts at line 3
+        let diff_default = unified_diff_with_offsets(old_text, new_text, 0, 0);
+        assert_eq!(
+            diff_default,
+            "@@ -3,6 +3,6 @@\n line3\n line4\n line5\n-CHANGE_ME\n+CHANGED\n line7\n line8\n"
+        );
+
+        // With full context (8 lines), the diff starts at line 1
+        let diff_full_context = unified_diff_with_context(old_text, new_text, 0, 0, 8);
+        assert_eq!(
+            diff_full_context,
+            "@@ -1,8 +1,8 @@\n line1\n line2\n line3\n line4\n line5\n-CHANGE_ME\n+CHANGED\n line7\n line8\n"
+        );
+
+        // With 0 context, only the changed line is shown
+        let diff_no_context = unified_diff_with_context(old_text, new_text, 0, 0, 0);
+        assert_eq!(diff_no_context, "@@ -6,1 +6,1 @@\n-CHANGE_ME\n+CHANGED\n");
     }
 }

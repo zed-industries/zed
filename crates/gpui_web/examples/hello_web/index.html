@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=0" />
+        <title>GPUI Web: hello_web</title>
+        <link data-trunk rel="rust" data-bin="hello_web" data-bindgen-target="web" data-keep-debug data-wasm-opt="0" />
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            html,
+            body {
+                margin: 0;
+                height: 100%;
+            }
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+                touch-action: none;
+                outline: none;
+                -webkit-user-select: none;
+                user-select: none;
+            }
+        </style>
+    </head>
+    <body></body>
+</html>

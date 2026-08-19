@@ -6,12 +6,14 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    App, AsyncApp, Context, Entity, EventEmitter, Img, Subscription, Task, WeakEntity, prelude::*,
+    App, Asset, AssetLogger, AsyncApp, Context, Entity, EventEmitter, ImageCacheError, ImageSource,
+    Img, RenderImage, Subscription, Task, WeakEntity, prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _, TypedEnvelope, proto};
+use std::future::Future;
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -107,8 +109,47 @@ pub struct ImageItem {
     pub image_metadata: Option<ImageMetadata>,
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct ProjectImageSource {
+    project: WeakEntity<Project>,
+    path: ProjectPath,
+}
+
+enum ProjectImageAsset {}
+
+impl Asset for ProjectImageAsset {
+    type Source = ProjectImageSource;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+
+    fn load(
+        source: Self::Source,
+        cx: &mut App,
+    ) -> impl Future<Output = Self::Output> + Send + 'static {
+        let svg_renderer = cx.svg_renderer();
+        let load_image = cx.spawn(async move |cx| {
+            let open_image = source
+                .project
+                .update(cx, |project, cx| project.open_image(source.path, cx))?;
+            let image = open_image.await?;
+            Ok::<_, anyhow::Error>(image.read_with(cx, |image, _cx| image.image.clone()))
+        });
+
+        async move {
+            let image = load_image.await?;
+            image.to_image_data(svg_renderer).map_err(Into::into)
+        }
+    }
+}
+
+pub fn project_image_source(project: WeakEntity<Project>, path: ProjectPath) -> ImageSource {
+    let source = ProjectImageSource { project, path };
+    ImageSource::from(move |window: &mut gpui::Window, cx: &mut App| {
+        window.use_asset::<AssetLogger<ProjectImageAsset>>(&source, cx)
+    })
+}
+
 impl ImageItem {
-    fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
+    pub fn compute_metadata_from_bytes(image_bytes: &[u8]) -> Result<ImageMetadata> {
         let image_format = image::guess_format(image_bytes)?;
 
         let mut image_reader = ImageReader::new(std::io::Cursor::new(image_bytes));
@@ -698,7 +739,7 @@ impl ImageStoreImpl for Entity<RemoteImageStore> {
                 .request(rpc::proto::OpenImageByPath {
                     project_id,
                     worktree_id,
-                    path: path.to_proto(),
+                    path: path.as_unix_str().to_owned(),
                 })
                 .await?;
 
@@ -808,7 +849,10 @@ impl LocalImageStore {
             let new_file = if let Some(entry) = snapshot_entry {
                 worktree::File {
                     disk_state: match entry.mtime {
-                        Some(mtime) => DiskState::Present { mtime },
+                        Some(mtime) => DiskState::Present {
+                            mtime,
+                            size: entry.size,
+                        },
                         None => old_file.disk_state,
                     },
                     is_local: true,
@@ -899,89 +943,9 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
             image::ImageFormat::Ico => gpui::ImageFormat::Ico,
+            image::ImageFormat::Pnm => gpui::ImageFormat::Pnm,
             format => anyhow::bail!("Image format {format:?} not supported"),
         },
         content,
     )))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs::FakeFs;
-    use gpui::TestAppContext;
-    use serde_json::json;
-    use settings::SettingsStore;
-    use util::rel_path::rel_path;
-
-    pub fn init_test(cx: &mut TestAppContext) {
-        zlog::init_test();
-
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-        });
-    }
-
-    #[gpui::test]
-    async fn test_image_not_loaded_twice(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        fs.insert_tree("/root", json!({})).await;
-        // Create a png file that consists of a single white pixel
-        fs.insert_file(
-            "/root/image_1.png",
-            vec![
-                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-                0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
-                0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-            ],
-        )
-        .await;
-
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
-
-        let worktree_id =
-            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
-
-        let project_path = ProjectPath {
-            worktree_id,
-            path: rel_path("image_1.png").into(),
-        };
-
-        let (task1, task2) = project.update(cx, |project, cx| {
-            (
-                project.open_image(project_path.clone(), cx),
-                project.open_image(project_path.clone(), cx),
-            )
-        });
-
-        let image1 = task1.await.unwrap();
-        let image2 = task2.await.unwrap();
-
-        assert_eq!(image1, image2);
-    }
-
-    #[gpui::test]
-    fn test_compute_metadata_from_bytes() {
-        // Single white pixel PNG
-        let png_bytes = vec![
-            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
-            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-            0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
-            0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
-            0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-        ];
-
-        let metadata = ImageItem::compute_metadata_from_bytes(&png_bytes).unwrap();
-
-        assert_eq!(metadata.width, 1);
-        assert_eq!(metadata.height, 1);
-        assert_eq!(metadata.file_size, png_bytes.len() as u64);
-        assert_eq!(metadata.format, image::ImageFormat::Png);
-        assert!(metadata.colors.is_some());
-    }
 }

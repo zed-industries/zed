@@ -1,6 +1,6 @@
 use gh_workflow::*;
 
-use crate::tasks::workflows::steps::{CommonJobConditions, NamedJob, named};
+use crate::tasks::workflows::steps::{CommonJobConditions, CommonPermissionSets, NamedJob, named};
 
 use super::{runners, steps};
 
@@ -9,14 +9,15 @@ pub fn danger() -> Workflow {
     let danger = danger_job();
 
     named::workflow()
-        .on(
-            Event::default().pull_request(PullRequest::default().add_branch("main").types([
+        .with_minimal_permissions()
+        .on(Event::default()
+            .pull_request(PullRequest::default().add_branch("main").types([
                 PullRequestType::Opened,
                 PullRequestType::Synchronize,
                 PullRequestType::Reopened,
                 PullRequestType::Edited,
-            ])),
-        )
+            ]))
+            .merge_group(MergeGroup::default()))
         .add_job(danger.name, danger.job)
 }
 
@@ -30,12 +31,11 @@ fn danger_job() -> NamedJob {
             // This GitHub token is not used, but the value needs to be here to prevent
             // Danger from throwing an error.
             .add_env(("GITHUB_TOKEN", "not_a_real_token"))
-            // All requests are instead proxied through an instance of
-            // https://github.com/maxdeviant/danger-proxy that allows Danger to securely
-            // authenticate with GitHub while still being able to run on PRs from forks.
+            // All requests are instead proxied through a proxy that allows Danger to securely authenticate with GitHub
+            // while still being able to run on PRs from forks.
             .add_env((
                 "DANGER_GITHUB_API_BASE_URL",
-                "https://danger-proxy.fly.dev/github",
+                "https://danger-proxy.zed.dev/github",
             ))
     }
 

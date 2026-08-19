@@ -1,3 +1,8 @@
+---
+title: Developing Zed
+description: "Guide to building and developing Zed from source."
+---
+
 # Developing Zed
 
 See the platform-specific instructions for building Zed from source:
@@ -21,9 +26,9 @@ your password again the next time something changes in the binary.
 This quickly becomes annoying and impedes development speed.
 
 That is why, by default, when running a development build of Zed an alternative
-credential provider is used in order to bypass the system keychain.
+credential provider is used to bypass the system keychain.
 
-> Note: This is **only** the case for development builds. For all non-development
+> **Note:** This is **only** the case for development builds. For all non-development
 > release channels the system keychain is always used.
 
 If you need to test something out using the real system keychain in a
@@ -80,6 +85,30 @@ The `script/histogram` tool can accept as many measurement files as you like and
 For benchmarking unit tests, annotate them with the `#[perf]` attribute from the `util_macros` crate. Then run `cargo
 perf-test -p $CRATE` to benchmark them. See the rustdoc documentation on `crates/util_macros` and `tooling/perf` for
 in-depth examples and explanations.
+
+## ETW Profiling on Windows
+
+Zed supports performance profiling with Event Tracing for Windows (ETW) to capture detailed performance data, including CPU, GPU, memory, disk, and file I/O activity. Data is saved to an `.etl` file, which can be opened in standard profiling tools for analysis.
+
+ETW recordings may contain personally identifiable or security-sensitive information, such as paths to files and registry keys accessed, as well as process names. Please keep this in mind when sharing traces with others.
+
+### Recording a trace
+
+Open the command palette and run one of the following:
+
+- `zed: record etw trace`: records CPU, GPU, memory, and I/O activity
+- `zed: record etw trace with heap tracing`: includes heap allocation data for the Zed process
+
+Zed will prompt you to choose a save location for the `.etl` file, then request administrator permission. Once granted, recording will begin.
+
+### Saving or canceling
+
+While a trace is recording, open the command palette and run one of the following:
+
+- `zed: save etw trace`: stops recording and saves the trace to disk
+- `zed: cancel etw trace`: stops recording without saving
+
+Recordings automatically save after 60 seconds if not stopped manually.
 
 ## Contributor links
 

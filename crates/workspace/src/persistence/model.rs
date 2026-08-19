@@ -1,7 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
-    path_list::PathList,
+    multi_workspace::SerializedProjectGroupState, path_list::PathList,
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
@@ -10,17 +10,21 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Entity, WeakEntity};
+use gpui::{AsyncWindowContext, Entity, WeakEntity, WindowId};
 
 use language::{Toolchain, ToolchainScope};
-use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
+use project::{
+    Project, ProjectGroupKey, bookmark_store::SerializedBookmark,
+    debugger::breakpoint_store::SourceBreakpoint,
+};
 use remote::RemoteConnectionOptions;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::ResultExt;
+use util::{ResultExt, path_list::SerializedPathList};
 use uuid::Uuid;
 
 #[derive(
@@ -35,7 +39,7 @@ pub(crate) enum RemoteConnectionKind {
     Docker,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SerializedWorkspaceLocation {
     Local,
     Remote(RemoteConnectionOptions),
@@ -48,27 +52,108 @@ impl SerializedWorkspaceLocation {
     }
 }
 
+/// A workspace entry from a previous session, containing all the info needed
+/// to restore it including which window it belonged to (for MultiWorkspace grouping).
+#[derive(Debug, PartialEq, Clone)]
+pub struct SessionWorkspace {
+    pub workspace_id: WorkspaceId,
+    pub location: SerializedWorkspaceLocation,
+    pub paths: PathList,
+    pub window_id: Option<WindowId>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SerializedProjectGroup {
+    pub path_list: SerializedPathList,
+    pub(crate) location: SerializedWorkspaceLocation,
+    #[serde(default = "default_expanded")]
+    pub expanded: bool,
+}
+
+fn default_expanded() -> bool {
+    true
+}
+
+impl SerializedProjectGroup {
+    pub fn from_group(key: &ProjectGroupKey, expanded: bool) -> Self {
+        Self {
+            path_list: key.path_list().serialize(),
+            location: match key.host() {
+                Some(host) => SerializedWorkspaceLocation::Remote(host),
+                None => SerializedWorkspaceLocation::Local,
+            },
+            expanded,
+        }
+    }
+
+    pub fn into_restored_state(self) -> SerializedProjectGroupState {
+        let path_list = PathList::deserialize(&self.path_list);
+        let host = match self.location {
+            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Remote(opts) => Some(opts),
+        };
+        SerializedProjectGroupState {
+            key: ProjectGroupKey::new(host, path_list),
+            expanded: self.expanded,
+        }
+    }
+}
+
+impl From<SerializedProjectGroup> for ProjectGroupKey {
+    fn from(value: SerializedProjectGroup) -> Self {
+        value.into_restored_state().key
+    }
+}
+
+/// Per-window state for a MultiWorkspace, persisted to KVP.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct MultiWorkspaceState {
+    pub active_workspace_id: Option<WorkspaceId>,
+    pub sidebar_open: bool,
+    #[serde(alias = "project_group_keys")]
+    pub project_groups: Vec<SerializedProjectGroup>,
+    #[serde(default)]
+    pub sidebar_state: Option<String>,
+}
+
+/// The serialized state of a single MultiWorkspace window from a previous session:
+/// the active workspace to restore plus window-level state (project group keys,
+/// sidebar).
+#[derive(Debug, Clone)]
+pub struct SerializedMultiWorkspace {
+    pub active_workspace: SessionWorkspace,
+    pub state: MultiWorkspaceState,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct SerializedWorkspace {
     pub(crate) id: WorkspaceId,
     pub(crate) location: SerializedWorkspaceLocation,
     pub(crate) paths: PathList,
+    /// The workspace's main worktree paths at the time this workspace was saved.
+    ///
+    /// These paths are used for grouping, deduping, and display in recent-workspace
+    /// UIs. They are not authoritative for reopening the workspace, because they may
+    /// become stale if the repository layout changes after the save. Use `paths` when
+    /// reopening the workspace.
+    pub(crate) identity_paths: Option<PathList>,
     pub(crate) center_group: SerializedPaneGroup,
     pub(crate) window_bounds: Option<SerializedWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    pub(crate) bookmarks: BTreeMap<Arc<Path>, Vec<SerializedBookmark>>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
     pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockStructure {
-    pub(crate) left: DockData,
-    pub(crate) right: DockData,
-    pub(crate) bottom: DockData,
+    pub left: DockData,
+    pub right: DockData,
+    pub bottom: DockData,
 }
 
 impl RemoteConnectionKind {
@@ -114,11 +199,11 @@ impl Bind for DockStructure {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Default)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize)]
 pub struct DockData {
-    pub(crate) visible: bool,
-    pub(crate) active_panel: Option<String>,
-    pub(crate) zoom: bool,
+    pub visible: bool,
+    pub active_panel: Option<String>,
+    pub zoom: bool,
 }
 
 impl Column for DockData {
@@ -310,21 +395,30 @@ impl SerializedPane {
             }
         }
 
-        if let Some(active_item_index) = active_item_index {
+        if let Some(active_item) = active_item_index.and_then(|index| items.get(index)?.clone()) {
             pane.update_in(cx, |pane, window, cx| {
-                pane.activate_item(active_item_index, false, false, window, cx);
-            })?;
-        }
-
-        if let Some(preview_item_index) = preview_item_index {
-            pane.update(cx, |pane, cx| {
-                if let Some(item) = pane.item_for_index(preview_item_index) {
-                    pane.set_preview_item_id(Some(item.item_id()), cx);
+                if let Some(index) = pane.index_for_item(active_item.as_ref()) {
+                    pane.activate_item(index, false, false, window, cx);
                 }
             })?;
         }
+
+        if let Some(preview_item) = preview_item_index.and_then(|index| items.get(index)?.clone()) {
+            pane.update(cx, |pane, cx| {
+                pane.set_preview_item_id(Some(preview_item.item_id()), cx);
+            })?;
+        }
+
+        // `items` keeps a `None` for every item that failed to deserialize, and those
+        // were never added to the pane. Counting them would leave the pinned count
+        // pointing past the pinned tabs and pin unpinned ones in their place.
+        let pinned_count = items
+            .iter()
+            .take(self.pinned_count)
+            .filter(|item| item.is_some())
+            .count();
         pane.update(cx, |pane, _| {
-            pane.set_pinned_count(self.pinned_count.min(items.len()));
+            pane.set_pinned_count(pinned_count);
         })?;
 
         anyhow::Ok(items)

@@ -16,7 +16,7 @@ default = []
 
 [dependencies]
 client.workspace = true
-cloud_llm_client.workspace = true
+cloud_api_types.workspace = true
 component.workspace = true
 gpui.workspace = true
 language_model.workspace = true

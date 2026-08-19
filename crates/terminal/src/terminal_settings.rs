@@ -1,19 +1,17 @@
-use alacritty_terminal::vte::ansi::{
-    CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
-};
 use collections::HashMap;
-use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use settings::AlternateScroll;
 
 use settings::{
-    PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBlink, TerminalDockPosition,
-    TerminalLineHeight, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
+    IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBell, TerminalBlink,
+    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
+    merge_from::MergeFrom,
 };
 use task::Shell;
-use theme::FontFamilyName;
+use theme_settings::FontFamilyName;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
@@ -37,8 +35,11 @@ pub struct TerminalSettings {
     pub option_as_meta: bool,
     pub copy_on_select: bool,
     pub keep_selection_on_copy: bool,
+    pub open_links_in_mouse_mode: bool,
     pub button: bool,
     pub dock: TerminalDockPosition,
+    pub starts_open: bool,
+    pub flexible: bool,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub detect_venv: VenvSettings,
@@ -49,6 +50,8 @@ pub struct TerminalSettings {
     pub minimum_contrast: f32,
     pub path_hyperlink_regexes: Vec<String>,
     pub path_hyperlink_timeout_ms: u64,
+    pub show_count_badge: bool,
+    pub bell: TerminalBell,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -70,7 +73,7 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
         } => Shell::WithArguments {
             program,
             args,
-            title_override: title_override.map(Into::into),
+            title_override,
         },
     }
 }
@@ -84,7 +87,7 @@ impl settings::Settings for TerminalSettings {
         TerminalSettings {
             shell: settings_shell_to_task_shell(project_content.shell.unwrap()),
             working_directory: project_content.working_directory.unwrap(),
-            font_size: user_content.font_size.map(Into::into),
+            font_size: user_content.font_size.map(|s| s.into_gpui()),
             font_family: user_content.font_family,
             font_fallbacks: user_content.font_fallbacks.map(|fallbacks| {
                 FontFallbacks::from_fonts(
@@ -94,8 +97,8 @@ impl settings::Settings for TerminalSettings {
                         .collect(),
                 )
             }),
-            font_features: user_content.font_features,
-            font_weight: user_content.font_weight,
+            font_features: user_content.font_features.map(|f| f.into_gpui()),
+            font_weight: user_content.font_weight.map(|w| w.into_gpui()),
             line_height: user_content.line_height.unwrap(),
             env: project_content.env.unwrap(),
             cursor_shape: user_content.cursor_shape.unwrap().into(),
@@ -104,10 +107,13 @@ impl settings::Settings for TerminalSettings {
             option_as_meta: user_content.option_as_meta.unwrap(),
             copy_on_select: user_content.copy_on_select.unwrap(),
             keep_selection_on_copy: user_content.keep_selection_on_copy.unwrap(),
+            open_links_in_mouse_mode: user_content.open_links_in_mouse_mode.unwrap(),
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),
-            default_width: px(user_content.default_width.unwrap()),
-            default_height: px(user_content.default_height.unwrap()),
+            starts_open: user_content.starts_open.unwrap(),
+            default_width: user_content.default_width.unwrap().into_gpui(),
+            default_height: user_content.default_height.unwrap().into_gpui(),
+            flexible: user_content.flexible.unwrap(),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),
             max_scroll_history_lines: user_content.max_scroll_history_lines,
@@ -128,6 +134,8 @@ impl settings::Settings for TerminalSettings {
                 })
                 .collect(),
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
+            show_count_badge: user_content.show_count_badge.unwrap(),
+            bell: user_content.bell.unwrap(),
         }
     }
 }
@@ -153,26 +161,6 @@ impl From<settings::CursorShapeContent> for CursorShape {
             settings::CursorShapeContent::Underline => CursorShape::Underline,
             settings::CursorShapeContent::Bar => CursorShape::Bar,
             settings::CursorShapeContent::Hollow => CursorShape::Hollow,
-        }
-    }
-}
-
-impl From<CursorShape> for AlacCursorShape {
-    fn from(value: CursorShape) -> Self {
-        match value {
-            CursorShape::Block => AlacCursorShape::Block,
-            CursorShape::Underline => AlacCursorShape::Underline,
-            CursorShape::Bar => AlacCursorShape::Beam,
-            CursorShape::Hollow => AlacCursorShape::HollowBlock,
-        }
-    }
-}
-
-impl From<CursorShape> for AlacCursorStyle {
-    fn from(value: CursorShape) -> Self {
-        AlacCursorStyle {
-            shape: value.into(),
-            blinking: false,
         }
     }
 }

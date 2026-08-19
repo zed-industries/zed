@@ -69,7 +69,7 @@ impl Domain for CommandPaletteDB {
     )];
 }
 
-db::static_connection!(COMMAND_PALETTE_HISTORY, CommandPaletteDB, []);
+db::static_connection!(CommandPaletteDB, []);
 
 impl CommandPaletteDB {
     pub async fn write_command_invocation(
@@ -96,6 +96,13 @@ impl CommandPaletteDB {
             WHERE command_name=(?)
             ORDER BY last_invoked DESC
             LIMIT 1
+        }
+    }
+
+    #[cfg(test)]
+    query! {
+        pub(crate) async fn clear_all() -> Result<()> {
+            DELETE FROM command_invocations
         }
     }
 

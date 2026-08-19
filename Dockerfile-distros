@@ -11,8 +11,7 @@ ENV CARGO_TERM_COLOR=always
 
 COPY script/linux script/
 RUN ./script/linux
-COPY script/install-mold script/install-cmake script/
-RUN ./script/install-mold "2.34.0"
+COPY script/install-cmake script/
 RUN ./script/install-cmake "3.30.4"
 
 COPY . .

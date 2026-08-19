@@ -6,7 +6,7 @@ use std::{
 };
 
 use dap::{Capabilities, ExceptionBreakpointsFilter, adapters::DebugAdapterName};
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::KeyValueStore;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
@@ -520,8 +520,9 @@ impl BreakpointList {
             });
             let value = serde_json::to_string(&settings);
 
+            let kvp = KeyValueStore::global(cx);
             cx.background_executor()
-                .spawn(async move { KEY_VALUE_STORE.write_kvp(key, value?).await })
+                .spawn(async move { kvp.write_kvp(key, value?).await })
         } else {
             Task::ready(Result::Ok(()))
         }
@@ -532,7 +533,7 @@ impl BreakpointList {
         adapter_name: DebugAdapterName,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        let Some(val) = KEY_VALUE_STORE.read_kvp(&Self::kvp_key(&adapter_name))? else {
+        let Some(val) = KeyValueStore::global(cx).read_kvp(&Self::kvp_key(&adapter_name))? else {
             return Ok(());
         };
         let value: PersistedAdapterOptions = serde_json::from_str(&val)?;
@@ -906,7 +907,7 @@ impl LineBreakpoint {
                 )))
                 .w_full()
                 .gap_1()
-                .min_h(rems_from_px(26.))
+                .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .on_click({
                     let weak = weak.clone();
@@ -1036,7 +1037,7 @@ impl DataBreakpoint {
             h_flex()
                 .w_full()
                 .gap_1()
-                .min_h(rems_from_px(26.))
+                .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .child(
                     v_flex()
@@ -1139,7 +1140,7 @@ impl ExceptionBreakpoint {
             h_flex()
                 .w_full()
                 .gap_1()
-                .min_h(rems_from_px(26.))
+                .min_h(rems_from_px(26_f32))
                 .justify_between()
                 .child(
                     v_flex()

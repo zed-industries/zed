@@ -27,7 +27,7 @@ parts:
     stage-packages:
       - libasound2t64
       # snapcraft has a lint that this is unused, but without it Zed exits with
-      # "Missing Vulkan entry points: LibraryLoadFailure" in blade_graphics.
+      # "Missing Vulkan entry points: LibraryLoadFailure" in wgpu.
       - libvulkan1
       # snapcraft has a lint that this is unused, but without it Zed exits with
       # "NoWaylandLib" when run with Wayland.

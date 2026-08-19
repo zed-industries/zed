@@ -1,53 +1,64 @@
 use anyhow::Context as _;
 use collections::HashMap;
+use cpal::DeviceId;
 
 mod remote_video_track_view;
-use cpal::traits::HostTrait as _;
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 use rodio::DeviceTrait as _;
+use serde::{Deserialize, Serialize};
 
 mod record;
 pub use record::CaptureInput;
 
-#[cfg(not(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
-)))]
+#[cfg(any(
+    rust_analyzer,
+    not(any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    ))
+))]
 mod livekit_client;
-#[cfg(not(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
-)))]
+#[cfg(any(
+    rust_analyzer,
+    not(any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    ))
+))]
 pub use livekit_client::*;
 
-// If you need proper LSP in livekit_client you've got to comment
-// - the cfg blocks above
-// - the mods: mock_client & test and their conditional blocks
-// - the pub use mock_client::* and their conditional blocks
-
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
 ))]
 mod mock_client;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
 ))]
 pub mod test;
-#[cfg(any(
-    test,
-    feature = "test-support",
-    all(target_os = "windows", target_env = "gnu"),
-    target_os = "freebsd"
+#[cfg(all(
+    not(rust_analyzer),
+    any(
+        test,
+        feature = "test-support",
+        all(target_os = "windows", target_env = "gnu"),
+        target_os = "freebsd"
+    )
 ))]
 pub use mock_client::*;
 
@@ -55,6 +66,23 @@ pub use mock_client::*;
 pub enum Participant {
     Local(LocalParticipant),
     Remote(RemoteParticipant),
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum ConnectionQuality {
+    Excellent,
+    Good,
+    Poor,
+    Lost,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+pub struct RemoteAudioPlaybackStats {
+    pub frames_received: u64,
+    pub frames_dropped: u64,
+    pub queue_underflows: u64,
+    pub current_queue_depth: u64,
+    pub maximum_queue_depth: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +197,10 @@ pub enum RoomEvent {
     ActiveSpeakersChanged {
         speakers: Vec<Participant>,
     },
+    ConnectionQualityChanged {
+        participant: Participant,
+        quality: ConnectionQuality,
+    },
     ConnectionStateChanged(ConnectionState),
     Connected {
         participants_with_tracks: Vec<(RemoteParticipant, Vec<RemoteTrackPublication>)>,
@@ -182,24 +214,18 @@ pub enum RoomEvent {
 
 pub(crate) fn default_device(
     input: bool,
+    device_id: Option<&DeviceId>,
 ) -> anyhow::Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let device;
-    let config;
-    if input {
-        device = cpal::default_host()
-            .default_input_device()
-            .context("no audio input device available")?;
-        config = device
+    let device = audio::resolve_device(device_id, input)?;
+    let config = if input {
+        device
             .default_input_config()
-            .context("failed to get default input config")?;
+            .context("failed to get default input config")?
     } else {
-        device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device available")?;
-        config = device
+        device
             .default_output_config()
-            .context("failed to get default output config")?;
-    }
+            .context("failed to get default output config")?
+    };
     Ok((device, config))
 }
 

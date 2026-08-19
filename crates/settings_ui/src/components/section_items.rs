@@ -1,4 +1,4 @@
-use gpui::{IntoElement, ParentElement, Styled};
+use gpui::{IntoElement, ParentElement, Role, Styled};
 use ui::{Divider, DividerColor, prelude::*};
 
 #[derive(IntoElement)]
@@ -30,21 +30,26 @@ impl SettingsSectionHeader {
 
 impl RenderOnce for SettingsSectionHeader {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let label_text = self.label.clone();
         let label = Label::new(self.label)
             .size(LabelSize::Small)
             .color(Color::Muted)
             .buffer_font(cx);
 
         v_flex()
+            .id(label_text.clone())
+            .role(Role::Heading)
+            .aria_level(2)
+            .aria_label(label_text)
             .w_full()
             .when(!self.no_padding, |this| this.px_8())
             .gap_1p5()
             .map(|this| {
-                if self.icon.is_some() {
+                if let Some(icon) = self.icon {
                     this.child(
                         h_flex()
                             .gap_1p5()
-                            .child(Icon::new(self.icon.unwrap()).color(Color::Muted))
+                            .child(Icon::new(icon).color(Color::Muted))
                             .child(label),
                     )
                 } else {

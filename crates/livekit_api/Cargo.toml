@@ -13,10 +13,13 @@ workspace = true
 path = "src/livekit_api.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-jsonwebtoken.workspace = true
+jsonwebtoken = { workspace = true, features = ["aws_lc_rs"] }
 log.workspace = true
 prost.workspace = true
 prost-types.workspace = true

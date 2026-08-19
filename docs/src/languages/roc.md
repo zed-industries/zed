@@ -1,3 +1,8 @@
+---
+title: Roc
+description: "Configure Roc language support in Zed, including language servers, formatting, and debugging."
+---
+
 # Roc
 
 [Roc](https://www.roc-lang.org/) is a fast, friendly, functional language.

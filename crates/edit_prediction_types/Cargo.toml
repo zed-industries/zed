@@ -14,5 +14,6 @@ path = "src/edit_prediction_types.rs"
 [dependencies]
 client.workspace = true
 gpui.workspace = true
+icons.workspace = true
 language.workspace = true
 text.workspace = true
