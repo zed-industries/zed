@@ -31,7 +31,11 @@ use crate::WindowId;
 pub const TASK_POLL_FLOOR: Duration = Duration::from_micros(100);
 
 /// A dirty frame that has not been presented by this deadline stops blocking
-/// foreground-idle boundaries and completes its interval explicitly.
+/// foreground-idle boundaries, so a window that never presents (hidden or
+/// occluded windows receive no frame callbacks) cannot suppress boundaries
+/// indefinitely. Expiry only unblocks: the open interval still seals at a
+/// real presentation or idle boundary, keeping a starving hang and the frame
+/// it starved in one interval.
 pub const FRAME_DEADLINE: Duration = Duration::from_secs(1);
 
 // Backstop against pathological event storms within a single interval. At the
@@ -158,25 +162,13 @@ impl PresentedFrame {
     }
 }
 
-/// A pending frame that did not reach the platform before its deadline.
-#[derive(Debug, Copy, Clone)]
-pub struct FrameDeadline {
-    /// The window whose frame missed its deadline.
-    pub window_id: WindowId,
-    /// When the frame first became dirty.
-    pub dirty_at: Instant,
-    /// The exact deadline that completed the interval.
-    pub ended_at: Instant,
-}
-
 /// The semantic event that completed a foreground activity interval.
 #[derive(Debug, Copy, Clone)]
 pub enum IntervalBoundary {
     /// A newly drawn frame was submitted to the platform.
     Presented(PresentedFrame),
-    /// A dirty frame did not reach the platform before its deadline.
-    FrameDeadline(FrameDeadline),
-    /// The foreground returned to an idle platform loop with no frame pending.
+    /// The foreground returned to an idle platform loop with no unexpired
+    /// frame pending.
     Idle {
         /// When the foreground went idle.
         ended_at: Instant,
@@ -188,7 +180,6 @@ impl IntervalBoundary {
     pub fn end_time(&self) -> Instant {
         match self {
             Self::Presented(presented) => presented.presentation.present_end,
-            Self::FrameDeadline(deadline) => deadline.ended_at,
             Self::Idle { ended_at } => *ended_at,
         }
     }
@@ -197,7 +188,6 @@ impl IntervalBoundary {
     pub fn dirty_at(&self) -> Option<Instant> {
         match self {
             Self::Presented(presented) => presented.frame.dirty_at,
-            Self::FrameDeadline(deadline) => Some(deadline.dirty_at),
             Self::Idle { .. } => None,
         }
     }
@@ -223,15 +213,6 @@ pub enum FrameStateChange {
     },
 }
 
-impl FrameStateChange {
-    fn time(&self) -> Instant {
-        match self {
-            Self::Pending { dirty_at, .. } => *dirty_at,
-            Self::Closed { at, .. } => *at,
-        }
-    }
-}
-
 /// One item retained in the foreground journal.
 #[derive(Debug, Copy, Clone)]
 pub enum ForegroundJournalEntry {
@@ -241,16 +222,6 @@ pub enum ForegroundJournalEntry {
     Boundary(IntervalBoundary),
     /// A change to pending-frame state. This is metadata, not foreground work.
     FrameState(FrameStateChange),
-}
-
-impl ForegroundJournalEntry {
-    fn time(&self) -> Instant {
-        match self {
-            Self::Event(event) => event.end_time(),
-            Self::Boundary(boundary) => boundary.end_time(),
-            Self::FrameState(change) => change.time(),
-        }
-    }
 }
 
 /// An immutable view of one sealed foreground interval, produced by
@@ -725,7 +696,6 @@ pub struct IntervalSealer {
     events: Vec<ForegroundEvent>,
     small_polls: Vec<SmallPollFlush>,
     dropped_events: u64,
-    pending_frames: HashMap<WindowId, Instant>,
 }
 
 impl IntervalSealer {
@@ -737,7 +707,6 @@ impl IntervalSealer {
             events: Vec::new(),
             small_polls: Vec::new(),
             dropped_events: 0,
-            pending_frames: HashMap::new(),
         }
     }
 
@@ -756,12 +725,6 @@ impl IntervalSealer {
     ) -> Vec<FrameSnapshot> {
         let mut snapshots = Vec::new();
         for entry in entries {
-            let boundary_cancels_exact_deadline = matches!(
-                entry,
-                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(_))
-                    | ForegroundJournalEntry::FrameState(FrameStateChange::Closed { .. })
-            );
-            snapshots.extend(self.advance_to(entry.time(), !boundary_cancels_exact_deadline));
             match entry {
                 ForegroundJournalEntry::Event(event) => {
                     if self.is_empty() {
@@ -774,7 +737,6 @@ impl IntervalSealer {
                 }
                 ForegroundJournalEntry::Boundary(boundary) => {
                     if let IntervalBoundary::Presented(presented) = boundary {
-                        self.pending_frames.remove(&presented.frame.window_id);
                         if self.is_empty() {
                             self.interval_start = self
                                 .interval_start
@@ -788,58 +750,10 @@ impl IntervalSealer {
                         snapshots.push(self.seal(boundary));
                     }
                 }
-                ForegroundJournalEntry::FrameState(change) => match change {
-                    FrameStateChange::Pending {
-                        window_id,
-                        dirty_at,
-                    } => {
-                        self.pending_frames
-                            .entry(window_id)
-                            .and_modify(|pending_at| *pending_at = (*pending_at).min(dirty_at))
-                            .or_insert(dirty_at);
-                    }
-                    FrameStateChange::Closed { window_id, .. } => {
-                        self.pending_frames.remove(&window_id);
-                    }
-                },
-            }
-        }
-        snapshots
-    }
-
-    /// Completes pending frames whose exact deadline is at or before `now`.
-    /// Silent polling can therefore report a frame that never presents without
-    /// manufacturing timeout boundaries for unrelated foreground work.
-    pub fn advance(&mut self, now: Instant) -> Vec<FrameSnapshot> {
-        self.advance_to(now, true)
-    }
-
-    fn advance_to(&mut self, now: Instant, include_now: bool) -> Vec<FrameSnapshot> {
-        let mut snapshots = Vec::new();
-        loop {
-            let next_expired = self
-                .pending_frames
-                .iter()
-                .filter_map(|(window_id, dirty_at)| {
-                    let ended_at = *dirty_at + FRAME_DEADLINE;
-                    let expired = ended_at < now || (include_now && ended_at == now);
-                    expired.then_some((*window_id, *dirty_at, ended_at))
-                })
-                .min_by_key(|(_, _, ended_at)| *ended_at);
-            let Some((window_id, dirty_at, ended_at)) = next_expired else {
-                break;
-            };
-
-            self.pending_frames.remove(&window_id);
-            let boundary = IntervalBoundary::FrameDeadline(FrameDeadline {
-                window_id,
-                dirty_at,
-                ended_at,
-            });
-            if self.is_empty() {
-                self.interval_start = self.interval_start.max(ended_at);
-            } else {
-                snapshots.push(self.seal(boundary));
+                // Pending-frame state gates boundaries on the writer side;
+                // the entries remain in the stream for consumers that want
+                // dirty timing, but the sealer has no use for them.
+                ForegroundJournalEntry::FrameState(_) => {}
             }
         }
         snapshots
@@ -945,7 +859,7 @@ mod tests {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration()
                 }
-                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } => None,
             },
             Some(Duration::from_millis(5))
         );
@@ -1096,116 +1010,13 @@ mod tests {
         }));
     }
 
+    /// A frame that outlives [`FRAME_DEADLINE`] no longer seals an interval
+    /// of its own: the work that starved it and its eventual presentation
+    /// stay in one interval, preserving the dirty-to-present association.
     #[test]
-    fn pending_frame_seals_at_its_exact_deadline() {
+    fn a_presentation_after_the_deadline_seals_the_whole_interval() {
         let start = Instant::now();
         let window_id = WindowId::from(0xDEA1);
-        let mut sealer = IntervalSealer::new(start);
-        let snapshots = sealer.push_entries([
-            pending_frame(window_id, start),
-            input_entry(
-                start + Duration::from_millis(1),
-                start + Duration::from_millis(20),
-            ),
-        ]);
-        assert!(snapshots.is_empty());
-        assert!(
-            sealer
-                .advance(start + FRAME_DEADLINE - Duration::from_nanos(1))
-                .is_empty()
-        );
-
-        let snapshots = sealer.advance(start + FRAME_DEADLINE);
-        let [snapshot] = snapshots.as_slice() else {
-            panic!("expected one deadline snapshot, got {snapshots:?}");
-        };
-        assert_eq!(snapshot.interval_end(), start + FRAME_DEADLINE);
-        assert!(matches!(
-            snapshot.boundary,
-            IntervalBoundary::FrameDeadline(FrameDeadline {
-                window_id: deadline_window,
-                dirty_at,
-                ended_at,
-            }) if deadline_window == window_id
-                && dirty_at == start
-                && ended_at == start + FRAME_DEADLINE
-        ));
-    }
-
-    #[test]
-    fn expired_frame_no_longer_blocks_later_idle_boundaries() {
-        let start = Instant::now();
-        let window_id = WindowId::from(0xDEA2);
-        let mut sealer = IntervalSealer::new(start);
-        sealer.push_entries([
-            pending_frame(window_id, start),
-            input_entry(start, start + Duration::from_millis(20)),
-        ]);
-        assert_eq!(sealer.advance(start + FRAME_DEADLINE).len(), 1);
-
-        let event_start = start + FRAME_DEADLINE + Duration::from_millis(1);
-        let event_end = event_start + Duration::from_millis(20);
-        let snapshots = sealer.push_entries([
-            input_entry(event_start, event_end),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
-                ended_at: event_end,
-            }),
-        ]);
-        let [snapshot] = snapshots.as_slice() else {
-            panic!("expected one idle snapshot, got {snapshots:?}");
-        };
-        assert!(matches!(
-            snapshot.boundary,
-            IntervalBoundary::Idle { ended_at } if ended_at == event_end
-        ));
-    }
-
-    #[test]
-    fn presentation_before_deadline_cancels_it() {
-        let start = Instant::now();
-        let window_id = WindowId::from(0xDEA3);
-        let presented_at = start + FRAME_DEADLINE / 2;
-        let mut sealer = IntervalSealer::new(start);
-        let snapshots = sealer.push_entries([
-            pending_frame(window_id, start),
-            input_entry(start, start + Duration::from_millis(20)),
-            ForegroundJournalEntry::Boundary(presented_boundary(window_id, start, presented_at)),
-        ]);
-        assert_eq!(snapshots.len(), 1);
-        assert!(matches!(
-            snapshots[0].boundary,
-            IntervalBoundary::Presented(_)
-        ));
-        assert!(sealer.advance(start + FRAME_DEADLINE * 2).is_empty());
-    }
-
-    #[test]
-    fn closing_a_window_at_its_deadline_cancels_the_pending_frame() {
-        let start = Instant::now();
-        let window_id = WindowId::from(0xDEA7);
-        let mut sealer = IntervalSealer::new(start);
-        let snapshots = sealer.push_entries([
-            pending_frame(window_id, start),
-            input_entry(start, start + Duration::from_millis(20)),
-            ForegroundJournalEntry::FrameState(FrameStateChange::Closed {
-                window_id,
-                at: start + FRAME_DEADLINE,
-            }),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
-                ended_at: start + FRAME_DEADLINE,
-            }),
-        ]);
-        let [snapshot] = snapshots.as_slice() else {
-            panic!("expected one idle snapshot, got {snapshots:?}");
-        };
-        assert!(matches!(snapshot.boundary, IntervalBoundary::Idle { .. }));
-        assert!(sealer.advance(start + FRAME_DEADLINE * 2).is_empty());
-    }
-
-    #[test]
-    fn late_presentation_starts_a_new_interval_after_the_deadline() {
-        let start = Instant::now();
-        let window_id = WindowId::from(0xDEA4);
         let presented_at = start + FRAME_DEADLINE + Duration::from_millis(250);
         let mut sealer = IntervalSealer::new(start);
         let snapshots = sealer.push_entries([
@@ -1213,58 +1024,121 @@ mod tests {
             input_entry(start, start + Duration::from_millis(20)),
             ForegroundJournalEntry::Boundary(presented_boundary(window_id, start, presented_at)),
         ]);
-        assert_eq!(snapshots.len(), 2);
+        let [snapshot] = snapshots.as_slice() else {
+            panic!("expected one presented snapshot, got {snapshots:?}");
+        };
         assert!(matches!(
-            snapshots[0].boundary,
-            IntervalBoundary::FrameDeadline(_)
+            snapshot.boundary,
+            IntervalBoundary::Presented(presented)
+                if presented.frame.window_id == window_id
+                    && presented.dirty_to_present_duration()
+                        == Some(presented_at.duration_since(start))
         ));
-        assert!(matches!(
-            snapshots[1].boundary,
-            IntervalBoundary::Presented(_)
+        assert_eq!(snapshot.interval_end(), presented_at);
+        assert_eq!(snapshot.events.len(), 2);
+    }
+
+    /// Frame expiry unblocks idle boundaries on the writer side: retained
+    /// work after the deadline seals at its turn's end even though the window
+    /// never presented.
+    #[test]
+    fn an_expired_frame_no_longer_blocks_idle_boundaries() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xDEA2);
+        let mut collector = ForegroundJournalCollector::new();
+        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+
+        let blocked_end = start + Duration::from_millis(20);
+        journal.begin_turn();
+        journal.record_event(ForegroundEvent::Input(InputTiming {
+            start,
+            end: blocked_end,
+            caused_invalidation: true,
+        }));
+        journal.end_turn(blocked_end);
+        assert!(!has_boundary_at(
+            &collector.collect_unseen().entries,
+            blocked_end
         ));
-        assert_eq!(snapshots[1].events.len(), 1);
-        assert!(matches!(
-            snapshots[1].events[0],
-            ForegroundEvent::Present(_)
+
+        let unblocked_end = start + FRAME_DEADLINE + Duration::from_millis(1);
+        journal.begin_turn();
+        journal.record_event(ForegroundEvent::Input(InputTiming {
+            start: start + FRAME_DEADLINE,
+            end: unblocked_end,
+            caused_invalidation: false,
+        }));
+        journal.end_turn(unblocked_end);
+        assert!(has_boundary_at(
+            &collector.collect_unseen().entries,
+            unblocked_end
         ));
     }
 
+    /// Closing a window clears its pending frame, so idle boundaries resume
+    /// without waiting for the deadline.
+    #[test]
+    fn closing_a_window_unblocks_idle_boundaries() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xDEA7);
+        let mut collector = ForegroundJournalCollector::new();
+        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+        journal.record_window_closed(window_id, start + Duration::from_millis(1));
+
+        let event_end = start + Duration::from_millis(2);
+        journal.begin_turn();
+        journal.record_event(ForegroundEvent::Input(InputTiming {
+            start: start + Duration::from_millis(1),
+            end: event_end,
+            caused_invalidation: false,
+        }));
+        journal.end_turn(event_end);
+        assert!(has_boundary_at(
+            &collector.collect_unseen().entries,
+            event_end
+        ));
+    }
+
+    /// One window presenting must not unblock idle boundaries while another
+    /// window's unexpired frame is still pending.
     #[test]
     fn presenting_one_window_does_not_clear_another_pending_window() {
         let start = Instant::now();
         let first_window = WindowId::from(0xDEA5);
         let second_window = WindowId::from(0xDEA6);
-        let second_dirty_at = start + Duration::from_millis(100);
-        let mut sealer = IntervalSealer::new(start);
-        let snapshots = sealer.push_entries([
-            pending_frame(first_window, start),
-            pending_frame(second_window, second_dirty_at),
-            input_entry(start, start + Duration::from_millis(20)),
-            ForegroundJournalEntry::Boundary(presented_boundary(
+        let mut collector = ForegroundJournalCollector::new();
+        let mut journal = ForegroundJournal::new(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(first_window, start);
+        journal.record_frame_pending(second_window, start + Duration::from_millis(100));
+        journal.record_present(
+            presentation_timing(first_window, start + Duration::from_millis(500)),
+            Some(frame_timing(
                 first_window,
                 start,
                 start + Duration::from_millis(500),
             )),
-            input_entry(
-                start + Duration::from_millis(600),
-                start + Duration::from_millis(620),
-            ),
-        ]);
-        assert_eq!(snapshots.len(), 1);
-        assert!(matches!(
-            snapshots[0].boundary,
-            IntervalBoundary::Presented(_)
-        ));
+        );
 
-        let snapshots = sealer.advance(second_dirty_at + FRAME_DEADLINE);
-        let [snapshot] = snapshots.as_slice() else {
-            panic!("expected the second window's deadline, got {snapshots:?}");
-        };
-        assert!(matches!(
-            snapshot.boundary,
-            IntervalBoundary::FrameDeadline(FrameDeadline { window_id, .. })
-                if window_id == second_window
-        ));
+        let event_end = start + Duration::from_millis(620);
+        journal.begin_turn();
+        journal.record_event(ForegroundEvent::Input(InputTiming {
+            start: start + Duration::from_millis(600),
+            end: event_end,
+            caused_invalidation: false,
+        }));
+        journal.end_turn(event_end);
+
+        let entries = collector.collect_unseen().entries;
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                entry,
+                ForegroundJournalEntry::Boundary(IntervalBoundary::Presented(presented))
+                    if presented.frame.window_id == first_window
+            )
+        }));
+        assert!(!has_boundary_at(&entries, event_end));
     }
 
     #[test]
@@ -1498,49 +1372,6 @@ mod tests {
         assert!(ours(&drained.entries).is_empty());
     }
 
-    /// The writer folds sub-floor polls and only flushes them alongside a
-    /// later retained entry, so a flush can enter the stream after a frame
-    /// deadline it precedes semantically. The sealer must attribute it by its
-    /// span, landing it in the deadline-sealed interval.
-    #[test]
-    fn late_flushed_small_polls_land_before_the_deadline_boundary() {
-        let start = Instant::now();
-        let window_id = WindowId::from(0xD1A7);
-        let mut sealer = IntervalSealer::new(start);
-
-        let snapshots = sealer.push_entries([
-            pending_frame(window_id, start),
-            ForegroundJournalEntry::Event(ForegroundEvent::TaskPoll(task_timing(
-                start + Duration::from_millis(10),
-                start + Duration::from_millis(150),
-            ))),
-            ForegroundJournalEntry::Event(ForegroundEvent::SmallPolls(SmallPollFlush {
-                summary: PollSummary {
-                    count: 40,
-                    total: Duration::from_millis(4),
-                },
-                since: start + Duration::from_millis(200),
-                until: start + Duration::from_millis(800),
-            })),
-            ForegroundJournalEntry::Boundary(IntervalBoundary::Idle {
-                ended_at: start + Duration::from_secs(2),
-            }),
-        ]);
-
-        let [deadline_snapshot] = snapshots.as_slice() else {
-            panic!("expected exactly the deadline-sealed snapshot, got {snapshots:?}");
-        };
-        assert!(matches!(
-            deadline_snapshot.boundary,
-            IntervalBoundary::FrameDeadline(FrameDeadline {
-                window_id: deadline_window,
-                ..
-            }) if deadline_window == window_id
-        ));
-        assert_eq!(deadline_snapshot.small_poll_summary().count, 40);
-        assert_eq!(deadline_snapshot.events.len(), 1);
-    }
-
     proptest! {
         #![proptest_config(ProptestConfig {
             failure_persistence: None,
@@ -1548,7 +1379,7 @@ mod tests {
         })]
 
         #[test]
-        fn presentation_deadline_ordering_is_stable(
+        fn a_presentation_seals_exactly_once_regardless_of_delay(
             present_delay_micros in 1u64..=2_000_000
         ) {
             let start = Instant::now();
@@ -1565,23 +1396,12 @@ mod tests {
                 )),
             ]);
 
-            if presented_at <= start + FRAME_DEADLINE {
-                prop_assert_eq!(snapshots.len(), 1);
-                prop_assert!(matches!(
-                    snapshots[0].boundary,
-                    IntervalBoundary::Presented(_)
-                ));
-            } else {
-                prop_assert_eq!(snapshots.len(), 2);
-                prop_assert!(matches!(
-                    snapshots[0].boundary,
-                    IntervalBoundary::FrameDeadline(_)
-                ));
-                prop_assert!(matches!(
-                    snapshots[1].boundary,
-                    IntervalBoundary::Presented(_)
-                ));
-            }
+            prop_assert_eq!(snapshots.len(), 1);
+            prop_assert!(matches!(
+                snapshots[0].boundary,
+                IntervalBoundary::Presented(_)
+            ));
+            prop_assert_eq!(snapshots[0].interval_end(), presented_at);
         }
 
         #[test]

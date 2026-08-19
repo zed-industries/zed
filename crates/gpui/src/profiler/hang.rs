@@ -19,10 +19,9 @@ use super::journal::{
 
 /// Detects foreground hangs by polling the journal.
 ///
-/// Detection is post-hoc: a hang is reported once an explicit presentation,
-/// foreground-idle, or pending-frame deadline boundary completes its
-/// interval. Work that never yields back to the foreground is not observed
-/// until it does.
+/// Detection is post-hoc: a hang is reported once an explicit presentation
+/// or foreground-idle boundary completes its interval. Work that never
+/// yields back to the foreground is not observed until it does.
 pub struct HangDetector {
     collector: ForegroundJournalCollector,
     sealer: IntervalSealer,
@@ -62,7 +61,6 @@ impl HangDetector {
     /// Drains newly recorded events and returns the incidents sealed since
     /// the previous poll.
     pub fn poll(&mut self) -> Vec<HangIncident> {
-        let now = Instant::now();
         let drained = self.collector.collect_unseen();
         if self.first_present_at.is_none() {
             self.first_present_at = drained.entries.iter().find_map(|entry| match entry {
@@ -73,20 +71,10 @@ impl HangDetector {
             });
         }
         self.sealer.note_lost(drained.lost);
-        let snapshots = self.sealer.push_entries(drained.entries);
-        let mut incidents = Self::detect_incidents(snapshots, self.threshold);
-        incidents.extend(self.advance_at(now));
-        incidents
-    }
-
-    fn advance_at(&mut self, now: Instant) -> Vec<HangIncident> {
-        Self::detect_incidents(self.sealer.advance(now), self.threshold)
-    }
-
-    fn detect_incidents(snapshots: Vec<FrameSnapshot>, threshold: Duration) -> Vec<HangIncident> {
-        snapshots
+        self.sealer
+            .push_entries(drained.entries)
             .into_iter()
-            .filter_map(|snapshot| HangIncident::detect(snapshot, threshold))
+            .filter_map(|snapshot| HangIncident::detect(snapshot, self.threshold))
             .collect()
     }
 }
@@ -115,9 +103,8 @@ pub struct SerializedHangIncident {
     /// For presentation-sealed incidents, how long the submitted frame had
     /// been dirty, in milliseconds.
     pub dirty_to_present_ms: Option<f64>,
-    /// What closed the incident: `"present"`, `"frame_deadline"`, or
-    /// `"idle"`. This labels the boundary, not the hang's cause — the
-    /// cause is the first contributor.
+    /// What closed the incident: `"present"` or `"idle"`. This labels the
+    /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
     /// Fraction of the active window the foreground spent working,
     /// `0.0..=1.0`. Low values with a high `dirty_to_present_ms` indicate
@@ -239,11 +226,10 @@ impl SerializedHangIncident {
                 IntervalBoundary::Presented(presented) => {
                     presented.dirty_to_present_duration().map(as_millis)
                 }
-                IntervalBoundary::FrameDeadline(_) | IntervalBoundary::Idle { .. } => None,
+                IntervalBoundary::Idle { .. } => None,
             },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
-                IntervalBoundary::FrameDeadline(_) => "frame_deadline",
                 IntervalBoundary::Idle { .. } => "idle",
             },
             busy_fraction: (busy_fraction * 1000.0).round() / 1000.0,
@@ -375,9 +361,9 @@ mod tests {
     use crate::profiler::{ActionTiming, FrameTiming, PresentTiming, TaskTiming, YieldTime};
 
     use super::super::journal::{
-        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameDeadline, FrameSnapshot,
-        FrameStateChange, InputTiming, IntervalBoundary, PollSummary, PresentedFrame,
-        SmallPollFlush, install_foreground_journal, record_present,
+        FRAME_DEADLINE, ForegroundEvent, ForegroundJournalEntry, FrameSnapshot, FrameStateChange,
+        InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
+        install_foreground_journal, record_present,
     };
     use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
 
@@ -387,35 +373,53 @@ mod tests {
     // empty polls), well below the injected hangs.
     const HANG_THRESHOLD: Duration = Duration::from_millis(10);
 
+    /// A hang that outlives the frame deadline stays in one incident with
+    /// the frame it starved: the deadline only unblocks idle boundaries, so
+    /// the eventual presentation seals the hang together with its
+    /// dirty-to-present association.
     #[test]
-    fn silent_poll_advances_a_pending_frame_deadline() {
+    fn a_hang_outliving_the_frame_deadline_keeps_its_frame_association() {
         let start = scheduler::Instant::now();
         let window_id = WindowId::from(0x51E17);
+        let hang_end = start + FRAME_DEADLINE * 5;
+        let presented_at = hang_end + Duration::from_millis(16);
         let mut detector = HangDetector::new(HANG_THRESHOLD);
+
         let snapshots = detector.sealer.push_entries([
             ForegroundJournalEntry::FrameState(FrameStateChange::Pending {
                 window_id,
                 dirty_at: start,
             }),
-            ForegroundJournalEntry::Event(ForegroundEvent::Input(InputTiming {
-                start,
-                end: start + Duration::from_millis(20),
-                caused_invalidation: true,
-            })),
+            ForegroundJournalEntry::Event(task_poll_event(start, hang_end)),
         ]);
-        assert!(snapshots.is_empty());
+        assert!(snapshots.is_empty(), "nothing seals mid-hang");
 
-        let incidents = detector.advance_at(start + FRAME_DEADLINE);
-        assert!(incidents.iter().any(|incident| {
-            matches!(
-                incident.snapshot.boundary,
-                IntervalBoundary::FrameDeadline(FrameDeadline {
-                    window_id: deadline_window,
-                    ended_at,
-                    ..
-                }) if deadline_window == window_id && ended_at == start + FRAME_DEADLINE
-            )
-        }));
+        let snapshots = detector
+            .sealer
+            .push_entries([ForegroundJournalEntry::Boundary(
+                IntervalBoundary::Presented(PresentedFrame {
+                    frame: frame(window_id, presented_at),
+                    presentation: PresentTiming {
+                        window_id,
+                        present_start: presented_at - Duration::from_millis(1),
+                        present_end: presented_at,
+                        animation_interval: None,
+                    },
+                }),
+            )]);
+        let [snapshot] = snapshots.as_slice() else {
+            panic!("expected one presented snapshot, got {snapshots:?}");
+        };
+        let incident =
+            HangIncident::detect(snapshot.clone(), HANG_THRESHOLD).expect("the hang qualifies");
+        assert!(matches!(
+            incident.contributors[0],
+            ForegroundEvent::TaskPoll(timing) if timing.end.0 == hang_end
+        ));
+        assert!(matches!(
+            incident.snapshot.boundary,
+            IntervalBoundary::Presented(_)
+        ));
     }
 
     #[test]
@@ -501,10 +505,9 @@ mod tests {
     }
 
     #[test]
-    fn serialized_incident_reports_idle_and_deadline_seal_fields() {
+    fn serialized_incident_reports_idle_seal_fields() {
         let startup = scheduler::Instant::now();
         let at = |ms: u64| startup + Duration::from_millis(ms);
-        let window_id = WindowId::from(0xF1E1E);
 
         let idle = FrameSnapshot {
             interval_start: at(200),
@@ -523,31 +526,6 @@ mod tests {
         assert_eq!(serialized.active_ms, 60.0);
         assert_eq!(serialized.stall_ms, 60.0);
         assert_eq!(serialized.busy_fraction, 1.0);
-
-        let deadline = FrameSnapshot {
-            interval_start: at(450),
-            boundary: IntervalBoundary::FrameDeadline(FrameDeadline {
-                window_id,
-                dirty_at: at(400),
-                ended_at: at(400) + FRAME_DEADLINE,
-            }),
-            events: vec![task_poll_event(at(500), at(700))],
-            small_polls: Vec::new(),
-            dropped_events: 0,
-        };
-        let incident = HangIncident::detect(deadline, HANG_THRESHOLD).expect("has contributors");
-        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(at(100)));
-        assert_eq!(serialized.phase, "steady");
-        assert_eq!(serialized.sealed_by, "frame_deadline");
-        assert_eq!(serialized.dirty_to_present_ms, None);
-        // The never-presented frame's first invalidation anchors the window
-        // even though it precedes the interval and the contributor.
-        assert_eq!(serialized.start_ms, 400.0);
-        assert_eq!(
-            serialized.active_ms,
-            FRAME_DEADLINE.as_micros() as f64 / 1000.0
-        );
-        assert_eq!(serialized.stall_ms, 200.0);
     }
 
     #[test]
