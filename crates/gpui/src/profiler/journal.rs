@@ -650,6 +650,16 @@ pub struct DrainedEntries {
     pub lost: u64,
 }
 
+/// Bounds how many entries one lock acquisition copies during
+/// [`ForegroundJournalCollector::collect_unseen`]. The foreground writer
+/// spins on the same lock, and a collector preempted mid-copy would otherwise
+/// stall it for the whole backlog (hundreds of microseconds for a full ring,
+/// unbounded under preemption). Chunking bounds each hold to a few
+/// microseconds; the cursor tolerates entries pushed between chunks. Small in
+/// tests so chunk-boundary behavior is exercised without flooding the shared
+/// ring.
+const COLLECT_CHUNK: usize = if cfg!(test) { 8 } else { 1024 };
+
 /// Reads the foreground stream, tracking a cursor so each call to
 /// [`Self::collect_unseen`] returns only entries recorded since the previous
 /// call. Independent collectors do not affect each other.
@@ -674,20 +684,31 @@ impl ForegroundJournalCollector {
     /// Returns entries recorded since the previous call (or since the
     /// collector was created), reporting how many were overwritten in the
     /// ring before this drain observed them.
+    ///
+    /// The backlog is copied in [`COLLECT_CHUNK`]-sized chunks, releasing the
+    /// ring lock between chunks and allocating only while unlocked, so the
+    /// foreground writer is never blocked for more than one chunk's copy.
     pub fn collect_unseen(&mut self) -> DrainedEntries {
-        let ring = FOREGROUND_ENTRIES.lock();
-        let buffer_len = ring.entries.len() as u64;
-        let buffer_start = ring.total_pushed.saturating_sub(buffer_len);
-        let lost = buffer_start.saturating_sub(self.cursor);
-        let skip = self.cursor.saturating_sub(buffer_start) as usize;
-        let entries = ring
-            .entries
-            .iter()
-            .skip(skip.min(ring.entries.len()))
-            .copied()
-            .collect();
-        self.cursor = ring.total_pushed;
-        DrainedEntries { entries, lost }
+        let mut entries: Vec<ForegroundJournalEntry> = Vec::new();
+        let mut lost = 0;
+        loop {
+            // Reserve outside the lock; the reserved chunk makes the extend
+            // below allocation-free while the lock is held.
+            entries.reserve(COLLECT_CHUNK);
+            let ring = FOREGROUND_ENTRIES.lock();
+            let buffer_len = ring.entries.len() as u64;
+            let buffer_start = ring.total_pushed.saturating_sub(buffer_len);
+            lost += buffer_start.saturating_sub(self.cursor);
+            self.cursor = self.cursor.max(buffer_start);
+            let skip = (self.cursor - buffer_start) as usize;
+            let available = ring.entries.len() - skip;
+            let take = available.min(COLLECT_CHUNK);
+            entries.extend(ring.entries.iter().skip(skip).take(take).copied());
+            self.cursor += take as u64;
+            if take == available {
+                return DrainedEntries { entries, lost };
+            }
+        }
     }
 }
 
@@ -1441,6 +1462,40 @@ mod tests {
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].events.len(), MAX_INTERVAL_EVENTS);
         assert_eq!(snapshots[0].dropped_events, overflow as u64);
+    }
+
+    /// Drains spanning multiple lock-release chunks must return every entry
+    /// exactly once, in recording order.
+    #[test]
+    fn collect_unseen_preserves_order_across_chunk_boundaries() {
+        let start = Instant::now();
+        let mut collector = ForegroundJournalCollector::new();
+        let timestamps: Vec<Instant> = (0..COLLECT_CHUNK * 2 + 3)
+            .map(|i| start + Duration::from_micros(i as u64 + 1))
+            .collect();
+        push_to_ring(timestamps.iter().map(|&at| input_entry(at, at)));
+
+        let ours = |entries: &[ForegroundJournalEntry]| -> Vec<Instant> {
+            entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    ForegroundJournalEntry::Event(ForegroundEvent::Input(timing))
+                        if timestamps.contains(&timing.end) =>
+                    {
+                        Some(timing.end)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let drained = collector.collect_unseen();
+        assert_eq!(ours(&drained.entries), timestamps);
+
+        // The cursor advanced past everything: a second drain sees none of
+        // our entries again.
+        let drained = collector.collect_unseen();
+        assert!(ours(&drained.entries).is_empty());
     }
 
     /// The writer folds sub-floor polls and only flushes them alongside a
