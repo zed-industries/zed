@@ -84,12 +84,30 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
     let foreground_thread = thread::current().id();
     let monitor_interval = Duration::from_secs(1);
     let telemetry = Arc::new(Mutex::new(telemetry::Reporter::new()));
+    let incident_detector = Arc::new(spin::Mutex::new(HangDetector::new(report_longer_then)));
+    let started = Instant::now();
+    let startup = *STARTUP_TIME.get().unwrap_or(&started);
     let mut log = logging::Reporter::new(monitor_interval, report_longer_then, foreground_thread);
 
-    let telemetry2 = Arc::clone(&telemetry);
     cx.on_app_quit({
+        let telemetry = Arc::clone(&telemetry);
+        let incident_detector = Arc::clone(&incident_detector);
         move |_| {
-            telemetry2.lock().send();
+            let mut incident_detector = incident_detector.lock();
+            let incidents = incident_detector.poll();
+            let first_present_at = incident_detector.first_present_at();
+            drop(incident_detector);
+
+            let mut telemetry = telemetry.lock();
+            for incident in &incidents {
+                telemetry.add(SerializedHangIncident::convert(
+                    startup,
+                    incident,
+                    MAX_SERIALIZED_CONTRIBUTORS,
+                    first_present_at,
+                ));
+            }
+            telemetry.send();
             client.telemetry().flush_events()
         }
     })
@@ -103,17 +121,17 @@ fn start_hang_detection(report_longer_then: Duration, client: Arc<Client>, cx: &
             // allow "bad" tasks during startup. Not because we should but since here
             // they are not observed by the user and to lower on clutter from the reporter
             thread::sleep(Duration::from_millis(200));
-            let mut incident_detector = HangDetector::new(report_longer_then);
-            let started = Instant::now();
-            let startup = *STARTUP_TIME.get().unwrap_or(&started);
             loop {
                 thread::sleep(monitor_interval);
                 let task_stats = profiler::take_all_stats(TasksIncluded::CompletedAndRunning);
                 let action_stats = profiler::take_action_stats();
 
                 {
+                    let mut incident_detector = incident_detector.lock();
                     let incidents = incident_detector.poll();
                     let first_present_at = incident_detector.first_present_at();
+                    drop(incident_detector);
+
                     let mut telemetry = telemetry.lock();
                     for incident in &incidents {
                         let serialized_incident = SerializedHangIncident::convert(

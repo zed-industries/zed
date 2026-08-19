@@ -23420,6 +23420,7 @@ dependencies = [
  "smol",
  "snippet_provider",
  "snippets_ui",
+ "spin 0.10.0",
  "svg_preview",
  "sysinfo 0.37.2",
  "system_specs",

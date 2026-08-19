@@ -124,6 +124,7 @@ gpui = { workspace = true, features = [ "profiler" ] }
 gpui_platform = { workspace = true, features = [ "screen-capture", "font-kit", "wayland", "x11" ] }
 gpui_tokio.workspace = true
 image = { workspace = true, optional = true }
+spin = "0.10.0"
 itertools.workspace = true
 rayon.workspace = true
 semver.workspace = true
