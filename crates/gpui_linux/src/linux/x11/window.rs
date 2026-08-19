@@ -609,6 +609,8 @@ impl X11WindowState {
                 None
             };
 
+            let mut wm_state = Vec::new();
+
             if params.kind == WindowKind::Dialog {
                 // _NET_WM_WINDOW_TYPE_DIALOG indicates that this is a dialog (floating) window
                 // https://specifications.freedesktop.org/wm-spec/1.4/ar01s05.html
@@ -626,14 +628,23 @@ impl X11WindowState {
                 // We set the modal state for dialog windows, so that the window manager
                 // can handle it appropriately (e.g., prevent interaction with the parent window
                 // while the dialog is open).
+                wm_state.push(atoms._NET_WM_STATE_MODAL);
+            }
+
+            if params.initial_maximized {
+                wm_state.push(atoms._NET_WM_STATE_MAXIMIZED_VERT);
+                wm_state.push(atoms._NET_WM_STATE_MAXIMIZED_HORZ);
+            }
+
+            if !wm_state.is_empty() {
                 check_reply(
-                    || "X11 ChangeProperty32 setting modal state for dialog window failed.",
+                    || "X11 ChangeProperty32 setting initial window state failed.",
                     xcb.change_property32(
                         xproto::PropMode::REPLACE,
                         x_window,
                         atoms._NET_WM_STATE,
                         xproto::AtomEnum::ATOM,
-                        &[atoms._NET_WM_STATE_MODAL],
+                        &wm_state,
                     ),
                 )?;
             }
@@ -797,8 +808,8 @@ impl X11WindowState {
                 hovered: false,
                 force_render_after_recovery: false,
                 fullscreen: false,
-                maximized_vertical: false,
-                maximized_horizontal: false,
+                maximized_vertical: params.initial_maximized,
+                maximized_horizontal: params.initial_maximized,
                 hidden: false,
                 appearance,
                 handle,
