@@ -21,22 +21,9 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .modal(false)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding()
-        });
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         Self { picker }
-    }
-
-    pub fn set_query(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
-        self.picker.update(cx, |picker, cx| {
-            picker.set_query(&query, window, cx);
-        });
     }
 }
 
@@ -174,7 +161,7 @@ impl PickerDelegate for ContactFinderDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .start_slot(Avatar::new(user.avatar_uri.clone()))
-                .child(Label::new(user.github_login.clone()))
+                .child(Label::new(user.username.clone()))
                 .end_slot::<Icon>(icon_path.map(Icon::from_path)),
         )
     }

@@ -2,26 +2,6 @@ use gpui::{Hsla, IntoElement, PathBuilder, Refineable as _, StyleRefinement, can
 
 use crate::prelude::*;
 
-pub fn divider() -> Divider {
-    Divider {
-        line_style: DividerStyle::Solid,
-        direction: DividerDirection::Horizontal,
-        color: DividerColor::default(),
-        style: StyleRefinement::default(),
-        inset: false,
-    }
-}
-
-pub fn vertical_divider() -> Divider {
-    Divider {
-        line_style: DividerStyle::Solid,
-        direction: DividerDirection::Vertical,
-        color: DividerColor::default(),
-        style: StyleRefinement::default(),
-        inset: false,
-    }
-}
-
 #[derive(Clone, Copy, PartialEq)]
 enum DividerStyle {
     Solid,
@@ -166,7 +146,7 @@ impl RenderOnce for Divider {
             DividerDirection::Vertical => div()
                 .min_w_0()
                 .w_px()
-                .h_full()
+                .h_4()
                 .when(self.inset, |this| this.my_1p5()),
         };
 

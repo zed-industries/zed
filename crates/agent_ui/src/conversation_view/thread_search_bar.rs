@@ -891,12 +891,12 @@ fn collect_markdowns(
         AgentThreadEntry::AssistantMessage(message) => {
             for (chunk_ix, chunk) in message.chunks.iter().enumerate() {
                 match chunk {
-                    AssistantMessageChunk::Message { block } => {
+                    AssistantMessageChunk::Message { block, .. } => {
                         if let Some(md) = block.markdown() {
                             out.push(md.clone());
                         }
                     }
-                    AssistantMessageChunk::Thought { block }
+                    AssistantMessageChunk::Thought { block, .. }
                         if entry_view_state
                             .thinking_block_state((entry_ix, chunk_ix), cx)
                             .0 =>
@@ -920,8 +920,13 @@ fn collect_markdowns(
                             ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
                                 Some(markdown.clone())
                             }
+                            ToolCallContent::ContentBlock(ContentBlock::EmbeddedResource {
+                                markdown: Some(markdown),
+                                ..
+                            }) => Some(markdown.clone()),
                             ToolCallContent::ContentBlock(
                                 ContentBlock::Empty
+                                | ContentBlock::EmbeddedResource { markdown: None, .. }
                                 | ContentBlock::ResourceLink { .. }
                                 | ContentBlock::Image { .. },
                             )
@@ -941,6 +946,7 @@ fn collect_markdowns(
                 out.push(summary.clone());
             }
         }
+        AgentThreadEntry::Elicitation(_) => {}
         AgentThreadEntry::ContextCompaction(_) => {}
     }
     out

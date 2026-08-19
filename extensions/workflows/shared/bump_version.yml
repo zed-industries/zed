@@ -11,6 +11,7 @@ on:
     paths-ignore:
     - .github/**
   workflow_dispatch: {}
+permissions: {}
 jobs:
   determine_bump_type:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

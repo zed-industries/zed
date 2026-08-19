@@ -95,13 +95,7 @@ impl EncodingSelector {
 
     fn new(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let delegate = EncodingSelectorDelegate::new(cx.entity().downgrade(), buffer);
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .initial_width(gpui::rems(34.))
-                .minimum_results_width(gpui::rems(34.))
-                .height(gpui::rems(24.))
-                .no_vertical_padding()
-        });
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

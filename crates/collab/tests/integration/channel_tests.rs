@@ -367,76 +367,6 @@ async fn test_joining_channel_ancestor_member(
 }
 
 #[gpui::test]
-async fn test_rejoining_channel_does_not_remove_livekit_participant(
-    executor: BackgroundExecutor,
-    cx_a1: &mut TestAppContext,
-    cx_a2: &mut TestAppContext,
-) {
-    let mut server = TestServer::start(executor.clone()).await;
-    // Two connections for the same user. The second one joining the same
-    // channel reproduces the production scenario where the server runs
-    // stale-connection cleanup for the first connection (as it does after an
-    // abrupt disconnect/crash followed by a rejoin within RECONNECT_TIMEOUT).
-    // Mirror LiveKit Cloud: removing a participant revokes their tokens. This
-    // is what turns the redundant `remove_participant` during stale cleanup
-    // into a user-visible failure.
-    server
-        .test_livekit_server
-        .set_revoke_tokens_on_removal(true);
-
-    let client_a1 = server.create_client(cx_a1, "user_a").await;
-    let client_a2 = server.create_client(cx_a2, "user_a").await;
-    client_a1.initialize_channel_store(cx_a1);
-
-    let channel_id = server
-        .make_channel("zed", None, (&client_a1, cx_a1), &mut [])
-        .await;
-
-    let active_call_a1 = cx_a1.read(ActiveCall::global);
-    active_call_a1
-        .update(cx_a1, |active_call, cx| {
-            active_call.join_channel(channel_id, cx)
-        })
-        .await
-        .unwrap();
-    executor.run_until_parked();
-
-    // The second connection joins the same channel, triggering stale-connection
-    // cleanup of the first connection on the server.
-    let active_call_a2 = cx_a2.read(ActiveCall::global);
-    active_call_a2
-        .update(cx_a2, |active_call, cx| {
-            active_call.join_channel(channel_id, cx)
-        })
-        .await
-        .unwrap();
-    executor.run_until_parked();
-
-    // The user-visible symptom: with the bug, stale cleanup revokes the
-    // rejoining user's token and they end up in the call with no audio.
-    let room_a2 =
-        cx_a2.read(|cx| active_call_a2.read_with(cx, |call, _| call.room().unwrap().clone()));
-    cx_a2.read(|cx| {
-        room_a2.read_with(cx, |room, cx| {
-            assert!(
-                room.is_connected(cx),
-                "rejoining the same channel should not break audio"
-            )
-        })
-    });
-
-    // The mechanism: that cleanup must NOT have removed the user from the
-    // LiveKit room, since they are immediately rejoining it.
-    let identity = client_a2.user_id().unwrap().to_string();
-    assert!(
-        !server
-            .test_livekit_server
-            .participant_was_removed(&identity),
-        "rejoining the same channel should not remove the LiveKit participant"
-    );
-}
-
-#[gpui::test]
 async fn test_channel_room(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -657,6 +587,95 @@ async fn test_channel_room(
             pending: vec![]
         }
     );
+}
+
+#[gpui::test]
+async fn test_rejoining_channel_after_stale_connection_cleanup_connects_livekit(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_a2: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    let channel_id = server
+        .make_channel("zed", None, (&client_a, cx_a), &mut [(&client_b, cx_b)])
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    active_call_a
+        .update(cx_a, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    let active_call_b = cx_b.read(ActiveCall::global);
+    active_call_b
+        .update(cx_b, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+
+    let old_room_a =
+        cx_a.read(|cx| active_call_a.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a.read(|cx| old_room_a.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
+
+    server.disconnect_client(client_a.peer_id().unwrap());
+    executor.run_until_parked();
+    server.advance_livekit_timestamp();
+
+    let client_a2 = server.create_client(cx_a2, "user_a").await;
+    let active_call_a2 = cx_a2.read(ActiveCall::global);
+    active_call_a2
+        .update(cx_a2, |active_call, cx| {
+            active_call.join_channel(channel_id, cx)
+        })
+        .await
+        .unwrap();
+
+    executor.run_until_parked();
+
+    let room_a2 =
+        cx_a2.read(|cx| active_call_a2.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_a2.read(|cx| room_a2.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
+    assert_eq!(
+        room_participants(&room_a2, cx_a2),
+        RoomParticipants {
+            remote: vec!["user_b".to_string()],
+            pending: vec![]
+        }
+    );
+
+    let room_b =
+        cx_b.read(|cx| active_call_b.read_with(cx, |call, _| call.room().unwrap().clone()));
+    cx_b.read(|cx| room_b.read_with(cx, |room, cx| assert!(room.is_connected(cx))));
+    assert_eq!(
+        room_participants(&room_b, cx_b),
+        RoomParticipants {
+            remote: vec!["user_a".to_string()],
+            pending: vec![]
+        }
+    );
+
+    cx_a2.read(|cx| {
+        client_a2.channel_store().read_with(cx, |channels, _| {
+            let mut participant_ids = channels
+                .channel_participants(channel_id)
+                .iter()
+                .map(|participant| participant.legacy_id)
+                .collect::<Vec<_>>();
+            participant_ids.sort_unstable();
+            let mut expected_ids = vec![client_a2.user_id().unwrap(), client_b.user_id().unwrap()];
+            expected_ids.sort_unstable();
+            assert_eq!(participant_ids, expected_ids);
+        })
+    });
 }
 
 #[gpui::test]

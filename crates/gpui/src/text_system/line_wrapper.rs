@@ -477,7 +477,10 @@ impl LineWrapper {
         // is included so it stays attached to the preceding word when wrapping.
         matches!(c, '-' | '_' | '.' | '\'' | '’' | '‘' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':' | ';') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
-        matches!(c, '⋯')
+        matches!(c, '⋯') ||
+
+        // Non-breaking glue characters
+        matches!(c, '\u{202F}' | '\u{00A0}' | '\u{2011}')
     }
 
     #[inline(always)]
@@ -842,6 +845,17 @@ mod tests {
                 Boundary::new(18, 0)
             ],
         );
+
+        // Test with non-breaking glue characters
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("a\u{202F}b\u{00A0}c\u{2011}d e")],
+                    px(72.0)
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(12, 0),], // special chars above take up 3, 2 and 3 bytes, so boundary ends up at 12
+        );
     }
 
     #[test]
@@ -1170,6 +1184,12 @@ mod tests {
         assert_not_word("こんにちは");
         assert_not_word("😀😁😂");
         assert_not_word("()[]{}<>");
+
+        // Non-breaking ("Glue") characters, see https://www.unicode.org/reports/tr14/
+        // (https://github.com/zed-industries/zed/issues/59664)
+        assert_word("\u{202F}"); // NNBSP " "
+        assert_word("\u{00A0}"); // NBSP " "
+        assert_word("\u{2011}"); // NBH "‑"
     }
 
     // For compatibility with the test macro

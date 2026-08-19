@@ -112,9 +112,7 @@ impl AddToolchainState {
             let (lister, rx) = Self::create_path_browser_delegate(project.clone(), cx);
             let path_style = project.read(cx).path_style(cx);
             let picker = cx.new(|cx| {
-                let picker = Picker::uniform_list(lister, window, cx)
-                    .initial_width(rems(34.))
-                    .minimum_results_width(rems(34.));
+                let picker = Picker::uniform_list(lister, window, cx);
                 let mut worktree_root = worktree_root_path.to_string_lossy().into_owned();
                 worktree_root.push_str(path_style.primary_separator());
                 picker.set_query(&worktree_root, window, cx);
@@ -234,9 +232,7 @@ impl AddToolchainState {
                             let (delegate, rx) =
                                 Self::create_path_browser_delegate(this.project.clone(), cx);
                             picker.update(cx, |picker, cx| {
-                                *picker = Picker::uniform_list(delegate, window, cx)
-                                    .initial_width(rems(34.))
-                                    .minimum_results_width(rems(34.));
+                                *picker = Picker::uniform_list(delegate, window, cx);
                                 picker.set_query(path.to_string_lossy().as_ref(), window, cx);
                             });
                             *input_state = Self::wait_for_path(rx, window, cx);
@@ -688,8 +684,6 @@ impl ToolchainSelector {
                     cx,
                 );
                 Picker::uniform_list(delegate, window, cx)
-                    .initial_width(rems(34.))
-                    .minimum_results_width(rems(34.))
             });
             let picker_focus_handle = picker.focus_handle(cx);
             picker.update(cx, |picker, _| {

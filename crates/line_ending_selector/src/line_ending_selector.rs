@@ -65,13 +65,7 @@ impl LineEndingSelector {
         let line_ending = buffer.read(cx).line_ending();
         let delegate =
             LineEndingSelectorDelegate::new(cx.entity().downgrade(), buffer, project, line_ending);
-        let picker = cx.new(|cx| {
-            Picker::nonsearchable_uniform_list(delegate, window, cx)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding()
-        });
+        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

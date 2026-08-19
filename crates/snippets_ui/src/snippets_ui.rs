@@ -111,13 +111,7 @@ impl ScopeSelector {
         let delegate =
             ScopeSelectorDelegate::new(workspace, cx.entity().downgrade(), language_registry);
 
-        let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding()
-        });
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -226,7 +220,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                 cx.spawn_in(window, async move |_, cx| {
                     let scope_file_name = ScopeFileName(match scope_name.to_lowercase().as_str() {
                         GLOBAL_SCOPE_NAME => Cow::Borrowed(GLOBAL_SCOPE_FILE_NAME),
-                        _ => Cow::Owned(language.await?.lsp_id()),
+                        _ => Cow::Owned(language.await?.snippet_scope_id()),
                     });
 
                     workspace.update_in(cx, |workspace, window, cx| {
@@ -328,7 +322,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
         let name_label = mat.string.clone();
 
         let scope_name = ScopeName(Cow::Owned(
-            LanguageName::new(&self.candidates[mat.candidate_id].string).lsp_id(),
+            LanguageName::new(&self.candidates[mat.candidate_id].string).snippet_scope_id(),
         ));
         let file_label = if self.existing_scopes.contains(&scope_name) {
             Some(ScopeFileName::from(scope_name).with_extension())

@@ -177,7 +177,6 @@ impl TabSwitcher {
                     Picker::nonsearchable_list(delegate, window, cx)
                 }
                 .initial_width(rems(PANEL_WIDTH_REMS))
-                .minimum_results_width(rems(PANEL_WIDTH_REMS))
             }),
             init_modifiers,
         }
@@ -276,7 +275,9 @@ impl TabMatch {
                 let project = project.read(cx);
                 let entry = project.entry_for_path(&path, cx)?;
                 let git_status = project
-                    .project_path_git_status(&path, cx)
+                    .git_store()
+                    .read(cx)
+                    .display_status_for_project_path(&path, cx)
                     .map(|status| status.summary())
                     .unwrap_or_default();
                 Some(entry_git_aware_label_color(

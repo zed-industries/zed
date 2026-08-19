@@ -21,6 +21,8 @@ Clone the [Zed repository](https://github.com/zed-industries/zed).
 - Install the Windows 11 or 10 SDK for your system, and make sure at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/).
 - Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/)). Or you can install it through Visual Studio Installer, then manually add the `bin` directory to your `PATH`, for example: `C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
 
+> Starting with Visual Studio 2026 (or MSVC 14.50), you need to install optional components `MSVC Build Tools for x64/x86 (Latest)` and `C++ Spectre-mitigated libraries for x64/x86 (Latest MSVC)`, since Microsoft has decoupled the MSVC version from the Visual Studio version. The traditional naming format `MSVC v*** - VS YYYY C++ x64/x86 ...` will no longer be applicable to newer MSVC toolchain. See [this blog](https://devblogs.microsoft.com/cppblog/new-release-cadence-and-support-lifecycle-for-msvc-build-tools/) for more details.
+
 If you cannot compile Zed, make sure a Visual Studio installation includes at least the following components:
 
 ```json
