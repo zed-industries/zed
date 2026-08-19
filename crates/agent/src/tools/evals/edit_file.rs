@@ -361,7 +361,7 @@ impl EditToolTest {
                 abs_path: Path::new("/path/to/root").into(),
                 rules_file: None,
             }];
-            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let project_context = ProjectContext::new(worktrees);
             let tool_names = tools
                 .iter()
                 .map(|tool| tool.name.clone().into())
@@ -372,6 +372,9 @@ impl EditToolTest {
                 model_name: None,
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
+                sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             let templates = Templates::new();
             template.render(&templates)?
@@ -500,7 +503,9 @@ impl EditToolTest {
                     if tool_use.is_input_complete
                         && tool_use.name.as_ref() == EditFileTool::NAME =>
                 {
-                    let input: EditFileToolInput = serde_json::from_value(tool_use.input)
+                    let input: EditFileToolInput = tool_use
+                        .input
+                        .parse()
                         .context("Failed to parse tool input as EditFileToolInput")?;
                     return Ok(input);
                 }
@@ -604,7 +609,9 @@ fn tool_use(
         id: LanguageModelToolUseId::from(id.into()),
         name: name.into(),
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
-        input: serde_json::to_value(input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(input).unwrap(),
+        ),
         is_input_complete: true,
         thought_signature: None,
     })

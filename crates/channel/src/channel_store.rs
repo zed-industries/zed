@@ -124,7 +124,7 @@ impl ChannelMembership {
                 proto::channel_member::Kind::Member => 0,
                 proto::channel_member::Kind::Invitee => 1,
             },
-            username_order: &self.user.github_login,
+            username_order: &self.user.username,
         }
     }
 }
@@ -143,7 +143,7 @@ pub enum ChannelEvent {
 
 impl EventEmitter<ChannelEvent> for ChannelStore {}
 
-enum OpenEntityHandle<E> {
+enum OpenEntityHandle<E: 'static> {
     Open(WeakEntity<E>),
     Loading(Shared<Task<Result<Entity<E>, Arc<anyhow::Error>>>>),
 }

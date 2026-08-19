@@ -4,7 +4,9 @@ use futures::{
     io::BufReader,
     stream::{BoxStream, StreamExt},
 };
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -148,6 +150,7 @@ pub enum ThinkingType {
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
+    Low,
     High,
     Max,
 }
@@ -297,15 +300,16 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamResponse>>> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
@@ -319,10 +323,7 @@ pub async fn stream_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
-                                Ok(response) => Some(Ok(response)),
-                                Err(error) => Some(Err(anyhow!(error))),
-                            }
+                            Some(serde_json::from_str(line).map_err(Into::into))
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),

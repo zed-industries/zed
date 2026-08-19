@@ -13,6 +13,7 @@ path = "agent_skills.rs"
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 const_format.workspace = true
 fs.workspace = true
 futures.workspace = true
@@ -20,6 +21,7 @@ gpui.workspace = true
 paths.workspace = true
 serde.workspace = true
 serde_yaml_ng.workspace = true
+url.workspace = true
 util.workspace = true
 
 [dev-dependencies]

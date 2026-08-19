@@ -1,5 +1,5 @@
 use action_log::ActionLog;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use futures::FutureExt as _;
 use gpui::{App, Entity, SharedString, Task};
@@ -16,6 +16,80 @@ use util::markdown::MarkdownCodeBlock;
 
 fn tool_content_err(e: impl std::fmt::Display) -> LanguageModelToolResultContent {
     LanguageModelToolResultContent::from(e.to_string())
+}
+
+/// Resolves the optional `start_line` / `end_line` inputs from the tool schema
+/// to a concrete 1-indexed, inclusive `(start, end)` line range:
+///
+/// - `start` defaults to 1 and is clamped to `>= 1` (the model occasionally passes
+///   `0` despite instructions to be 1-indexed).
+/// - `end` defaults to `u32::MAX` and is clamped to `>= start`, so callers always
+///   read at least one line even when the model passes `end < start`.
+///
+/// Callers translate this 1-indexed inclusive range to whichever coordinate
+/// system their slicing API wants (e.g. 0-indexed exclusive row ranges for
+/// `Buffer::text_for_range`).
+fn resolve_line_range(start_line: Option<u32>, end_line: Option<u32>) -> (u32, u32) {
+    let start = start_line.unwrap_or(1).max(1);
+    let end = end_line.unwrap_or(u32::MAX).max(start);
+    (start, end)
+}
+
+/// Prefixes each line of `text` with its line number in `cat -n` format:
+/// the line number is right-aligned in a 6-character field, followed by a
+/// single tab, followed by the line's original content (including its
+/// trailing newline if present). Numbering starts at `start_line`.
+///
+/// This format matches what the model expects in the edit tool, where the
+/// line number prefix is `line number + tab` and everything after the tab is
+/// the actual file content to match.
+fn format_with_line_numbers(text: &str, start_line: u32) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::with_capacity(text.len() + text.len() / 4);
+    write_lines_numbered(&mut output, std::iter::once(text), start_line);
+    output
+}
+
+/// Streams `cat -n`-style line-numbered output directly into `output` from an
+/// iterator of string slices. Chunks do not need to align to line boundaries:
+/// a single chunk may contain multiple newlines, span multiple lines, or end
+/// mid-line. This lets callers consume `Buffer::text_for_range`'s `Chunks`
+/// iterator without materializing the unnumbered text first.
+fn write_lines_numbered<'a>(
+    output: &mut String,
+    chunks: impl IntoIterator<Item = &'a str>,
+    start_line: u32,
+) {
+    use std::fmt::Write as _;
+
+    let mut line_number = start_line;
+    let mut at_line_start = true;
+    for chunk in chunks {
+        let mut rest = chunk;
+        while !rest.is_empty() {
+            if at_line_start {
+                // Writes to a `String` are infallible, so the `Result` can be ignored.
+                let _ = write!(output, "{line_number:>6}\t");
+                at_line_start = false;
+            }
+            match rest.find('\n') {
+                Some(nl) => {
+                    let (head, tail) = rest.split_at(nl + 1);
+                    output.push_str(head);
+                    line_number = line_number.saturating_add(1);
+                    at_line_start = true;
+                    rest = tail;
+                }
+                None => {
+                    output.push_str(rest);
+                    break;
+                }
+            }
+        }
+    }
 }
 
 /// Read a file under the global skills directory directly via the filesystem,
@@ -40,25 +114,20 @@ async fn read_global_skill_file(
             .line(start_line.map(|line| line.saturating_sub(1))),
     ]));
 
-    let result_text = if start_line.is_some() || end_line.is_some() {
-        // Mirror the line-range semantics of the buffer-backed path: 1-indexed,
-        // start clamped to >= 1, end exclusive of the next line, and always
-        // returning at least one line. `split_inclusive` keeps each line's
-        // terminator attached, so CRLF stays CRLF and the trailing newline of
-        // the last returned line is preserved — matching `Buffer::text_for_range`.
-        let start = start_line.unwrap_or(1).max(1);
-        let mut end = end_line.unwrap_or(u32::MAX);
-        if end < start {
-            end = start;
-        }
-
+    let (raw_text, first_line_number) = if start_line.is_some() || end_line.is_some() {
+        // `split_inclusive` keeps each line's terminator attached, so CRLF stays
+        // CRLF and the trailing newline of the last returned line is preserved —
+        // matching `Buffer::text_for_range` in the buffer-backed path.
+        let (start, end) = resolve_line_range(start_line, end_line);
         let lines: Vec<&str> = content.split_inclusive('\n').collect();
         let start_idx = (start as usize).saturating_sub(1).min(lines.len());
         let end_idx = (end as usize).min(lines.len()).max(start_idx);
-        lines[start_idx..end_idx].concat()
+        (lines[start_idx..end_idx].concat(), start)
     } else {
-        content
+        (content, 1)
     };
+
+    let result_text = format_with_line_numbers(&raw_text, first_line_number);
 
     let markdown = MarkdownCodeBlock {
         tag: requested_path,
@@ -86,11 +155,13 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 ///   Do NOT retry reading the same file without line numbers if you receive an outline.
 /// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
 ///   Image files are returned as visual content that you can analyze directly.
+///
+/// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -100,6 +171,10 @@ pub struct ReadFileToolInput {
     ///
     /// If you want to access `file.txt` in `directory1`, you should use the path `directory1/file.txt`.
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
+    /// </example>
+    ///
+    /// <example>
+    /// To read a global agent skill file, you may provide a path under `~/.agents/skills`, such as `~/.agents/skills/my-skill/SKILL.md`.
     /// </example>
     pub path: String,
     /// Optional line number to start reading on (1-based index)
@@ -182,8 +257,8 @@ impl AgentTool for ReadFileTool {
                 .map_err(tool_content_err)?;
             let fs = project.read_with(cx, |project, _cx| project.fs().clone());
 
-            // Fast path: if the model passes an absolute path that resolves
-            // under the global skills directory, read it directly via the
+            // Fast path: if the model passes a path that resolves under the
+            // global skills directory, read it directly via the
             // filesystem. Global skills live outside any worktree, so the
             // standard project-path machinery would refuse them.
             if let Some(skill_path) =
@@ -220,7 +295,7 @@ impl AgentTool for ReadFileTool {
                     project.absolute_path(&project_path, cx)
                 })
                 .ok_or_else(|| {
-                    anyhow!("Failed to convert {} to absolute path", &input.path)
+                    anyhow!("Failed to convert {} to absolute path", input.path)
                 }).map_err(tool_content_err)?;
 
             // Check settings exclusions synchronously
@@ -229,14 +304,14 @@ impl AgentTool for ReadFileTool {
                 if global_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if global_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the global `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -244,14 +319,14 @@ impl AgentTool for ReadFileTool {
                 if worktree_settings.is_path_excluded(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
                 if worktree_settings.is_path_private(&project_path.path) {
                     anyhow::bail!(
                         "Cannot read file because its path matches the worktree `private_files` setting: {}",
-                        &input.path
+                        input.path
                     );
                 }
 
@@ -261,7 +336,7 @@ impl AgentTool for ReadFileTool {
             if fs.is_dir(&abs_path).await {
                 return Err(tool_content_err(format!(
                     "{} is a directory, not a file. Use the list_directory tool to explore directory contents.",
-                    &input.path
+                    input.path
                 )));
             }
 
@@ -342,29 +417,38 @@ impl AgentTool for ReadFileTool {
 
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
-                let result = buffer.read_with(cx, |buffer, _cx| {
-                    // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
-                    let start = input.start_line.unwrap_or(1).max(1);
+                let result_text = buffer.read_with(cx, |buffer, _cx| {
+                    let (start, end) = resolve_line_range(input.start_line, input.end_line);
                     let start_row = start - 1;
                     if start_row <= buffer.max_point().row {
                         let column = buffer.line_indent_for_row(start_row).raw_len();
                         anchor = Some(buffer.anchor_before(Point::new(start_row, column)));
                     }
 
-                    let mut end_row = input.end_line.unwrap_or(u32::MAX);
-                    if end_row <= start_row {
-                        end_row = start_row + 1; // read at least one lines
-                    }
-                    let start = buffer.anchor_before(Point::new(start_row, 0));
-                    let end = buffer.anchor_before(Point::new(end_row, 0));
-                    buffer.text_for_range(start..end).collect::<String>()
+                    // `end` is 1-indexed inclusive; `Point` rows are 0-indexed.
+                    // Using `end` directly as the (exclusive) end row is the
+                    // standard inclusive→exclusive translation, and since
+                    // `resolve_line_range` guarantees `end >= start`, we always
+                    // read at least one line.
+                    let start_anchor = buffer.anchor_before(Point::new(start_row, 0));
+                    let end_anchor = buffer.anchor_before(Point::new(end, 0));
+                    // Stream the numbered output directly from the buffer's
+                    // chunk iterator so the unnumbered range is never
+                    // materialized as its own `String`.
+                    let mut output = String::new();
+                    write_lines_numbered(
+                        &mut output,
+                        buffer.text_for_range(start_anchor..end_anchor),
+                        start,
+                    );
+                    output
                 });
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                Ok(result.into())
+                Ok(result_text.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
@@ -378,9 +462,10 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 });
 
-                is_outline_response = buffer_content.is_outline;
 
-                if buffer_content.is_outline {
+                is_outline_response = buffer_content.is_synthetic;
+
+                if buffer_content.is_synthetic {
                     Ok(formatdoc! {"
                         SUCCESS: File outline retrieved. This file is too large to read all at once, so the outline below shows the file's structure with line numbers.
 
@@ -394,7 +479,7 @@ impl AgentTool for ReadFileTool {
                     }
                     .into())
                 } else {
-                    Ok(buffer_content.text.into())
+                    Ok(format_with_line_numbers(&buffer_content.text, 1).into())
                 }
             };
 
@@ -427,6 +512,27 @@ impl AgentTool for ReadFileTool {
             result
         })
     }
+
+    fn replay(
+        &self,
+        input: Self::Input,
+        output: Self::Output,
+        event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        if let LanguageModelToolResultContent::Text(text) = output {
+            let markdown = MarkdownCodeBlock {
+                tag: &input.path,
+                text: &text,
+            }
+            .to_string();
+            event_stream.update_fields(acp::ToolCallUpdateFields::new().content(vec![
+                acp::ToolCallContent::Content(acp::Content::new(markdown)),
+            ]));
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -436,7 +542,7 @@ mod test {
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{SettingsStore, SplicingVec};
     use std::path::PathBuf;
     use std::sync::Arc;
     use util::path;
@@ -530,7 +636,10 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content".into());
+        assert_eq!(
+            result.unwrap(),
+            "     1\tThis is a small file content".into()
+        );
     }
 
     #[gpui::test]
@@ -777,7 +886,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "root content".into());
+        assert_eq!(result.unwrap(), "     1\troot content".into());
     }
 
     #[gpui::test]
@@ -810,7 +919,10 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
+        assert_eq!(
+            result.unwrap(),
+            "     2\tLine 2\n     3\tLine 3\n     4\tLine 4\n".into()
+        );
     }
 
     #[gpui::test]
@@ -844,7 +956,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
+        assert_eq!(result.unwrap(), "     1\tLine 1\n     2\tLine 2\n".into());
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -861,7 +973,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\n".into());
+        assert_eq!(result.unwrap(), "     1\tLine 1\n".into());
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -878,7 +990,7 @@ mod test {
                 )
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3\n".into());
+        assert_eq!(result.unwrap(), "     3\tLine 3\n".into());
     }
 
     fn error_text(content: LanguageModelToolResultContent) -> String {
@@ -939,10 +1051,10 @@ mod test {
             use settings::SettingsStore;
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions = Some(vec![
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
-                    ]);
+                    ]));
                     settings.project.worktree.private_files = Some(
                         vec![
                             "**/.mysecrets".to_string(),
@@ -1112,7 +1224,7 @@ mod test {
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
-        assert_eq!(result.unwrap(), "Normal file content".into());
+        assert_eq!(result.unwrap(), "     1\tNormal file content".into());
 
         // Path traversal attempts with .. should fail
         let result = cx
@@ -1245,8 +1357,10 @@ mod test {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                        "**/.git".to_string(),
+                        "**/node_modules".to_string(),
+                    ]));
                     settings.project.worktree.private_files =
                         Some(vec!["**/.env".to_string()].into());
                 });
@@ -1282,7 +1396,7 @@ mod test {
 
         assert_eq!(
             result,
-            "fn main() { println!(\"Hello from worktree1\"); }".into()
+            "     1\tfn main() { println!(\"Hello from worktree1\"); }".into()
         );
 
         // Test reading private file in worktree1 should fail
@@ -1348,7 +1462,7 @@ mod test {
 
         assert_eq!(
             result,
-            "export function greet() { return 'Hello from worktree2'; }".into()
+            "     1\texport function greet() { return 'Hello from worktree2'; }".into()
         );
 
         // Test reading private file in worktree2 should fail
@@ -1658,7 +1772,10 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = content else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "# Spec\n\nReference body.");
+        assert_eq!(
+            text.as_ref(),
+            "     1\t# Spec\n     2\t\n     3\tReference body."
+        );
     }
 
     #[gpui::test]
@@ -1705,7 +1822,7 @@ mod test {
         };
         // Mirrors the buffer-backed path: lines 2-3 inclusive, WITH trailing
         // newline of the last returned line.
-        assert_eq!(text.as_ref(), "line two\nline three\n");
+        assert_eq!(text.as_ref(), "     2\tline two\n     3\tline three\n");
     }
 
     #[gpui::test]
@@ -1750,7 +1867,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "Line 1\nLine 2\n");
+        assert_eq!(text.as_ref(), "     1\tLine 1\n     2\tLine 2\n");
     }
 
     #[gpui::test]
@@ -1795,7 +1912,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "Line 1\n");
+        assert_eq!(text.as_ref(), "     1\tLine 1\n");
     }
 
     #[gpui::test]
@@ -1840,7 +1957,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "Line 3\n");
+        assert_eq!(text.as_ref(), "     3\tLine 3\n");
     }
 
     #[gpui::test]
@@ -1885,7 +2002,7 @@ mod test {
         let LanguageModelToolResultContent::Text(text) = result.unwrap() else {
             panic!("expected text content");
         };
-        assert_eq!(text.as_ref(), "line one\r\nline two\r\n");
+        assert_eq!(text.as_ref(), "     1\tline one\r\n     2\tline two\r\n");
     }
 
     #[gpui::test]

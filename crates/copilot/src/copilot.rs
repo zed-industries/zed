@@ -46,20 +46,11 @@ use workspace::AppState;
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 
 actions!(
-    copilot,
+    copilot_edit_predictions,
     [
-        /// Requests a code completion suggestion from Copilot.
-        Suggest,
-        /// Cycles to the next Copilot suggestion.
-        NextSuggestion,
-        /// Cycles to the previous Copilot suggestion.
-        PreviousSuggestion,
-        /// Reinstalls the Copilot language server.
+        /// Reinstalls the Copilot Edit Predictions language server.
+        #[action(deprecated_aliases = ["copilot::Reinstall"])]
         Reinstall,
-        /// Signs in to GitHub Copilot.
-        SignIn,
-        /// Signs out of GitHub Copilot.
-        SignOut
     ]
 );
 
@@ -511,8 +502,14 @@ impl Copilot {
             };
         }
 
-        if let Ok(oauth_token) = env::var(copilot_chat::COPILOT_OAUTH_ENV_VAR) {
-            env.insert(copilot_chat::COPILOT_OAUTH_ENV_VAR.to_string(), oauth_token);
+        for env_var in [
+            copilot_chat::COPILOT_OAUTH_ENV_VAR,
+            copilot_chat::GITHUB_COPILOT_OAUTH_ENV_VAR,
+        ] {
+            if let Ok(oauth_token) = env::var(env_var) {
+                env.insert(env_var.to_string(), oauth_token);
+                break;
+            }
         }
 
         if env.is_empty() { None } else { Some(env) }
@@ -836,10 +833,7 @@ impl Copilot {
                     anyhow::Ok(())
                 })
             }
-            CopilotServer::Disabled => cx.background_spawn(async {
-                clear_copilot_config_dir().await;
-                anyhow::Ok(())
-            }),
+            CopilotServer::Disabled => cx.background_spawn(async { anyhow::Ok(()) }),
             _ => Task::ready(Err(anyhow!("copilot hasn't started yet"))),
         }
     }
@@ -1289,40 +1283,15 @@ impl Copilot {
     }
 
     fn update_action_visibilities(&self, cx: &mut App) {
-        let signed_in_actions = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let auth_actions = [TypeId::of::<SignOut>()];
-        let no_auth_actions = [TypeId::of::<SignIn>()];
-        let status = self.status();
+        let signed_in_actions = [TypeId::of::<Reinstall>()];
 
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
 
         if is_ai_disabled {
             filter.hide_action_types(&signed_in_actions);
-            filter.hide_action_types(&auth_actions);
-            filter.hide_action_types(&no_auth_actions);
         } else {
-            match status {
-                Status::Disabled => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.hide_action_types(&no_auth_actions);
-                }
-                Status::Authorized => {
-                    filter.hide_action_types(&no_auth_actions);
-                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
-                }
-                _ => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(&no_auth_actions);
-                }
-            }
+            filter.show_action_types(&signed_in_actions);
         }
     }
 }
@@ -1383,10 +1352,6 @@ fn notify_did_change_config_to_server(
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await
-}
-
-async fn clear_copilot_config_dir() {
-    remove_matching(copilot_chat::copilot_chat_config_dir(), |_| true).await
 }
 
 async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::Result<PathBuf> {
