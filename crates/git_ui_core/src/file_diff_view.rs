@@ -8,8 +8,8 @@ use editor::{
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Font, IntoElement, Render, Task, WeakEntity, Window,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
+    IntoElement, Render, Task, WeakEntity, Window,
 };
 use language::{Buffer, HighlightedText, Point};
 use project::{Project, ProjectPath};
@@ -21,11 +21,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
+use ui::{Color, Icon, IconName, SharedString};
 use util::paths::PathExt as _;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -248,16 +248,6 @@ impl Item for FileDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
