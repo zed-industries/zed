@@ -17,7 +17,7 @@ doctest = false
 name = "test_app"
 
 [features]
-test-support = ["collections/test-support", "gpui/test-support"]
+test-support = ["collections/test-support", "gpui/test-support", "livekit_api/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -65,6 +65,7 @@ objc.workspace = true
 collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform.workspace = true
+livekit_api = { workspace = true, features = ["test-support"] }
 simplelog.workspace = true
 
 [build-dependencies]

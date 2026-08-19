@@ -35,7 +35,7 @@ theme_settings.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 wasmtime.workspace = true
 
 [dev-dependencies]

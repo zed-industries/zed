@@ -626,12 +626,17 @@ mod tests {
     };
     use core::panic;
     use smallvec::SmallVec;
-    use std::{cell::RefCell, ops::Range, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        ops::Range,
+        rc::Rc,
+    };
 
     use crate::{
-        ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler, IntoElement,
-        KeyBinding, KeyContext, Keymap, Pixels, Point, Render, Subscription, TestAppContext,
-        UTF16Selection, Unbind, Window,
+        ActionRegistry, App, Bounds, Context, DispatchPhase, DispatchTree, FocusHandle,
+        InputHandler, IntoElement, KeyBinding, KeyContext, Keymap, Pixels, PlatformWindow, Point,
+        Render, Subscription, TestAppContext, UTF16Selection, Unbind, VisualContext,
+        VisualTestContext, Window,
     };
 
     actions!(dispatch_test, [TestAction, SecondaryTestAction]);
@@ -722,6 +727,66 @@ mod tests {
 
         let highest = tree.highest_precedence_binding_for_action(&TestAction, &contexts);
         assert!(highest.is_some_and(|binding| binding.action.partial_eq(&TestAction)));
+    }
+
+    /// Models the picker preview footer scenario: a picker action is bound in
+    /// `Picker > Editor`, but a base keymap binds the same chord to an editor
+    /// action in `Editor`. `Picker > Editor` and `Editor` resolve at the same
+    /// context depth, so at equal depth precedence is decided purely by load
+    /// order (later wins). Because base keymaps load after the default keymap,
+    /// the picker binding is shadowed unless it is (re)bound by an overlay that
+    /// loads after the base keymap - which is exactly what
+    /// `keymaps/specific-overrides*.json` does.
+    #[test]
+    fn test_overlay_after_base_restores_shadowed_picker_binding() {
+        // SecondaryTestAction stands in for the editor/base action (e.g.
+        // editor::AddSelectionBelow), TestAction for the picker action.
+        let contexts = vec![
+            KeyContext::parse("Picker").unwrap(),
+            KeyContext::parse("Editor").unwrap(),
+        ];
+
+        // Default keymap (picker binding) followed by a base keymap that binds
+        // the same chord to an editor action: the base binding wins and the
+        // picker action is shadowed, so its footer tooltip renders no shortcut.
+        let shadowed = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", SecondaryTestAction, Some("Editor")),
+        ]);
+        let highest = shadowed.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(
+            highest.is_none(),
+            "picker binding should be shadowed by the base editor binding"
+        );
+
+        // Re-binding the picker action in an overlay loaded after the base keymap
+        // restores it as the resolved binding.
+        let fixed = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", SecondaryTestAction, Some("Editor")),
+            // overlay loaded last:
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+        ]);
+        let highest = fixed.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(
+            highest.is_some_and(|binding| binding.action.partial_eq(&TestAction)),
+            "overlay loaded after base should restore the picker binding"
+        );
+
+        // Conversely, putting the override in the default keymap (i.e. before the
+        // base keymap) does NOT help: the later base binding still wins at equal
+        // depth. This is why the overlay must be loaded after the base keymap.
+        let override_before_base = test_dispatch_tree(vec![
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", TestAction, Some("Picker > Editor")),
+            KeyBinding::new("ctrl-alt-down", SecondaryTestAction, Some("Editor")),
+        ]);
+        let highest =
+            override_before_base.highest_precedence_binding_for_action(&TestAction, &contexts);
+        assert!(
+            highest.is_none(),
+            "an override loaded before the base binding cannot win the equal-depth tie"
+        );
     }
 
     #[test]
@@ -977,12 +1042,14 @@ mod tests {
         struct CustomElement {
             focus_handle: FocusHandle,
             text: Rc<RefCell<String>>,
+            action_count: Rc<Cell<usize>>,
         }
         impl CustomElement {
             fn new(cx: &mut Context<Self>) -> Self {
                 Self {
                     focus_handle: cx.focus_handle(),
                     text: Rc::default(),
+                    action_count: Rc::default(),
                 }
             }
         }
@@ -1031,7 +1098,15 @@ mod tests {
                 key_context.add("Terminal");
                 window.set_key_context(key_context);
                 window.handle_input(&self.focus_handle, self.clone(), cx);
-                window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
+                let action_count = self.action_count.clone();
+                window.on_action(
+                    std::any::TypeId::of::<TestAction>(),
+                    move |_, phase, _, _| {
+                        if phase == DispatchPhase::Bubble {
+                            action_count.set(action_count.get() + 1);
+                        }
+                    },
+                );
             }
         }
         impl IntoElement for CustomElement {
@@ -1095,6 +1170,10 @@ mod tests {
 
             fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
 
+            fn prefers_ime_for_printable_keys(&mut self, _: &mut Window, _: &mut App) -> bool {
+                true
+            }
+
             fn bounds_for_range(
                 &mut self,
                 _: Range<usize>,
@@ -1122,6 +1201,7 @@ mod tests {
         cx.update(|cx| {
             cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
             cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
+            cx.bind_keys([KeyBinding::new("ctrl-x k", TestAction, Some("Terminal"))]);
         });
         let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
         let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
@@ -1129,6 +1209,49 @@ mod tests {
             window.focus(&focus_handle, cx);
             window.activate_window();
         });
+
+        let query_prefers_ime_for_printable_keys = |cx: &mut VisualTestContext| {
+            let mut platform_window = cx.test_window(cx.window_handle());
+            let mut input_handler = platform_window.take_input_handler()?;
+            let prefers_ime = input_handler.query_prefers_ime_for_printable_keys();
+            platform_window.set_input_handler(input_handler);
+            Some(prefers_ime)
+        };
+
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
+        cx.simulate_keystrokes("ctrl-x");
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
+
+        let prefers_ime_after_blur = {
+            let mut platform_window = cx.test_window(cx.window_handle());
+            let mut input_handler = platform_window.take_input_handler();
+            cx.update(|window, _| {
+                window.blur();
+                assert!(!window.has_pending_keystrokes());
+                assert!(window.pending_input_keystrokes().is_none());
+            });
+            let prefers_ime = input_handler
+                .as_mut()
+                .map(|input_handler| input_handler.query_prefers_ime_for_printable_keys());
+            if let Some(input_handler) = input_handler {
+                platform_window.set_input_handler(input_handler);
+            }
+            prefers_ime
+        };
+        assert_eq!(prefers_ime_after_blur, Some(true));
+        cx.update(|window, cx| window.focus(&focus_handle, cx));
+
+        cx.simulate_keystrokes("ctrl-x");
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(false));
+        cx.simulate_keystrokes("k");
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
+        test.update(cx, |test, _| {
+            assert_eq!(test.action_count.get(), 1);
+            assert_eq!(test.text.borrow().as_str(), "");
+        });
+
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }

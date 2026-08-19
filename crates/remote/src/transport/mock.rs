@@ -292,6 +292,17 @@ impl RemoteConnection for MockRemoteConnection {
         PathStyle::local()
     }
 
+    fn remote_platform(&self) -> crate::RemotePlatform {
+        crate::RemotePlatform {
+            os: crate::RemoteOs::Linux,
+            arch: crate::RemoteArch::X86_64,
+        }
+    }
+
+    fn remote_os_version(&self) -> Option<String> {
+        None
+    }
+
     fn shell(&self) -> String {
         "sh".to_owned()
     }
@@ -313,6 +324,7 @@ impl RemoteClientDelegate for MockDelegate {
         &self,
         _prompt: String,
         _sender: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
+        _cancellation: futures::channel::oneshot::Receiver<()>,
         _cx: &mut AsyncApp,
     ) {
         unreachable!("MockDelegate::ask_password should not be called in tests")

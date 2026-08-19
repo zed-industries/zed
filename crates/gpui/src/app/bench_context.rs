@@ -10,57 +10,52 @@ use anyhow::{Result, anyhow};
 use hdrhistogram::Histogram;
 
 use crate::{
-    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BenchDispatcher,
-    Bounds, Context, Empty, Entity, EntityId, Focusable, ForegroundExecutor, Global,
-    NoopTextSystem, Platform, PlatformHeadlessRenderer, Render, Reservation, Task, TestPlatform,
-    VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
+    AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, Bounds, Context, Empty,
+    Entity, EntityId, Focusable, ForegroundExecutor, Global, Platform, PlatformHeadlessRenderer,
+    PlatformTextSystem, Render, Reservation, Task, TestPlatform, ThreadedDispatcher, VisualContext,
+    Window, WindowBounds, WindowHandle, WindowOptions,
     app::GpuiBorrow,
-    profiler::{self, FrameTiming, FrameTimingCollector},
+    profiler::{self, FrameEvent, FrameTimingCollector},
 };
 
-/// Returns this thread's shared benchmark platform, creating it on first use.
+/// Returns a benchmark platform backed by this thread's shared dispatcher.
 ///
-/// The platform is a [`TestPlatform`] backed by a multithreaded
-/// [`BenchDispatcher`], so background work runs with production concurrency in
-/// real time. It is cached per thread and reused across benchmark invocations
-/// so worker and timer threads persist for the whole process instead of being
-/// recreated for every Criterion calibration pass.
+/// The platform uses this thread's shared multithreaded [`ThreadedDispatcher`], so
+/// background work runs with production concurrency in real time. The dispatcher
+/// is cached per thread and reused across benchmark invocations so worker and
+/// timer threads persist for the whole process instead of being recreated for
+/// every Criterion calibration pass.
 ///
-/// Text is shaped with [`NoopTextSystem`] (one glyph per character at fixed
-/// advances). This keeps results deterministic across machines and font
-/// installations while preserving the structure of downstream layout and paint
-/// work; absolute timings exclude production text shaping (roughly 10% of draw
-/// time for a full editor frame). Benchmarks that need real shaping can build
-/// a [`TestPlatform`] with a platform text system and pass it to
-/// [`BenchAppContext::new_with_platform_and_report`].
+/// Text is shaped with the provided platform text system. Benchmarks generated
+/// by `#[gpui::bench]` use the current platform's text system, so text-heavy
+/// benchmark measurements include production shaping and glyph rasterization.
 ///
-/// `headless_renderer_factory` (only used on first call) supplies a renderer
-/// for benchmark windows, e.g. `gpui_platform::current_headless_renderer`.
-/// When present, scenes drawn by benchmarks are rasterized through the real
-/// sprite atlas and submitted to the GPU on present, so quad/sprite
-/// regressions show up in measurements. When `None`, presenting discards the
-/// scene. Currently only macOS provides a headless renderer (Metal), so GPU
-/// submission is excluded from benchmark measurements on other platforms.
+/// `headless_renderer_factory` supplies a renderer for benchmark windows, e.g.
+/// `gpui_platform::current_headless_renderer`. When present, scenes drawn by
+/// benchmarks are rasterized through the real sprite atlas and submitted to
+/// the GPU on present, so quad/sprite regressions show up in measurements.
+/// When `None`, presenting discards the scene. Currently only macOS provides
+/// a headless renderer (Metal), so GPU submission is excluded from benchmark
+/// measurements on other platforms.
 pub fn bench_platform(
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
+    text_system: Arc<dyn PlatformTextSystem>,
 ) -> Rc<dyn Platform> {
     thread_local! {
-        static PLATFORM: OnceCell<Rc<TestPlatform>> = const { OnceCell::new() };
+        static DISPATCHER: OnceCell<Arc<ThreadedDispatcher>> = const { OnceCell::new() };
     }
-    PLATFORM.with(|cell| {
-        cell.get_or_init(|| {
-            let dispatcher = Arc::new(BenchDispatcher::new());
-            let background_executor = BackgroundExecutor::new(dispatcher.clone());
-            let foreground_executor = ForegroundExecutor::new(dispatcher);
-            TestPlatform::with_platform(
-                background_executor,
-                foreground_executor,
-                Arc::new(NoopTextSystem::new()),
-                headless_renderer_factory,
-            )
-        })
-        .clone() as Rc<dyn Platform>
-    })
+    let dispatcher = DISPATCHER.with(|cell| {
+        cell.get_or_init(|| Arc::new(ThreadedDispatcher::new()))
+            .clone()
+    });
+    let background_executor = BackgroundExecutor::new(dispatcher.clone());
+    let foreground_executor = ForegroundExecutor::new(dispatcher);
+    TestPlatform::with_platform(
+        background_executor,
+        foreground_executor,
+        text_system,
+        headless_renderer_factory,
+    ) as Rc<dyn Platform>
 }
 
 /// Default target frame rate when a benchmark doesn't specify `fps = N`.
@@ -98,25 +93,37 @@ impl BenchReport {
         }
     }
 
-    fn record_frame_timings<'i>(&self, timings: impl IntoIterator<Item = &'i FrameTiming>) {
+    fn record_frame_timings<'i>(&self, events: impl IntoIterator<Item = &'i FrameEvent>) {
         let mut snapshot = self.frame_snapshot.borrow_mut();
         // `.ok()` on `record`: this operation is infallible (the histograms auto-resize).
-        for timing in timings {
-            snapshot
-                .draw
-                .record(timing.draw_duration().as_nanos() as u64)
-                .ok();
-            if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
-                snapshot
-                    .dirty_to_draw
-                    .record(dirty_to_draw.as_nanos() as u64)
-                    .ok();
-            }
-            if timing.invalidations > 0 {
-                snapshot
-                    .invalidations_per_frame
-                    .record(timing.invalidations)
-                    .ok();
+        for event in events {
+            match event {
+                FrameEvent::Draw(timing) => {
+                    snapshot
+                        .draw
+                        .record(timing.draw_duration().as_nanos() as u64)
+                        .ok();
+                    if let Some(dirty_to_draw) = timing.dirty_to_draw_duration() {
+                        snapshot
+                            .dirty_to_draw
+                            .record(dirty_to_draw.as_nanos() as u64)
+                            .ok();
+                    }
+                    if timing.invalidations > 0 {
+                        snapshot
+                            .invalidations_per_frame
+                            .record(timing.invalidations)
+                            .ok();
+                    }
+                }
+                FrameEvent::Present(timing) => {
+                    if let Some(animation_interval) = timing.animation_interval {
+                        snapshot
+                            .present_interval
+                            .record(animation_interval.as_nanos() as u64)
+                            .ok();
+                    }
+                }
             }
         }
     }
@@ -157,6 +164,7 @@ impl BenchReport {
         eprintln!("  note: includes Criterion warmup/calibration");
         self.print_histogram("window dirty-to-draw", &frame_snapshot.dirty_to_draw);
         self.print_histogram("window draw", &frame_snapshot.draw);
+        self.print_histogram("window present interval", &frame_snapshot.present_interval);
         if !frame_snapshot.invalidations_per_frame.is_empty() {
             eprintln!(
                 "  invalidations per frame: mean {:.2}, max {}",
@@ -209,6 +217,7 @@ impl BenchReport {
 struct WindowFrameSnapshot {
     dirty_to_draw: Histogram<u64>,
     draw: Histogram<u64>,
+    present_interval: Histogram<u64>,
     invalidations_per_frame: Histogram<u64>,
 }
 
@@ -217,12 +226,13 @@ impl WindowFrameSnapshot {
         Self {
             dirty_to_draw: Histogram::new(3).expect("3 significant digits is valid"),
             draw: Histogram::new(3).expect("3 significant digits is valid"),
+            present_interval: Histogram::new(3).expect("3 significant digits is valid"),
             invalidations_per_frame: Histogram::new(3).expect("3 significant digits is valid"),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.dirty_to_draw.is_empty() && self.draw.is_empty()
+        self.dirty_to_draw.is_empty() && self.draw.is_empty() && self.present_interval.is_empty()
     }
 }
 
@@ -230,36 +240,74 @@ fn format_duration(duration: Duration) -> String {
     format!("{:.3}ms", duration.as_secs_f64() * 1000.)
 }
 
-/// Enables frame tracing for the duration of a measurement and collects the
-/// frames recorded within it. The previous tracing state is restored on drop,
-/// so a panicking measurement doesn't leave tracing enabled for unrelated code
-/// (e.g. a later benchmark in the same process).
-struct FrameTraceScope {
+/// Enables profiler tracing for a measurement and collects its frame events.
+///
+/// The previous tracing state is restored on drop, so a panicking measurement
+/// doesn't leave tracing enabled for unrelated code such as a later benchmark
+/// in the same process.
+struct TraceScope {
     collector: FrameTimingCollector,
-    was_already_enabled: bool,
+    _trace_guard: profiler::TraceGuard,
 }
 
-impl FrameTraceScope {
+impl TraceScope {
     fn start() -> Self {
-        let was_already_enabled = !profiler::set_frame_trace_enabled(true);
+        let trace_guard = profiler::trace_scope();
         Self {
             collector: FrameTimingCollector::new(),
-            was_already_enabled,
+            _trace_guard: trace_guard,
         }
     }
 
-    fn finish(mut self) -> Vec<FrameTiming> {
+    fn finish(mut self) -> Vec<FrameEvent> {
         self.collector.collect_unseen()
-        // Dropping `self` restores the previous tracing state.
     }
 }
 
-impl Drop for FrameTraceScope {
+struct MeasuredTaskInput<Input> {
+    input: Input,
+    trace_scope: Option<TraceScope>,
+}
+
+struct MeasuredTaskOutput<Output> {
+    trace_scope: Option<TraceScope>,
+    report: BenchReport,
+    _output: Output,
+}
+
+impl<Output> Drop for MeasuredTaskOutput<Output> {
     fn drop(&mut self) {
-        if !self.was_already_enabled {
-            profiler::set_frame_trace_enabled(false);
-        }
+        let trace_scope = self
+            .trace_scope
+            .take()
+            .expect("measured task output should retain its trace scope");
+        self.report
+            .record_frame_timings(trace_scope.finish().iter());
     }
+}
+
+fn run_task_to_completion<Output>(
+    foreground_executor: &ForegroundExecutor,
+    task: Task<Output>,
+) -> Output
+where
+    Output: 'static,
+{
+    let output = Rc::new(RefCell::new(None));
+    foreground_executor
+        .spawn({
+            let output = output.clone();
+            async move {
+                *output.borrow_mut() = Some(task.await);
+            }
+        })
+        .detach();
+
+    foreground_executor
+        .dispatcher()
+        .as_threaded()
+        .expect("BenchAppContext requires a ThreadedDispatcher")
+        .run_until(|| output.borrow_mut().take())
 }
 
 /// A GPUI app context for Criterion benchmarks.
@@ -281,7 +329,7 @@ pub struct BenchAppContext<'a, 'measurement> {
 impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// Creates a new benchmark app context backed by the provided platform.
     ///
-    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// The platform's executors must be backed by a [`ThreadedDispatcher`]
     /// (see [`bench_platform`]) so the context can drain foreground work via
     /// [`Self::run_until_idle`]; panics otherwise.
     pub fn new(
@@ -294,7 +342,7 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Creates a new benchmark app context backed by the provided platform.
     ///
-    /// The platform's executors must be backed by a [`BenchDispatcher`]
+    /// The platform's executors must be backed by a [`ThreadedDispatcher`]
     /// (see [`bench_platform`]) so the context can drain foreground work via
     /// [`Self::run_until_idle`]; panics otherwise.
     #[doc(hidden)]
@@ -317,9 +365,9 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         // Validate up front so misconfiguration fails at construction with a
         // clear message instead of deep inside `run_until_idle`.
         assert!(
-            background_executor.dispatcher().as_bench().is_some(),
+            background_executor.dispatcher().as_threaded().is_some(),
             "BenchAppContext requires a platform whose executors are backed by a \
-             BenchDispatcher; construct one with gpui::bench_platform"
+             ThreadedDispatcher; construct one with gpui::bench_platform"
         );
         let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
@@ -365,13 +413,49 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs queued foreground tasks on this thread and waits for in flight
     /// background work to finish. Timers that aren't due yet are not waited
-    /// for (see [`BenchDispatcher::run_until_idle`]).
+    /// for (see [`ThreadedDispatcher::run_until_idle`]).
     pub fn run_until_idle(&self) {
         self.background_executor
             .dispatcher()
-            .as_bench()
+            .as_threaded()
             .expect("validated in BenchAppContext::build")
             .run_until_idle();
+    }
+
+    /// Alternates draining queued work with GPUI update cycles until neither
+    /// makes progress, so state dropped by benchmark code is fully released.
+    ///
+    /// Dropped entities are released only inside an update's effect flush, and
+    /// releases cascade: one flush drops the entities whose handles are gone,
+    /// their drops release further handles and can queue foreground work, and
+    /// a later flush collects those. Executor pumping alone never runs a
+    /// flush, so without this dropped state would linger in the entity map
+    /// until some woken task happened to run an update. Production gets this
+    /// cadence for free from frames and input events.
+    pub fn settle(&mut self) {
+        let dispatcher = self.background_executor.dispatcher().clone();
+        let dispatcher = dispatcher
+            .as_threaded()
+            .expect("validated in BenchAppContext::build");
+        loop {
+            self.run_until_idle();
+            self.update(|_| ());
+            if dispatcher.is_idle() {
+                return;
+            }
+        }
+    }
+
+    /// Runs main-thread tasks until `ready` returns a value.
+    ///
+    /// Unlike [`Self::run_until_idle`], this returns as soon as `ready`
+    /// reports completion, leaving any remaining queued work pending.
+    pub fn run_until<R>(&self, ready: impl FnMut() -> Option<R>) -> R {
+        self.background_executor
+            .dispatcher()
+            .as_threaded()
+            .expect("validated in BenchAppContext::build")
+            .run_until(ready)
     }
 
     /// Measures a generic benchmark workload using Criterion's iteration loop.
@@ -383,10 +467,85 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// benchmark's frame report through the GPUI frame profiler.
     pub fn bench_iter(&mut self, mut benchmark: impl FnMut(&mut Self)) {
         let bencher = self.take_bencher("bench_iter");
-        let collector = FrameTraceScope::start();
+        let collector = TraceScope::start();
         let mut benchmark = || benchmark(self);
         bencher.iter(&mut benchmark);
         self.report.record_frame_timings(collector.finish().iter());
+        self.replace_bencher(bencher);
+    }
+
+    /// Measures a GPUI task to completion using Criterion's iteration loop.
+    ///
+    /// The closure is invoked once per Criterion iteration. The returned task
+    /// may depend on foreground work, background work, timers, or external
+    /// workers that wake GPUI tasks. Its output is dropped after the timed
+    /// interval.
+    ///
+    /// Any window draws triggered by the task are recorded into the benchmark's
+    /// frame report through the GPUI frame profiler.
+    pub fn bench_task<Output>(&mut self, mut benchmark: impl FnMut(&mut Self) -> Task<Output>)
+    where
+        Output: 'static,
+    {
+        self.bench_batched_task_internal("bench_task", |_| (), |_, cx| benchmark(cx));
+    }
+
+    /// Measures a GPUI task with per-iteration setup outside the timed interval.
+    ///
+    /// `setup` runs before timing starts. The returned input is passed by mutable
+    /// reference to `benchmark`, which returns the task whose completion is
+    /// measured. Both the setup input and task output are dropped after timing
+    /// stops.
+    ///
+    /// Each iteration is kept in its own Criterion batch so profiler tracing and
+    /// destruction cannot overlap adjacent measurements.
+    pub fn bench_batched_task<Input, Output>(
+        &mut self,
+        setup: impl FnMut(&mut Self) -> Input,
+        benchmark: impl FnMut(&mut Input, &mut Self) -> Task<Output>,
+    ) where
+        Output: 'static,
+    {
+        self.bench_batched_task_internal("bench_batched_task", setup, benchmark);
+    }
+
+    fn bench_batched_task_internal<Input, Output>(
+        &mut self,
+        benchmark_kind: &str,
+        mut setup: impl FnMut(&mut Self) -> Input,
+        mut benchmark: impl FnMut(&mut Input, &mut Self) -> Task<Output>,
+    ) where
+        Output: 'static,
+    {
+        let bencher = self.take_bencher(benchmark_kind);
+        let mut setup_context = self.clone();
+        let mut benchmark_context = self.clone();
+        let foreground_executor = self.foreground_executor.clone();
+        let report = self.report.clone();
+
+        bencher.iter_batched_ref(
+            || {
+                // The previous iteration's input and output were just
+                // dropped; settling here releases their entities before the
+                // next setup, so per-iteration state cannot accumulate
+                // across a measurement.
+                setup_context.settle();
+                MeasuredTaskInput {
+                    input: setup(&mut setup_context),
+                    trace_scope: Some(TraceScope::start()),
+                }
+            },
+            |measured_input| {
+                let task = benchmark(&mut measured_input.input, &mut benchmark_context);
+                let output = run_task_to_completion(&foreground_executor, task);
+                MeasuredTaskOutput {
+                    trace_scope: measured_input.trace_scope.take(),
+                    report: report.clone(),
+                    _output: output,
+                }
+            },
+            criterion::BatchSize::PerIteration,
+        );
         self.replace_bencher(bencher);
     }
 
@@ -397,8 +556,8 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
     /// windows. The entity should be part of the window's render tree, such as the
     /// root view or a child of it.
     ///
-    /// Frame timings are collected through the GPUI frame profiler
-    /// ([`crate::profiler::record_frame_timing`]), which is enabled for the
+    /// Frame events are collected through the GPUI frame profiler
+    /// ([`crate::profiler::record_frame_event`]), which is enabled for the
     /// duration of the measurement.
     pub fn bench_renderer<V>(
         &mut self,
@@ -414,9 +573,16 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
             })
             .expect("cannot benchmark renderer for entity without a current window");
 
-        let collector = FrameTraceScope::start();
+        let dispatcher = self.background_executor.dispatcher().clone();
+        let collector = TraceScope::start();
 
         let mut benchmark = || {
+            // Work already queued at frame start delays the frame in
+            // production too, so run it inside the measured interval.
+            dispatcher
+                .as_threaded()
+                .expect("validated in BenchAppContext::build")
+                .run_ready_main_tasks();
             self.with_window(view.entity_id(), |window, cx| {
                 view.update(cx, |view, cx| update(view, window, cx));
             })
@@ -431,20 +597,23 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         };
         bencher.iter(&mut benchmark);
 
-        let timings = collector.finish();
-        self.report.record_frame_timings(
-            timings
-                .iter()
-                .filter(|timing| timing.window_id == window_id),
-        );
+        let events = collector.finish();
+        self.report
+            .record_frame_timings(events.iter().filter(|event| match event {
+                FrameEvent::Draw(timing) => timing.window_id == window_id,
+                FrameEvent::Present(timing) => timing.window_id == window_id,
+            }));
         self.replace_bencher(bencher);
     }
 
     /// Adds a window with an empty root view for benchmark setup.
     pub fn add_empty_window(&mut self) -> BenchWindowContext<'a, 'measurement> {
+        let bounds = {
+            let app = self.app.borrow();
+            Bounds::maximized(None, &app)
+        };
         let window = {
             let mut app = self.app.borrow_mut();
-            let bounds = Bounds::maximized(None, &app);
             let window: AnyWindowHandle = app
                 .open_window(
                     WindowOptions {
@@ -481,20 +650,34 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
 
     /// Runs GPUI benchmark teardown.
     ///
-    /// Forgets any timers still armed on the shared dispatcher so they can't
-    /// fire during a later benchmark; assumes no other `BenchAppContext` is
-    /// live on this thread.
+    /// Cancels any timers still armed on the shared dispatcher and drains the
+    /// work that cancellation unblocks so they can't fire during a later
+    /// benchmark; assumes no other `BenchAppContext` is live on this thread.
     pub fn teardown(mut self) {
         self.run_until_idle();
         self.update(|cx| {
             cx.quit();
         });
         self.run_until_idle();
-        self.background_executor
-            .dispatcher()
-            .as_bench()
-            .expect("validated in BenchAppContext::build")
-            .forget_pending_timers();
+
+        let dispatcher = self.background_executor.dispatcher();
+        let dispatcher = dispatcher
+            .as_threaded()
+            .expect("validated in BenchAppContext::build");
+
+        drop(self.app);
+        drop(self.foreground_executor);
+
+        for _ in 0..100 {
+            if dispatcher.cancel_pending_timers() == 0 {
+                return;
+            }
+            dispatcher.run_until_idle();
+        }
+        panic!(
+            "benchmark teardown kept scheduling timers: {}",
+            dispatcher.debug_state()
+        );
     }
 }
 
@@ -760,5 +943,40 @@ impl VisualContext for BenchWindowContext<'_, '_> {
         self.window.update(&mut self.cx, |_, window, cx| {
             entity.read(cx).focus_handle(cx).focus(window, cx)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{rc::Rc, sync::Arc};
+
+    use super::*;
+
+    #[test]
+    fn task_completion_supports_non_send_foreground_output() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let (sender, receiver) = futures::channel::oneshot::channel();
+
+        background_executor
+            .spawn(async move {
+                sender
+                    .send(())
+                    .expect("foreground receiver should remain alive");
+            })
+            .detach();
+        let expected_output = Rc::new(42);
+        let task_output = expected_output.clone();
+        let task = foreground_executor.spawn(async move {
+            receiver.await.expect("background task should send a value");
+            task_output
+        });
+
+        let output = run_task_to_completion(&foreground_executor, task);
+        assert!(
+            Rc::ptr_eq(&output, &expected_output),
+            "task runner should preserve non-Send foreground output"
+        );
     }
 }

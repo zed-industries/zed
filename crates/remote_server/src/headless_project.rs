@@ -254,7 +254,7 @@ impl HeadlessProject {
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
         language_extension::init(
-            language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
+            language_extension::LspAccess::ViaLspStore(lsp_store.downgrade()),
             proxy.clone(),
             languages.clone(),
         );
@@ -537,6 +537,7 @@ impl HeadlessProject {
                 root_repo_common_dir: worktree
                     .root_repo_common_dir()
                     .map(|p| p.to_string_lossy().into_owned()),
+                root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
             }
         });
 
@@ -584,7 +585,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let path = RelPath::from_proto(&message.payload.path)?;
+        let path = RelPath::from_unix_str(&message.payload.path)?.into();
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
@@ -613,7 +614,7 @@ impl HeadlessProject {
     ) -> Result<proto::OpenImageResponse> {
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let path = RelPath::from_proto(&message.payload.path)?;
+        let path = RelPath::from_unix_str(&message.payload.path)?;
         let project_id = message.payload.project_id;
         use proto::create_image_for_peer::Variant;
 
@@ -728,7 +729,7 @@ impl HeadlessProject {
         );
 
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
-        let path = RelPath::from_proto(&message.payload.path)?;
+        let path = RelPath::from_unix_str(&message.payload.path)?;
         let project_id = message.payload.project_id;
         let file_id = message.payload.file_id;
         log::debug!(
@@ -1107,7 +1108,7 @@ impl HeadlessProject {
                 }
             });
 
-            while let Some(buffer) = new_matches.next().await {
+            while let Some((buffer, _)) = new_matches.next().await {
                 let _ = buffer_store
                     .update(cx, |this, cx| {
                         this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)
