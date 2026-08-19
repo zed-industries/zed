@@ -3,7 +3,8 @@ use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
-    SplittableEditor, hover_markdown_style, multibuffer_context_lines,
+    SelectionEffects, SplittableEditor, hover_markdown_style, multibuffer_context_lines,
+    scroll::ScrollAnchor,
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, RepoPath};
@@ -34,6 +35,7 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 use theme::ActiveTheme;
 use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
@@ -187,6 +189,7 @@ impl CommitView {
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
         file_filter: Option<RepoPath>,
+        scroll_to: Option<(RepoPath, u32)>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -226,6 +229,7 @@ impl CommitView {
                                 workspace_entity,
                                 workspace_handle,
                                 stash,
+                                scroll_to,
                                 window,
                                 cx,
                             )
@@ -272,6 +276,7 @@ impl CommitView {
         workspace_entity: Entity<Workspace>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
+        scroll_to: Option<(RepoPath, u32)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -313,13 +318,64 @@ impl CommitView {
         let commit_sha = Arc::<str>::from(commit.sha.as_ref());
 
         let repository_clone = repository.clone();
+        let mut scroll_to = scroll_to;
+
+        // Put the target file first so the blamed line is visible immediately.
+        // Files sorted above it are inserted next and shift its display row,
+        // but the scroll anchor tracks its buffer position, so the target
+        // stays stable in the viewport.
+        let mut commit_diff = commit_diff;
+        commit_diff.files.sort_by(|a, b| a.path.cmp(&b.path));
+        if let Some((target_path, _)) = &scroll_to {
+            if let Some(pos) = commit_diff
+                .files
+                .iter()
+                .position(|f| f.path == *target_path)
+            {
+                let target = commit_diff.files.remove(pos);
+                commit_diff.files.insert(0, target);
+            }
+        }
+
         let project_clone = project.clone();
 
         let load_diff_task = cx.spawn_in(window, async move |this, cx| {
             let mut binary_buffer_ids: HashSet<language::BufferId> = HashSet::default();
             let mut file_statuses: HashMap<language::BufferId, FileStatus> = HashMap::default();
 
+            // Let manual scrolling and the scrollbar reflect the final document size
+            // while excerpts stream in; autoscroll still uses the real max row.
+            let expected_max_row: f64 = commit_diff
+                .files
+                .iter()
+                .map(|file| {
+                    if file.is_binary {
+                        1.0
+                    } else {
+                        let new_lines = file
+                            .new_text
+                            .as_ref()
+                            .map(|t| t.lines().count())
+                            .unwrap_or(0);
+                        let old_lines = file
+                            .old_text
+                            .as_ref()
+                            .map(|t| t.lines().count())
+                            .unwrap_or(0);
+                        new_lines.max(old_lines) as f64
+                    }
+                })
+                .sum();
+            this.update(cx, |this, cx| {
+                this.editor.update(cx, |editor, cx| {
+                    editor.rhs_editor().update(cx, |editor, _cx| {
+                        editor.set_expected_max_row(Some(expected_max_row))
+                    });
+                });
+            })?;
+
             for file in commit_diff.files {
+                let file_path = file.path.clone();
                 let is_created = file.old_text.is_none();
                 let is_deleted = file.new_text.is_none();
                 let raw_new_text = file.new_text.unwrap_or_default();
@@ -449,6 +505,79 @@ impl CommitView {
                         yield_now().await;
                     }
                 }
+
+                if let Some((target_path, target_row)) = &scroll_to
+                    && *target_path == file_path
+                {
+                    let anchor = this.update(cx, |this, cx| {
+                        this.multibuffer.read(cx).buffer_point_to_anchor(
+                            &buffer,
+                            language::Point::new(*target_row, 0),
+                            cx,
+                        )
+                    })?;
+                    if let Some(anchor) = anchor {
+                        // Pin the scroll anchor to the target line so it centers;
+                        // the line count is unknown before the first layout.
+                        let recenter =
+                            move |editor: &mut Editor,
+                                  window: &mut Window,
+                                  cx: &mut Context<Editor>| {
+                                if let Some(offset) =
+                                    editor.visible_line_count().map(center_scroll_offset)
+                                {
+                                    editor.set_scroll_anchor(
+                                        ScrollAnchor {
+                                            anchor,
+                                            offset: gpui::point(0.0, offset),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                    true
+                                } else {
+                                    false
+                                }
+                            };
+                        this.update_in(cx, |this, window, cx| {
+                            this.editor.update(cx, |editor, cx| {
+                                editor.rhs_editor().update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll().nav_history(false),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges([anchor..anchor]),
+                                    );
+                                    let offset =
+                                        editor.visible_line_count().map(center_scroll_offset);
+                                    editor.set_scroll_anchor(
+                                        ScrollAnchor {
+                                            anchor,
+                                            offset: gpui::point(0.0, offset.unwrap_or(0.0)),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                    if offset.is_none() {
+                                        let editor: WeakEntity<Editor> = cx.entity().downgrade();
+                                        cx.spawn_in(window, async move |_, cx| {
+                                            for _ in 0..120 {
+                                                if editor.update_in(cx, recenter).unwrap_or(true) {
+                                                    break;
+                                                }
+                                                cx.background_executor()
+                                                    .timer(Duration::from_millis(16))
+                                                    .await;
+                                            }
+                                        })
+                                        .detach();
+                                    }
+                                });
+                            });
+                        })?;
+                        scroll_to = None;
+                    }
+                }
             }
 
             this.update(cx, |this, cx| {
@@ -459,6 +588,7 @@ impl CommitView {
                             file_statuses,
                             commit_view,
                         });
+                        editor.set_expected_max_row(None);
                     });
                 });
                 if !binary_buffer_ids.is_empty() {
@@ -1404,4 +1534,9 @@ fn stash_matches_index(sha: &str, stash_index: usize, repo: &Repository) -> bool
         .get(stash_index)
         .map(|entry| entry.oid.to_string() == sha)
         .unwrap_or(false)
+}
+
+/// The scroll offset that centers the given number of visible lines.
+fn center_scroll_offset(visible_lines: f64) -> f64 {
+    -((visible_lines - 1.0) / 2.0).floor().max(0.0)
 }

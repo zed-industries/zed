@@ -83,7 +83,8 @@ impl EditorElement {
         }
 
         if text_hovered
-            && let Some((bounds, buffer_id, blame_entry)) = &position_map.inline_blame_bounds
+            && let Some((bounds, buffer_id, buffer_row, blame_entry)) =
+                &position_map.inline_blame_bounds
         {
             let mouse_over_inline_blame = bounds.contains(&event.position);
             let mouse_over_popover = editor
@@ -97,7 +98,14 @@ impl EditorElement {
                 .is_some_and(|state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(*buffer_id, blame_entry, event.position, false, cx);
+                editor.show_blame_popover(
+                    *buffer_id,
+                    *buffer_row,
+                    blame_entry,
+                    event.position,
+                    false,
+                    cx,
+                );
             } else if !keyboard_grace {
                 editor.hide_blame_popover(false, cx);
             }

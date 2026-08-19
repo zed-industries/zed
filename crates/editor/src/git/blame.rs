@@ -123,6 +123,7 @@ pub trait BlameRenderer {
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
         _: usize,
+        _: u32,
         _: Hsla,
         window: &mut Window,
         _: &mut App,
@@ -138,6 +139,7 @@ pub trait BlameRenderer {
     fn render_blame_entry_popover(
         &self,
         _: BlameEntry,
+        _: u32,
         _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
         _: Vec<SharedString>,
@@ -151,6 +153,7 @@ pub trait BlameRenderer {
     fn open_blame_commit(
         &self,
         _: BlameEntry,
+        _: u32,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: &mut Window,
@@ -184,6 +187,7 @@ impl BlameRenderer for () {
         _: WeakEntity<Workspace>,
         _: Entity<Editor>,
         _: usize,
+        _: u32,
         _: Hsla,
         _: &mut Window,
         _: &mut App,
@@ -203,6 +207,7 @@ impl BlameRenderer for () {
     fn render_blame_entry_popover(
         &self,
         _: BlameEntry,
+        _: u32,
         _: ScrollHandle,
         _: Option<ParsedCommitMessage>,
         _: Vec<SharedString>,
@@ -218,6 +223,7 @@ impl BlameRenderer for () {
     fn open_blame_commit(
         &self,
         _: BlameEntry,
+        _: u32,
         _: Entity<Repository>,
         _: WeakEntity<Workspace>,
         _: &mut Window,

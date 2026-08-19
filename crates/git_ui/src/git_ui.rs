@@ -58,6 +58,7 @@ pub mod text_diff_view;
 pub mod unstaged_diff;
 
 pub use blame_ui::GitBlameStatus;
+pub(crate) use blame_ui::blame_entry_scroll_target;
 pub use conflict_view::MergeConflictIndicator;
 
 pub fn init(cx: &mut App) {
@@ -680,6 +681,7 @@ impl RefPickerModal {
                                 details.sha.to_string(),
                                 repo.downgrade(),
                                 workspace.weak_handle(),
+                                None,
                                 None,
                                 None,
                                 window,

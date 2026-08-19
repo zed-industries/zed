@@ -72,6 +72,7 @@ pub(crate) fn commit_context_menu(
                         workspace.clone(),
                         None,
                         None,
+                        None,
                         window,
                         cx,
                     );

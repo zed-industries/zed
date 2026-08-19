@@ -6321,6 +6321,7 @@ impl GitPanel {
                                     workspace.clone(),
                                     None,
                                     None,
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -6540,6 +6541,7 @@ impl GitPanel {
             entry.sha.to_string(),
             active_repository.downgrade(),
             self.workspace.clone(),
+            None,
             None,
             None,
             window,
@@ -7029,6 +7031,7 @@ impl GitPanel {
                                                 sha_for_click.clone(),
                                                 repo.clone(),
                                                 workspace.clone(),
+                                                None,
                                                 None,
                                                 None,
                                                 window,
