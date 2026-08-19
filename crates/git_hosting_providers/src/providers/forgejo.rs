@@ -180,14 +180,28 @@ impl GitHostingProvider for Forgejo {
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
         let url = RemoteUrl::from_str(url).ok()?;
 
-        let host = url.host_str()?;
-        if host != self.base_url.host_str()? {
+        if url.host_str()? != self.base_url.host_str()? {
             return None;
         }
 
-        let mut path_segments = url.path_segments()?;
+        // Filter out empty segments (e.g. from leading/trailing slashes)
+        let mut path_segments = url.path_segments()?.filter(|s| !s.is_empty());
+
+        // Skip prefix segments matching base_url's path
+        if let Some(base_segments) = self.base_url.path_segments() {
+            for base_seg in base_segments.filter(|s| !s.is_empty()) {
+                if path_segments.next()? != base_seg {
+                    return None;
+                }
+            }
+        }
+
         let owner = path_segments.next()?;
         let repo = path_segments.next()?.trim_end_matches(".git");
+
+        if owner.is_empty() || repo.is_empty() {
+            return None;
+        }
 
         Some(ParsedGitRemote {
             owner: owner.into(),
