@@ -73,9 +73,7 @@ pub(crate) fn activate_or_add_with_preview<T: Item>(
 ) -> Entity<T> {
     if let Some(existing) = existing {
         workspace.activate_item(&existing, true, true, window, cx);
-        if !allow_preview
-            && let Some(pane) = workspace.pane_for(&existing)
-        {
+        if !allow_preview && let Some(pane) = workspace.pane_for(&existing) {
             pane.update(cx, |pane, _| {
                 pane.unpreview_item_if_preview(existing.entity_id());
             });

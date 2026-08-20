@@ -2133,9 +2133,7 @@ impl GitPanel {
                         .project_path_to_repo_path(&project_path, cx)
                         .as_ref()
             {
-                if !allow_preview
-                    && let Some(pane) = workspace.read(cx).pane_for(&project_diff)
-                {
+                if !allow_preview && let Some(pane) = workspace.read(cx).pane_for(&project_diff) {
                     pane.update(cx, |pane, _| {
                         pane.unpreview_item_if_preview(project_diff.entity_id());
                     });
@@ -2213,7 +2211,7 @@ impl GitPanel {
                 window,
                 cx,
             )
-                .detach_and_notify_err(self.workspace.clone(), window, cx);
+            .detach_and_notify_err(self.workspace.clone(), window, cx);
 
             Some(())
         });
