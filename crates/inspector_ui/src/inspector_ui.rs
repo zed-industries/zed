@@ -13,7 +13,7 @@ pub fn init(_app_state: std::sync::Arc<workspace::AppState>, cx: &mut gpui::App)
 
     cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
         Err::<(), anyhow::Error>(anyhow::anyhow!(
-            "dev::ToggleInspector is only available in debug builds"
+            "dev::ToggleInspector is only available in debug builds and Nightly"
         ))
         .notify_app_err(cx);
     });
