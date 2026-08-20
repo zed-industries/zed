@@ -1016,6 +1016,7 @@ mod tests {
                 position: settings::SidebarDockPosition::Left,
             },
             thinking_display: Default::default(),
+            terminal_output_limit: agent_settings::DEFAULT_TERMINAL_OUTPUT_LIMIT,
         };
 
         cx.update(|cx| {
