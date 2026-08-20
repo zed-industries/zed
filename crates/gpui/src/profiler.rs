@@ -17,6 +17,10 @@ use std::{
 };
 
 mod actions;
+#[cfg(feature = "profiler")]
+pub mod hang;
+#[cfg(feature = "profiler")]
+pub mod journal;
 pub use actions::{ActionStatistics, ActionTiming, take_action_stats};
 
 use serde::{Deserialize, Serialize};
@@ -587,7 +591,7 @@ impl ThreadTimings {
     pub fn update_running_task(&mut self, _: SpawnTime, _: &'static std::panic::Location<'_>) {}
 
     #[cfg(feature = "profiler")]
-    pub fn save_task_timing(&mut self, ended: YieldTime) {
+    pub fn save_task_timing(&mut self, ended: YieldTime) -> TaskTiming {
         let ActiveTiming {
             location,
             start,
@@ -614,6 +618,7 @@ impl ThreadTimings {
             self.timings.push_back(timing);
             self.total_pushed += 1;
         }
+        timing
     }
     #[cfg(not(feature = "profiler"))]
     pub fn save_task_timing(&mut self, _: YieldTime) {}
@@ -662,6 +667,8 @@ impl Drop for ThreadTimings {
 
 #[doc(hidden)]
 pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Location<'_>) {
+    #[cfg(feature = "profiler")]
+    journal::begin_foreground_turn();
     THREAD_TIMINGS.with(|timings| {
         timings.lock().update_running_task(spawned, location);
     });
@@ -670,6 +677,12 @@ pub fn update_running_task(spawned: SpawnTime, location: &'static std::panic::Lo
 #[doc(hidden)]
 pub fn save_task_timing() {
     let yielded_at = YieldTime(Instant::now());
+    #[cfg(feature = "profiler")]
+    {
+        let timing = THREAD_TIMINGS.with(|timings| timings.lock().save_task_timing(yielded_at));
+        journal::record_task_poll(timing);
+    }
+    #[cfg(not(feature = "profiler"))]
     THREAD_TIMINGS.with(|timings| {
         timings.lock().save_task_timing(yielded_at);
     });
@@ -801,17 +814,27 @@ impl FrameTiming {
     }
 }
 
-/// A newly drawn frame reaching the screen.
+/// Work spent submitting a window frame to the platform.
 #[cfg(feature = "profiler")]
 #[derive(Debug, Copy, Clone)]
 pub struct PresentTiming {
-    /// The window whose frame was presented.
+    /// The window whose frame was submitted.
     pub window_id: WindowId,
-    /// When the frame was presented.
-    pub presented_at: Instant,
-    /// The interval since the previous newly drawn frame was presented, when
+    /// When the platform submission began.
+    pub present_start: Instant,
+    /// When the platform submission completed.
+    pub present_end: Instant,
+    /// The interval since the previous newly drawn frame was submitted, when
     /// both frames belong to an active animation.
     pub animation_interval: Option<Duration>,
+}
+
+#[cfg(feature = "profiler")]
+impl PresentTiming {
+    /// Time spent submitting the frame to the platform.
+    pub fn present_duration(&self) -> Duration {
+        self.present_end.duration_since(self.present_start)
+    }
 }
 
 /// A frame event observed by the profiler.
@@ -852,8 +875,13 @@ pub struct InputLatencySnapshot {
 
 #[cfg(feature = "profiler")]
 enum WindowActivity {
-    Input { started_at: Instant },
-    Draw { started_at: Instant },
+    Input {
+        started_at: Instant,
+        kind: &'static str,
+    },
+    Draw {
+        started_at: Instant,
+    },
 }
 
 /// Collects profiling information for one window.
@@ -865,6 +893,7 @@ enum WindowActivity {
 pub struct WindowProfiler {
     window_id: WindowId,
     active_activities: SmallVec<[WindowActivity; 4]>,
+    active_actions: SmallVec<[(&'static str, Instant); 2]>,
     draw_duration_histogram: Histogram<u64>,
     present_interval_histogram: Histogram<u64>,
     first_input_at: Option<Instant>,
@@ -874,16 +903,17 @@ pub struct WindowProfiler {
     mid_draw_events_dropped: u64,
     last_present_at: Option<Instant>,
     animating_at_last_present: bool,
-    drew_since_last_present: bool,
+    pending_frame: Option<FrameTiming>,
 }
 
 #[cfg(feature = "profiler")]
 impl WindowProfiler {
     /// Creates a profiler for a window.
     pub fn new(window_id: WindowId) -> anyhow::Result<Self> {
-        Ok(Self {
+        let profiler = Self {
             window_id,
             active_activities: SmallVec::new(),
+            active_actions: SmallVec::new(),
             draw_duration_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create draw duration histogram: {error}")
             })?,
@@ -901,23 +931,37 @@ impl WindowProfiler {
             mid_draw_events_dropped: 0,
             last_present_at: None,
             animating_at_last_present: false,
-            drew_since_last_present: false,
-        })
+            pending_frame: None,
+        };
+        journal::record_frame_pending(window_id, Instant::now());
+        Ok(profiler)
     }
 
-    /// Records the beginning of an input dispatch.
-    pub fn begin_input(&mut self) {
+    /// Records the beginning of an input dispatch. `kind` names the platform
+    /// input variant being dispatched (see [`crate::PlatformInput::kind_name`]).
+    pub fn begin_input(&mut self, kind: &'static str) {
+        journal::begin_foreground_turn();
         self.active_activities.push(WindowActivity::Input {
             started_at: Instant::now(),
+            kind,
         });
     }
 
     /// Records the end of an input dispatch.
     pub fn end_input(&mut self, caused_invalidation: bool) {
-        let Some(WindowActivity::Input { started_at }) = self.active_activities.pop() else {
+        let Some(WindowActivity::Input { started_at, kind }) = self.active_activities.pop() else {
             debug_assert!(false, "input activity must be the current window activity");
+            journal::end_foreground_turn();
             return;
         };
+
+        journal::record_input(journal::InputTiming {
+            kind,
+            start: started_at,
+            end: Instant::now(),
+            caused_invalidation,
+        });
+        journal::end_foreground_turn();
 
         if !caused_invalidation {
             return;
@@ -937,19 +981,37 @@ impl WindowProfiler {
 
     /// Records the beginning of an action handler.
     pub fn begin_action_handler(&mut self, action: &(dyn Action + 'static), cx: &mut App) {
-        actions::update_running_action(action, cx);
+        journal::begin_foreground_turn();
+        let name = actions::update_running_action(action, cx);
+        self.active_actions.push((name, Instant::now()));
     }
 
     /// Records the end of the current action handler.
     pub fn end_action_handler(&mut self) {
+        // Dual-write to the legacy aggregate store; its single global running
+        // slot misbehaves when tests run actions concurrently, which is why
+        // the journal entry is tracked here on the window instead.
         actions::save_action_timing();
+        let Some((name, start)) = self.active_actions.pop() else {
+            debug_assert!(false, "action handler must be begun before it ends");
+            journal::end_foreground_turn();
+            return;
+        };
+        journal::record_action(ActionTiming {
+            name,
+            start,
+            end: Instant::now(),
+        });
+        journal::end_foreground_turn();
     }
 
     /// Records the beginning of a window draw.
     pub fn begin_draw(&mut self) {
-        self.active_activities.push(WindowActivity::Draw {
-            started_at: Instant::now(),
-        });
+        journal::begin_foreground_turn();
+        let started_at = Instant::now();
+        journal::record_frame_pending(self.window_id, started_at);
+        self.active_activities
+            .push(WindowActivity::Draw { started_at });
     }
 
     /// Records the end of a window draw and returns the draw duration.
@@ -959,20 +1021,21 @@ impl WindowProfiler {
         }) = self.active_activities.pop()
         else {
             debug_assert!(false, "draw activity must be the current window activity");
+            journal::end_foreground_turn();
             return Duration::ZERO;
         };
 
-        self.drew_since_last_present = true;
         let draw_end = Instant::now();
-        let draw_duration = draw_end.duration_since(draw_start);
-        self.record_draw_duration(draw_duration);
-        record_frame_event(FrameEvent::Draw(FrameTiming {
+        let frame_timing = FrameTiming {
             window_id: self.window_id,
             dirty_at,
             invalidations,
             draw_start,
             draw_end,
-        }));
+        };
+        let draw_duration = frame_timing.draw_duration();
+        self.record_draw_timing(frame_timing);
+        journal::end_foreground_turn();
         draw_duration
     }
 
@@ -980,8 +1043,19 @@ impl WindowProfiler {
     ///
     /// `next_frame_scheduled` marks the animation state for the interval ending
     /// at the next newly drawn frame's presentation.
-    pub fn record_present(&mut self, window_active: bool, next_frame_scheduled: bool) {
-        self.record_present_at(Instant::now(), window_active, next_frame_scheduled);
+    pub fn record_present(
+        &mut self,
+        present_start: Instant,
+        present_end: Instant,
+        window_active: bool,
+        next_frame_scheduled: bool,
+    ) {
+        self.record_present_at(
+            present_start,
+            present_end,
+            window_active,
+            next_frame_scheduled,
+        );
     }
 
     /// Returns a snapshot of the current input-latency histograms.
@@ -1003,12 +1077,13 @@ impl WindowProfiler {
 
     fn record_present_at(
         &mut self,
-        presented_at: Instant,
+        present_start: Instant,
+        present_end: Instant,
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
         if let Some(first_input_at) = self.first_input_at.take() {
-            let latency_nanos = presented_at.duration_since(first_input_at).as_nanos() as u64;
+            let latency_nanos = present_end.duration_since(first_input_at).as_nanos() as u64;
             self.input_latency_histogram.record(latency_nanos).ok();
         }
         if self.pending_input_count > 0 {
@@ -1018,38 +1093,55 @@ impl WindowProfiler {
             self.pending_input_count = 0;
         }
 
-        if !std::mem::take(&mut self.drew_since_last_present) {
+        let frame = self.pending_frame.take();
+        let animation_interval =
+            if frame.is_some() && self.animating_at_last_present && window_active {
+                self.last_present_at
+                    .map(|last_present_at| present_end.duration_since(last_present_at))
+            } else {
+                None
+            };
+        let present_timing = PresentTiming {
+            window_id: self.window_id,
+            present_start,
+            present_end,
+            animation_interval,
+        };
+        journal::record_present(present_timing, frame);
+
+        if frame.is_none() {
             return;
         }
-
-        let animation_interval = if self.animating_at_last_present && window_active {
-            self.last_present_at
-                .map(|last_present_at| presented_at.duration_since(last_present_at))
-        } else {
-            None
-        };
 
         if let Some(animation_interval) = animation_interval {
             self.present_interval_histogram
                 .record(animation_interval.as_nanos() as u64)
                 .ok();
         }
+        record_frame_event(FrameEvent::Present(present_timing));
 
-        record_frame_event(FrameEvent::Present(PresentTiming {
-            window_id: self.window_id,
-            presented_at,
-            animation_interval,
-        }));
-
-        self.last_present_at = Some(presented_at);
+        self.last_present_at = Some(present_end);
         self.animating_at_last_present = next_frame_scheduled && window_active;
+    }
+
+    fn record_draw_timing(&mut self, timing: FrameTiming) {
+        self.record_draw_duration(timing.draw_duration());
+        self.pending_frame = Some(timing);
+        record_frame_event(FrameEvent::Draw(timing));
+        journal::record_draw(timing);
     }
 
     fn record_draw_duration(&mut self, duration: Duration) {
         self.draw_duration_histogram
             .record(duration.as_nanos() as u64)
             .ok();
-        self.drew_since_last_present = true;
+    }
+}
+
+#[cfg(feature = "profiler")]
+impl Drop for WindowProfiler {
+    fn drop(&mut self) {
+        journal::record_window_closed(self.window_id);
     }
 }
 
@@ -1180,11 +1272,16 @@ mod tests {
         let start = Instant::now();
         let mut collector = FrameTimingCollector::new();
 
-        window_profiler.record_draw_duration(Duration::from_millis(2));
-        window_profiler.record_present_at(start, true, true);
-        window_profiler.record_draw_duration(Duration::from_millis(2));
-        window_profiler.record_present_at(start + FRAME, true, true);
-        window_profiler.record_present_at(start + FRAME + FRAME / 2, true, true);
+        record_test_draw(&mut window_profiler, start);
+        window_profiler.record_present_at(start, start, true, true);
+        record_test_draw(&mut window_profiler, start + FRAME);
+        window_profiler.record_present_at(start + FRAME, start + FRAME, true, true);
+        window_profiler.record_present_at(
+            start + FRAME + FRAME / 2,
+            start + FRAME + FRAME / 2,
+            true,
+            true,
+        );
 
         let present_timings = collector
             .collect_unseen()
@@ -1284,7 +1381,7 @@ mod tests {
         let start = Instant::now();
 
         draw_and_present(&mut window_profiler, start, true, true);
-        window_profiler.record_present_at(start + FRAME / 2, true, true);
+        window_profiler.record_present_at(start + FRAME / 2, start + FRAME / 2, true, true);
         draw_and_present(&mut window_profiler, start + FRAME, true, true);
 
         assert_eq!(window_profiler.present_interval_histogram.len(), 1);
@@ -1339,8 +1436,8 @@ mod tests {
             first_input_at + Duration::from_millis(2),
         );
         window_profiler.end_input(true);
-        window_profiler.record_draw_duration(Duration::from_millis(2));
-        window_profiler.record_present_at(presented_at, true, false);
+        record_test_draw(&mut window_profiler, presented_at);
+        window_profiler.record_present_at(presented_at, presented_at, true, false);
 
         let snapshot = window_profiler.input_latency_snapshot();
         assert_eq!(snapshot.latency_histogram.len(), 1);
@@ -1420,7 +1517,10 @@ mod tests {
     fn begin_input_at(window_profiler: &mut WindowProfiler, started_at: Instant) {
         window_profiler
             .active_activities
-            .push(WindowActivity::Input { started_at });
+            .push(WindowActivity::Input {
+                started_at,
+                kind: "test",
+            });
     }
 
     #[cfg(feature = "profiler")]
@@ -1430,7 +1530,22 @@ mod tests {
         window_active: bool,
         next_frame_scheduled: bool,
     ) {
-        window_profiler.record_draw_duration(Duration::from_millis(2));
-        window_profiler.record_present_at(presented_at, window_active, next_frame_scheduled);
+        record_test_draw(window_profiler, presented_at);
+        window_profiler.record_present_at(
+            presented_at,
+            presented_at,
+            window_active,
+            next_frame_scheduled,
+        );
+    }
+
+    fn record_test_draw(window_profiler: &mut WindowProfiler, draw_end: Instant) {
+        window_profiler.record_draw_timing(FrameTiming {
+            window_id: window_profiler.window_id,
+            dirty_at: Some(draw_end - Duration::from_millis(4)),
+            invalidations: 1,
+            draw_start: draw_end - Duration::from_millis(2),
+            draw_end,
+        });
     }
 }
