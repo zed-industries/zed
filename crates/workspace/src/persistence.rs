@@ -29,7 +29,7 @@ use project::{
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
-    DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
+    DockerConnectionOptions, DockerIdentityKey, RemoteConnectionIdentity, RemoteConnectionOptions,
     SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
 };
 use serde::{Deserialize, Serialize};
@@ -1051,6 +1051,10 @@ impl Domain for WorkspaceDb {
         sql!(
             ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
         ),
+        sql!(
+            ALTER TABLE remote_connections ADD COLUMN local_folder TEXT;
+            ALTER TABLE remote_connections ADD COLUMN config_file TEXT;
+        ),
     ];
 
     // Allow recovering from bad migration that was initially shipped to nightly
@@ -1658,6 +1662,23 @@ impl WorkspaceDb {
         this: &Connection,
         options: RemoteConnectionOptions,
     ) -> Result<RemoteConnectionId> {
+        // Dev container connections are keyed on their stable host labels
+        // (`local_folder` + `config_file`), not the ephemeral `container_id`, so
+        // that rebuilding or restarting a container reuses the same row instead
+        // of accumulating a fresh one on every cycle (see issue #56576).
+        if let RemoteConnectionOptions::Docker(docker) = &options {
+            if let (Some(local_folder), Some(config_file)) =
+                (docker.local_folder.clone(), docker.config_file.clone())
+            {
+                return Self::get_or_create_dev_container_connection_query(
+                    this,
+                    docker,
+                    local_folder,
+                    config_file,
+                );
+            }
+        }
+
         let identity = remote_connection_identity(&options);
         let kind;
         let user: Option<String>;
@@ -1688,15 +1709,17 @@ impl WorkspaceDb {
                 distro = Some(distro_name);
                 user = identity_user;
             }
-            RemoteConnectionIdentity::Docker {
-                container_id: identity_container_id,
-                name: identity_name,
-                remote_user,
-            } => {
+            RemoteConnectionIdentity::Docker { remote_user, key } => {
                 kind = RemoteConnectionKind::Docker;
-                container_id = Some(identity_container_id);
-                name = Some(identity_name);
                 user = Some(remote_user);
+                match key {
+                    // Dev container connections take the stable-key path above;
+                    // only the label-less fallback reaches here.
+                    DockerIdentityKey::ContainerId(identity_container_id) => {
+                        container_id = Some(identity_container_id);
+                    }
+                    DockerIdentityKey::DevContainer { .. } => {}
+                }
             }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionIdentity::Mock { id } => {
@@ -1707,6 +1730,7 @@ impl WorkspaceDb {
         }
 
         if let RemoteConnectionOptions::Docker(options) = options {
+            name = Some(options.name);
             use_podman = Some(options.use_podman);
             remote_env = serde_json::to_string(&options.remote_env).ok();
         }
@@ -1723,6 +1747,73 @@ impl WorkspaceDb {
             use_podman,
             remote_env,
         )
+    }
+
+    /// Finds or creates the `remote_connections` row for a dev container,
+    /// matching on the stable host labels rather than the ephemeral
+    /// `container_id`. When a row already exists, its runtime fields
+    /// (`container_id`, `name`, `use_podman`, `remote_env`) are refreshed so a
+    /// later reconnect uses the most recent values.
+    fn get_or_create_dev_container_connection_query(
+        this: &Connection,
+        docker: &DockerConnectionOptions,
+        local_folder: String,
+        config_file: String,
+    ) -> Result<RemoteConnectionId> {
+        let kind = RemoteConnectionKind::Docker.serialize();
+        let user = docker.remote_user.clone();
+        let name = docker.name.clone();
+        let container_id = docker.container_id.clone();
+        let use_podman = docker.use_podman;
+        let remote_env = serde_json::to_string(&docker.remote_env).ok();
+
+        if let Some(id) = this.select_row_bound(sql!(
+            SELECT id
+            FROM remote_connections
+            WHERE
+                kind IS ? AND
+                user IS ? AND
+                local_folder IS ? AND
+                config_file IS ?
+            LIMIT 1
+        ))?((
+            kind,
+            user.clone(),
+            local_folder.clone(),
+            config_file.clone(),
+        ))? {
+            this.exec_bound(sql!(
+                UPDATE remote_connections
+                SET container_id = ?, name = ?, use_podman = ?, remote_env = ?
+                WHERE id = ?
+            ))?((container_id, name, use_podman, remote_env, id))?;
+            Ok(RemoteConnectionId(id))
+        } else {
+            let id = this.select_row_bound(sql!(
+                INSERT INTO remote_connections (
+                    kind,
+                    user,
+                    name,
+                    container_id,
+                    use_podman,
+                    remote_env,
+                    local_folder,
+                    config_file
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                RETURNING id
+            ))?((
+                kind,
+                user,
+                name,
+                container_id,
+                use_podman,
+                remote_env,
+                local_folder,
+                config_file,
+            ))?
+            .context("failed to insert dev container remote connection")?;
+            Ok(RemoteConnectionId(id))
+        }
     }
 
     fn get_or_create_remote_connection_query(
@@ -1904,13 +1995,13 @@ impl WorkspaceDb {
     fn remote_connections(&self) -> Result<HashMap<RemoteConnectionId, RemoteConnectionOptions>> {
         Ok(self.select(sql!(
             SELECT
-                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env
+                id, kind, host, port, user, distro, container_id, name, use_podman, remote_env, local_folder, config_file
             FROM
                 remote_connections
         ))?()?
         .into_iter()
         .filter_map(
-            |(id, kind, host, port, user, distro, container_id, name, use_podman, remote_env)| {
+            |(id, kind, host, port, user, distro, container_id, name, use_podman, (remote_env, local_folder, config_file))| {
                 Some((
                     RemoteConnectionId(id),
                     Self::remote_connection_from_row(
@@ -1923,6 +2014,8 @@ impl WorkspaceDb {
                         name,
                         use_podman,
                         remote_env,
+                        local_folder,
+                        config_file,
                     )?,
                 ))
             },
@@ -1934,9 +2027,9 @@ impl WorkspaceDb {
         &self,
         id: RemoteConnectionId,
     ) -> Result<RemoteConnectionOptions> {
-        let (kind, host, port, user, distro, container_id, name, use_podman, remote_env) =
+        let (kind, host, port, user, distro, container_id, name, use_podman, (remote_env, local_folder, config_file)) =
             self.select_row_bound(sql!(
-                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env
+                SELECT kind, host, port, user, distro, container_id, name, use_podman, remote_env, local_folder, config_file
                 FROM remote_connections
                 WHERE id = ?
             ))?(id.0)?
@@ -1951,6 +2044,8 @@ impl WorkspaceDb {
             name,
             use_podman,
             remote_env,
+            local_folder,
+            config_file,
         )
         .context("invalid remote_connection row")
     }
@@ -1965,6 +2060,8 @@ impl WorkspaceDb {
         name: Option<String>,
         use_podman: Option<bool>,
         remote_env: Option<String>,
+        local_folder: Option<String>,
+        config_file: Option<String>,
     ) -> Option<RemoteConnectionOptions> {
         match RemoteConnectionKind::deserialize(&kind)? {
             RemoteConnectionKind::Wsl => Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
@@ -1984,6 +2081,8 @@ impl WorkspaceDb {
                     container_id: container_id?,
                     name: name?,
                     remote_user: user?,
+                    local_folder,
+                    config_file,
                     upload_binary_over_docker_exec: false,
                     use_podman: use_podman?,
                     remote_env,
@@ -4176,6 +4275,74 @@ mod tests {
             .unwrap();
 
         assert_ne!(connection_id, different_connection);
+    }
+
+    #[gpui::test]
+    async fn test_dev_container_connection_is_stable_across_rebuilds() {
+        let db =
+            WorkspaceDb::open_test_db("test_dev_container_connection_is_stable_across_rebuilds")
+                .await;
+
+        let local_folder = "/home/user/project".to_string();
+        let config_file = "/home/user/project/.devcontainer/devcontainer.json".to_string();
+
+        let make_options = |container_id: &str, name: &str| {
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                name: name.to_string(),
+                container_id: container_id.to_string(),
+                remote_user: "vscode".to_string(),
+                local_folder: Some(local_folder.clone()),
+                config_file: Some(config_file.clone()),
+                upload_binary_over_docker_exec: false,
+                use_podman: false,
+                remote_env: BTreeMap::default(),
+            })
+        };
+
+        let first = db
+            .get_or_create_remote_connection(make_options("container-1", "project"))
+            .await
+            .unwrap();
+
+        // A rebuild produces a new container id (and possibly a new name), but
+        // the same host labels must reuse the same connection row.
+        let after_rebuild = db
+            .get_or_create_remote_connection(make_options("container-2", "project-renamed"))
+            .await
+            .unwrap();
+
+        assert_eq!(first, after_rebuild);
+
+        // The row's runtime fields are refreshed to the latest container.
+        let RemoteConnectionOptions::Docker(reloaded) = db.remote_connection(first).unwrap() else {
+            panic!("expected a docker connection");
+        };
+        assert_eq!(reloaded.container_id, "container-2");
+        assert_eq!(reloaded.name, "project-renamed");
+        assert_eq!(
+            reloaded.local_folder.as_deref(),
+            Some(local_folder.as_str())
+        );
+        assert_eq!(reloaded.config_file.as_deref(), Some(config_file.as_str()));
+
+        // A different config file in the same folder is a distinct dev container.
+        let other_config = RemoteConnectionOptions::Docker(DockerConnectionOptions {
+            name: "backend".to_string(),
+            container_id: "container-3".to_string(),
+            remote_user: "vscode".to_string(),
+            local_folder: Some(local_folder.clone()),
+            config_file: Some(
+                "/home/user/project/.devcontainer/backend/devcontainer.json".to_string(),
+            ),
+            upload_binary_over_docker_exec: false,
+            use_podman: false,
+            remote_env: BTreeMap::default(),
+        });
+        let different = db
+            .get_or_create_remote_connection(other_config)
+            .await
+            .unwrap();
+        assert_ne!(first, different);
     }
 
     #[gpui::test]
