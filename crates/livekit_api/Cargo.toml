@@ -29,5 +29,5 @@ serde.workspace = true
 [build-dependencies]
 prost-build.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["prost-types"]

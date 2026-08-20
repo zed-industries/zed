@@ -52,6 +52,9 @@ pub(crate) struct ParsedMarkdownData {
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    /// Source spans of link reference definitions (`[id]: https://example.com`), which are
+    /// consumed by the parser and never appear in any event range.
+    pub link_definition_spans: Vec<Range<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -258,9 +261,14 @@ pub(crate) fn parse_markdown_with_options(
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
     let parse_options = parse_options(parse_metadata_blocks);
-    let mut parser = Parser::new_ext(text, parse_options)
-        .into_offset_iter()
-        .peekable();
+    let mut parser = Parser::new_ext(text, parse_options);
+    let mut link_definition_spans = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| definition.span.clone())
+        .collect::<Vec<_>>();
+    link_definition_spans.sort_by_key(|span| span.start);
+    let mut parser = parser.into_offset_iter().peekable();
     while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata && !parse_metadata_blocks {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock(_)) =
@@ -685,6 +693,7 @@ pub(crate) fn parse_markdown_with_options(
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
+        link_definition_spans,
     }
 }
 
