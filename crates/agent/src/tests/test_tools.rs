@@ -183,6 +183,61 @@ impl AgentTool for StreamingFailingEchoTool {
     }
 }
 
+/// A tool that echoes its input only after being released via a oneshot,
+/// used to test non-blocking tool calls. Its input is raw JSON so tests can
+/// also verify that the runtime-level `blocking` property never reaches the
+/// tool.
+pub struct GatedEchoTool {
+    release_rx: Mutex<Option<oneshot::Receiver<()>>>,
+}
+
+impl GatedEchoTool {
+    pub fn new(release_rx: oneshot::Receiver<()>) -> Self {
+        Self {
+            release_rx: Mutex::new(Some(release_rx)),
+        }
+    }
+}
+
+impl AgentTool for GatedEchoTool {
+    type Input = serde_json::Value;
+    type Output = String;
+
+    const NAME: &'static str = "gated_echo";
+
+    fn kind() -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
+        "Gated Echo".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: ToolInput<Self::Input>,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String, String>> {
+        let release_rx = self.release_rx.lock().unwrap().take();
+        cx.spawn(async move |_cx| {
+            let input = input.recv().await.map_err(|e| e.to_string())?;
+            if let Some(release_rx) = release_rx {
+                release_rx.await.map_err(|e| e.to_string())?;
+            }
+            Ok(json!({
+                "text": input.get("text"),
+                "received_blocking_key": input.get("blocking").is_some(),
+            })
+            .to_string())
+        })
+    }
+}
+
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]
 pub struct EchoToolInput {

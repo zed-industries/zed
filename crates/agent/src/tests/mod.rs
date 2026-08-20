@@ -28,8 +28,8 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    LanguageModelRequestToolInput, LanguageModelToolResult, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -1137,6 +1137,274 @@ async fn test_tool_call_id_scoped_per_completion_request(cx: &mut TestAppContext
         "raw tool_use ids that recur across separate completion requests within the same turn \
          must map to distinct ACP tool call ids, otherwise the second tool call would overwrite \
          the first instead of appearing as a new entry"
+    );
+}
+
+/// A tool call with `"blocking": false` must not hold up the turn: the
+/// model immediately receives a placeholder result carrying an
+/// `async_tool_call_id`, and the real result is delivered later as a new
+/// user message with the same id.
+#[gpui::test]
+async fn test_non_blocking_tool_call(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tools"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The runtime offers an optional `blocking` property on every tool
+    // schema, defaulting to blocking.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let echo_tool = completion
+        .tools
+        .iter()
+        .find(|tool| tool.name == EchoTool::NAME)
+        .unwrap();
+    let LanguageModelRequestToolInput::Function { input_schema, .. } = &echo_tool.input else {
+        panic!("expected a function tool");
+    };
+    assert_eq!(
+        input_schema["properties"]["blocking"]["default"],
+        json!(true),
+        "tools should offer the blocking property"
+    );
+
+    // The model calls one tool non-blockingly and one blockingly.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_slow".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_fast".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "fast"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"text": "fast"})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The turn did not wait for the gated tool: the model immediately
+    // received a placeholder result carrying an async_tool_call_id, plus the
+    // blocking call's real result.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result_text = |tool_use_id: &str| {
+        completion
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .find_map(|content| match content {
+                MessageContent::ToolResult(result)
+                    if result.tool_use_id.to_string() == tool_use_id =>
+                {
+                    result.content.iter().find_map(|content| match content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            Some(text.to_string())
+                        }
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a tool result for {tool_use_id}"))
+    };
+    let placeholder: serde_json::Value = serde_json::from_str(&tool_result_text("call_slow"))
+        .unwrap_or_else(|_| panic!("not json: {:?}", tool_result_text("call_slow")));
+    assert_eq!(placeholder["status"], json!("running"));
+    let async_id = placeholder["async_tool_call_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        async_id.starts_with("a~"),
+        "async tool call id should carry the fixed prefix: {async_id}"
+    );
+    assert_eq!(tool_result_text("call_fast"), "fast");
+
+    // Let the gated tool finish while the model is still responding; its
+    // result is delivered at the next reasoning boundary.
+    release_tx.send(()).unwrap();
+    cx.run_until_parked();
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The finished result steered the thread into a continuation whose
+    // request ends with a new user message carrying the same id.
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["tool_name"], json!(GatedEchoTool::NAME));
+    assert_eq!(delivery["status"], json!("completed"));
+    let result: serde_json::Value =
+        serde_json::from_str(delivery["result"].as_str().unwrap()).unwrap();
+    assert_eq!(result["text"], json!("slow"));
+    assert_eq!(
+        result["received_blocking_key"],
+        json!(false),
+        "the runtime must strip the blocking property before the tool runs"
+    );
+
+    // End the continuation turn; the original event stream completes after
+    // reporting the delivered user message.
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let remaining = events.collect::<Vec<_>>().await;
+    assert!(remaining.iter().any(|event| matches!(
+        event,
+        Ok(ThreadEvent::UserMessage(message))
+            if matches!(&*message.content, [UserMessageContent::Text(text)] if text.contains(&async_id))
+    )));
+    assert!(
+        remaining
+            .iter()
+            .any(|event| matches!(event, Ok(ThreadEvent::Stop(_))))
+    );
+}
+
+/// A non-blocking tool call that finishes after the turn ended requests a
+/// continuation turn so its result still reaches the model.
+#[gpui::test]
+async fn test_non_blocking_tool_call_requests_continuation_when_idle(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_slow".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The model gets the placeholder and ends its turn while the tool is
+    // still running.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let placeholder_text = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|content| match content {
+            MessageContent::ToolResult(result) if result.tool_use_id.to_string() == "call_slow" => {
+                result.content.iter().find_map(|content| match content {
+                    language_model::LanguageModelToolResultContent::Text(text) => {
+                        Some(text.to_string())
+                    }
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("placeholder result for the non-blocking call");
+    let placeholder: serde_json::Value = serde_json::from_str(&placeholder_text).unwrap();
+    let async_id = placeholder["async_tool_call_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+    assert!(fake_model.pending_completions().is_empty());
+
+    // When the tool finishes with no turn running, a continuation is
+    // requested instead of the result being delivered mid-turn.
+    let continuation_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&thread, {
+            let continuation_requested = continuation_requested.clone();
+            move |_, _: &ContinuationRequested, _| {
+                continuation_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    });
+    release_tx.send(()).unwrap();
+    cx.run_until_parked();
+    assert!(continuation_requested.load(std::sync::atomic::Ordering::SeqCst));
+
+    // Driving the continuation (as NativeAgent does) delivers the result.
+    let events = thread
+        .update(cx, |thread, cx| thread.send_existing(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["status"], json!("completed"));
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let remaining = events.collect::<Vec<_>>().await;
+    assert!(
+        remaining
+            .iter()
+            .any(|event| matches!(event, Ok(ThreadEvent::Stop(_))))
     );
 }
 
@@ -4884,6 +5152,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                         "name": "Test Profile",
                         "tools": {
                             EchoTool::NAME: true,
+                            GatedEchoTool::NAME: true,
                             DelayTool::NAME: true,
                             WordListTool::NAME: true,
                             ToolRequiringPermission::NAME: true,
