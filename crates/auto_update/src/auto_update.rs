@@ -1492,7 +1492,9 @@ mod tests {
         );
         let will_restart = cx.expect_restart();
         cx.update(|cx| cx.restart());
-        let path = will_restart.await.unwrap().unwrap();
+        let (path, arguments) = will_restart.await.unwrap();
+        assert!(arguments.is_empty());
+        let path = path.unwrap();
         assert_eq!(path, tmp_dir.path().join("zed"));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
     }

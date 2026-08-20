@@ -265,6 +265,56 @@ fn highlight_id_for_completion(
     }
 }
 
+/// Older pyright-derived servers request a literal `<configuration section>.analysis` section,
+/// while new versions request `<configuration section>` and read its nested `analysis` object.
+///
+/// Basedpyright changed this behavior in v1.39.10, context: https://github.com/DetachHead/basedpyright/pull/1847
+/// Pyright itself changed this behavior in v1.1.411 context: https://github.com/microsoft/pyright/pull/11480
+fn normalize_pyright_analysis_configuration(
+    workspace_configuration: &mut Value,
+    configuration_section: &str,
+) {
+    let Some(workspace_configuration) = workspace_configuration.as_object_mut() else {
+        return;
+    };
+
+    let flat_analysis_section = format!("{configuration_section}.analysis");
+
+    let nested_analysis = workspace_configuration
+        .get(configuration_section)
+        .and_then(Value::as_object)
+        .and_then(|server_configuration| server_configuration.get("analysis"))
+        .and_then(Value::as_object);
+    let flat_analysis = workspace_configuration
+        .get(&flat_analysis_section)
+        .and_then(Value::as_object);
+
+    let nested_analysis = match (nested_analysis, flat_analysis) {
+        (Some(nested_analysis), Some(flat_analysis)) => {
+            let mut merged_analysis = nested_analysis.clone();
+            for (key, value) in flat_analysis {
+                merged_analysis
+                    .entry(key.clone())
+                    .or_insert_with(|| value.clone());
+            }
+            Value::Object(merged_analysis)
+        }
+        (Some(nested_analysis), None) => Value::Object(nested_analysis.clone()),
+        (None, Some(flat_analysis)) => Value::Object(flat_analysis.clone()),
+        (None, None) => return,
+    };
+
+    let server_configuration = workspace_configuration
+        .entry(configuration_section)
+        .or_insert_with(|| Value::Object(serde_json::Map::default()));
+    let Some(server_configuration) = server_configuration.as_object_mut() else {
+        return;
+    };
+    server_configuration.insert("analysis".to_owned(), nested_analysis.clone());
+
+    workspace_configuration.insert(flat_analysis_section, nested_analysis);
+}
+
 pub struct TyLspAdapter {
     fs: Arc<dyn Fs>,
 }
@@ -666,54 +716,28 @@ impl LspAdapter for PyrightLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
+
             // If we have a detected toolchain, configure Pyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
-                user_settings.as_object().is_none_or(|object| {
-                    ![
-                        "venvPath",
-                        "venv",
-                        "python",
-                        "pythonPath",
-                        "defaultInterpreterPath",
-                    ]
-                    .into_iter()
-                    .any(|known_key| object.contains_key(known_key))
-                })
+                object
+                    .get("python")
+                    .and_then(Value::as_object)
+                    .is_none_or(|python| {
+                        !["pythonPath", "venvPath"]
+                            .into_iter()
+                            .any(|known_key| python.contains_key(known_key))
+                    })
             };
             if let Some(toolchain) = toolchain
                 && should_insert_toolchain()
-                && let Ok(env) =
-                    serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone())
+                && serde_json::from_value::<PythonToolchainData>(toolchain.as_json.clone()).is_ok()
             {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = &env.environment.prefix {
-                    // Set venvPath and venv at the root level
-                    // This matches the format of a pyrightconfig.json file
-                    if let Some(parent) = venv_dir.parent() {
-                        // Use relative path if the venv is inside the workspace
-                        let venv_path = if parent == adapter.worktree_root_path() {
-                            ".".to_string()
-                        } else {
-                            parent.to_string_lossy().into_owned()
-                        };
-                        object.insert("venvPath".to_string(), Value::String(venv_path));
-                    }
 
-                    if let Some(venv_name) = venv_dir.file_name() {
-                        object.insert(
-                            "venv".to_owned(),
-                            Value::String(venv_name.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-
-                // Always set the python interpreter path
-                // Get or create the python section
                 let python = object
                     .entry("python")
                     .and_modify(|v| {
@@ -724,17 +748,10 @@ impl LspAdapter for PyrightLspAdapter {
                     .or_insert(Value::Object(serde_json::Map::default()));
                 let python = python.as_object_mut().unwrap();
 
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
-                );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
+                python.insert("pythonPath".to_owned(), Value::String(interpreter_path));
             }
 
+            normalize_pyright_analysis_configuration(&mut user_settings, "python");
             user_settings
         }))
     }
@@ -2112,89 +2129,68 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
+            if !user_settings.is_object() {
+                user_settings = Value::Object(serde_json::Map::default());
+            }
+            let object = user_settings.as_object_mut().unwrap();
+
+            // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
+            maybe!({
+                let analysis = object
+                    .entry("basedpyright.analysis")
+                    .or_insert(Value::Object(serde_json::Map::default()));
+                if let serde_json::map::Entry::Vacant(v) =
+                    analysis.as_object_mut()?.entry("typeCheckingMode")
+                {
+                    v.insert(Value::String("standard".to_owned()));
+                }
+                Some(())
+            });
+
+            // Disable basedpyright's organizeImports so ruff handles it instead
+            maybe!({
+                let basedpyright = object
+                    .entry("basedpyright")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()?;
+                if let serde_json::map::Entry::Vacant(v) =
+                    basedpyright.entry("disableOrganizeImports")
+                {
+                    v.insert(Value::Bool(true));
+                }
+                Some(())
+            });
 
             // If we have a detected toolchain, configure BasedPyright to use it - unless the user sets it themselves.
             let should_insert_toolchain = || {
-                user_settings.as_object().is_none_or(|object| {
-                    ![
-                        "venvPath",
-                        "venv",
-                        "python",
-                        "pythonPath",
-                        "defaultInterpreterPath",
-                    ]
-                    .into_iter()
-                    .any(|known_key| object.contains_key(known_key))
-                })
+                object
+                    .get("python")
+                    .and_then(Value::as_object)
+                    .is_none_or(|python| {
+                        !["pythonPath", "venvPath"]
+                            .into_iter()
+                            .any(|known_key| python.contains_key(known_key))
+                    })
             };
             if let Some(toolchain) = toolchain
                 && should_insert_toolchain()
-                && let Ok(env) = serde_json::from_value::<
-                    pet_core::python_environment::PythonEnvironment,
-                >(toolchain.as_json.clone())
+                && serde_json::from_value::<pet_core::python_environment::PythonEnvironment>(
+                    toolchain.as_json.clone(),
+                )
+                .is_ok()
             {
-                if !user_settings.is_object() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-
                 let interpreter_path = toolchain.path.to_string();
-                if let Some(venv_dir) = env.prefix {
-                    // Set venvPath and venv at the root level
-                    // This matches the format of a pyrightconfig.json file
-                    if let Some(parent) = venv_dir.parent() {
-                        // Use relative path if the venv is inside the workspace
-                        let venv_path = if parent == adapter.worktree_root_path() {
-                            ".".to_string()
-                        } else {
-                            parent.to_string_lossy().into_owned()
-                        };
-                        object.insert("venvPath".to_string(), Value::String(venv_path));
-                    }
 
-                    if let Some(venv_name) = venv_dir.file_name() {
-                        object.insert(
-                            "venv".to_owned(),
-                            Value::String(venv_name.to_string_lossy().into_owned()),
-                        );
-                    }
-                }
-
-                // Set both pythonPath and defaultInterpreterPath for compatibility
                 if let Some(python) = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
                 {
-                    python.insert(
-                        "pythonPath".to_owned(),
-                        Value::String(interpreter_path.clone()),
-                    );
-                    python.insert(
-                        "defaultInterpreterPath".to_owned(),
-                        Value::String(interpreter_path),
-                    );
-                }
-                // Basedpyright by default uses `strict` type checking, we tone it down as to not surpris users
-                maybe!({
-                    let analysis = object
-                        .entry("basedpyright.analysis")
-                        .or_insert(Value::Object(serde_json::Map::default()));
-                    if let serde_json::map::Entry::Vacant(v) =
-                        analysis.as_object_mut()?.entry("typeCheckingMode")
-                    {
-                        v.insert(Value::String("standard".to_owned()));
-                    }
-                    Some(())
-                });
-                // Disable basedpyright's organizeImports so ruff handles it instead
-                if let serde_json::map::Entry::Vacant(v) =
-                    object.entry("basedpyright.disableOrganizeImports")
-                {
-                    v.insert(Value::Bool(true));
+                    python.insert("pythonPath".to_owned(), Value::String(interpreter_path));
                 }
             }
 
+            normalize_pyright_analysis_configuration(&mut user_settings, "basedpyright");
             user_settings
         }))
     }
@@ -2721,7 +2717,128 @@ mod tests {
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
-    use crate::python::python_module_name_from_relative_path;
+    use crate::python::{
+        normalize_pyright_analysis_configuration, python_module_name_from_relative_path,
+    };
+
+    #[test]
+    fn test_normalize_legacy_basedpyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright.analysis": {
+                "diagnosticMode": "workspace",
+                "typeCheckingMode": "basic"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_nested_basedpyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright": {
+                "analysis": {
+                    "diagnosticMode": "workspace"
+                },
+                "unrelated": true
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace"
+                    },
+                    "unrelated": true
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_merges_both_analysis_configuration_with_conflicts() {
+        let mut workspace_configuration = serde_json::json!({
+            "basedpyright": {
+                "analysis": {
+                    "diagnosticMode": "workspace",
+                }
+            },
+            "basedpyright.analysis": {
+                "typeCheckingMode": "standard",
+                "diagnosticMode": "openFilesOnly"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "basedpyright");
+
+        // Settings from both forms survive, with the nested form winning on conflicting keys.
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "basedpyright": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "standard",
+                    }
+                },
+                "basedpyright.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "standard",
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_normalize_pyright_analysis_configuration() {
+        let mut workspace_configuration = serde_json::json!({
+            "python.analysis": {
+                "diagnosticMode": "workspace",
+                "typeCheckingMode": "basic"
+            }
+        });
+
+        normalize_pyright_analysis_configuration(&mut workspace_configuration, "python");
+
+        assert_eq!(
+            workspace_configuration,
+            serde_json::json!({
+                "python": {
+                    "analysis": {
+                        "diagnosticMode": "workspace",
+                        "typeCheckingMode": "basic"
+                    }
+                },
+                "python.analysis": {
+                    "diagnosticMode": "workspace",
+                    "typeCheckingMode": "basic"
+                }
+            })
+        );
+    }
 
     #[gpui::test]
     async fn test_conda_activation_script_injection(cx: &mut TestAppContext) {
