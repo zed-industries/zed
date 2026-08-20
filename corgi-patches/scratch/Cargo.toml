@@ -2,7 +2,7 @@
 name = "scratch"
 version = "1.0.9"
 edition = "2021"
-description = "dcargo-patched scratch: honors DCARGO_SHARED for a keyed, per-action shared dir"
+description = "corgi-patched scratch: uses a keyed, per-action shared directory"
 license = "MIT OR Apache-2.0"
 
 [lib]

@@ -1,4 +1,4 @@
-//! dcargo-patched `scratch`.
+//! A corgi-compatible `scratch` implementation.
 //!
 //! Upstream bakes its own OUT_DIR in at compile time (`env!`), making one
 //! global directory that every crate's build script writes into --

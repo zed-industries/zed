@@ -61,5 +61,5 @@ crates/docs_preprocessor/actions.json
 
 .local*
 
-# dcargo build output
+# corgi build output
 dtarget/
