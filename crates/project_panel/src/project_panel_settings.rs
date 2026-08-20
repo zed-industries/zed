@@ -1,3 +1,4 @@
+use collections::HashMap;
 use editor::{EditorSettings, ui_scrollbar_settings_from_raw};
 use gpui::Pixels;
 use schemars::JsonSchema;
@@ -35,6 +36,25 @@ pub struct ProjectPanelSettings {
     pub sort_order: ProjectPanelSortOrder,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
+}
+
+/// File nesting is registered as its own setting, separate from
+/// `ProjectPanelSettings`, so that the latter can stay `Copy` despite the
+/// pattern map.
+#[derive(Clone, Debug, Deserialize, PartialEq, RegisterSetting)]
+pub struct FileNestingSettings {
+    pub enabled: bool,
+    pub patterns: HashMap<String, String>,
+}
+
+impl Settings for FileNestingSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let file_nesting = content.project_panel.clone().unwrap().file_nesting.unwrap();
+        Self {
+            enabled: file_nesting.enabled.unwrap(),
+            patterns: file_nesting.patterns.unwrap(),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

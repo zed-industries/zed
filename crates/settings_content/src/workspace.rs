@@ -853,6 +853,28 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Settings related to file nesting in the project panel.
+    pub file_nesting: Option<FileNestingSettingsContent>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct FileNestingSettingsContent {
+    /// Whether to nest related files under an expandable parent file
+    /// in the project panel, according to `patterns`.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// The map of file patterns used to nest files.
+    /// The key is a parent file pattern that can contain one `*` wildcard.
+    /// The value is a comma-separated list of child file patterns, where
+    /// `${capture}` expands to the text matched by the parent's wildcard
+    /// and `*` matches any text.
+    ///
+    /// Example: `{"*.ts": "${capture}.js, ${capture}.d.ts"}`
+    ///
+    /// Default: {}
+    pub patterns: Option<HashMap<String, String>>,
 }
 
 #[derive(
