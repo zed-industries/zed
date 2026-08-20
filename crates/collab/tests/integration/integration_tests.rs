@@ -2540,6 +2540,65 @@ async fn test_propagate_saves_and_fs_changes(
 }
 
 #[gpui::test(iterations = 10)]
+async fn test_unloaded_entries_sync_to_guests(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(1);
+            });
+        });
+    });
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "junk": {
+                    "x": {
+                        "deep.txt": ""
+                    }
+                },
+                "top.txt": ""
+            }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+    worktree_b.read_with(cx_b, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("junk"))
+                .map(|entry| entry.kind),
+            Some(worktree::EntryKind::UnloadedDir)
+        );
+        assert_eq!(tree.entry_for_path(rel_path("junk/x")), None);
+        assert_eq!(tree.deferred_scan_dir_count(), 1);
+    });
+}
+
+#[gpui::test(iterations = 10)]
 async fn test_git_diff_base_change(
     executor: BackgroundExecutor,
     cx_a: &mut TestAppContext,
@@ -4336,9 +4395,9 @@ async fn test_collaborating_with_diagnostics(
                 .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(0, 4)..Point::new(0, 7),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Diagnostic {
                         group_id: 2,
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
@@ -4346,10 +4405,10 @@ async fn test_collaborating_with_diagnostics(
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(0, 10)..Point::new(0, 13),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    Point::new(0, 10)..Point::new(0, 13),
+                    Diagnostic {
                         group_id: 3,
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
@@ -4357,7 +4416,7 @@ async fn test_collaborating_with_diagnostics(
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                }
+                )
             ]
         );
     });
@@ -5736,7 +5795,7 @@ async fn test_lsp_hover(
         let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
-                &language_server_names[i]
+                language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();
@@ -5951,6 +6010,7 @@ async fn test_project_symbols(
         .unwrap();
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "TWO");
+    assert_eq!(symbols[0].kind, language::SymbolKind::Constant);
 
     // Open one of the returned symbols.
     let buffer_b_2 = project_b

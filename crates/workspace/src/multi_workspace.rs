@@ -46,6 +46,10 @@ actions!(
         NextProject,
         /// Activates the previous project in the sidebar.
         PreviousProject,
+        /// Moves the active project up in the sidebar.
+        MoveProjectUp,
+        /// Moves the active project down in the sidebar.
+        MoveProjectDown,
         /// Activates the next thread in sidebar order.
         NextThread,
         /// Activates the previous thread in sidebar order.
@@ -1492,28 +1496,7 @@ impl MultiWorkspace {
     }
 
     pub fn focus_active_workspace(&self, window: &mut Window, cx: &mut App) {
-        // If a dock panel is zoomed, focus it instead of the center pane.
-        // Otherwise, focusing the center pane triggers dismiss_zoomed_items_to_reveal
-        // which closes the zoomed dock.
-        let focus_handle = {
-            let workspace = self.workspace().read(cx);
-            let mut target = None;
-            for dock in workspace.all_docks() {
-                let dock = dock.read(cx);
-                if dock.is_open() {
-                    if let Some(panel) = dock.active_panel() {
-                        if panel.is_zoomed(window, cx) {
-                            target = Some(panel.activation_focus_handle(cx));
-                            break;
-                        }
-                    }
-                }
-            }
-            target.unwrap_or_else(|| {
-                let pane = workspace.active_pane().clone();
-                pane.read(cx).focus_handle(cx)
-            })
-        };
+        let focus_handle = self.workspace().read(cx).fallback_focus_handle(window, cx);
         window.focus(&focus_handle, cx);
     }
 
@@ -2128,6 +2111,18 @@ impl Render for MultiWorkspace {
                             if let Some(sidebar) = &this.sidebar {
                                 sidebar.cycle_project(false, window, cx);
                             }
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &MoveProjectUp, _window, cx| {
+                            let key = this.project_group_key_for_workspace(this.workspace(), cx);
+                            this.move_project_group_up(&key, cx);
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this: &mut Self, _: &MoveProjectDown, _window, cx| {
+                            let key = this.project_group_key_for_workspace(this.workspace(), cx);
+                            this.move_project_group_down(&key, cx);
                         }),
                     )
                     .on_action(cx.listener(|this: &mut Self, _: &NextThread, window, cx| {
