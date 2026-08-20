@@ -1883,17 +1883,19 @@ async fn test_spawn_agent_steers_running_subagent(cx: &mut TestAppContext) {
     );
     assert_eq!(
         placeholder["session_id"],
-        json!(subagent_session_id.to_string()),
-        "placeholder should carry the subagent session id"
+        json!(session_alias(&subagent_session_id).to_string()),
+        "placeholder should carry the short subagent session alias"
     );
 
-    // The parent steers the running subagent by resuming its session. The
-    // subagent's own request is still pending, so drive the parent's
-    // completion directly.
+    // The parent steers the running subagent by resuming its session, using
+    // the short alias from the placeholder. The subagent's own request is
+    // still pending, so drive the parent's completion directly.
     let steer_input = SpawnAgentToolInput {
         label: "steer".to_string(),
         message: "course correct".to_string(),
-        session_id: Some(subagent_session_id.clone()),
+        session_id: Some(acp::SessionId::new(
+            session_alias(&subagent_session_id).to_string(),
+        )),
     };
     model.send_completion_stream_event(
         &parent_completion,
@@ -1992,6 +1994,13 @@ async fn test_spawn_agent_steers_running_subagent(cx: &mut TestAppContext) {
     let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
     assert_eq!(delivery["tool_name"], json!(SpawnAgentTool::NAME));
     assert_eq!(delivery["status"], json!("completed"));
+    assert!(
+        delivery["result"].as_str().unwrap().contains(&format!(
+            "\"session_id\":\"{}",
+            session_alias(&subagent_session_id)
+        )),
+        "the spawn result should carry the short session alias: {delivery}"
+    );
     assert!(
         delivery["result"]
             .as_str()
