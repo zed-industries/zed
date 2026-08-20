@@ -1526,6 +1526,7 @@ impl Item for TerminalView {
                     .relative()
                     .child(
                         Label::new(title)
+                            .single_line()
                             .color(params.text_color())
                             .when(self.is_renaming(), |this| this.alpha(0.)),
                     )

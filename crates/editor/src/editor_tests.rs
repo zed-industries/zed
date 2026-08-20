@@ -59,6 +59,7 @@ use settings::{
 };
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     sync::{Arc, atomic},
 };
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
@@ -3333,6 +3334,44 @@ async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newest_selection_on_screen_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let multibyte_line = "ã".repeat(40);
+    cx.set_state(&format!("{multibyte_line}ˇx\n"));
+    cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(60.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Equal
+        );
+        editor.set_visible_column_count(20.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Greater
+        );
+    });
+
+    let ascii_line = "a".repeat(40);
+    cx.set_state(&format!("{ascii_line}ˇx\n"));
+    cx.update_editor(|editor, window, cx| {
+        editor.set_visible_line_count(50., window, cx);
+        editor.set_visible_column_count(60.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Equal
+        );
+        editor.set_visible_column_count(20.);
+        assert_eq!(
+            editor.newest_selection_on_screen(window, cx),
+            Ordering::Greater
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_scroll_line_up_down_cursor_margin(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -3590,6 +3629,156 @@ async fn test_autoscroll_relative(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 0.0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let window = cx.window;
+    // Narrow viewport so a long line can't possibly fit on screen at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let long_line = "x".repeat(250);
+    cx.set_state(&format!("ˇ{long_line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Simulate shift+end: extend the selection from column 0 to the end
+    // of the long line. Before the fix, this selection's span was wider
+    // than the viewport, which caused autoscroll_horizontally to bail
+    // out entirely and leave scroll_position.x at 0.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 250)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 250.,
+            "head must not be scrolled past, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 249.,
+            "head column must be at the right edge, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Long line so scroll_width stays large and never clamps target_right,
+    // isolating the case below. Viewport is tuned so a 5-char selection's
+    // raw glyph span fits, but its padded span (+ gutter margin + em_advance,
+    // the same padding the final scroll guard uses) does not.
+    cx.simulate_window_resize(window, size(px(146.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Its raw glyph span fits the viewport, but the padded
+    // span does not, so the fix must still scroll to reveal it.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 105.,
+            "selection head must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection head must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Viewport wide enough to fit a short selection's full span at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    // Scroll right first so the whole line is out of view.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 300)..Point::new(0, 300)]);
+        });
+    });
+    cx.run_until_parked();
+
+    let scrolled_right_x = cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        assert!(
+            scroll_x > 200.,
+            "should be scrolled far right, scroll_x = {scroll_x}"
+        );
+        scroll_x
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Since it fits within the viewport, both edges of
+    // the selection should end up visible, not just the head.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x < scrolled_right_x,
+            "must scroll left towards the selection, scroll_x = {scroll_x}"
+        );
+        assert!(
+            scroll_x <= 100.5,
+            "selection start must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection end must be visible, visible columns end at {right_edge}"
         );
     });
 }
@@ -13322,6 +13511,56 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
         // With SyntaxAware, tree-sitter adds indentation for being inside `{}`
         assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
     });
+}
+
+#[gpui::test]
+async fn test_ime_composition_keeps_manual_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("fn foo() {ˇ\n}");
+    cx.condition(|editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+        // A manual indent here
+        editor.tab(&Tab, window, cx);
+    });
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        \n}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "n", None, window, cx);
+        editor.replace_and_mark_text_in_range(None, "nn", None, window, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        nn\n}");
 }
 
 #[gpui::test]
@@ -27032,12 +27271,9 @@ async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(
         index_contents,
-        [(
-            ::git::repository::repo_path("file.rs"),
-            "head\n".to_string(),
-        )]
-        .into_iter()
-        .collect::<HashMap<_, _>>()
+        [(::git::repository::repo_path("file.rs"), b"head\n".to_vec(),)]
+            .into_iter()
+            .collect::<HashMap<_, _>>()
     );
 }
 
@@ -33164,6 +33400,88 @@ async fn test_go_to_bookmark_with_out_of_order_bookmarks(cx: &mut TestAppContext
 
     ctx.go_to_previous_bookmark();
     assert_eq!(ctx.cursor_row(), 1, "Prev from row 5 should go to row 1");
+}
+
+#[gpui::test]
+async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state("let aˇbc = 1;");
+
+    let rename_request_count = Arc::new(AtomicUsize::new(0));
+    let _rename_handler = cx.set_request_handler::<lsp::request::Rename, _, _>({
+        let rename_request_count = rename_request_count.clone();
+        move |_, _, _| {
+            rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async { Ok(None) }
+        }
+    });
+    let mut prepare_rename_handler = cx
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+            move |_, _, _| async move {
+                Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 4,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                })))
+            },
+        );
+
+    for new_name in ["", "   "] {
+        let prepare_rename_task = cx
+            .update_editor(|editor, window, cx| editor.rename(&Rename, window, cx))
+            .expect("Prepare rename was not started");
+        prepare_rename_handler.next().await.unwrap();
+        prepare_rename_task.await.expect("Prepare rename failed");
+
+        let rename_editor = cx.editor(|editor, _, _| {
+            editor
+                .pending_rename()
+                .expect("Rename should still be pending")
+                .editor
+                .clone()
+        });
+        rename_editor.update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.backspace(&Backspace, window, cx);
+            editor.insert(new_name, window, cx);
+        });
+        assert_eq!(
+            cx.editor(|editor, _, cx| {
+                editor
+                    .pending_rename()
+                    .expect("Rename should still be pending")
+                    .editor
+                    .read(cx)
+                    .text(cx)
+            }),
+            new_name
+        );
+
+        cx.update_editor(|editor, window, cx| {
+            editor
+                .confirm_rename(&ConfirmRename, window, cx)
+                .expect("Confirm rename should consume the action")
+        })
+        .await
+        .expect("Confirm rename failed");
+
+        assert_eq!(rename_request_count.load(atomic::Ordering::SeqCst), 0);
+        assert!(cx.editor(|editor, _, _| editor.pending_rename().is_none()));
+        assert_eq!(cx.buffer_text(), "let abc = 1;");
+    }
 }
 
 #[gpui::test]
@@ -42302,6 +42620,66 @@ async fn test_align_selections_multicolumn(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_align_selections_with_multibyte_chars(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // The reported case: `←` and `π` take more bytes than they take columns, so
+    // aligning on the buffer column padded the first row one space too far.
+    let before = "a ← 1  ˇ# one\nbc ← π  ˇ# two";
+    let after = "a ← 1   ˇ# one\nbc ← π  ˇ# two";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A multi-byte character before the first column also has to shift the
+    // offset that is carried into the second column.
+    let before = "π aˇ bbbˇc\nxy aˇ bˇc";
+    let after = "π a ˇ bbbˇc\nxy aˇ b  ˇc";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // The display map expands tabs before the row is laid out, so a leading tab
+    // counts as its expanded width rather than as one byte.
+    let before = "\taˇbc\nxyzaˇbc";
+    let after = "\taˇbc\nxyza ˇbc";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // A non-BMP character advances two columns, so counting characters rather
+    // than measuring advances would pad this row twice as far as it needs.
+    let before = "😀ˇb\nxyzˇb";
+    let after = "😀 ˇb\nxyzˇb";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(after);
+
+    // Multi-byte characters after the cursors do not move them.
+    let before = "abˇ←z\ncdˇqz";
+    cx.set_state(before);
+    cx.update_editor(|e, window, cx| e.align_selections(&AlignSelections, window, cx));
+    cx.assert_editor_state(before);
+}
+
+#[gpui::test]
+async fn test_align_selections_with_soft_wrap(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let before = "aaaaaaaaaaaaˇx\nbbbbbˇy";
+    let after = "aaaaaaaaaaaaˇx\nbbbbb       ˇy";
+    cx.set_state(before);
+    cx.update_editor(|e, _, cx| e.set_wrap_width(Some(100.0.into()), cx));
+    cx.update_editor(|e, window, cx| {
+        assert!(e.display_text(cx).lines().count() > 2);
+        e.align_selections(&AlignSelections, window, cx)
+    });
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
 async fn test_custom_fallback_highlights(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -42985,4 +43363,75 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
+}
+
+#[gpui::test]
+async fn test_in_preview_key_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        serde_json::json!({
+            "test.txt": "hello",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(
+                (worktree_id, rel_path("test.txt")),
+                None,
+                true,
+                true,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert!(pane.is_active_preview_item(editor.entity_id()));
+    });
+
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            editor.key_context(window, cx).contains("in_preview"),
+            "Expected 'in_preview' context when the editor is the pane's preview item"
+        );
+    });
+
+    pane.update(cx, |pane, _cx| {
+        pane.unpreview_item_if_preview(editor.entity_id());
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.key_context(window, cx).contains("in_preview"),
+            "Expected no 'in_preview' context after the tab is unpreviewed"
+        );
+    });
 }

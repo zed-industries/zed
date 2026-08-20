@@ -34,12 +34,12 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, BranchesScanResult, CommitData, CommitDetails, CommitDiff, CommitFile,
-        CommitOptions, CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions,
-        FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
-        InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput,
-        RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree,
-        delete_branch_flag,
+        Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
+        CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
+        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
+        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
+        is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -52,7 +52,7 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
+    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry, decode_text, encode_text,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -206,6 +206,85 @@ fn pending_hunks(
             )
         })
         .collect()
+}
+
+fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
+    Ok(decode_text(bytes)?.text)
+}
+
+#[derive(Debug)]
+pub struct CommitDiff {
+    pub files: Vec<CommitFile>,
+}
+
+#[derive(Debug)]
+pub struct CommitFile {
+    pub path: RepoPath,
+    pub old_text: Option<String>,
+    pub new_text: Option<String>,
+    pub is_binary: bool,
+}
+
+impl CommitFile {
+    pub fn status(&self) -> CommitFileStatus {
+        match (&self.old_text, &self.new_text) {
+            (None, Some(_)) => CommitFileStatus::Added,
+            (Some(_), None) => CommitFileStatus::Deleted,
+            _ => CommitFileStatus::Modified,
+        }
+    }
+}
+
+fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
+    let files = diff
+        .files
+        .into_iter()
+        .map(|file| {
+            let git::repository::CommitFile {
+                path,
+                old_content,
+                new_content,
+                mut is_binary,
+            } = file;
+
+            if is_binary {
+                return CommitFile {
+                    path,
+                    old_text: old_content.map(|_| String::new()),
+                    new_text: new_content.map(|_| String::new()),
+                    is_binary,
+                };
+            }
+
+            let mut decode_content = |content: Option<Vec<u8>>| {
+                content.map(|content| match decode_git_text(content) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        log::debug!(
+                            "treating commit content for {} as binary after decoding failed: {error:#}",
+                            path.as_unix_str()
+                        );
+                        is_binary = true;
+                        String::new()
+                    }
+                })
+            };
+            let mut old_text = decode_content(old_content);
+            let mut new_text = decode_content(new_content);
+            if is_binary {
+                old_text = old_text.map(|_| String::new());
+                new_text = new_text.map(|_| String::new());
+            }
+
+            CommitFile {
+                path,
+                old_text,
+                new_text,
+                is_binary,
+            }
+        })
+        .collect();
+    CommitDiff { files }
 }
 
 #[derive(Clone, Debug)]
@@ -535,12 +614,48 @@ pub struct Repository {
     job_debug_queue: job_debug_queue::GitJobDebugQueue,
     pending_ops: SumTree<PendingOps>,
     job_id: JobId,
-    askpass_delegates: Arc<Mutex<HashMap<u64, AskPassDelegate>>>,
+    askpass_delegates: RemoteAskPassDelegates,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
     initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
+}
+
+type RemoteAskPassDelegates = Arc<Mutex<HashMap<u64, RemoteAskPassDelegate>>>;
+
+struct RemoteAskPassDelegate {
+    delegate: AskPassDelegate,
+    active_request_cancellation: Option<oneshot::Sender<()>>,
+}
+
+struct RemoteAskPassOperation {
+    askpass_id: u64,
+    delegates: RemoteAskPassDelegates,
+}
+
+impl RemoteAskPassOperation {
+    fn new(askpass_id: u64, delegate: AskPassDelegate, delegates: RemoteAskPassDelegates) -> Self {
+        let previous = delegates.lock().insert(
+            askpass_id,
+            RemoteAskPassDelegate {
+                delegate,
+                active_request_cancellation: None,
+            },
+        );
+        debug_assert!(previous.is_none());
+        Self {
+            askpass_id,
+            delegates,
+        }
+    }
+}
+
+impl Drop for RemoteAskPassOperation {
+    fn drop(&mut self) {
+        let delegate = self.delegates.lock().remove(&self.askpass_id);
+        debug_assert!(delegate.is_some());
+    }
 }
 
 impl std::ops::Deref for Repository {
@@ -860,6 +975,7 @@ impl GitStore {
         client.add_entity_message_handler(Self::handle_update_diff_bases);
         client.add_entity_request_handler(Self::handle_get_permalink_to_line);
         client.add_entity_request_handler(Self::handle_blame_buffer);
+        client.add_entity_request_handler(Self::handle_blame_buffer_at_revision);
         client.add_entity_message_handler(Self::handle_update_repository);
         client.add_entity_message_handler(Self::handle_remove_repository);
         client.add_entity_request_handler(Self::handle_git_clone);
@@ -2863,11 +2979,22 @@ impl GitStore {
         let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) else {
             return;
         };
+        let (encoding, has_bom) = self
+            .buffer_store
+            .read(cx)
+            .get(buffer_id)
+            .map(|buffer| {
+                let buffer = buffer.read(cx);
+                (buffer.encoding(), buffer.has_bom())
+            })
+            .unwrap_or((encoding_rs::UTF_8, false));
         let recv = repo.update(cx, |repo, cx| {
             log::debug!("hunks changed for {}", path.as_unix_str());
             repo.spawn_set_index_text_job(
                 path,
                 new_index_text,
+                encoding,
+                has_bom,
                 Some(hunk_staging_operation_count),
                 cx,
             )
@@ -3355,6 +3482,15 @@ impl GitStore {
 
         let message = envelope.payload.message;
 
+        if envelope.payload.staged.unwrap_or(false) {
+            repository_handle
+                .update(&mut cx, |repository_handle, cx| {
+                    repository_handle.stash_staged(message, cx)
+                })
+                .await?;
+            return Ok(proto::Ack {});
+        }
+
         let entries = envelope
             .payload
             .paths
@@ -3434,11 +3570,30 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let repo_path = RepoPath::from_proto(&envelope.payload.path)?;
 
+        let (encoding, has_bom) = cx.update(|cx| {
+            repository_handle
+                .read(cx)
+                .repo_path_to_project_path(&repo_path, cx)
+                .and_then(|project_path| {
+                    this.read(cx)
+                        .buffer_store
+                        .read(cx)
+                        .get_by_path(&project_path)
+                })
+                .map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    (buffer.encoding(), buffer.has_bom())
+                })
+                .unwrap_or((encoding_rs::UTF_8, false))
+        });
+
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
                 repository_handle.spawn_set_index_text_job(
                     repo_path,
                     envelope.payload.text,
+                    encoding,
+                    has_bom,
                     None,
                     cx,
                 )
@@ -4350,19 +4505,12 @@ impl GitStore {
         let repository = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
         let delegates = cx.update(|cx| repository.read(cx).askpass_delegates.clone());
-        let Some(mut askpass) = delegates.lock().remove(&envelope.payload.askpass_id) else {
-            debug_panic!("no askpass found");
-            anyhow::bail!("no askpass found");
-        };
-
-        let response = askpass
-            .ask_password(envelope.payload.prompt)
-            .await
-            .ok_or_else(|| anyhow::anyhow!("askpass cancelled"))?;
-
-        delegates
-            .lock()
-            .insert(envelope.payload.askpass_id, askpass);
+        let response = request_remote_password(
+            &delegates,
+            envelope.payload.askpass_id,
+            envelope.payload.prompt,
+        )
+        .await?;
 
         // In fact, we don't quite know what we're doing here, as we're sending askpass password unencrypted, but..
         Ok(proto::AskPassResponse {
@@ -4626,6 +4774,39 @@ impl GitStore {
             })
             .await?;
         Ok(serialize_blame_buffer_response(blame))
+    }
+
+    async fn handle_blame_buffer_at_revision(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::BlameBufferAtRevision>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::BlameBufferAtRevisionResponse> {
+        let repository_id = RepositoryId(envelope.payload.repository_id);
+        let path = RepoPath::from_proto(&envelope.payload.path)?;
+        let revision = envelope
+            .payload
+            .revision
+            .parse::<git::Oid>()
+            .with_context(|| format!("invalid revision {:?}", envelope.payload.revision))?;
+        let (content, blame) = this
+            .update(&mut cx, |this, cx| {
+                let repository = this.repositories().get(&repository_id)?;
+                Some(repository.update(cx, |repository, cx| {
+                    repository.blame_buffer_at_revision(path, revision, cx)
+                }))
+            })
+            .context("missing repository")?
+            .await?;
+        Ok(proto::BlameBufferAtRevisionResponse {
+            content,
+            entries: blame
+                .entries
+                .into_iter()
+                .map(serialize_blame_entry)
+                .collect(),
+            messages: serialize_commit_messages(blame.messages),
+            tag_names: serialize_commit_tag_names(blame.tag_names),
+        })
     }
 
     async fn handle_get_permalink_to_line(
@@ -5660,6 +5841,41 @@ fn make_remote_delegate(
     })
 }
 
+async fn request_remote_password(
+    delegates: &RemoteAskPassDelegates,
+    askpass_id: u64,
+    prompt: String,
+) -> Result<EncryptedPassword> {
+    let (password_request, operation_cancellation) = {
+        let mut delegates = delegates.lock();
+        let delegate = delegates
+            .get_mut(&askpass_id)
+            .context("remote Git operation no longer exists")?;
+        if delegate.active_request_cancellation.is_some() {
+            bail!("another askpass request is already active");
+        }
+
+        let (cancellation_sender, cancellation_receiver) = oneshot::channel();
+        let password_request = delegate.delegate.ask_password(prompt);
+        delegate.active_request_cancellation = Some(cancellation_sender);
+        (password_request.fuse(), cancellation_receiver.fuse())
+    };
+
+    futures::pin_mut!(password_request, operation_cancellation);
+    let response = futures::select_biased! {
+        response = password_request => response,
+        _ = operation_cancellation => None,
+    };
+
+    let mut delegates = delegates.lock();
+    let delegate = delegates
+        .get_mut(&askpass_id)
+        .context("remote Git operation ended while awaiting askpass")?;
+    delegate.active_request_cancellation.take();
+
+    response.context("askpass cancelled")
+}
+
 impl RepositoryId {
     pub fn to_proto(self) -> u64 {
         self.0
@@ -6312,11 +6528,13 @@ impl Repository {
                         {
                             let index_text = (current_index_text.is_some() && !*is_symlink)
                                 .then(|| loaded_revisions.next().flatten())
-                                .flatten();
+                                .flatten()
+                                .and_then(|bytes| decode_git_text(bytes).log_err());
 
                             let head_text = (current_head_text.is_some() && !*is_symlink)
                                 .then(|| loaded_revisions.next().flatten())
-                                .flatten();
+                                .flatten()
+                                .and_then(|bytes| decode_git_text(bytes).log_err());
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
@@ -6766,9 +6984,10 @@ impl Repository {
         let id = self.id;
         self.send_job("load_commit_diff", None, move |git_repo, cx| async move {
             match git_repo {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.load_commit(commit, cx).await
-                }
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                    .load_commit(commit, cx)
+                    .await
+                    .map(decode_commit_diff),
                 RepositoryState::Remote(RemoteRepositoryState {
                     client, project_id, ..
                 }) => {
@@ -7775,6 +7994,27 @@ impl Repository {
         self.stash_entries(to_stash, message, cx)
     }
 
+    pub fn stash_tracked(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        // `is_created` rather than `is_untracked`, so that staging a new file does not
+        // move it out of the untracked set: `git add` makes it `Tracked { Added }`, but
+        // the panel still lists it under "Untracked" and the user expects it left alone.
+        let to_stash: Vec<_> = self
+            .cached_status()
+            .filter(|entry| !entry.status.is_created())
+            .map(|entry| entry.repo_path)
+            .collect();
+
+        // An empty pathspec would make `git stash push` stash everything.
+        if to_stash.is_empty() {
+            return Task::ready(Ok(()));
+        }
+        self.stash_entries(to_stash, message, cx)
+    }
+
     pub fn stash_entries(
         &mut self,
         entries: Vec<RepoPath>,
@@ -7802,6 +8042,43 @@ impl Repository {
                                         .map(|repo_path| repo_path.as_unix_str().to_owned())
                                         .collect(),
                                     message,
+                                    staged: None,
+                                })
+                                .await?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn stash_staged(
+        &mut self,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job("stash_staged", None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local(LocalRepositoryState {
+                            backend,
+                            environment,
+                            ..
+                        }) => backend.stash_staged(message, environment).await,
+                        RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                            client
+                                .request(proto::Stash {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    paths: Vec::new(),
+                                    message,
+                                    staged: Some(true),
                                 })
                                 .await?;
                             Ok(())
@@ -8088,11 +8365,8 @@ impl Repository {
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
                         let (name, email) = name_and_email.unzip();
                         client
                             .request(proto::Commit {
@@ -8191,11 +8465,8 @@ impl Repository {
                         result
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
 
                         let response = client
                             .request(proto::Fetch {
@@ -8274,11 +8545,8 @@ impl Repository {
                         result
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
                         let response = client
                             .request(proto::Push {
                                 project_id: project_id.0,
@@ -8350,11 +8618,8 @@ impl Repository {
                             .await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        askpass_delegates.lock().insert(askpass_id, askpass);
-                        let _defer = util::defer(|| {
-                            let askpass_delegate = askpass_delegates.lock().remove(&askpass_id);
-                            debug_assert!(askpass_delegate.is_some());
-                        });
+                        let _askpass_operation =
+                            RemoteAskPassOperation::new(askpass_id, askpass, askpass_delegates);
                         let response = client
                             .request(proto::Pull {
                                 project_id: project_id.0,
@@ -8380,6 +8645,8 @@ impl Repository {
         &mut self,
         path: RepoPath,
         content: Option<String>,
+        encoding: &'static encoding_rs::Encoding,
+        has_bom: bool,
         hunk_staging_operation_count: Option<usize>,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<anyhow::Result<()>> {
@@ -8409,6 +8676,8 @@ impl Repository {
                             Ok(None) => false,
                             Err(_err) => false,
                         };
+                        let content =
+                            content.map(|content| encode_text(content, encoding, has_bom));
                         backend
                             .set_index_text(path.clone(), content, environment.clone(), executable)
                             .await?;
@@ -9714,9 +9983,11 @@ impl Repository {
     ) -> Task<Result<Option<String>>> {
         let rx = self.send_job("load_staged_text", None, move |state, _| async move {
             match state {
-                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    anyhow::Ok(backend.load_index_text(repo_path).await)
-                }
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                    .load_index_text(repo_path)
+                    .await
+                    .map(decode_git_text)
+                    .transpose(),
                 RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                     let response = client
                         .request(proto::OpenUnstagedDiff {
@@ -9745,8 +10016,16 @@ impl Repository {
                         format!(":{}", repo_path.as_unix_str()),
                     ];
                     let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
-                    let committed_text = loaded_revisions.next().flatten();
-                    let staged_text = loaded_revisions.next().flatten();
+                    let committed_text = loaded_revisions
+                        .next()
+                        .flatten()
+                        .map(decode_git_text)
+                        .transpose()?;
+                    let staged_text = loaded_revisions
+                        .next()
+                        .flatten()
+                        .map(decode_git_text)
+                        .transpose()?;
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
                     } else {
@@ -9810,12 +10089,67 @@ impl Repository {
         )
     }
 
+    pub fn blame_buffer_at_revision(
+        &mut self,
+        path: RepoPath,
+        revision: Oid,
+        cx: &App,
+    ) -> Task<Result<(String, git::blame::Blame)>> {
+        let repository_id = self.snapshot.id;
+        let rx = self.send_job("blame_buffer_at_revision", None, {
+            let path = path.clone();
+            move |state, _| async move {
+                match state {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        let content_task = backend
+                            .load_revisions(vec![format!("{revision}:{}", path.as_unix_str())]);
+                        let blame_task = backend.blame_at_revision(path.clone(), revision);
+                        let (mut contents, blame) = futures::try_join!(content_task, blame_task)?;
+                        let content = contents.pop().flatten().with_context(|| {
+                            format!(
+                                "cannot load {:?} at revision {revision}: the file is missing or binary",
+                                path.as_ref()
+                            )
+                        })?;
+                        let content = decode_git_text(content)?;
+                        anyhow::Ok((content, blame))
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                        let response = client
+                            .request(proto::BlameBufferAtRevision {
+                                project_id: project_id.to_proto(),
+                                repository_id: repository_id.0,
+                                path: path.as_unix_str().to_owned(),
+                                revision: revision.to_string(),
+                            })
+                            .await?;
+                        let blame = blame_from_proto(
+                            response.entries,
+                            response.messages,
+                            response.tag_names,
+                        );
+                        Ok((response.content, blame))
+                    }
+                }
+            }
+        });
+        cx.spawn(move |_: &mut AsyncApp| async move {
+            let (content, blame) = rx.await??;
+            anyhow::ensure!(
+                !is_binary_content(content.as_bytes()),
+                "cannot blame binary file {:?} at revision {revision}",
+                path.as_ref()
+            );
+            Ok((content, blame))
+        })
+    }
+
     fn load_blob_content(&mut self, oid: Oid, cx: &App) -> Task<Result<String>> {
         let repository_id = self.snapshot.id;
         let rx = self.send_job("load_blob_content", None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    backend.load_blob_content(oid).await
+                    decode_git_text(backend.load_blob_content(oid).await?)
                 }
                 RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
                     let response = client
@@ -10133,7 +10467,7 @@ pub async fn resolve_git_worktree_to_main_repo(fs: &dyn Fs, path: &Path) -> Opti
         .canonicalize(&gitdir_abs.join(commondir_content.trim()))
         .await
         .ok()?;
-    Some(repo_identity_path(&common_dir).to_path_buf())
+    Some(repo_identity_path(&common_dir, PathStyle::local()).to_path_buf())
 }
 
 /// Validates that the resolved worktree directory is acceptable:
@@ -10253,12 +10587,12 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
 ///   meaningful project root.
 /// - Otherwise (e.g. `zed.git` for a bare clone), `common_dir` itself is
 ///   returned — it is already a meaningful on-disk path.
-pub fn repo_identity_path(common_dir: &Path) -> &Path {
-    let is_dot_entry = common_dir
-        .file_name()
-        .is_some_and(|n| n.to_string_lossy().starts_with('.'));
+pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
+    let is_dot_entry = path_style
+        .file_name(common_dir)
+        .is_some_and(|n| n.starts_with('.'));
     if is_dot_entry {
-        common_dir.parent().unwrap_or(common_dir)
+        path_style.parent(common_dir).unwrap_or(common_dir)
     } else {
         common_dir
     }
@@ -10373,36 +10707,112 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
     let entries = blame
         .entries
         .into_iter()
-        .map(|entry| proto::BlameEntry {
-            sha: entry.sha.as_bytes().into(),
-            start_line: entry.range.start,
-            end_line: entry.range.end,
-            original_line_number: entry.original_line_number,
-            author: entry.author,
-            author_mail: entry.author_mail,
-            author_time: entry.author_time,
-            author_tz: entry.author_tz,
-            committer: entry.committer_name,
-            committer_mail: entry.committer_email,
-            committer_time: entry.committer_time,
-            committer_tz: entry.committer_tz,
-            summary: entry.summary,
-            previous: entry.previous,
-            filename: entry.filename,
-        })
+        .map(serialize_blame_entry)
         .collect::<Vec<_>>();
+    let messages = serialize_commit_messages(blame.messages);
+    let tag_names = serialize_commit_tag_names(blame.tag_names);
 
-    let messages = blame
-        .messages
+    proto::BlameBufferResponse {
+        blame_response: Some(proto::blame_buffer_response::BlameResponse {
+            entries,
+            messages,
+            tag_names,
+        }),
+    }
+}
+
+fn serialize_blame_entry(entry: git::blame::BlameEntry) -> proto::BlameEntry {
+    proto::BlameEntry {
+        sha: entry.sha.as_bytes().into(),
+        start_line: entry.range.start,
+        end_line: entry.range.end,
+        original_line_number: entry.original_line_number,
+        author: entry.author,
+        author_mail: entry.author_mail,
+        author_time: entry.author_time,
+        author_tz: entry.author_tz,
+        committer: entry.committer_name,
+        committer_mail: entry.committer_email,
+        committer_time: entry.committer_time,
+        committer_tz: entry.committer_tz,
+        summary: entry.summary,
+        previous: entry.previous,
+        filename: entry.filename,
+    }
+}
+
+fn deserialize_blame_entry(entry: proto::BlameEntry) -> Option<git::blame::BlameEntry> {
+    Some(git::blame::BlameEntry {
+        sha: git::Oid::from_bytes(&entry.sha).ok()?,
+        range: entry.start_line..entry.end_line,
+        original_line_number: entry.original_line_number,
+        committer_name: entry.committer,
+        committer_time: entry.committer_time,
+        committer_tz: entry.committer_tz,
+        committer_email: entry.committer_mail,
+        author: entry.author,
+        author_mail: entry.author_mail,
+        author_time: entry.author_time,
+        author_tz: entry.author_tz,
+        summary: entry.summary,
+        previous: entry.previous,
+        filename: entry.filename,
+    })
+}
+
+fn serialize_commit_messages(messages: HashMap<git::Oid, String>) -> Vec<proto::CommitMessage> {
+    messages
         .into_iter()
         .map(|(oid, message)| proto::CommitMessage {
             oid: oid.as_bytes().into(),
             message,
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
-    proto::BlameBufferResponse {
-        blame_response: Some(proto::blame_buffer_response::BlameResponse { entries, messages }),
+fn deserialize_commit_message(message: proto::CommitMessage) -> Option<(git::Oid, String)> {
+    Some((git::Oid::from_bytes(&message.oid).ok()?, message.message))
+}
+
+fn serialize_commit_tag_names(
+    tag_names: HashMap<git::Oid, Vec<String>>,
+) -> Vec<proto::CommitTagNames> {
+    tag_names
+        .into_iter()
+        .map(|(oid, tag_names)| proto::CommitTagNames {
+            oid: oid.as_bytes().into(),
+            tag_names,
+        })
+        .collect()
+}
+
+fn deserialize_commit_tag_names(
+    tag_names: proto::CommitTagNames,
+) -> Option<(git::Oid, Vec<String>)> {
+    Some((
+        git::Oid::from_bytes(&tag_names.oid).ok()?,
+        tag_names.tag_names,
+    ))
+}
+
+fn blame_from_proto(
+    entries: Vec<proto::BlameEntry>,
+    messages: Vec<proto::CommitMessage>,
+    tag_names: Vec<proto::CommitTagNames>,
+) -> git::blame::Blame {
+    git::blame::Blame {
+        entries: entries
+            .into_iter()
+            .filter_map(deserialize_blame_entry)
+            .collect(),
+        messages: messages
+            .into_iter()
+            .filter_map(deserialize_commit_message)
+            .collect(),
+        tag_names: tag_names
+            .into_iter()
+            .filter_map(deserialize_commit_tag_names)
+            .collect(),
     }
 }
 
@@ -10410,40 +10820,11 @@ fn deserialize_blame_buffer_response(
     response: proto::BlameBufferResponse,
 ) -> Option<git::blame::Blame> {
     let response = response.blame_response?;
-    let entries = response
-        .entries
-        .into_iter()
-        .filter_map(|entry| {
-            Some(git::blame::BlameEntry {
-                sha: git::Oid::from_bytes(&entry.sha).ok()?,
-                range: entry.start_line..entry.end_line,
-                original_line_number: entry.original_line_number,
-                committer_name: entry.committer,
-                committer_time: entry.committer_time,
-                committer_tz: entry.committer_tz,
-                committer_email: entry.committer_mail,
-                author: entry.author,
-                author_mail: entry.author_mail,
-                author_time: entry.author_time,
-                author_tz: entry.author_tz,
-                summary: entry.summary,
-                previous: entry.previous,
-                filename: entry.filename,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    let messages = response
-        .messages
-        .into_iter()
-        .filter_map(|message| Some((git::Oid::from_bytes(&message.oid).ok()?, message.message)))
-        .collect::<HashMap<_, _>>();
-
-    Some(Blame {
-        entries,
-        messages,
-        tag_names: Default::default(),
-    })
+    Some(blame_from_proto(
+        response.entries,
+        response.messages,
+        response.tag_names,
+    ))
 }
 
 fn log_source_to_proto(log_source: &LogSource) -> proto::GitLogSource {
@@ -10749,6 +11130,165 @@ mod tests {
         });
     }
 
+    type TestPasswordPrompt = (
+        String,
+        oneshot::Sender<EncryptedPassword>,
+        oneshot::Receiver<()>,
+    );
+
+    fn test_askpass_delegate(
+        cx: &mut TestAppContext,
+    ) -> (AskPassDelegate, mpsc::UnboundedReceiver<TestPasswordPrompt>) {
+        let (prompt_sender, prompt_receiver) = mpsc::unbounded();
+        let delegate = AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |prompt, response_sender, cancellation, _| {
+                prompt_sender
+                    .unbounded_send((prompt, response_sender, cancellation))
+                    .expect("prompt receiver should remain open");
+            },
+        );
+        (delegate, prompt_receiver)
+    }
+
+    #[gpui::test]
+    async fn ending_remote_operation_cancels_active_askpass(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        let password_request = cx.executor().spawn({
+            let delegates = delegates.clone();
+            async move { request_remote_password(&delegates, 1, "Password:".to_string()).await }
+        });
+        let (_, response_sender, cancellation) = prompts
+            .next()
+            .await
+            .expect("password prompt should be received");
+
+        drop(operation);
+
+        assert!(cancellation.await.is_err());
+        let Err(error) = password_request.await else {
+            panic!("password request should be cancelled")
+        };
+        assert!(error.to_string().contains("remote Git operation ended"));
+        assert!(delegates.lock().is_empty());
+        drop(response_sender);
+    }
+
+    #[gpui::test]
+    async fn successful_remote_askpass_allows_another_prompt(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+
+        for expected_prompt in ["Username:", "Password:"] {
+            let password_request =
+                cx.executor().spawn({
+                    let delegates = delegates.clone();
+                    async move {
+                        request_remote_password(&delegates, 1, expected_prompt.to_string()).await
+                    }
+                });
+            let (prompt, response_sender, cancellation) = prompts
+                .next()
+                .await
+                .expect("password prompt should be received");
+            assert_eq!(prompt, expected_prompt);
+            assert!(
+                response_sender
+                    .send(
+                        EncryptedPassword::try_from("secret")
+                            .expect("test password should be encryptable")
+                    )
+                    .is_ok()
+            );
+            assert!(password_request.await.is_ok());
+            assert!(cancellation.await.is_err());
+            assert!(
+                delegates
+                    .lock()
+                    .get(&1)
+                    .expect("operation should remain registered")
+                    .active_request_cancellation
+                    .is_none()
+            );
+        }
+
+        drop(operation);
+    }
+
+    #[gpui::test]
+    async fn concurrent_remote_askpass_request_is_rejected(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        let first_request = cx.executor().spawn({
+            let delegates = delegates.clone();
+            async move { request_remote_password(&delegates, 1, "First:".to_string()).await }
+        });
+        let (_, response_sender, cancellation) = prompts
+            .next()
+            .await
+            .expect("first password prompt should be received");
+
+        let Err(error) = request_remote_password(&delegates, 1, "Second:".to_string()).await else {
+            panic!("concurrent prompt should be rejected");
+        };
+
+        assert!(error.to_string().contains("already active"));
+        assert!(prompts.next().now_or_never().is_none());
+
+        drop(operation);
+        assert!(cancellation.await.is_err());
+        assert!(first_request.await.is_err());
+        drop(response_sender);
+    }
+
+    #[gpui::test]
+    async fn remote_askpass_is_rejected_after_operation_ends(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        drop(operation);
+
+        let Err(error) = request_remote_password(&delegates, 1, "Password:".to_string()).await
+        else {
+            panic!("prompt should be rejected after operation ends");
+        };
+
+        assert!(error.to_string().contains("no longer exists"));
+        assert!(prompts.next().now_or_never().is_none());
+    }
+
+    #[gpui::test]
+    async fn late_remote_askpass_response_does_not_restore_operation(cx: &mut TestAppContext) {
+        let delegates = RemoteAskPassDelegates::default();
+        let (delegate, mut prompts) = test_askpass_delegate(cx);
+        let operation = RemoteAskPassOperation::new(1, delegate, delegates.clone());
+        let password_request = cx.executor().spawn({
+            let delegates = delegates.clone();
+            async move { request_remote_password(&delegates, 1, "Password:".to_string()).await }
+        });
+        let (_, response_sender, cancellation) = prompts
+            .next()
+            .await
+            .expect("password prompt should be received");
+
+        drop(operation);
+        assert!(cancellation.await.is_err());
+        assert!(
+            response_sender
+                .send(
+                    EncryptedPassword::try_from("secret")
+                        .expect("test password should be encryptable")
+                )
+                .is_err()
+        );
+        assert!(password_request.await.is_err());
+        assert!(delegates.lock().is_empty());
+    }
+
     #[test]
     fn test_is_submodule_git_dir() {
         assert!(is_submodule_git_dir(Path::new("/Foo/.git/modules/Bar")));
@@ -10794,6 +11334,31 @@ mod tests {
         // to the raw path).
         let resolved = resolve_git_worktree_to_main_repo(fs.as_ref(), Path::new("/Foo/Bar")).await;
         assert_eq!(resolved, None);
+    }
+
+    #[gpui::test]
+    fn test_decode_git_text_windows_1251_one_line_change(cx: &mut TestAppContext) {
+        let old_text = "строка один\nстрока два\n";
+        let new_text = "строка один\nстрока три\n";
+        let (old_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(old_text);
+        let (new_bytes, _, _) = encoding_rs::WINDOWS_1251.encode(new_text);
+
+        let decoded_old = decode_git_text(old_bytes.into_owned()).unwrap();
+        let decoded_new = decode_git_text(new_bytes.into_owned()).unwrap();
+        let buffer = cx.new(|cx| Buffer::local(decoded_new, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(&decoded_old, &buffer_snapshot, cx));
+        let diff = diff.update(cx, |diff, cx| diff.snapshot(cx));
+        let hunks = diff.hunks(&buffer_snapshot).collect::<Vec<_>>();
+        let [hunk] = hunks.as_slice() else {
+            panic!("expected one modified hunk, got {hunks:?}");
+        };
+
+        assert_eq!(hunk.range, text::Point::new(1, 0)..text::Point::new(2, 0));
+        assert_eq!(
+            hunk.diff_base_byte_range,
+            old_text.find("строка два").unwrap()..old_text.len()
+        );
     }
 
     #[gpui::test]

@@ -10,13 +10,13 @@ use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, SharedString, px};
+use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
+    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -760,10 +760,10 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
-            default_width: px(agent.default_width.unwrap()),
-            default_height: px(agent.default_height.unwrap()),
+            default_width: agent.default_width.unwrap().into_gpui(),
+            default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
-                Some(px(agent.max_content_width.unwrap()))
+                Some(agent.max_content_width.unwrap().into_gpui())
             } else {
                 None
             },

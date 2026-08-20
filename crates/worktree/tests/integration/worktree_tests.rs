@@ -15,7 +15,7 @@ use rpc::{AnyProtoClient, NoopProtoClient, proto};
 use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
 
 use serde_json::json;
-use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, WorktreeId};
+use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, SplicingVec, WorktreeId};
 use std::{
     cell::Cell,
     env,
@@ -2070,7 +2070,7 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions = Some(vec![
                     "node_modules/**/package.json".to_string(),
                     "**/.DS_Store".to_string(),
@@ -2141,7 +2141,7 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/.DS_Store".to_string()]);
+                    Some(SplicingVec::from(vec!["**/.DS_Store".to_string()]));
                 settings.project.worktree.file_scan_inclusions =
                     Some(vec!["**/.DS_Store".to_string()]);
             });
@@ -2204,7 +2204,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions =
                     Some(vec!["node_modules/**".to_string()]);
             });
@@ -2239,7 +2239,7 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![]));
                 settings.project.worktree.file_scan_inclusions = Some(vec![]);
             });
         });
@@ -2291,8 +2291,10 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
+                    "**/foo/**".to_string(),
+                    "**/.DS_Store".to_string(),
+                ]));
             });
         });
     });
@@ -2333,7 +2335,7 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.worktree.file_scan_exclusions =
-                    Some(vec!["**/node_modules/**".to_string()]);
+                    Some(SplicingVec::from(vec!["**/node_modules/**".to_string()]));
             });
         });
     });
@@ -2487,11 +2489,11 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                     "**/.git".to_string(),
                     "node_modules/".to_string(),
                     "build_output".to_string(),
-                ]);
+                ]));
             });
         });
     });
@@ -5591,7 +5593,8 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         }
         let loaded = loaded.unwrap();
         assert_eq!(
-            loaded.text, case.expected_text,
+            loaded.text.to_string(),
+            case.expected_text,
             "Encoding mismatch for file: {}",
             case.name
         );

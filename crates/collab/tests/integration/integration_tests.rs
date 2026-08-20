@@ -4395,9 +4395,9 @@ async fn test_collaborating_with_diagnostics(
                 .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(0, 4)..Point::new(0, 7),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Diagnostic {
                         group_id: 2,
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
@@ -4405,10 +4405,10 @@ async fn test_collaborating_with_diagnostics(
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(0, 10)..Point::new(0, 13),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    Point::new(0, 10)..Point::new(0, 13),
+                    Diagnostic {
                         group_id: 3,
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
@@ -4416,7 +4416,7 @@ async fn test_collaborating_with_diagnostics(
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                }
+                )
             ]
         );
     });
