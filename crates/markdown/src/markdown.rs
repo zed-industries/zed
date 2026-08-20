@@ -4081,8 +4081,8 @@ impl Element for HighlightedLine {
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.text.paint(window, cx);
         self.line.paint_highlights(window);
+        self.text.paint(window, cx);
     }
 }
 
