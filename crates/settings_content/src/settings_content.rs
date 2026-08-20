@@ -1290,6 +1290,12 @@ pub struct RemoteSettingsContent {
     ///
     /// Default: null (auto-detect)
     pub dev_container_use_buildkit: Option<bool>,
+    /// The container CLI binary used to manage devcontainers. When set, this
+    /// takes priority over `use_podman` and allows using alternatives such as
+    /// `podman-remote` or an absolute path like `/usr/bin/podman-remote`.
+    ///
+    /// Default: null (uses "podman" if `use_podman` is true, otherwise "docker")
+    pub container_binary: Option<String>,
 }
 
 #[with_fallible_options]
@@ -1301,6 +1307,7 @@ pub struct DevContainerConnection {
     pub remote_user: String,
     pub container_id: String,
     pub use_podman: bool,
+    pub container_binary: Option<String>,
     pub extension_ids: Vec<String>,
     pub remote_env: BTreeMap<String, String>,
 }
