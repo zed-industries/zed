@@ -17,6 +17,17 @@ use serde_json::json;
 use tempfile::TempDir;
 use util::path;
 
+struct SkipBAndInner2;
+
+impl CopyFilter for SkipBAndInner2 {
+    fn should_copy(&self, path: &Path) -> bool {
+        !matches!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("b" | "inner2")
+        )
+    }
+}
+
 #[gpui::test]
 async fn test_fake_fs(executor: BackgroundExecutor) {
     let fs = FakeFs::new(executor.clone());
@@ -94,7 +105,7 @@ async fn test_copy_recursive_with_single_file(executor: BackgroundExecutor) {
 
     let source = Path::new(path!("/outer/a"));
     let target = Path::new(path!("/outer/a copy"));
-    copy_recursive(fs.as_ref(), source, target, Default::default())
+    copy_recursive(fs.as_ref(), source, target, RecursiveCopyOptions::default())
         .await
         .unwrap();
 
@@ -109,7 +120,7 @@ async fn test_copy_recursive_with_single_file(executor: BackgroundExecutor) {
 
     let source = Path::new(path!("/outer/a"));
     let target = Path::new(path!("/outer/inner/a copy"));
-    copy_recursive(fs.as_ref(), source, target, Default::default())
+    copy_recursive(fs.as_ref(), source, target, RecursiveCopyOptions::default())
         .await
         .unwrap();
 
@@ -158,7 +169,7 @@ async fn test_copy_recursive_with_single_dir(executor: BackgroundExecutor) {
 
     let source = Path::new(path!("/outer/empty"));
     let target = Path::new(path!("/outer/empty copy"));
-    copy_recursive(fs.as_ref(), source, target, Default::default())
+    copy_recursive(fs.as_ref(), source, target, RecursiveCopyOptions::default())
         .await
         .unwrap();
 
@@ -182,7 +193,7 @@ async fn test_copy_recursive_with_single_dir(executor: BackgroundExecutor) {
 
     let source = Path::new(path!("/outer/non-empty"));
     let target = Path::new(path!("/outer/non-empty copy"));
-    copy_recursive(fs.as_ref(), source, target, Default::default())
+    copy_recursive(fs.as_ref(), source, target, RecursiveCopyOptions::default())
         .await
         .unwrap();
 
@@ -251,7 +262,7 @@ async fn test_copy_recursive(executor: BackgroundExecutor) {
 
     let source = Path::new(path!("/outer"));
     let target = Path::new(path!("/outer/inner1/outer"));
-    copy_recursive(fs.as_ref(), source, target, Default::default())
+    copy_recursive(fs.as_ref(), source, target, RecursiveCopyOptions::default())
         .await
         .unwrap();
 
@@ -282,6 +293,57 @@ async fn test_copy_recursive(executor: BackgroundExecutor) {
             PathBuf::from(path!("/outer/inner1/outer/inner2")),
             PathBuf::from(path!("/outer/inner1/outer/inner1/inner3")),
             PathBuf::from(path!("/outer/inner1/outer/inner1/inner4")),
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_copy_recursive_with_filter(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/outer"),
+        json!({
+            "inner1": {
+                "a": "A",
+                "b": "B",
+            },
+            "inner2": {
+                "c": "C",
+            }
+        }),
+    )
+    .await;
+
+    copy_recursive(
+        fs.as_ref(),
+        Path::new(path!("/outer")),
+        Path::new(path!("/outer copy")),
+        RecursiveCopyOptions {
+            copy_options: CopyOptions::default(),
+            filter: &SkipBAndInner2,
+        },
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        fs.files(),
+        vec![
+            PathBuf::from(path!("/outer/inner1/a")),
+            PathBuf::from(path!("/outer/inner1/b")),
+            PathBuf::from(path!("/outer/inner2/c")),
+            PathBuf::from(path!("/outer copy/inner1/a")),
+        ]
+    );
+    assert_eq!(
+        fs.directories(false),
+        vec![
+            PathBuf::from(path!("/")),
+            PathBuf::from(path!("/outer")),
+            PathBuf::from(path!("/outer copy")),
+            PathBuf::from(path!("/outer/inner1")),
+            PathBuf::from(path!("/outer/inner2")),
+            PathBuf::from(path!("/outer copy/inner1")),
         ]
     );
 }
@@ -330,8 +392,11 @@ async fn test_copy_recursive_with_overwriting(executor: BackgroundExecutor) {
         fs.as_ref(),
         source,
         target,
-        CopyOptions {
-            overwrite: true,
+        RecursiveCopyOptions {
+            copy_options: CopyOptions {
+                overwrite: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
     )
@@ -402,8 +467,11 @@ async fn test_copy_recursive_with_ignoring(executor: BackgroundExecutor) {
         fs.as_ref(),
         source,
         target,
-        CopyOptions {
-            ignore_if_exists: true,
+        RecursiveCopyOptions {
+            copy_options: CopyOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
             ..Default::default()
         },
     )

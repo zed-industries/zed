@@ -2042,8 +2042,11 @@ impl LocalWorktree {
                         fs.as_ref(),
                         &source,
                         &target,
-                        fs::CopyOptions {
-                            overwrite: true,
+                        fs::RecursiveCopyOptions {
+                            copy_options: fs::CopyOptions {
+                                overwrite: true,
+                                ..Default::default()
+                            },
                             ..Default::default()
                         },
                     )
@@ -2473,7 +2476,7 @@ impl RemoteWorktree {
                     continue;
                 };
                 for (abs_path, is_directory) in
-                    read_dir_items(local_fs.as_ref(), &root_path_to_copy).await?
+                    read_dir_items(local_fs.as_ref(), &root_path_to_copy, &fs::NoFilter).await?
                 {
                     let Some(relative_path) = abs_path
                         .strip_prefix(&root_path_to_copy)
