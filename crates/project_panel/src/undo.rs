@@ -264,7 +264,6 @@ impl Operation {
                     operation.trash_paths(paths);
                 }
             }
-            // TODO!: Should we do something when `RemoveDir` here?
             Self::Rename(..) | Self::Restore(..) | Self::CreateDir(..) | Self::RemoveDir(..) => {}
         }
     }
