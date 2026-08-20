@@ -58,7 +58,7 @@ pub use language_core::{
     serialize_regex,
 };
 pub use language_registry::{
-    LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+    LanguageLoader, LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
 use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
@@ -106,7 +106,8 @@ pub use file_content::{
     ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
 };
 pub use language_registry::{
-    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
+    QueryFileContents, QueryFiles,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
