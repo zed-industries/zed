@@ -839,6 +839,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
                 Some(
                     div()
                         .id(("config-option-picker-item", ix))
+                        .tooltip(Tooltip::text(option_name.clone()))
                         .when_some(description, |this, desc| {
                             let desc: SharedString = desc.into();
                             this.on_hover(cx.listener(move |menu, hovered, _, cx| {
