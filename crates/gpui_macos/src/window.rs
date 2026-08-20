@@ -509,6 +509,7 @@ const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
 // the window on exit.
 struct SimpleFullscreenState {
     frame: NSRect,
+    bounds: Bounds<Pixels>,
     style_mask: NSWindowStyleMask,
 }
 
@@ -822,9 +823,11 @@ impl MacWindowState {
                 return None;
             }
             let screen_frame = unsafe { NSScreen::frame(screen) };
+            let bounds = self.bounds();
 
             self.simple_fullscreen_state = Some(SimpleFullscreenState {
                 frame: unsafe { NSWindow::frame(self.native_window) },
+                bounds,
                 style_mask: unsafe { self.native_window.styleMask() },
             });
 
@@ -869,6 +872,8 @@ impl MacWindowState {
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if let Some(state) = &self.simple_fullscreen_state {
+            WindowBounds::Windowed(state.bounds)
         } else {
             WindowBounds::Windowed(self.bounds())
         }

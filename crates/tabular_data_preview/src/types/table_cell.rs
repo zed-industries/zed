@@ -1,7 +1,7 @@
 use text::Anchor;
 use ui::SharedString;
 
-/// Position of a cell within the source CSV buffer
+/// Position of a cell within the source buffer
 #[derive(Clone, Debug)]
 pub struct CellContentSpan {
     /// Start anchor of the cell content in the source buffer
@@ -13,7 +13,7 @@ pub struct CellContentSpan {
 /// A table cell with its content and position in the source buffer
 #[derive(Clone, Debug)]
 pub enum TableCell {
-    /// Cell existing in the CSV
+    /// Cell existing in the source data
     Real {
         /// Position of this cell in the source buffer
         position: CellContentSpan,
