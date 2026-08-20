@@ -1269,7 +1269,8 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
-            let mut was_directory_diff_stats = GitPanelSettings::get_global(cx).directory_diff_stats;
+            let mut was_directory_diff_stats =
+                GitPanelSettings::get_global(cx).directory_diff_stats;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
