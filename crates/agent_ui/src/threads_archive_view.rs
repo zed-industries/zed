@@ -1151,7 +1151,7 @@ impl ProjectPickerModal {
         let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
             let workspaces = db
-                .recent_project_workspaces(fs.as_ref())
+                .recent_project_workspaces(fs, cx.background_executor().clone())
                 .await
                 .log_err()
                 .unwrap_or_default();

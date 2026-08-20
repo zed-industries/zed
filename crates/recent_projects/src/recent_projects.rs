@@ -118,74 +118,6 @@ enum ProjectPickerStyle {
     Popover,
 }
 
-pub async fn get_recent_projects(
-    current_workspace_id: Option<WorkspaceId>,
-    limit: Option<usize>,
-    fs: Arc<dyn fs::Fs>,
-    db: &WorkspaceDb,
-) -> Vec<RecentProjectEntry> {
-    let workspaces = db
-        .recent_project_workspaces(fs.as_ref())
-        .await
-        .unwrap_or_default();
-
-    let filtered: Vec<_> = workspaces
-        .into_iter()
-        .filter(|workspace| Some(workspace.workspace_id) != current_workspace_id)
-        .filter(|workspace| matches!(workspace.location, SerializedWorkspaceLocation::Local))
-        .collect();
-
-    let mut all_paths: Vec<PathBuf> = filtered
-        .iter()
-        .flat_map(|workspace| workspace.identity_paths.paths().iter().cloned())
-        .collect();
-    all_paths.sort_unstable();
-    all_paths.dedup();
-    let path_details =
-        util::disambiguate::compute_disambiguation_details(&all_paths, |path, detail| {
-            project::path_suffix(path, detail)
-        });
-    let path_detail_map: std::collections::HashMap<PathBuf, usize> =
-        all_paths.into_iter().zip(path_details).collect();
-
-    let entries: Vec<RecentProjectEntry> = filtered
-        .into_iter()
-        .map(|workspace| {
-            let paths: Vec<PathBuf> = workspace.paths.paths().to_vec();
-            let ordered_paths: Vec<&PathBuf> = workspace.identity_paths.ordered_paths().collect();
-
-            let name = ordered_paths
-                .iter()
-                .map(|p| {
-                    let detail = path_detail_map.get(*p).copied().unwrap_or(0);
-                    project::path_suffix(p, detail)
-                })
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            let full_path = ordered_paths
-                .iter()
-                .map(|p| p.to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            RecentProjectEntry {
-                name: SharedString::from(name),
-                full_path: SharedString::from(full_path),
-                paths,
-                workspace_id: workspace.workspace_id,
-                timestamp: workspace.timestamp,
-            }
-        })
-        .collect();
-
-    match limit {
-        Some(n) => entries.into_iter().take(n).collect(),
-        None => entries,
-    }
-}
-
 pub async fn delete_recent_project(workspace_id: WorkspaceId, db: &WorkspaceDb) {
     let _ = db.delete_workspace_by_id(workspace_id).await;
 }
@@ -660,8 +592,9 @@ impl RecentProjects {
         let db = WorkspaceDb::global(cx);
         cx.spawn_in(window, async move |this, cx| {
             let Some(fs) = fs else { return };
-            let workspaces = db
-                .recent_project_workspaces(fs.as_ref())
+            let executor = cx.background_executor().clone();
+            let workspaces = cx
+                .background_spawn(async move { db.recent_project_workspaces(fs, executor).await })
                 .await
                 .log_err()
                 .unwrap_or_default();
@@ -2339,8 +2272,11 @@ impl RecentProjectsDelegate {
                     .await
                     .log_err()
                     .unwrap_or_default();
-                let workspaces = db
-                    .recent_project_workspaces(fs.as_ref())
+                let executor = cx.background_executor().clone();
+                let workspaces = cx
+                    .background_spawn(
+                        async move { db.recent_project_workspaces(fs, executor).await },
+                    )
                     .await
                     .unwrap_or_default();
                 this.update_in(cx, move |picker, window, cx| {
