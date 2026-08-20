@@ -91,7 +91,6 @@ codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
-component.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
@@ -196,7 +195,6 @@ snippets_ui.workspace = true
 svg_preview.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
-task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
@@ -313,5 +311,5 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
-[package.metadata.cargo-machete]
-ignored = ["profiling", "zstd", "tracing"]
+[package.metadata.cargo-shear]
+ignored = ["profiling", "tracing"]
