@@ -761,7 +761,7 @@ impl MacWindowState {
 
 unsafe impl Send for MacWindowState {}
 
-pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
+pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>, MainThreadMarker);
 
 impl MacWindow {
     pub fn open(
@@ -785,6 +785,7 @@ impl MacWindow {
         foreground_executor: ForegroundExecutor,
         background_executor: BackgroundExecutor,
         renderer_context: renderer::Context,
+        marker: MainThreadMarker,
     ) -> Self {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
@@ -894,7 +895,7 @@ impl MacWindow {
             let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
 
-            let mut window = Self(Arc::new(Mutex::new(MacWindowState {
+            let state = Arc::new(Mutex::new(MacWindowState {
                 handle,
                 foreground_executor,
                 background_executor,
@@ -947,7 +948,8 @@ impl MacWindow {
                 closed: Arc::new(AtomicBool::new(false)),
                 accesskit_adapter: None,
                 sheet_parent: None,
-            })));
+            }));
+            let mut window = Self(state, marker);
 
             (*native_window).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -1407,8 +1409,7 @@ impl PlatformWindow for MacWindow {
             .map(|(ix, _)| ix)
             .filter(|&ix| ix > 0);
 
-        let marker = MainThreadMarker::new().expect("alert not on main thread");
-        let alert = NSAlert::new(marker);
+        let alert = NSAlert::new(self.1);
         alert.setAlertStyle(match level {
             PromptLevel::Critical => NSAlertStyle::Critical,
             PromptLevel::Warning => NSAlertStyle::Warning,
