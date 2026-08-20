@@ -173,6 +173,68 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clicking_file_focuses_opened_item(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/src"),
+        json!({
+            "test.rs": "// Rust file",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/src").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        workspace.open_panel::<ProjectPanel>(window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    select_path(&panel, "src/test.rs", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        window.focus(&panel.focus_handle, cx);
+        assert!(
+            panel.focus_handle.contains_focused(window, cx),
+            "Project Panel should be focused before clicking a file"
+        );
+
+        let entry_id = panel
+            .selected_entry(cx)
+            .expect("test file should be selected")
+            .1
+            .id;
+        panel.open_entry_from_click(entry_id, 1, cx);
+    });
+    cx.run_until_parked();
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        let active_item = workspace
+            .active_item(cx)
+            .expect("clicked file should be open");
+        assert!(
+            active_item
+                .item_focus_handle(cx)
+                .contains_focused(window, cx),
+            "Clicking a file should focus the opened item"
+        );
+        assert_eq!(
+            workspace.active_pane().read(cx).preview_item_id(),
+            Some(active_item.item_id()),
+            "A single click should still open the item as a preview"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_file_history_action_uses_focused_project_panel_selection(
     cx: &mut gpui::TestAppContext,
 ) {
