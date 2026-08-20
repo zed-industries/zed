@@ -1441,6 +1441,7 @@ pub struct Workspace {
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
     persisted_recent_navigation_history: Vec<PathBuf>,
+    last_active_project_path: Option<ProjectPath>,
     restoring_workspace: bool,
 }
 
@@ -1565,6 +1566,16 @@ impl Workspace {
                 project::Event::WorktreeUpdatedEntries(..) => {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
+                }
+
+                project::Event::EntryRenamed {
+                    old_abs_path,
+                    new_abs_path,
+                    ..
+                } => {
+                    if this.rename_persisted_navigation_history_paths(old_abs_path, new_abs_path) {
+                        this.serialize_workspace(window, cx);
+                    }
                 }
 
                 project::Event::DisconnectedFromHost => {
@@ -1898,6 +1909,7 @@ impl Workspace {
             _dev_container_task: None,
             deferred_save_items: Vec::new(),
             persisted_recent_navigation_history: Vec::new(),
+            last_active_project_path: None,
             restoring_workspace: false,
         }
     }
@@ -2799,20 +2811,48 @@ impl Workspace {
             pane.update(cx, |pane, cx| pane.nav_history_mut().clear(cx));
         }
         self.persisted_recent_navigation_history.clear();
+        self.last_active_project_path = None;
         self.serialize_workspace(window, cx);
     }
 
-    fn remember_navigation_history_item(&mut self, item: &dyn ItemHandle, cx: &App) {
-        if self.restoring_workspace {
-            return;
+    fn rename_persisted_navigation_history_paths(
+        &mut self,
+        old_path: &Path,
+        new_path: &Path,
+    ) -> bool {
+        let mut changed = false;
+        for path in &mut self.persisted_recent_navigation_history {
+            let Ok(suffix) = path.strip_prefix(old_path) else {
+                continue;
+            };
+            let renamed_path = new_path.join(suffix);
+            if *path != renamed_path {
+                *path = renamed_path;
+                changed = true;
+            }
         }
 
-        let Some(project_path) = item.project_path(cx) else {
-            return;
+        if changed {
+            let mut seen_paths = HashSet::default();
+            self.persisted_recent_navigation_history
+                .retain(|path| seen_paths.insert(path.clone()));
+        }
+        changed
+    }
+
+    fn remember_navigation_history_path(&mut self, project_path: &ProjectPath, cx: &App) -> bool {
+        if self.restoring_workspace {
+            return false;
+        }
+        let Some(absolute_path) = self.project.read(cx).absolute_path(project_path, cx) else {
+            return false;
         };
-        let Some(absolute_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
-            return;
-        };
+
+        self.last_active_project_path = Some(project_path.clone());
+
+        if self.persisted_recent_navigation_history.first() == Some(&absolute_path) {
+            return false;
+        }
 
         self.persisted_recent_navigation_history
             .retain(|path| path != &absolute_path);
@@ -2820,6 +2860,7 @@ impl Workspace {
             .insert(0, absolute_path);
         self.persisted_recent_navigation_history
             .truncate(MAX_RECENT_SELECTIONS);
+        true
     }
 
     fn navigate_history(
@@ -5721,9 +5762,6 @@ impl Workspace {
                 local,
                 focus_changed,
             } => {
-                if let Some(item) = pane.read(cx).active_item() {
-                    self.remember_navigation_history_item(item.as_ref(), cx);
-                }
                 window.invalidate_character_coordinates();
 
                 pane.update(cx, |pane, _| {
@@ -6224,6 +6262,8 @@ impl Workspace {
     ) {
         cx.emit(Event::ActiveItemChanged);
         let active_entry = self.active_project_path(cx);
+        let active_project_path_changed =
+            self.last_active_project_path.as_ref() != active_entry.as_ref();
         self.project.update(cx, |project, cx| {
             project.set_active_path(active_entry.clone(), cx)
         });
@@ -6233,6 +6273,16 @@ impl Workspace {
             git_store_entity.update(cx, |git_store, cx| {
                 git_store.set_active_repo_for_path(project_path, cx);
             });
+        }
+
+        if active_project_path_changed {
+            match active_entry.as_ref() {
+                None => self.last_active_project_path = None,
+                Some(path) if self.remember_navigation_history_path(path, cx) => {
+                    self.serialize_workspace(window, cx);
+                }
+                Some(_) => {}
+            }
         }
 
         self.update_window_title(window, cx);
@@ -7371,10 +7421,6 @@ impl Workspace {
                 center_group = Some((group, active_pane))
             }
 
-            workspace.update(cx, |workspace, _| {
-                workspace.restoring_workspace = false;
-            })?;
-
             let mut items_by_project_path = HashMap::default();
             let mut item_ids_by_kind = HashMap::default();
             let mut all_deserialized_items = Vec::default();
@@ -7435,6 +7481,7 @@ impl Workspace {
                     });
                 }
 
+                workspace.restoring_workspace = false;
                 cx.notify();
             })?;
 
@@ -13247,12 +13294,17 @@ mod tests {
             workspace
                 .persisted_recent_navigation_history
                 .push(PathBuf::from(path!("/src/a.txt")));
+            workspace.last_active_project_path = Some(ProjectPath {
+                worktree_id: WorktreeId::from_usize(1),
+                path: rel_path("a.txt").into(),
+            });
             assert_eq!(workspace.recent_navigation_history(None, cx).len(), 1);
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.clear_navigation_history(window, cx);
             assert!(workspace.persisted_recent_navigation_history.is_empty());
+            assert!(workspace.last_active_project_path.is_none());
             assert!(workspace.recent_navigation_history(None, cx).is_empty());
         });
     }
@@ -18094,6 +18146,253 @@ mod tests {
         });
 
         assert_eq!(history, vec![PathBuf::from("a.rs"), PathBuf::from("b.rs")]);
+    }
+
+    #[gpui::test]
+    async fn test_active_project_path_changes_are_persisted(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        cx.update(register_serializable_item::<TestItem>);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "a.rs": "",
+                "b.rs": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let path_b = ProjectPath {
+            worktree_id,
+            path: rel_path("b.rs").into(),
+        };
+
+        let database = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = database.next_id().await.unwrap();
+        workspace.update(cx, |workspace, _| workspace.set_database_id(workspace_id));
+
+        let project_item =
+            cx.update(|_, cx| TestProjectItem::new_in_worktree(1, "a.rs", worktree_id, cx));
+        let item =
+            cx.new(|cx| TestItem::new(cx).with_project_items(std::slice::from_ref(&project_item)));
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        assert_eq!(
+            database
+                .workspace_for_id(workspace_id)
+                .unwrap()
+                .recent_navigation_history,
+            vec![PathBuf::from(path!("/project/a.rs"))]
+        );
+        assert!(workspace.read_with(cx, |workspace, _| {
+            workspace.last_active_project_path.is_some()
+        }));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.clear_navigation_history(window, cx);
+            assert!(workspace.persisted_recent_navigation_history.is_empty());
+            assert!(workspace.last_active_project_path.is_none());
+        });
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        });
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                workspace.persisted_recent_navigation_history.clone()
+            }),
+            vec![PathBuf::from(path!("/project/a.rs"))]
+        );
+
+        project_item.update(cx, |project_item, _| {
+            project_item.project_path = Some(path_b.clone());
+        });
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        });
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                workspace.persisted_recent_navigation_history.clone()
+            }),
+            vec![
+                PathBuf::from(path!("/project/b.rs")),
+                PathBuf::from(path!("/project/a.rs")),
+            ]
+        );
+
+        cx.executor().advance_clock(SERIALIZATION_THROTTLE_TIME);
+        cx.run_until_parked();
+        let serialized_workspace = database.workspace_for_id(workspace_id).unwrap();
+        assert_eq!(
+            serialized_workspace.recent_navigation_history,
+            vec![
+                PathBuf::from(path!("/project/b.rs")),
+                PathBuf::from(path!("/project/a.rs")),
+            ]
+        );
+
+        assert!(workspace.read_with(cx, |workspace, _| {
+            workspace._schedule_serialize_workspace.is_none()
+        }));
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        });
+        assert!(workspace.read_with(cx, |workspace, _| {
+            workspace._schedule_serialize_workspace.is_none()
+        }));
+
+        workspace.update(cx, |workspace, _| {
+            workspace.persisted_recent_navigation_history.clear();
+        });
+        workspace
+            .update_in(cx, |_, window, cx| {
+                Workspace::load_workspace(serialized_workspace, Vec::new(), window, cx)
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                workspace.persisted_recent_navigation_history.clone()
+            }),
+            vec![
+                PathBuf::from(path!("/project/b.rs")),
+                PathBuf::from(path!("/project/a.rs")),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_persisted_recent_navigation_history_is_bounded_mru(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({})).await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        for index in 0..=MAX_RECENT_SELECTIONS {
+            workspace.update(cx, |workspace, cx| {
+                assert!(workspace.remember_navigation_history_path(
+                    &ProjectPath {
+                        worktree_id,
+                        path: rel_path(&format!("{index}.rs")).into(),
+                    },
+                    cx,
+                ));
+            });
+        }
+
+        let expected = (1..=MAX_RECENT_SELECTIONS)
+            .rev()
+            .map(|index| PathBuf::from(format!("/project/{index}.rs")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                workspace.persisted_recent_navigation_history.clone()
+            }),
+            expected
+        );
+
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.remember_navigation_history_path(
+                &ProjectPath {
+                    worktree_id,
+                    path: rel_path("10.rs").into(),
+                },
+                cx,
+            ));
+        });
+        let history = workspace.read_with(cx, |workspace, _| {
+            workspace.persisted_recent_navigation_history.clone()
+        });
+        assert_eq!(history.len(), MAX_RECENT_SELECTIONS);
+        assert_eq!(
+            history.first(),
+            Some(&PathBuf::from(path!("/project/10.rs")))
+        );
+        assert_eq!(
+            history
+                .iter()
+                .filter(|path| *path == path!("/project/10.rs"))
+                .count(),
+            1
+        );
+    }
+
+    #[gpui::test]
+    async fn test_project_rename_updates_persisted_navigation_history(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                "dir": { "a.rs": "" },
+                "other.rs": "",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let (worktree_id, directory_entry_id) = project.update(cx, |project, cx| {
+            let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+            let directory_path = ProjectPath {
+                worktree_id,
+                path: rel_path("dir").into(),
+            };
+            let entry_id = project.entry_for_path(&directory_path, cx).unwrap().id;
+            (worktree_id, entry_id)
+        });
+
+        workspace.update(cx, |workspace, _| {
+            workspace.persisted_recent_navigation_history = vec![
+                PathBuf::from(path!("/project/other.rs")),
+                PathBuf::from(path!("/project/dir/a.rs")),
+                PathBuf::from(path!("/project/renamed/a.rs")),
+            ];
+        });
+
+        project
+            .update(cx, |project, cx| {
+                project.rename_entry(
+                    directory_entry_id,
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("renamed").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            workspace.read_with(cx, |workspace, _| {
+                workspace.persisted_recent_navigation_history.clone()
+            }),
+            vec![
+                PathBuf::from(path!("/project/other.rs")),
+                PathBuf::from(path!("/project/renamed/a.rs")),
+            ]
+        );
     }
 
     #[gpui::test]
