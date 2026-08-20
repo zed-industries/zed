@@ -479,6 +479,8 @@ pub struct EditPredictionSettings {
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
+    /// Settings specific to Amazon Bedrock.
+    pub amazon_bedrock: Option<AmazonBedrockEditPredictionSettings>,
     /// Controls whether training data collection is enabled.
     ///
     /// `Default` means the value stored in the legacy KV store is used as a fallback,
@@ -539,6 +541,43 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     /// The prompt format to use for completions. When `None`, the format
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AmazonBedrockEditPredictionSettings {
+    /// The id of the model to request completions from.
+    pub model: String,
+    /// Maximum tokens to generate.
+    pub max_output_tokens: u32,
+    /// The prompt format to use for completions.
+    pub prompt_format: EditPredictionPromptFormat,
+    /// Which Bedrock endpoint family to send completions to.
+    pub backend: AmazonBedrockPredictionBackend,
+    /// AWS profile to resolve credentials from; the default AWS credential
+    /// provider chain is used when `None`.
+    pub profile: Option<String>,
+    /// AWS region to sign requests for and to derive the endpoint from.
+    pub region: String,
+    /// Overrides the OpenAI-compatible base URL derived from the backend and region.
+    pub endpoint_url: Option<Arc<str>>,
+    /// Overrides the built-in system message; the default is used when `None`.
+    pub system_prompt: Option<Arc<str>>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum AmazonBedrockPredictionBackend {
+    #[default]
+    Mantle,
+    Runtime,
+}
+
+impl From<settings::AmazonBedrockPredictionBackendContent> for AmazonBedrockPredictionBackend {
+    fn from(value: settings::AmazonBedrockPredictionBackendContent) -> Self {
+        match value {
+            settings::AmazonBedrockPredictionBackendContent::Mantle => Self::Mantle,
+            settings::AmazonBedrockPredictionBackendContent::Runtime => Self::Runtime,
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -883,6 +922,30 @@ impl settings::Settings for AllLanguageSettings {
                 prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
             });
 
+        let amazon_bedrock = edit_predictions.amazon_bedrock.unwrap_or_default();
+        let amazon_bedrock_settings =
+            amazon_bedrock
+                .model
+                .filter(|model| !model.is_empty())
+                .map(|model| AmazonBedrockEditPredictionSettings {
+                    model,
+                    max_output_tokens: amazon_bedrock.max_output_tokens.unwrap_or(256),
+                    prompt_format: amazon_bedrock.prompt_format.unwrap_or_default().into(),
+                    backend: amazon_bedrock.backend.unwrap_or_default().into(),
+                    profile: amazon_bedrock.profile.filter(|profile| !profile.is_empty()),
+                    region: amazon_bedrock
+                        .region
+                        .unwrap_or_else(|| "us-east-1".to_string()),
+                    endpoint_url: amazon_bedrock
+                        .endpoint_url
+                        .filter(|endpoint_url| !endpoint_url.is_empty())
+                        .map(Into::into),
+                    system_prompt: amazon_bedrock
+                        .system_prompt
+                        .filter(|system_prompt| !system_prompt.is_empty())
+                        .map(Into::into),
+                });
+
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
 
         for (language, patterns) in all_languages.file_types.iter().flatten() {
@@ -923,6 +986,7 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
+                amazon_bedrock: amazon_bedrock_settings,
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
             defaults: default_language_settings,

@@ -1,18 +1,43 @@
 use crate::{
-    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, amazon_bedrock,
+    cursor_excerpt,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
 use anyhow::{Context as _, Result, anyhow};
+use aws_credential_types::Credentials;
 use gpui::{App, AppContext as _, Entity, Task};
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPredictionPromptFormat, ToOffset, ToPoint as _,
-    language_settings::all_language_settings,
+    language_settings::{
+        AmazonBedrockEditPredictionSettings, OpenAiCompatibleEditPredictionSettings,
+        all_language_settings,
+    },
 };
 use std::{path::Path, sync::Arc, time::Instant};
 use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
 
 const FIM_CONTEXT_TOKENS: usize = 512;
+
+enum FimBackend {
+    Custom {
+        settings: OpenAiCompatibleEditPredictionSettings,
+        api_key: Option<Arc<str>>,
+    },
+    AmazonBedrock {
+        settings: AmazonBedrockEditPredictionSettings,
+        credentials: Task<Result<Credentials>>,
+    },
+}
+
+impl FimBackend {
+    fn max_output_tokens(&self) -> u32 {
+        match self {
+            FimBackend::Custom { settings, .. } => settings.max_output_tokens,
+            FimBackend::AmazonBedrock { settings, .. } => settings.max_output_tokens,
+        }
+    }
+}
 
 struct FimRequestOutput {
     request_id: String,
@@ -48,17 +73,31 @@ pub fn request_prediction(
     let cursor_point = position.to_point(&snapshot);
     let request_start = cx.background_executor().now();
 
-    let Some(settings) = (match provider {
+    let custom_settings = match provider {
         settings::EditPredictionProvider::Ollama => settings.ollama.clone(),
         settings::EditPredictionProvider::OpenAiCompatibleApi => {
             settings.open_ai_compatible_api.clone()
         }
         _ => None,
-    }) else {
-        return Task::ready(Err(anyhow!("Unsupported edit prediction provider for FIM")));
+    };
+    let bedrock_settings = match provider {
+        settings::EditPredictionProvider::AmazonBedrock => settings.amazon_bedrock.clone(),
+        _ => None,
     };
 
-    let api_key = load_open_ai_compatible_api_key_if_needed(provider, cx);
+    let backend = if let Some(settings) = custom_settings {
+        FimBackend::Custom {
+            api_key: load_open_ai_compatible_api_key_if_needed(provider, cx),
+            settings,
+        }
+    } else if let Some(settings) = bedrock_settings {
+        FimBackend::AmazonBedrock {
+            credentials: amazon_bedrock::resolve_credentials(&settings, cx),
+            settings,
+        }
+    } else {
+        return Task::ready(Err(anyhow!("Unsupported edit prediction provider for FIM")));
+    };
 
     let result = cx.background_spawn(async move {
         let cursor_offset = cursor_point.to_offset(&snapshot);
@@ -100,18 +139,37 @@ pub fn request_prediction(
         let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
         let stop_tokens = get_fim_stop_tokens();
 
-        let max_tokens = settings.max_output_tokens;
+        let max_tokens = backend.max_output_tokens();
 
-        let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
-            provider,
-            &settings,
-            prompt,
-            max_tokens,
-            stop_tokens,
-            api_key,
-            &http_client,
-        )
-        .await?;
+        let (response_text, request_id) = match backend {
+            FimBackend::Custom { settings, api_key } => {
+                open_ai_compatible::send_custom_server_request(
+                    provider,
+                    &settings,
+                    prompt,
+                    max_tokens,
+                    stop_tokens,
+                    api_key,
+                    &http_client,
+                )
+                .await?
+            }
+            FimBackend::AmazonBedrock {
+                settings,
+                credentials,
+            } => {
+                let credentials = credentials.await?;
+                amazon_bedrock::send_fim_request(
+                    &settings,
+                    credentials,
+                    prompt,
+                    max_tokens,
+                    stop_tokens,
+                    &http_client,
+                )
+                .await?
+            }
+        };
 
         let response_received_at = Instant::now();
 
@@ -195,46 +253,38 @@ fn format_fim_prompt(
     }
 }
 
+/// Boundary tokens that end a FIM completion: sent as stop sequences, and
+/// truncated from responses when the server did not honor them.
+const FIM_BOUNDARY_TOKENS: &[&str] = &[
+    "<|endoftext|>",
+    "<|file_separator|>",
+    "<|fim_pad|>",
+    "<|fim_prefix|>",
+    "<|fim_middle|>",
+    "<|fim_suffix|>",
+    "<fim_prefix>",
+    "<fim_middle>",
+    "<fim_suffix>",
+    "<PRE>",
+    "<SUF>",
+    "<MID>",
+    "[PREFIX]",
+    "[SUFFIX]",
+    "[MIDDLE]",
+    "[POSTFIX]",
+];
+
 fn get_fim_stop_tokens() -> Vec<String> {
-    vec![
-        "<|endoftext|>".to_string(),
-        "<|file_separator|>".to_string(),
-        "<|fim_pad|>".to_string(),
-        "<|fim_prefix|>".to_string(),
-        "<|fim_middle|>".to_string(),
-        "<|fim_suffix|>".to_string(),
-        "<fim_prefix>".to_string(),
-        "<fim_middle>".to_string(),
-        "<fim_suffix>".to_string(),
-        "<PRE>".to_string(),
-        "<SUF>".to_string(),
-        "<MID>".to_string(),
-        "[PREFIX]".to_string(),
-        "[SUFFIX]".to_string(),
-    ]
+    FIM_BOUNDARY_TOKENS
+        .iter()
+        .map(|token| token.to_string())
+        .collect()
 }
 
 fn clean_fim_completion(response: &str) -> String {
     let mut result = response.to_string();
 
-    let end_tokens = [
-        "<|endoftext|>",
-        "<|file_separator|>",
-        "<|fim_pad|>",
-        "<|fim_prefix|>",
-        "<|fim_middle|>",
-        "<|fim_suffix|>",
-        "<fim_prefix>",
-        "<fim_middle>",
-        "<fim_suffix>",
-        "<PRE>",
-        "<SUF>",
-        "<MID>",
-        "[PREFIX]",
-        "[SUFFIX]",
-    ];
-
-    for token in &end_tokens {
+    for token in FIM_BOUNDARY_TOKENS {
         if let Some(pos) = result.find(token) {
             result.truncate(pos);
         }

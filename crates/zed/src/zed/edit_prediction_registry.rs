@@ -121,16 +121,35 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
             Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
         }
         EditPredictionProvider::Codestral => Some(EditPredictionProviderConfig::Codestral),
-        EditPredictionProvider::Ollama | EditPredictionProvider::OpenAiCompatibleApi => {
-            let custom_settings = if provider == EditPredictionProvider::Ollama {
-                settings.ollama.as_ref()?
-            } else {
-                settings.open_ai_compatible_api.as_ref()?
+        EditPredictionProvider::Ollama
+        | EditPredictionProvider::OpenAiCompatibleApi
+        | EditPredictionProvider::AmazonBedrock => {
+            let (model, mut format) = match provider {
+                EditPredictionProvider::Ollama => {
+                    let custom_settings = settings.ollama.as_ref()?;
+                    (
+                        custom_settings.model.as_str(),
+                        custom_settings.prompt_format,
+                    )
+                }
+                EditPredictionProvider::OpenAiCompatibleApi => {
+                    let custom_settings = settings.open_ai_compatible_api.as_ref()?;
+                    (
+                        custom_settings.model.as_str(),
+                        custom_settings.prompt_format,
+                    )
+                }
+                _ => {
+                    let bedrock_settings = settings.amazon_bedrock.as_ref()?;
+                    (
+                        bedrock_settings.model.as_str(),
+                        bedrock_settings.prompt_format,
+                    )
+                }
             };
 
-            let mut format = custom_settings.prompt_format;
             if format == EditPredictionPromptFormat::Infer {
-                if let Some(inferred_format) = infer_prompt_format(&custom_settings.model) {
+                if let Some(inferred_format) = infer_prompt_format(model) {
                     format = inferred_format;
                 } else {
                     // todo: notify user that prompt format inference failed
@@ -139,8 +158,16 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
             }
 
             if matches!(format, EditPredictionPromptFormat::Zeta(_)) {
+                // Zeta and Sweep requests go to a custom text-completion
+                // server, which Bedrock's chat-shaped endpoints cannot serve.
+                if provider == EditPredictionProvider::AmazonBedrock {
+                    return None;
+                }
                 Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Zeta))
             } else if format == EditPredictionPromptFormat::Sweep {
+                if provider == EditPredictionProvider::AmazonBedrock {
+                    return None;
+                }
                 Some(EditPredictionProviderConfig::Zed(
                     EditPredictionModel::SweepPrompt,
                 ))
@@ -173,6 +200,14 @@ fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
         "codegemma" => EditPredictionPromptFormat::CodeGemma,
         "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
         "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
+        // Bedrock model ids are vendor-prefixed, e.g. `qwen.qwen3-coder-30b-a3b-instruct`.
+        model_base if model_base.contains("qwen") && model_base.contains("coder") => {
+            EditPredictionPromptFormat::Qwen
+        }
+        model_base if model_base.contains("codestral") || model_base.contains("devstral") => {
+            EditPredictionPromptFormat::Codestral
+        }
+        model_base if model_base.contains("gemma") => EditPredictionPromptFormat::CodeGemma,
         _ => {
             return None;
         }
