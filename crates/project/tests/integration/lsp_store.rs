@@ -159,14 +159,7 @@ async fn test_open_buffer_via_lsp_case_variant_no_duplicate(cx: &mut TestAppCont
             .entries(true, 0)
             .map(|entry| entry.path.as_unix_str().to_string())
             .collect();
-        assert!(
-            !entries.iter().any(|p| p.contains("SRC")),
-            "differently-cased entry should not have been created, got: {entries:?}"
-        );
-        assert!(
-            entries.iter().any(|p| p == "src/main.rs"),
-            "canonical-cased entry should exist, got: {entries:?}"
-        );
+        assert_eq!(entries, vec!["", "src", "src/main.rs"]);
     });
 }
 
