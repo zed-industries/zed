@@ -182,4 +182,46 @@ mod tests {
             "expected long labels to wrap onto multiple SVG text lines, got {wrapped_line_count}: {svg}"
         );
     }
+
+    #[test]
+    fn class_diagram_labels_keep_sixteen_pixel_font_size() {
+        let source = r#"classDiagram
+            class User {
+                +String id
+                +String name
+                +signIn()
+            }
+        "#;
+        let theme = MermaidTheme::default();
+        let svg = render_mermaid(source, &theme).expect("render failed");
+        let svg = crate::postprocess::postprocess(&svg, &theme).expect("postprocess failed");
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
+
+        assert_eq!(text_font_size(tree.root(), "User"), Some(16.0));
+        assert_eq!(text_font_size(tree.root(), "+String name"), Some(16.0));
+    }
+
+    fn text_font_size(group: &usvg::Group, expected_text: &str) -> Option<f32> {
+        for node in group.children() {
+            match node {
+                usvg::Node::Group(group) => {
+                    if let Some(font_size) = text_font_size(group, expected_text) {
+                        return Some(font_size);
+                    }
+                }
+                usvg::Node::Text(text) => {
+                    for chunk in text.chunks() {
+                        if chunk.text() == expected_text {
+                            return chunk.spans().first().map(|span| span.font_size().get());
+                        }
+                    }
+                }
+                usvg::Node::Path(_) | usvg::Node::Image(_) => {}
+            }
+        }
+
+        None
+    }
 }

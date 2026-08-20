@@ -374,6 +374,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         r#"
         text, tspan, foreignObject div, foreignObject span, foreignObject p {{ font-family: {font} !important; }}
         foreignObject div, foreignObject span, foreignObject p {{ font-size: 16px; color: {text}; }}
+        .merman-foreignobject-fallback-text {{ font-size: 16px !important; }}
         foreignObject p {{ margin: 0; }}
         foreignObject {{ overflow: visible; }}
         foreignObject div {{ max-width: none !important; }}
