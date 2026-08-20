@@ -1235,12 +1235,13 @@ impl CodegenAlternative {
                 };
 
             let mut message_id = None;
-            let mut received_failure = false;
+            let mut failure_started = false;
+            let mut failure_complete = false;
             let last_token_usage = Arc::new(Mutex::new(TokenUsage::default()));
 
             let first_text = loop {
                 let Some(event) = completion_events.next().await else {
-                    if received_failure {
+                    if failure_complete {
                         finish_with_status(CodegenStatus::Done, cx);
                     } else {
                         finish_with_status(
@@ -1269,7 +1270,7 @@ impl CodegenAlternative {
                         if let Some(output) = output {
                             match output {
                                 ToolUseOutput::Rewrite { text } => {
-                                    if received_failure {
+                                    if failure_started {
                                         finish_with_status(
                                             CodegenStatus::Error(anyhow!(
                                                 "Inline assistant called \
@@ -1286,7 +1287,8 @@ impl CodegenAlternative {
                                     message,
                                     is_input_complete,
                                 } => {
-                                    received_failure |= is_input_complete;
+                                    failure_started = true;
+                                    failure_complete |= is_input_complete;
                                     if is_input_complete
                                         && codegen
                                             .update(cx, |this, cx| {
@@ -1305,7 +1307,7 @@ impl CodegenAlternative {
                         *last_token_usage.lock() = token_usage;
                     }
                     Ok(LanguageModelCompletionEvent::Stop(reason)) => {
-                        if !received_failure {
+                        if !failure_complete {
                             finish_with_status(
                                 CodegenStatus::Error(anyhow!(
                                     "Inline assistant stopped before completing \
@@ -2372,6 +2374,34 @@ mod tests {
         assert_eq!(
             error.as_deref(),
             Some("Inline assistant called `rewrite_section` after `failure_message`")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_completion_rejects_rewrite_after_partial_failure(cx: &mut TestAppContext) {
+        let (buffer, codegen) = new_tool_based_codegen(cx);
+        let events_tx = simulate_tool_based_completion(&codegen, cx);
+
+        events_tx
+            .unbounded_send(failure_tool_use("Cannot rewrite", false))
+            .unwrap();
+        events_tx
+            .unbounded_send(rewrite_tool_use("tool_1", "replacement", true))
+            .unwrap();
+        drop(events_tx);
+        cx.run_until_parked();
+
+        let error = codegen.read_with(cx, |codegen, _cx| match &codegen.status {
+            CodegenStatus::Error(error) => Some(error.to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            error.as_deref(),
+            Some("Inline assistant called `rewrite_section` after `failure_message`")
+        );
+        assert_eq!(
+            buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx).text()),
+            ""
         );
     }
 
