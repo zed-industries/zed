@@ -1052,6 +1052,17 @@ impl Domain for WorkspaceDb {
             ALTER TABLE bookmarks ADD COLUMN label TEXT NOT NULL DEFAULT "";
         ),
         sql!(
+            CREATE TABLE recent_navigation_history (
+                workspace_id INTEGER NOT NULL,
+                path BLOB NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (workspace_id, path),
+                FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                ON DELETE CASCADE
+                ON UPDATE CASCADE
+            ) STRICT;
+        ),
+        sql!(
             ALTER TABLE remote_connections ADD COLUMN docker_host TEXT;
         ),
     ];
@@ -1230,6 +1241,7 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            recent_navigation_history: self.recent_navigation_history(workspace_id),
         })
     }
 
@@ -1334,7 +1346,21 @@ impl WorkspaceDb {
             breakpoints: self.breakpoints(workspace_id),
             window_id,
             user_toolchains: self.user_toolchains(workspace_id, remote_connection_id),
+            recent_navigation_history: self.recent_navigation_history(workspace_id),
         })
+    }
+
+    fn recent_navigation_history(&self, workspace_id: WorkspaceId) -> Vec<PathBuf> {
+        self.select_bound(sql!(
+            SELECT path
+            FROM recent_navigation_history
+            WHERE workspace_id = ?
+            ORDER BY position
+        ))
+        .and_then(|mut statement| statement(workspace_id))
+        .context("Loading recent navigation history")
+        .log_err()
+        .unwrap_or_default()
     }
 
     fn bookmarks(&self, workspace_id: WorkspaceId) -> BTreeMap<Arc<Path>, Vec<SerializedBookmark>> {
@@ -1662,6 +1688,20 @@ impl WorkspaceDb {
                 );
 
                 prepared_query(args).context("Updating workspace")?;
+
+                conn.exec_bound(sql!(
+                    DELETE FROM recent_navigation_history WHERE workspace_id = ?;
+                ))?(workspace.id)
+                .context("Clearing recent navigation history")?;
+
+                let mut insert_recent_path = conn.exec_bound(sql!(
+                    INSERT INTO recent_navigation_history(workspace_id, path, position)
+                    VALUES (?, ?, ?);
+                ))?;
+                for (position, path) in workspace.recent_navigation_history.iter().enumerate() {
+                    insert_recent_path((workspace.id, path.as_path(), position))
+                        .context("Inserting recent navigation history")?;
+                }
 
                 // Save center pane group
                 Self::save_pane_group(conn, workspace.id, &workspace.center_group, None)
@@ -3036,6 +3076,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3159,6 +3200,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3195,6 +3237,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_without_breakpoint.clone())
@@ -3295,6 +3338,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3312,6 +3356,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3421,6 +3466,9 @@ mod tests {
             session_id: None,
             window_id: Some(999),
             user_toolchains: Default::default(),
+            recent_navigation_history: (0..20)
+                .map(|index| PathBuf::from(format!("/tmp2/src/{index}.rs")))
+                .collect(),
         };
 
         db.save_workspace(workspace.clone()).await;
@@ -3434,6 +3482,9 @@ mod tests {
 
         let round_trip_workspace = db.workspace_for_roots(&["/tmp", "/tmp2"]);
         assert_eq!(workspace, round_trip_workspace.unwrap());
+
+        assert!(db.delete_workspace_by_id(workspace.id).await.is_ok());
+        assert!(db.recent_navigation_history(workspace.id).is_empty());
     }
 
     #[gpui::test]
@@ -3457,6 +3508,7 @@ mod tests {
             session_id: None,
             window_id: Some(1),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let mut workspace_2 = SerializedWorkspace {
@@ -3474,6 +3526,7 @@ mod tests {
             session_id: None,
             window_id: Some(2),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3518,6 +3571,7 @@ mod tests {
             session_id: None,
             window_id: Some(3),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_3.clone()).await;
@@ -3558,6 +3612,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(10),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_2 = SerializedWorkspace {
@@ -3575,6 +3630,7 @@ mod tests {
             session_id: Some("session-id-1".to_owned()),
             window_id: Some(20),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_3 = SerializedWorkspace {
@@ -3592,6 +3648,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(30),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_4 = SerializedWorkspace {
@@ -3609,6 +3666,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let connection_id = db
@@ -3637,6 +3695,7 @@ mod tests {
             session_id: Some("session-id-2".to_owned()),
             window_id: Some(50),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         let workspace_6 = SerializedWorkspace {
@@ -3654,6 +3713,7 @@ mod tests {
             session_id: Some("session-id-3".to_owned()),
             window_id: Some(60),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         db.save_workspace(workspace_1.clone()).await;
@@ -3713,6 +3773,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         }
     }
 
@@ -3756,6 +3817,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .collect::<Vec<_>>();
 
@@ -3855,6 +3917,7 @@ mod tests {
             session_id: session_id.map(|s| s.to_owned()),
             window_id: Some(id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         }
     }
 
@@ -3879,6 +3942,7 @@ mod tests {
             session_id: None,
             window_id: Some(id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         }
     }
 
@@ -4137,6 +4201,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .collect::<Vec<_>>();
 
@@ -4560,6 +4625,7 @@ mod tests {
             session_id: None,
             window_id: None,
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         };
 
         // Save the workspace (this creates the record with empty paths)
@@ -4638,6 +4704,7 @@ mod tests {
                 breakpoints: Default::default(),
                 window_id: Some(*window_id),
                 user_toolchains: Default::default(),
+                recent_navigation_history: Default::default(),
             })
             .await;
         }
@@ -4925,6 +4992,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(99),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
 
@@ -5022,6 +5090,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
 
@@ -5040,6 +5109,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(window_id_val),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
 
@@ -5120,6 +5190,7 @@ mod tests {
             breakpoints: Default::default(),
             window_id: Some(88),
             user_toolchains: Default::default(),
+            recent_navigation_history: Default::default(),
         })
         .await;
         cx.run_until_parked();

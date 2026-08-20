@@ -3634,6 +3634,156 @@ async fn test_autoscroll_relative(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let window = cx.window;
+    // Narrow viewport so a long line can't possibly fit on screen at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let long_line = "x".repeat(250);
+    cx.set_state(&format!("ˇ{long_line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Simulate shift+end: extend the selection from column 0 to the end
+    // of the long line. Before the fix, this selection's span was wider
+    // than the viewport, which caused autoscroll_horizontally to bail
+    // out entirely and leave scroll_position.x at 0.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 250)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 250.,
+            "head must not be scrolled past, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 249.,
+            "head column must be at the right edge, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Long line so scroll_width stays large and never clamps target_right,
+    // isolating the case below. Viewport is tuned so a 5-char selection's
+    // raw glyph span fits, but its padded span (+ gutter margin + em_advance,
+    // the same padding the final scroll guard uses) does not.
+    cx.simulate_window_resize(window, size(px(146.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Its raw glyph span fits the viewport, but the padded
+    // span does not, so the fix must still scroll to reveal it.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 105.,
+            "selection head must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection head must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Viewport wide enough to fit a short selection's full span at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    // Scroll right first so the whole line is out of view.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 300)..Point::new(0, 300)]);
+        });
+    });
+    cx.run_until_parked();
+
+    let scrolled_right_x = cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        assert!(
+            scroll_x > 200.,
+            "should be scrolled far right, scroll_x = {scroll_x}"
+        );
+        scroll_x
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Since it fits within the viewport, both edges of
+    // the selection should end up visible, not just the head.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x < scrolled_right_x,
+            "must scroll left towards the selection, scroll_x = {scroll_x}"
+        );
+        assert!(
+            scroll_x <= 100.5,
+            "selection start must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection end must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_exclude_overscroll_margin_clamps_scroll_position(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     update_test_editor_settings(cx, &|settings| {
@@ -13364,6 +13514,56 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_ime_composition_keeps_manual_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("fn foo() {ˇ\n}");
+    cx.condition(|editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+        // A manual indent here
+        editor.tab(&Tab, window, cx);
+    });
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        \n}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "n", None, window, cx);
+        editor.replace_and_mark_text_in_range(None, "nn", None, window, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        nn\n}");
+}
+
+#[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware);
@@ -16028,160 +16228,6 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     );
 }
 
-async fn setup_range_format_test_with_capabilities(
-    cx: &mut TestAppContext,
-    capabilities: lsp::ServerCapabilities,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file(path!("/file.rs"), Default::default()).await;
-
-    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities,
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-    });
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    (project, editor, cx, fake_server)
-}
-
-async fn setup_range_format_test(
-    cx: &mut TestAppContext,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    setup_range_format_test_with_capabilities(
-        cx,
-        lsp::ServerCapabilities {
-            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..lsp::ServerCapabilities::default()
-        },
-    )
-    .await
-}
-
-/// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
-/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
-/// `head_content` sets the HEAD base, `index_content` sets the staged base.
-/// The buffer starts empty; the caller must `editor.set_text(...)` to set the
-/// working-tree content (the diff recomputes from buffer changes).
-async fn setup_range_format_test_with_git<'a>(
-    cx: &'a mut TestAppContext,
-    head_content: &str,
-    index_content: &str,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &'a mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({
-            ".git": {},
-            "file.rs": "",
-        }),
-    )
-    .await;
-
-    fs.set_head_for_repo(
-        std::path::Path::new(path!("/project/.git")),
-        &[("file.rs", head_content.to_string())],
-        "deadbeef",
-    );
-    fs.set_index_for_repo(
-        std::path::Path::new(path!("/project/.git")),
-        &[("file.rs", index_content.to_string())],
-    );
-
-    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-                document_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..lsp::ServerCapabilities::default()
-            },
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/project/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    // Open the unstaged diff so GitStore tracks this buffer. Without this,
-    // `get_unstaged_diff` returns None and compute_format_target cannot
-    // produce range-based FormatTarget.
-    project
-        .update(cx, |project, cx| {
-            project.open_unstaged_diff(buffer.clone(), cx)
-        })
-        .await
-        .unwrap();
-
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-    });
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    (project, editor, cx, fake_server)
-}
-
-fn refresh_editor_actions(cx: &mut VisualTestContext) {
-    cx.executor().run_until_parked();
-    cx.update(|window, cx| {
-        let _ = window.draw(cx);
-    });
-}
-
 #[gpui::test]
 async fn test_format_selections_action_available_when_range_formatting_is_supported(
     cx: &mut TestAppContext,
@@ -16699,6 +16745,129 @@ async fn test_modifications_format_multiple_hunks(cx: &mut TestAppContext) {
         "line0\nLINE1!\nline2\nline3\nLINE4!\nline5\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_overlapping_range_responses(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![vec![lsp_line_edit(0, 6, "fmt0\nfmt1\nfmt2\nfmt3\nfmt4\nfmt5\n")]],
+        "fmt0\nfmt1\nfmt2\nfmt3\nfmt4\nfmt5\n",
+        "a response covering the second hunk must suppress its request and must not duplicate the formatted block",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_divergent_overlapping_responses(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(1, 3, "one\ntwo\n")],
+            vec![lsp_line_edit(2, 5, "TWO\nthree\nfour\n")],
+        ],
+        "line0\none\ntwo\nline3\nLINE4\nline5\n",
+        "the first edit must win and the divergent overlapping edit must be dropped without corrupting the buffer",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_partially_overlapping_response_dropped_atomically(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(1, 2, "one\n")],
+            vec![
+                lsp_line_edit(4, 5, "four\n"),
+                lsp_line_edit(1, 2, "ONE\n"),
+            ],
+        ],
+        "line0\none\nline2\nline3\nLINE4\nline5\n",
+        "a response with any divergent overlapping edit must be dropped whole, including its non-overlapping edits",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_overlapping_edits_within_one_response(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nline4\nline5\n",
+        vec![vec![
+            lsp_line_edit(1, 2, "one\n"),
+            lsp_line_edit(1, 2, "uno\n"),
+        ]],
+        "line0\none\nline2\nline3\nline4\nline5\n",
+        "the later overlapping edit within one response must be dropped",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_same_position_inserts_within_one_response(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\n",
+        "line0\nLINE1\nline2\n",
+        vec![vec![
+            lsp_line_edit(1, 1, "alpha\n"),
+            lsp_line_edit(1, 1, "beta\n"),
+        ]],
+        "line0\nalpha\nbeta\nLINE1\nline2\n",
+        "multiple inserts at one position within one response are valid per the LSP spec and must all apply in array order",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_divergent_same_position_inserts_across_responses(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(4, 4, "alpha\n")],
+            vec![lsp_line_edit(4, 4, "beta\n")],
+        ],
+        "line0\nLINE1\nline2\nline3\nalpha\nLINE4\nline5\n",
+        "a later response inserting different text at the same position diverges and must be dropped",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_insert_touching_kept_edit_across_responses(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![
+                lsp_line_edit(1, 2, "one\n"),
+                lsp_line_edit(4, 4, "alpha\n"),
+            ],
+            vec![lsp_line_edit(4, 5, "alpha\nfour\n")],
+        ],
+        "line0\none\nline2\nline3\nalpha\nLINE4\nline5\n",
+        "an edit touching a kept insert at its boundary can duplicate the inserted text and must be dropped as divergent",
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -27071,12 +27240,9 @@ async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
         .unwrap();
     assert_eq!(
         index_contents,
-        [(
-            ::git::repository::repo_path("file.rs"),
-            "head\n".to_string(),
-        )]
-        .into_iter()
-        .collect::<HashMap<_, _>>()
+        [(::git::repository::repo_path("file.rs"), b"head\n".to_vec(),)]
+            .into_iter()
+            .collect::<HashMap<_, _>>()
     );
 }
 
@@ -43166,4 +43332,314 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
+}
+
+#[gpui::test]
+async fn test_in_preview_key_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        serde_json::json!({
+            "test.txt": "hello",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(
+                (worktree_id, rel_path("test.txt")),
+                None,
+                true,
+                true,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert!(pane.is_active_preview_item(editor.entity_id()));
+    });
+
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            editor.key_context(window, cx).contains("in_preview"),
+            "Expected 'in_preview' context when the editor is the pane's preview item"
+        );
+    });
+
+    pane.update(cx, |pane, _cx| {
+        pane.unpreview_item_if_preview(editor.entity_id());
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.key_context(window, cx).contains("in_preview"),
+            "Expected no 'in_preview' context after the tab is unpreviewed"
+        );
+    });
+}
+
+async fn setup_range_format_test_with_capabilities(
+    cx: &mut TestAppContext,
+    capabilities: lsp::ServerCapabilities,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+async fn setup_range_format_test(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    setup_range_format_test_with_capabilities(
+        cx,
+        lsp::ServerCapabilities {
+            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await
+}
+
+/// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
+/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
+/// `head_content` sets the HEAD base, `index_content` sets the staged base.
+/// The buffer starts empty; the caller must `editor.set_text(...)` to set the
+/// working-tree content (the diff recomputes from buffer changes).
+async fn setup_range_format_test_with_git<'a>(
+    cx: &'a mut TestAppContext,
+    head_content: &str,
+    index_content: &str,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &'a mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", head_content.to_string())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", index_content.to_string())],
+    );
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Open the unstaged diff so GitStore tracks this buffer. Without this,
+    // `get_unstaged_diff` returns None and compute_format_target cannot
+    // produce range-based FormatTarget.
+    project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+fn refresh_editor_actions(cx: &mut VisualTestContext) {
+    cx.executor().run_until_parked();
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+}
+
+fn lsp_line_edit(start_line: u32, end_line: u32, text: &str) -> lsp::TextEdit {
+    lsp::TextEdit::new(
+        lsp::Range::new(
+            lsp::Position::new(start_line, 0),
+            lsp::Position::new(end_line, 0),
+        ),
+        text.to_string(),
+    )
+}
+
+async fn assert_range_format_merge(
+    cx: &mut TestAppContext,
+    head_content: &str,
+    buffer_text: &str,
+    responses: Vec<Vec<lsp::TextEdit>>,
+    expected_text: &str,
+    description: &str,
+) {
+    let expected_requests = responses.len();
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, head_content).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(buffer_text, window, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let responses = Arc::new(responses);
+    let mut responded_rx =
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>({
+            let request_count = request_count.clone();
+            move |params, _| {
+                let count = request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                let responses = responses.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Uri::from_file_path(path!("/project/file.rs")).unwrap()
+                    );
+                    match responses.get(count) {
+                        Some(edits) => Ok(Some(edits.clone())),
+                        None => panic!("unexpected range formatting request #{}", count + 1),
+                    }
+                }
+            }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    for _ in 0..expected_requests {
+        responded_rx.next().await;
+    }
+    save.await;
+
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        expected_requests,
+        "{description}"
+    );
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        expected_text,
+        "{description}"
+    );
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
 }
