@@ -405,17 +405,31 @@ impl Editor {
                         },
                     );
 
-                    target_left = target_left.min(ScrollOffset::from(
-                        layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(start_column as usize)
-                            + self.gutter_dimensions.margin,
-                    ));
-                    target_right = target_right.max(
-                        ScrollOffset::from(
-                            layouts[head.row().minus(start_row) as usize]
-                                .x_for_index(end_column as usize),
-                        ) + em_advance,
+                    let layout = &layouts[head.row().minus(start_row) as usize];
+
+                    let mut candidate_left = ScrollOffset::from(
+                        layout.x_for_index(start_column as usize) + self.gutter_dimensions.margin,
                     );
+                    let mut candidate_right =
+                        ScrollOffset::from(layout.x_for_index(end_column as usize)) + em_advance;
+
+                    // If the full selection span (with the same padding used below) doesn't
+                    // fit in the viewport, fall back to just tracking the cursor (head)
+                    // instead of the whole selection, otherwise autoscroll gives up entirely.
+                    if candidate_right - candidate_left > viewport_width {
+                        let head_column = head.column();
+                        let head_column_clamped = cmp::min(row_line_len, head_column);
+                        candidate_left = ScrollOffset::from(
+                            layout.x_for_index(head_column as usize)
+                                + self.gutter_dimensions.margin,
+                        );
+                        candidate_right =
+                            ScrollOffset::from(layout.x_for_index(head_column_clamped as usize))
+                                + em_advance;
+                    }
+
+                    target_left = target_left.min(candidate_left);
+                    target_right = target_right.max(candidate_right);
                 }
             }
         } else {
