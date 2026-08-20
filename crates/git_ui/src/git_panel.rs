@@ -308,7 +308,6 @@ fn git_panel_context_menu(
     has_unstaged_changes: bool,
     has_new_changes: bool,
     has_stash_items: bool,
-    _group_by: GitPanelGroupBy,
     include_copy_paths: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
@@ -345,6 +344,7 @@ fn git_panel_context_menu(
             .when(include_copy_paths, |context_menu| {
                 context_menu
                     .separator()
+                    .action("Stash Directory", StashFile.boxed_clone())
                     .action("Copy Path", CopyPath.boxed_clone())
                     .action("Copy Relative Path", CopyRelativePath.boxed_clone())
             })
@@ -5942,7 +5942,7 @@ impl GitPanel {
     fn render_git_changes_actions_menu(
         &self,
         id: impl Into<ElementId>,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let has_tracked_changes = self.has_tracked_changes();
         let has_staged_tracked_changes = self.has_staged_tracked_changes();
@@ -5950,7 +5950,6 @@ impl GitPanel {
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
         let has_stash_items = self.stash_entries.entries.len() > 0;
-        let group_by = GitPanelSettings::get_global(cx).group_by;
 
         let focus_handle = self.focus_handle.clone();
         let menu_open = self.changes_actions_menu_handle.is_deployed();
@@ -5969,7 +5968,6 @@ impl GitPanel {
                     has_unstaged_changes,
                     has_new_changes,
                     has_stash_items,
-                    group_by,
                     false,
                     focus_handle.clone(),
                     window,
@@ -7688,6 +7686,7 @@ impl GitPanel {
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
                 .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action("Stash File", StashFile.boxed_clone())
                 .separator()
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
@@ -7746,7 +7745,6 @@ impl GitPanel {
             has_unstaged_changes,
             has_new_changes,
             has_stash_items,
-            GitPanelSettings::get_global(cx).group_by,
             include_copy_paths,
             self.focus_handle.clone(),
             window,
