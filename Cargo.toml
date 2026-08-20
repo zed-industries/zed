@@ -497,7 +497,6 @@ which_key = { path = "crates/which_key" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
-zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zed_credentials_provider = { path = "crates/zed_credentials_provider" }
 zed_env_vars = { path = "crates/zed_env_vars" }
@@ -560,13 +559,11 @@ base64 = "0.22"
 bitflags = "2.6.0"
 block = "0.1"
 block2 = "0.6"
-brotli = "8.0.2"
 brush-parser = "0.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 cbindgen = { version = "0.28.0", default-features = false }
-cfg-if = "1.0.3"
 chardetng = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
@@ -575,7 +572,6 @@ clap = { version = "4.4", features = ["derive", "wrap_help"] }
 clap_complete = { version = "4.4" }
 clap_complete_nushell = { version = "4.4" }
 cocoa = "=0.26.0"
-cocoa-foundation = "=0.2.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
 const_format = "0.2"
@@ -622,7 +618,6 @@ fork = "0.4.0"
 futures = "0.3.32"
 futures-concurrency = "7.7.1"
 futures-lite = "1.13"
-futures-util = "0.3.32"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 globset = "0.4"
 handlebars = "4.3"
@@ -732,7 +727,6 @@ palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 parse_int = "0.9"
 partial-json-fixer = "0.5.3"
-pathdiff = "0.2"
 pathfinder_geometry = "0.5"
 pciid-parser = "0.8.0"
 percent-encoding = "2.3.2"
@@ -1118,16 +1112,6 @@ large_enum_variant = "allow"
 # Boolean expressions can be hard to read, requiring only the minimal form gets in the way
 nonminimal_bool = "allow"
 
-[workspace.metadata.cargo-machete]
-ignored = [
-    "bindgen",
-    "cbindgen",
-    "prost_build",
-    "serde",
-    "component",
-    "documented",
-    "sea-orm-macros",
-]
 
 # Dylint discovers our custom lints through this entry, so `cargo dylint --all`
 # runs them without a `--path` argument. The `lints` package pins its own
