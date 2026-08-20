@@ -18298,7 +18298,7 @@ mod tests {
 
         let expected = (1..=MAX_RECENT_SELECTIONS)
             .rev()
-            .map(|index| PathBuf::from(format!("/project/{index}.rs")))
+            .map(|index| PathBuf::from(path!("/project")).join(format!("{index}.rs")))
             .collect::<Vec<_>>();
         assert_eq!(
             workspace.read_with(cx, |workspace, _| {
