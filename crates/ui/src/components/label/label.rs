@@ -1,5 +1,7 @@
+use std::borrow::Cow;
 use std::ops::Range;
 
+use crate::utils::replace_control_characters;
 use crate::{LabelLike, prelude::*};
 use gpui::{HighlightStyle, StyleRefinement, StyledText};
 
@@ -71,6 +73,12 @@ impl Label {
     /// Truncates the label from the start, keeping the end visible.
     pub fn truncate_start(mut self) -> Self {
         self.base = self.base.truncate_start();
+        self
+    }
+
+    /// Truncates overflowing text with an ellipsis (`…`) in the middle if needed.
+    pub fn truncate_middle(mut self) -> Self {
+        self.base = self.base.truncate_middle();
         self
     }
 
@@ -233,7 +241,9 @@ impl LabelCommon for Label {
     }
 
     fn single_line(mut self) -> Self {
-        self.label = SharedString::from(self.label.replace('\n', "⏎"));
+        if let Cow::Owned(replaced) = replace_control_characters(&self.label) {
+            self.label = SharedString::from(replaced);
+        }
         self.base = self.base.single_line();
         self
     }
@@ -320,6 +330,20 @@ fn parse_backtick_spans(text: &str) -> Option<(SharedString, Vec<Range<usize>>)>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_single_line_replaces_control_characters() {
+        // File names are allowed to contain these, and rendering them verbatim
+        // breaks the layout of tabs and project panel entries.
+        let label = Label::new("a\nb\rc\td").single_line();
+        assert_eq!(label.label, "a⏎b␍c␉d");
+    }
+
+    #[test]
+    fn test_single_line_leaves_printable_text_alone() {
+        let label = Label::new("main.rs").single_line();
+        assert_eq!(label.label, "main.rs");
+    }
 
     #[test]
     fn test_parse_backtick_spans_no_backticks() {

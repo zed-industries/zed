@@ -4,3 +4,5 @@
 //! (Criterion, `gpui_platform`, gpui's `bench` feature, ...) don't weigh down
 //! the test builds of the crates being benchmarked. Each file in `benches/`
 //! targets one area of the codebase.
+
+pub mod bench_utils;

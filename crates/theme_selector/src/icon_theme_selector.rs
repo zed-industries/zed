@@ -162,6 +162,10 @@ impl IconThemeSelectorDelegate {
 impl PickerDelegate for IconThemeSelectorDelegate {
     type ListItem = ui::ListItem;
 
+    fn name() -> &'static str {
+        "icon theme selector"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select Icon Theme...".into()
     }

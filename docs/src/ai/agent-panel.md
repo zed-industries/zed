@@ -64,7 +64,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Messages sent while the agent is in the generating state get, by default, queued.
 
-For the Zed Agent, queued messages get sent at the next turn boundary, which is usually between a tool call and a response, whereas for External Agents, the message gets sent at the end of the generation.
+By default, queued messages get sent once the agent finishes generating. If you want a queued message to reach the Zed Agent sooner—interrupting it at its next step (usually between a tool call and a response) rather than waiting for it to finish—toggle "Steer" on that message. Steering is only available for the Zed Agent, since Zed can't detect turn boundaries for external agents.
 
 You can edit or remove (an individual or all) queued messages.
 You can also still interrupt the agent immediately if you want by either clicking on the stop button or by clicking the "Send Now" (double-enter) on a queued message.
@@ -106,7 +106,7 @@ You can also hold `cmd`/`ctrl` when submitting a message to automatically follow
 
 If you send a prompt to the Agent and then put Zed in the background, you can choose to be notified when its generation wraps up via:
 
-- a visual notification that appears in the top right of your screen
+- a visual desktop notification from your operating system
 - a sound notification
 
 These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.
@@ -131,7 +131,7 @@ The Agent Panel can host Terminal Threads alongside your agent threads. For open
 The agent can search your codebase to find relevant context, but providing it explicitly improves response quality and reduces latency.
 
 Add context by typing `@` in the message editor.
-You can mention files, directories, symbols, previous threads, skills, instruction files, and diagnostics.
+You can mention files, directories, symbols, previous threads, skills, diagnostics, branch diffs, and URLs to fetch.
 
 When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
@@ -154,7 +154,7 @@ Zed surfaces how many tokens you are consuming for your currently active thread 
 
 Zed automatically compacts long Zed Agent threads as they approach the configured token threshold. Compaction summarizes earlier messages and replaces them in the model context with that summary, leaving more room for the next turn. The thread shows a **Context Compacted** entry that you can expand to inspect the summary. You can compact manually by typing `/compact` in the message editor.
 
-If the selected model's context window is too small for automatic compaction (less than 80000 tokens), a banner appears above the message editor as you approach the token limit. Use **Start New Thread** from that banner, or choose **New From Summary** from the "Agent Options" menu, to continue in a new thread seeded with a summary. You can also @-mention a past thread in a new one.
+If the selected model's context window is too small for automatic compaction (less than 80000 tokens), a banner appears above the message editor as you approach the token limit. Use **Start New Thread** from that banner, or choose **New From Summary** from the New Thread menu (the `+` button on the top right), to continue in a new thread seeded with a summary. You can also @-mention a past thread in a new one.
 
 Configure automatic compaction with `agent.auto_compact`. See [Agent Settings](./agent-settings.md#automatic-compaction) for options.
 

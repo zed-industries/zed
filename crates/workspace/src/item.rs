@@ -135,6 +135,7 @@ pub struct TabContentParams {
     pub deemphasized: bool,
     /// Maximum character length for the title. None = use the item's own default (typically MAX_TAB_TITLE_LEN).
     pub max_title_len: Option<usize>,
+    pub truncate_title_middle: bool,
 }
 
 impl TabContentParams {
@@ -177,6 +178,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         let text = self.tab_content_text(params.detail.unwrap_or_default(), cx);
 
         Label::new(text)
+            .single_line()
             .color(params.text_color())
             .into_any_element()
     }

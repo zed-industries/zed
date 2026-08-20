@@ -3,20 +3,20 @@ mod user_agents_md;
 
 use std::cmp::Ordering::{Equal, Greater, Less};
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock};
 
 use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, SharedString, px};
+use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
+    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -216,8 +216,10 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_include_project_rules: bool,
     pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
+    pub compaction_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
@@ -231,6 +233,7 @@ pub struct AgentSettings {
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
+    pub terminal_init_command: Option<String>,
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
@@ -412,12 +415,50 @@ impl Default for AgentProfileId {
 /// combines them with the in-memory per-thread grants. `write_paths` are
 /// stored as minimal, lexically-normalized subtrees (see
 /// [`compile_sandbox_permissions`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandboxPermissions {
-    pub allow_network: bool,
+    /// Allow sandboxed commands to reach any host over the network.
+    pub allow_all_hosts: bool,
+    /// Hosts sandboxed commands may always reach, in canonical form (exact
+    /// hostnames or leading-`*.` subdomain wildcards). Parsed/validated where
+    /// consumed (`agent::sandboxing`).
+    pub network_hosts: Vec<String>,
     pub allow_fs_write_all: bool,
+    /// Persistently run agent terminal commands outside the OS sandbox. This is
+    /// the model-facing "off switch": when set, the sandboxed terminal tool is
+    /// not exposed and the system prompt omits the sandbox section, so the
+    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
+    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
+    /// approved "once" or "for this thread", which keeps the sandboxed
+    /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
-    pub write_paths: Vec<PathBuf>,
+    /// Directory subtree grants, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved.
+    pub write_paths: Vec<settings::GrantedWritePath>,
+    /// Whether sandbox escalation prompts warn about domains or write paths
+    /// that contain potentially confusable Unicode characters (homoglyphs,
+    /// invisible characters, or bidirectional overrides). Enabled by default.
+    pub warn_confusable_unicode: bool,
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem, whose sandbox-integrity guarantees
+    /// are weaker than a distro-native filesystem. Enabled by default.
+    pub warn_ntfs_grants: bool,
+}
+
+impl Default for SandboxPermissions {
+    fn default() -> Self {
+        Self {
+            allow_all_hosts: false,
+            network_hosts: Vec::new(),
+            allow_fs_write_all: false,
+            allow_unsandboxed: false,
+            write_paths: Vec::new(),
+            // The confusable-Unicode warning is a safety net, so it defaults on.
+            warn_confusable_unicode: true,
+            // The weaker-guarantee warning for Windows-hosted grants defaults on.
+            warn_ntfs_grants: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -718,10 +759,10 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
-            default_width: px(agent.default_width.unwrap()),
-            default_height: px(agent.default_height.unwrap()),
+            default_width: agent.default_width.unwrap().into_gpui(),
+            default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
-                Some(px(agent.max_content_width.unwrap()))
+                Some(agent.max_content_width.unwrap().into_gpui())
             } else {
                 None
             },
@@ -732,9 +773,13 @@ impl Settings for AgentSettings {
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
+            commit_message_include_project_rules: agent
+                .commit_message_include_project_rules
+                .unwrap(),
             commit_message_model: agent.commit_message_model,
             commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
+            compaction_model: agent.compaction_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
@@ -762,6 +807,9 @@ impl Settings for AgentSettings {
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
+            terminal_init_command: agent
+                .terminal_init_command
+                .filter(|command| !command.trim().is_empty()),
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
@@ -781,21 +829,67 @@ fn compile_sandbox_permissions(
         return SandboxPermissions::default();
     };
 
-    let mut write_paths = Vec::new();
-    for path in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
+    let mut write_paths: Vec<settings::GrantedWritePath> = Vec::new();
+    for entry in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
         // Normalize away `..`/`.` before storing, since coverage checks are
-        // purely lexical; drop paths that escape the filesystem root.
-        if let Ok(normalized) = util::paths::normalize_lexically(&path) {
-            util::paths::insert_subtree(&mut write_paths, normalized);
-        }
+        // purely lexical; drop entries whose requested (or resolved) path
+        // escapes the filesystem root.
+        let Ok(requested) = util::paths::normalize_lexically(&entry.requested) else {
+            continue;
+        };
+        let granted = match entry.resolved {
+            Some(resolved) => {
+                let Ok(resolved) = util::paths::normalize_lexically(&resolved) else {
+                    continue;
+                };
+                settings::GrantedWritePath::resolved_on_fs(requested, resolved, entry.on_windows_fs)
+            }
+            None => settings::GrantedWritePath::from_requested(requested),
+        };
+        insert_granted_subtree(&mut write_paths, granted);
     }
 
+    let network_hosts = content
+        .network_hosts
+        .map(|hosts| hosts.0)
+        .unwrap_or_default();
+
     SandboxPermissions {
-        allow_network: content.allow_network.unwrap_or(false),
+        allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
+        network_hosts,
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
+        warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
+        warn_ntfs_grants: content.warn_ntfs_grants.unwrap_or(true),
     }
+}
+
+/// Subtree-insert mirroring [`util::paths::insert_subtree`], but over
+/// [`settings::GrantedWritePath`] entries compared by their canonical
+/// (symlink-resolved) grant path — the path actually enforced at write time.
+///
+/// Insertion is a no-op when the new grant's canonical path is already covered
+/// by an existing entry; otherwise the new grant is added and any existing
+/// entries whose canonical path is a descendant of it are pruned. Containment
+/// is purely lexical, so callers should normalize paths first.
+fn insert_granted_subtree(
+    subtrees: &mut Vec<settings::GrantedWritePath>,
+    granted: settings::GrantedWritePath,
+) {
+    if subtrees.iter().any(|existing| {
+        granted
+            .canonical_or_requested()
+            .starts_with(existing.canonical_or_requested())
+    }) {
+        return;
+    }
+    subtrees.retain(|existing| {
+        !existing
+            .canonical_or_requested()
+            .starts_with(granted.canonical_or_requested())
+    });
+    subtrees.push(granted);
 }
 
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
@@ -899,6 +993,7 @@ mod tests {
     use serde_json::json;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
+    use std::path::PathBuf;
 
     #[test]
     fn test_parse_auto_compact_threshold() {
@@ -967,6 +1062,56 @@ mod tests {
         assert!(result.is_none());
     }
 
+    #[gpui::test]
+    fn test_terminal_init_command_filters_empty_without_trimming(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            let new_text = store
+                .new_text_for_update("{}".to_string(), |settings| {
+                    settings.agent.get_or_insert_default().terminal_init_command =
+                        Some(" claude --resume ".to_string());
+                })
+                .unwrap();
+            assert!(
+                new_text.contains(r#""terminal_init_command": " claude --resume ""#),
+                "updated settings JSON should include terminal_init_command, got {new_text}"
+            );
+            store.set_user_settings(&new_text, cx).unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .as_deref(),
+            Some(" claude --resume ")
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": "   " } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": null } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
+    }
+
     #[test]
     fn test_tool_permissions_parsing() {
         let json = json!({
@@ -1022,12 +1167,29 @@ mod tests {
     fn test_sandbox_permissions_empty() {
         let permissions = compile_sandbox_permissions(None);
         assert_eq!(permissions, SandboxPermissions::default());
+        // The confusable-Unicode warning is a safety net, so it's on by default.
+        assert!(permissions.warn_confusable_unicode);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_warn_confusable_unicode_can_be_disabled() {
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({ "warn_confusable_unicode": false })).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(!permissions.warn_confusable_unicode);
+
+        // Omitting the key keeps the warning enabled.
+        let content: settings::SandboxPermissionsContent =
+            serde_json::from_value(json!({})).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+        assert!(permissions.warn_confusable_unicode);
     }
 
     #[test]
     fn test_sandbox_permissions_parsing_and_pruning() {
         let json = json!({
-            "allow_network": true,
+            "allow_all_hosts": true,
+            "network_hosts": ["github.com", "*.npmjs.org"],
             "allow_unsandboxed": true,
             "write_paths": [
                 "/tmp/build/cache",
@@ -1039,12 +1201,19 @@ mod tests {
         let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
         let permissions = compile_sandbox_permissions(Some(content));
 
-        assert!(permissions.allow_network);
+        assert!(permissions.allow_all_hosts);
+        assert_eq!(
+            permissions.network_hosts,
+            vec!["github.com".to_string(), "*.npmjs.org".to_string()]
+        );
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
         assert_eq!(
             permissions.write_paths,
-            vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]
+            vec![
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::from_requested(PathBuf::from("/var/log")),
+            ]
         );
     }
 
@@ -1062,7 +1231,77 @@ mod tests {
 
         // `/tmp/build/../build/cache` normalizes to `/tmp/build/cache`, which is
         // then pruned as a redundant child of `/tmp/build`.
-        assert_eq!(permissions.write_paths, vec![PathBuf::from("/tmp/build")]);
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_bare_string_has_no_resolved() {
+        let json = json!({
+            "write_paths": ["/tmp/build"]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+        assert_eq!(permissions.write_paths[0].resolved, None);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_object_preserves_resolved() {
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link", "resolved": "/tmp/real" }
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/link"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
+        assert_eq!(
+            permissions.write_paths[0].resolved,
+            Some(PathBuf::from("/tmp/real"))
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_dedup_keys_on_resolved_path() {
+        // The requested paths are unrelated, but the resolved (canonical)
+        // targets form a subtree, so dedup must prune by the resolved path.
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link/cache", "resolved": "/tmp/real/cache" },
+                { "requested": "/tmp/other", "resolved": "/tmp/real" },
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/other"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
     }
 
     #[test]
