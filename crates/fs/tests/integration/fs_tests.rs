@@ -697,7 +697,13 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
+    assert_eq!(
+        fs.original_path_for_trash_id(trashed_entry),
+        Some(path.to_path_buf())
+    );
+
     fs.restore(trashed_entry).await.unwrap();
+    assert_eq!(fs.original_path_for_trash_id(trashed_entry), None);
 
     assert_eq!(
         fs.files(),
@@ -1119,4 +1125,31 @@ async fn test_realfs_watch_stress_reports_missed_paths(
         "missed {} paths without rescan being reported",
         missed_paths.len()
     );
+}
+
+#[gpui::test]
+async fn restore_can_be_retried_after_collision(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let path = path!("/root/a.txt");
+    let remove_options = RemoveOptions::default();
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "original"}))
+        .await;
+
+    // We'll first trash the `a.txt` file so we can hold onto its `TrashId`,
+    // allowing us to later attempt restoring it again, ensuring that it didn't
+    // get removed from the trash state, even if restoring failed.
+    let trash_id = fs.trash(path.as_ref(), remove_options).await.unwrap();
+
+    fs.insert_file(path, "conflicting".into()).await;
+    let err = fs.restore(trash_id).await.unwrap_err();
+    assert!(matches!(err, TrashRestoreError::Collision { .. }));
+
+    fs.remove_file(path.as_ref(), remove_options).await.unwrap();
+    let restored_path = fs.restore(trash_id).await.unwrap();
+    assert_eq!(fs.load(restored_path.as_path()).await.unwrap(), "original");
+
+    assert!(matches!(
+        fs.restore(trash_id).await.unwrap_err(),
+        TrashRestoreError::AlreadyRestored
+    ));
 }

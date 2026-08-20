@@ -392,17 +392,13 @@ pub(crate) const DETECT_CHANGED_EXTENSIONS_SCRIPT: &str = indoc::indoc! {r#"
 "#};
 
 const TS_QUERY_LS_FILE: &str = "ts_query_ls-x86_64-unknown-linux-gnu.tar.gz";
-const CI_TS_QUERY_RELEASE: &str = "tags/v3.15.1";
+const CI_TS_QUERY_RELEASE: &str = "v3.15.1";
 
-pub(crate) fn fetch_ts_query_ls() -> Step<Use> {
-    named::uses(
-        "dsaltares",
-        "fetch-gh-release-asset",
-        "aa37ae5c44d3c9820bc12fe675e8670ecd93bd1c",
-    ) // v1.1.1
-    .add_with(("repo", "ribru17/ts_query_ls"))
-    .add_with(("version", CI_TS_QUERY_RELEASE))
-    .add_with(("file", TS_QUERY_LS_FILE))
+pub(crate) fn fetch_ts_query_ls() -> Step<Run> {
+    named::bash(formatdoc!(
+        r#"gh release download {CI_TS_QUERY_RELEASE} --repo ribru17/ts_query_ls --pattern {TS_QUERY_LS_FILE} --dir "$GITHUB_WORKSPACE""#
+    ))
+    .add_env(("GH_TOKEN", vars::GITHUB_TOKEN))
 }
 
 pub(crate) enum RunContext {
@@ -454,16 +450,20 @@ fn check_style() -> NamedJob {
 }
 
 fn check_dependencies() -> NamedJob {
-    fn install_cargo_machete() -> Step<Use> {
-        steps::taiki_install_action("cargo-machete@0.7.0")
+    fn install_cargo_shear() -> Step<Use> {
+        steps::taiki_install_action("cargo-shear@1.13.4")
     }
 
-    fn run_cargo_machete() -> Step<Run> {
-        named::bash("cargo machete")
+    fn run_cargo_shear() -> Step<Run> {
+        named::bash("cargo shear --locked --deny-warnings")
     }
 
     fn check_cargo_lock() -> Step<Run> {
         named::bash("cargo update --locked --workspace")
+    }
+
+    fn check_crate_graph() -> Step<Run> {
+        named::bash("cargo test --package xtask -- workspace::")
     }
 
     fn check_vulnerable_dependencies() -> Step<Use> {
@@ -482,9 +482,10 @@ fn check_dependencies() -> NamedJob {
             .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(install_cargo_machete())
-            .add_step(run_cargo_machete())
+            .add_step(install_cargo_shear())
+            .add_step(run_cargo_shear())
             .add_step(check_cargo_lock())
+            .add_step(check_crate_graph())
             .add_step(check_vulnerable_dependencies()),
     ))
 }

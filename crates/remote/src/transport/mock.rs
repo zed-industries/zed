@@ -324,6 +324,7 @@ impl RemoteClientDelegate for MockDelegate {
         &self,
         _prompt: String,
         _sender: futures::channel::oneshot::Sender<askpass::EncryptedPassword>,
+        _cancellation: futures::channel::oneshot::Receiver<()>,
         _cx: &mut AsyncApp,
     ) {
         unreachable!("MockDelegate::ask_password should not be called in tests")

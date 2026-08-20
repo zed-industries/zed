@@ -178,6 +178,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         let text = self.tab_content_text(params.detail.unwrap_or_default(), cx);
 
         Label::new(text)
+            .single_line()
             .color(params.text_color())
             .into_any_element()
     }
