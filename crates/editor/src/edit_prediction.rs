@@ -272,7 +272,7 @@ impl Editor {
                 .edit_predictions
                 .debounce_for_delegate(registered_provider.provider.name())
         } else {
-            None
+            Duration::ZERO
         };
 
         self.edit_prediction_provider()?.refresh(

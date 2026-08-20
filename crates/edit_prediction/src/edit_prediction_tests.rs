@@ -16,7 +16,7 @@ use cloud_llm_client::{
     predict_edits_v4::{PredictEditsV4Request, PredictEditsV4Response},
 };
 use db::AppDatabase;
-use edit_prediction_types::{DelayMs, EditPredictionRequestTrigger};
+use edit_prediction_types::EditPredictionRequestTrigger;
 use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings};
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
@@ -95,7 +95,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
             project.clone(),
             buffer1.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         )
@@ -165,7 +165,7 @@ async fn test_refresh_prediction_from_buffer_honors_debounce_duration(cx: &mut T
             project.clone(),
             buffer.clone(),
             position,
-            Some(DelayMs(100)),
+            Duration::from_millis(100),
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -245,7 +245,7 @@ async fn test_refresh_prediction_from_buffer_suppressed_while_following(cx: &mut
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1358,7 +1358,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Explicit,
             cx,
         );
@@ -1445,7 +1445,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1519,7 +1519,7 @@ async fn test_interpolate_failed(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1599,7 +1599,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1629,7 +1629,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1697,7 +1697,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1727,7 +1727,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1814,7 +1814,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1827,7 +1827,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1922,7 +1922,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1935,7 +1935,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1952,7 +1952,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2090,7 +2090,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2104,7 +2104,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2125,7 +2125,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2167,7 +2167,7 @@ async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2175,7 +2175,7 @@ async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3080,7 +3080,7 @@ async fn test_edit_prediction_v4_end_of_buffer(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3142,7 +3142,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3213,7 +3213,7 @@ async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestApp
             project.clone(),
             buffer.clone(),
             position,
-            None,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3467,6 +3467,7 @@ async fn make_sweep_prompt_test_ep_store(
                                     settings::EditPredictionPromptFormatContent::Sweep,
                                 ),
                                 max_output_tokens: Some(64),
+                                prediction_debounce: None,
                             },
                         ),
                         ..Default::default()

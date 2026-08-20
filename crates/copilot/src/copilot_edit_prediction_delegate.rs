@@ -7,8 +7,8 @@ use crate::{
 };
 use anyhow::Result;
 use edit_prediction_types::{
-    DelayMs, EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason,
-    EditPredictionIconSet, EditPredictionRequestTrigger, interpolate_edits,
+    EditPrediction, EditPredictionDelegate, EditPredictionDiscardReason, EditPredictionIconSet,
+    EditPredictionRequestTrigger, interpolate_edits,
 };
 use gpui::{App, Context, Entity, Task, TaskExt};
 use icons::IconName;
@@ -75,16 +75,14 @@ impl EditPredictionDelegate for CopilotEditPredictionDelegate {
         &mut self,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
-        debounce_duration: Option<DelayMs>,
+        debounce_duration: Duration,
         _trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let copilot = self.copilot.clone();
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            if let Some(debounce_duration) = debounce_duration.filter(|delay| delay.0 != 0) {
-                cx.background_executor()
-                    .timer(Duration::from_millis(debounce_duration.0))
-                    .await;
+            if !debounce_duration.is_zero() {
+                cx.background_executor().timer(debounce_duration).await;
             }
 
             let completions = copilot
