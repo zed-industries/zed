@@ -361,7 +361,7 @@ impl EditToolTest {
                 abs_path: Path::new("/path/to/root").into(),
                 rules_file: None,
             }];
-            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let project_context = ProjectContext::new(worktrees);
             let tool_names = tools
                 .iter()
                 .map(|tool| tool.name.clone().into())
@@ -370,6 +370,11 @@ impl EditToolTest {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                user_agents_md: None,
+                sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             let templates = Templates::new();
             template.render(&templates)?
@@ -498,7 +503,9 @@ impl EditToolTest {
                     if tool_use.is_input_complete
                         && tool_use.name.as_ref() == EditFileTool::NAME =>
                 {
-                    let input: EditFileToolInput = serde_json::from_value(tool_use.input)
+                    let input: EditFileToolInput = tool_use
+                        .input
+                        .parse()
                         .context("Failed to parse tool input as EditFileToolInput")?;
                     return Ok(input);
                 }
@@ -547,33 +554,25 @@ impl EditToolTest {
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(rand::random());
-    let mut cx = TestAppContext::build(dispatcher, None);
-    let foreground_executor = cx.foreground_executor().clone();
-    let result = foreground_executor.block_test(async {
-        let test = EditToolTest::new(&mut cx).await;
-        let result = test.eval(eval, &mut cx).await;
-        drop(test);
-        cx.run_until_parked();
-        result
-    });
-    cx.quit();
-    match result {
-        Ok(output) => eval_utils::EvalOutput {
-            data: output.to_string(),
-            outcome: if output.assertion.score < 80 {
+    super::run_gpui_eval(
+        |cx| {
+            async move {
+                let test = EditToolTest::new(cx).await;
+                let result = test.eval(eval, cx).await;
+                drop(test);
+                cx.run_until_parked();
+                result
+            }
+            .boxed_local()
+        },
+        |output| {
+            if output.assertion.score < 80 {
                 eval_utils::OutcomeKind::Failed
             } else {
                 eval_utils::OutcomeKind::Passed
-            },
-            metadata: (),
+            }
         },
-        Err(err) => eval_utils::EvalOutput {
-            data: format!("{err:?}"),
-            outcome: eval_utils::OutcomeKind::Error,
-            metadata: (),
-        },
-    }
+    )
 }
 
 fn message(
@@ -610,7 +609,9 @@ fn tool_use(
         id: LanguageModelToolUseId::from(id.into()),
         name: name.into(),
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
-        input: serde_json::to_value(input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(input).unwrap(),
+        ),
         is_input_complete: true,
         thought_signature: None,
     })

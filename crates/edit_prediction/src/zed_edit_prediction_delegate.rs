@@ -1,10 +1,10 @@
-use std::{cmp, sync::Arc};
+use std::{cmp, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
-    EditPredictionIconSet, SuggestionDisplayType,
+    EditPredictionIconSet, EditPredictionRequestTrigger, SuggestionDisplayType,
 };
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
@@ -142,7 +142,8 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &mut self,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
-        _debounce: bool,
+        debounce_duration: Duration,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let store = self.store.read(cx);
@@ -163,7 +164,14 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             }
 
             store.refresh_context(&self.project, &buffer, cursor_position, cx);
-            store.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
+            store.refresh_prediction_from_buffer(
+                self.project.clone(),
+                buffer,
+                cursor_position,
+                debounce_duration,
+                trigger,
+                cx,
+            )
         });
     }
 
@@ -215,12 +223,21 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
 
             let Some(edits) = prediction.interpolate(&snapshot) else {
                 store.reject_current_prediction(
-                    EditPredictionRejectReason::InterpolatedEmpty,
+                    EditPredictionRejectReason::InterpolateFailed,
                     &self.project,
                     cx,
                 );
                 return None;
             };
+
+            if edits.is_empty() {
+                store.reject_current_prediction(
+                    EditPredictionRejectReason::InterpolatedEmpty,
+                    &self.project,
+                    cx,
+                );
+                return None;
+            }
 
             let cursor_row = cursor_position.to_point(&snapshot).row;
             let (closest_edit_ix, (closest_edit_range, _)) =

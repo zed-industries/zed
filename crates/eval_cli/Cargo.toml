@@ -47,5 +47,7 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 terminal_view.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
 util.workspace = true
 watch.workspace = true

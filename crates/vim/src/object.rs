@@ -4,6 +4,7 @@ use crate::{
     Vim,
     motion::{is_subword_end, is_subword_start, right},
     state::{Mode, Operator},
+    surrounds::{BRACKET_PAIRS, QUOTE_PAIRS, SurroundPair},
 };
 use editor::{
     Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, ToOffset,
@@ -606,7 +607,6 @@ impl Object {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
             }
             Object::AnyQuotes => {
-                let quote_types = ['\'', '"', '`'];
                 let cursor_offset = relative_to.to_offset(map, Bias::Left);
 
                 // Find innermost range directly without collecting all ranges
@@ -614,14 +614,14 @@ impl Object {
                 let mut min_size = usize::MAX;
 
                 // First pass: find innermost enclosing range
-                for quote in quote_types {
+                for &SurroundPair { open, close } in QUOTE_PAIRS {
                     if let Some(range) = surrounding_markers(
                         map,
                         relative_to,
                         around,
                         self.is_multiline(),
-                        quote,
-                        quote,
+                        open,
+                        close,
                     ) {
                         let start_offset = range.start.to_offset(map, Bias::Left);
                         let end_offset = range.end.to_offset(map, Bias::Right);
@@ -641,16 +641,16 @@ impl Object {
                 }
 
                 // Fallback: find nearest pair if not inside any quotes
-                quote_types
+                QUOTE_PAIRS
                     .iter()
-                    .flat_map(|&quote| {
+                    .flat_map(|&SurroundPair { open, close }| {
                         surrounding_markers(
                             map,
                             relative_to,
                             around,
                             self.is_multiline(),
-                            quote,
-                            quote,
+                            open,
+                            close,
                         )
                     })
                     .min_by_key(|range| {
@@ -681,14 +681,13 @@ impl Object {
                 surrounding_html_tag(map, head, range, around)
             }
             Object::AnyBrackets => {
-                let bracket_pairs = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
                 let cursor_offset = relative_to.to_offset(map, Bias::Left);
 
                 // Find innermost enclosing bracket range
                 let mut innermost = None;
                 let mut min_size = usize::MAX;
 
-                for &(open, close) in bracket_pairs.iter() {
+                for &SurroundPair { open, close } in BRACKET_PAIRS {
                     if let Some(range) = surrounding_markers(
                         map,
                         relative_to,
@@ -715,9 +714,9 @@ impl Object {
                 }
 
                 // Fallback: find nearest bracket pair if not inside any
-                bracket_pairs
+                BRACKET_PAIRS
                     .iter()
-                    .flat_map(|&(open, close)| {
+                    .flat_map(|&SurroundPair { open, close }| {
                         surrounding_markers(
                             map,
                             relative_to,
@@ -789,7 +788,7 @@ impl Object {
         around: bool,
         times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around, times) {
+        if let Some(range) = self.range(map, *selection, around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -966,7 +965,7 @@ pub fn surrounding_html_tag(
             while let Some(cur_node) = last_child_node {
                 if cur_node.child_count() >= 2 {
                     let first_child = cur_node.child(0);
-                    let last_child = cur_node.child(cur_node.child_count() as u32 - 1);
+                    let last_child = cur_node.child(cur_node.child_count() - 1);
                     if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
                         let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                         let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));

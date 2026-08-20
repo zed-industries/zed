@@ -69,7 +69,7 @@ impl RenderOnce for Indicator {
 
         match self.kind {
             IndicatorKind::Icon(icon) => container
-                .child(icon.map(|icon| icon.custom_size(rems_from_px(8.)).color(self.color))),
+                .child(icon.map(|icon| icon.custom_size(rems_from_px(8_f32)).color(self.color))),
             IndicatorKind::Dot => container
                 .w_1p5()
                 .h_1p5()
@@ -89,89 +89,86 @@ impl Component for Indicator {
         ComponentScope::Status
     }
 
-    fn description() -> Option<&'static str> {
-        Some(
-            "Visual indicators used to represent status, notifications, or draw attention to specific elements.",
-        )
+    fn description() -> &'static str {
+        "Visual indicators used to represent status, notifications, \
+        or draw attention to specific elements."
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
-                .gap_6()
-                .children(vec![
-                    example_group_with_title(
-                        "Dot Indicators",
-                        vec![
-                            single_example("Default", Indicator::dot().into_any_element()),
-                            single_example(
-                                "Success",
-                                Indicator::dot().color(Color::Success).into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Indicator::dot().color(Color::Warning).into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Indicator::dot().color(Color::Error).into_any_element(),
-                            ),
-                            single_example(
-                                "With Border",
-                                Indicator::dot()
-                                    .color(Color::Accent)
-                                    .border_color(Color::Default)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Bar Indicators",
-                        vec![
-                            single_example("Default", Indicator::bar().into_any_element()),
-                            single_example(
-                                "Success",
-                                Indicator::bar().color(Color::Success).into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Indicator::bar().color(Color::Warning).into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Indicator::bar().color(Color::Error).into_any_element(),
-                            ),
-                        ],
-                    ),
-                    example_group_with_title(
-                        "Icon Indicators",
-                        vec![
-                            single_example(
-                                "Default",
-                                Indicator::icon(Icon::new(IconName::Circle)).into_any_element(),
-                            ),
-                            single_example(
-                                "Success",
-                                Indicator::icon(Icon::new(IconName::Check))
-                                    .color(Color::Success)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Warning",
-                                Indicator::icon(Icon::new(IconName::Warning))
-                                    .color(Color::Warning)
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Error",
-                                Indicator::icon(Icon::new(IconName::Close))
-                                    .color(Color::Error)
-                                    .into_any_element(),
-                            ),
-                        ],
-                    ),
-                ])
-                .into_any_element(),
-        )
+    fn preview(_window: &mut Window, _cx: &mut App) -> AnyElement {
+        v_flex()
+            .gap_6()
+            .children(vec![
+                example_group_with_title(
+                    "Dot Indicators",
+                    vec![
+                        single_example("Default", Indicator::dot().into_any_element()),
+                        single_example(
+                            "Success",
+                            Indicator::dot().color(Color::Success).into_any_element(),
+                        ),
+                        single_example(
+                            "Warning",
+                            Indicator::dot().color(Color::Warning).into_any_element(),
+                        ),
+                        single_example(
+                            "Error",
+                            Indicator::dot().color(Color::Error).into_any_element(),
+                        ),
+                        single_example(
+                            "With Border",
+                            Indicator::dot()
+                                .color(Color::Accent)
+                                .border_color(Color::Default)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Bar Indicators",
+                    vec![
+                        single_example("Default", Indicator::bar().into_any_element()),
+                        single_example(
+                            "Success",
+                            Indicator::bar().color(Color::Success).into_any_element(),
+                        ),
+                        single_example(
+                            "Warning",
+                            Indicator::bar().color(Color::Warning).into_any_element(),
+                        ),
+                        single_example(
+                            "Error",
+                            Indicator::bar().color(Color::Error).into_any_element(),
+                        ),
+                    ],
+                ),
+                example_group_with_title(
+                    "Icon Indicators",
+                    vec![
+                        single_example(
+                            "Default",
+                            Indicator::icon(Icon::new(IconName::Circle)).into_any_element(),
+                        ),
+                        single_example(
+                            "Success",
+                            Indicator::icon(Icon::new(IconName::Check))
+                                .color(Color::Success)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Warning",
+                            Indicator::icon(Icon::new(IconName::Warning))
+                                .color(Color::Warning)
+                                .into_any_element(),
+                        ),
+                        single_example(
+                            "Error",
+                            Indicator::icon(Icon::new(IconName::Close))
+                                .color(Color::Error)
+                                .into_any_element(),
+                        ),
+                    ],
+                ),
+            ])
+            .into_any_element()
     }
 }

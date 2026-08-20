@@ -16,7 +16,7 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 tree-sitter-json.workspace = true
 util.workspace = true
 serde.workspace = true

@@ -6,7 +6,7 @@ use Role::*;
 use anyhow::{Context as _, Result};
 use client::{Client, RefreshLlmTokenListener, UserStore};
 use fs::FakeFs;
-use futures::StreamExt;
+use futures::{FutureExt as _, StreamExt};
 use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal as _};
 use http_client::StatusCode;
 use language::language_settings::FormatOnSave;
@@ -191,7 +191,7 @@ impl WriteToolTest {
                 abs_path: Path::new("/path/to/root").into(),
                 rules_file: None,
             }];
-            let project_context = ProjectContext::new(worktrees, Vec::default());
+            let project_context = ProjectContext::new(worktrees);
             let tool_names = tools
                 .iter()
                 .map(|tool| tool.name.clone().into())
@@ -200,6 +200,11 @@ impl WriteToolTest {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
+                date: chrono::Local::now().format("%Y-%m-%d").to_string(),
+                user_agents_md: None,
+                sandboxing: false,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
             };
             let templates = Templates::new();
             template.render(&templates)?
@@ -318,7 +323,9 @@ impl WriteToolTest {
                     if tool_use.is_input_complete
                         && tool_use.name.as_ref() == WriteFileTool::NAME =>
                 {
-                    let input: WriteFileToolInput = serde_json::from_value(tool_use.input)
+                    let input: WriteFileToolInput = tool_use
+                        .input
+                        .parse()
                         .context("Failed to parse tool input as WriteFileToolInput")?;
                     return Ok(input);
                 }
@@ -365,29 +372,19 @@ impl WriteToolTest {
 }
 
 fn run_eval(eval: EvalInput) -> eval_utils::EvalOutput<()> {
-    let dispatcher = gpui::TestDispatcher::new(rand::random());
-    let mut cx = TestAppContext::build(dispatcher, None);
-    let foreground_executor = cx.foreground_executor().clone();
-    let result = foreground_executor.block_test(async {
-        let test = WriteToolTest::new(&mut cx).await;
-        let result = test.eval(eval, &mut cx).await;
-        drop(test);
-        cx.run_until_parked();
-        result
-    });
-    cx.quit();
-    match result {
-        Ok(output) => eval_utils::EvalOutput {
-            data: output.to_string(),
-            outcome: eval_utils::OutcomeKind::Passed,
-            metadata: (),
+    super::run_gpui_eval(
+        |cx| {
+            async move {
+                let test = WriteToolTest::new(cx).await;
+                let result = test.eval(eval, cx).await;
+                drop(test);
+                cx.run_until_parked();
+                result
+            }
+            .boxed_local()
         },
-        Err(err) => eval_utils::EvalOutput {
-            data: format!("{err:?}"),
-            outcome: eval_utils::OutcomeKind::Error,
-            metadata: (),
-        },
-    }
+        |_| eval_utils::OutcomeKind::Passed,
+    )
 }
 
 fn message(
@@ -415,7 +412,9 @@ fn tool_use(
         id: LanguageModelToolUseId::from(id.into()),
         name: name.into(),
         raw_input: serde_json::to_string_pretty(&input).unwrap(),
-        input: serde_json::to_value(input).unwrap(),
+        input: language_model::LanguageModelToolUseInput::Json(
+            serde_json::to_value(input).unwrap(),
+        ),
         is_input_complete: true,
         thought_signature: None,
     })
