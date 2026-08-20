@@ -13,11 +13,12 @@ use language::{
     LanguageName, LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
-    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LanguageServerName, LanguageServerSelector, Uri,
+    CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
+    LanguageServerSelector, Uri,
 };
 use serde::Serialize;
 use serde_json::Value;
+use settings::WorktreeId;
 use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
@@ -123,6 +124,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
+        worktree_id: Option<u64>,
         status: BinaryStatus,
     ) {
         log::debug!(
@@ -130,10 +132,11 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
+        let worktree_id = WorktreeId::from_proto(worktree_id.expect("worktree_id is set before calling update_language_server_status"));
         self.language_registry
             .update_lsp_binary_status(BinaryStatusUpdate {
                 name: language_server_id,
-                id: LanguageServerId(0),
+                worktree_id: worktree_id,
                 binary_status: status,
             });
     }

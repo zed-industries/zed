@@ -11,7 +11,7 @@ pub use language_core::{
     BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate,
     QUERY_FILENAME_PREFIXES, ServerHealth,
 };
-use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent, WorktreeId};
 
 use futures::{
     Future,
@@ -96,7 +96,7 @@ struct ServerStatusSender {
 #[derive(Clone)]
 pub struct BinaryStatusUpdate {
     pub name: LanguageServerName,
-    pub id: LanguageServerId,
+    pub worktree_id: WorktreeId,
     pub binary_status: BinaryStatus,
 }
 

@@ -761,11 +761,12 @@ where
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         let name = self.name();
+        let worktree_id = delegate.worktree_id();
 
         log::debug!("fetching latest version of language server {:?}", name.0);
         delegate.update_status(BinaryStatusUpdate {
             name: name.clone(),
-            id: LanguageServerId(0),
+            worktree_id,
             binary_status: BinaryStatus::CheckingForUpdate,
         });
 
@@ -781,7 +782,7 @@ where
             log::debug!("language server {:?} is already installed", name.0);
             delegate.update_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: LanguageServerId(0),
+                worktree_id,
                 binary_status: BinaryStatus::None,
             });
             Ok(binary)
@@ -789,7 +790,7 @@ where
             log::debug!("downloading language server {:?}", name.0);
             delegate.update_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: LanguageServerId(0),
+                worktree_id,
                 binary_status: BinaryStatus::Downloading,
             });
             let binary = cx
@@ -799,7 +800,7 @@ where
 
             delegate.update_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: LanguageServerId(0),
+                worktree_id,
                 binary_status: BinaryStatus::None,
             });
             binary
@@ -891,9 +892,10 @@ where
                         );
                         binary = Ok(prev_downloaded_binary);
                     } else {
+                        let worktree_id = delegate.worktree_id();
                         delegate.update_status(BinaryStatusUpdate {
                             name: self.name(),
-                            id: LanguageServerId(0),
+                            worktree_id,
                             binary_status: BinaryStatus::Failed {
                                 error: format!("{error:?}"),
                             },

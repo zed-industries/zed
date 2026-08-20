@@ -486,7 +486,6 @@ impl LocalLspStore {
             delegate.clone(),
             true,
             wait_until_worktree_trust,
-            server_id,
             cx,
         );
         let pending_workspace_folders = Arc::<Mutex<BTreeSet<Uri>>>::default();
@@ -649,9 +648,10 @@ impl LocalLspStore {
 
                     Err(err) => {
                         let log = stderr_capture.lock().take().unwrap_or_default();
+                        let worktree_id = delegate.worktree_id();
                         delegate.update_status(BinaryStatusUpdate {
                             name: adapter.name(),
-                            id: server_id,
+                            worktree_id,
                             binary_status: BinaryStatus::Failed {
                                 error: if log.is_empty() {
                                     format!("{err:#}")
@@ -680,7 +680,7 @@ impl LocalLspStore {
         if update_binary_status {
             self.languages.update_lsp_binary_status(BinaryStatusUpdate {
                 name: adapter.name(),
-                id: server_id,
+                worktree_id,
                 binary_status: BinaryStatus::Starting,
             });
         }
@@ -704,7 +704,6 @@ impl LocalLspStore {
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
         wait_until_worktree_trust: Option<watch::Receiver<bool>>,
-        server_id: LanguageServerId,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
         if let Some(settings) = &settings.binary
@@ -730,10 +729,11 @@ impl LocalLspStore {
                             adapter.name(),
                         );
                     }
+                    let worktree_id = delegate.worktree_id();
                     languages
                         .update_lsp_binary_status(BinaryStatusUpdate {
                             name: adapter.name(),
-                            id: server_id,
+                            worktree_id,
                             binary_status: BinaryStatus::Starting
                     });
                 }
@@ -773,9 +773,10 @@ impl LocalLspStore {
                             "Worktree {worktree_abs_path:?} is trusted, starting language server {language_server_name}",
                         );
                     }
+                    let worktree_id = delegate.worktree_id();
                     languages.update_lsp_binary_status(BinaryStatusUpdate {
                             name: language_server_name.clone(),
-                            id: server_id,
+                            worktree_id,
                             binary_status: BinaryStatus::Starting
                     });
                 }
@@ -836,9 +837,10 @@ impl LocalLspStore {
                 .await
                 .await;
 
+            let worktree_id = delegate.worktree_id();
             delegate.update_status(BinaryStatusUpdate {
                 name: adapter.name.clone(),
-                id: server_id,
+                worktree_id,
                 binary_status: BinaryStatus::None,
             });
 
@@ -11674,9 +11676,18 @@ impl LspStore {
         };
 
         // Remove this server ID from all entries in the given worktree.
-        local
+        let key = local
             .language_server_ids
-            .retain(|_, state| state.id != server_id);
+            .iter()
+            .find_map(|(key, state)| (state.id == server_id).then(|| key.clone()));
+
+        let server_identifier = if let Some(key) = key {
+            local.language_server_ids.remove(&key);
+            Some((key.name, key.worktree_id))
+        } else {
+            None
+        };
+
         self.buffer_store.update(cx, |buffer_store, cx| {
             for buffer in buffer_store.buffers() {
                 buffer.update(cx, |buffer, cx| {
@@ -11743,23 +11754,13 @@ impl LspStore {
 
         let server_state = local.language_servers.remove(&server_id);
         self.cleanup_lsp_data(server_id);
-        let name = self
-            .language_server_statuses
-            .remove(&server_id)
-            .map(|status| status.name)
-            .or_else(|| {
-                if let Some(LanguageServerState::Running { adapter, .. }) = server_state.as_ref() {
-                    Some(adapter.name())
-                } else {
-                    None
-                }
-            });
+        self.language_server_statuses.remove(&server_id);
 
-        if let Some(name) = name {
+        if let Some((name, worktree_id)) = server_identifier {
             log::info!("stopping language server {name}");
             self.languages.update_lsp_binary_status(BinaryStatusUpdate {
                 name: name.clone(),
-                id: server_id,
+                worktree_id,
                 binary_status: BinaryStatus::Stopping,
             });
             cx.notify();
@@ -11772,7 +11773,7 @@ impl LspStore {
                             .languages
                             .update_lsp_binary_status(BinaryStatusUpdate {
                                 name,
-                                id: server_id,
+                                worktree_id,
                                 binary_status: BinaryStatus::Stopped,
                             });
                         cx.emit(LspStoreEvent::LanguageServerRemoved(server_id));
@@ -12334,7 +12335,7 @@ impl LspStore {
             .languages
             .update_lsp_binary_status(BinaryStatusUpdate {
                 name: adapter.name(),
-                id: server_id,
+                worktree_id: key.worktree_id,
                 binary_status: BinaryStatus::None,
             });
 
@@ -13657,6 +13658,36 @@ fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabi
     )
 }
 
+fn language_server_id_for_binary_status(
+    lsp_store: &LspStore,
+    worktree_id: WorktreeId,
+    language_server_name: &LanguageServerName,
+    cx: &App,
+) -> Option<LanguageServerId> {
+    lsp_store
+        .worktree_store
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)?;
+
+    lsp_store
+        .as_local()
+        .and_then(|local| {
+            local.language_server_ids.iter().find_map(|(seed, state)| {
+                (seed.worktree_id == worktree_id && seed.name == *language_server_name)
+                    .then_some(state.id)
+            })
+        })
+        .or_else(|| {
+            lsp_store
+                .language_server_statuses
+                .iter()
+                .find_map(|(server_id, status)| {
+                    (status.worktree == Some(worktree_id) && status.name == *language_server_name)
+                        .then_some(*server_id)
+                })
+        })
+}
+
 fn subscribe_to_binary_statuses(
     languages: &Arc<LanguageRegistry>,
     cx: &mut Context<'_, LspStore>,
@@ -13665,7 +13696,17 @@ fn subscribe_to_binary_statuses(
     cx.spawn(async move |lsp_store, cx| {
         while let Some(binary_status_update) = server_statuses.next().await {
             if lsp_store
-                .update(cx, |_, cx| {
+                .update(cx, |lsp_store, cx| {
+                    let worktree_id = binary_status_update.worktree_id;
+                    let Some(language_server_id) = language_server_id_for_binary_status(
+                        lsp_store,
+                        worktree_id,
+                        &binary_status_update.name,
+                        cx,
+                    ) else {
+                        return;
+                    };
+
                     let mut message = None;
                     let binary_status = match binary_status_update.binary_status {
                         BinaryStatus::None => proto::ServerBinaryStatus::None,
@@ -13682,7 +13723,7 @@ fn subscribe_to_binary_statuses(
                         }
                     };
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
-                        language_server_id: binary_status_update.id,
+                        language_server_id,
                         name: Some(binary_status_update.name),
                         message: proto::update_language_server::Variant::StatusUpdate(
                             proto::StatusUpdate {
@@ -15099,6 +15140,82 @@ fn extend_formatting_transaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn binary_statuses_are_scoped_to_their_worktree(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(Path::new("/first"), json!({})).await;
+        fs.insert_tree(Path::new("/second"), json!({})).await;
+
+        let first_project = Project::test(fs.clone(), [Path::new("/first")], cx).await;
+        let second_project = Project::test(fs, [Path::new("/second")], cx).await;
+        let first_worktree_id = first_project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+        let language_server_name = LanguageServerName::new_static("test-language-server");
+        let language_server_id = LanguageServerId(42);
+
+        let first_lsp_store = first_project.read_with(cx, |project, _| project.lsp_store());
+        first_lsp_store.update(cx, |lsp_store, _| {
+            lsp_store
+                .as_local_mut()
+                .expect("first project should be local")
+                .language_server_ids
+                .insert(
+                    LanguageServerSeed {
+                        worktree_id: first_worktree_id,
+                        name: language_server_name.clone(),
+                        toolchain: None,
+                        settings: LanguageServerSeedSettings {
+                            binary: None,
+                            initialization_options: None,
+                        },
+                    },
+                    UnifiedLanguageServer {
+                        id: language_server_id,
+                        project_roots: Default::default(),
+                    },
+                );
+        });
+        assert_eq!(
+            first_lsp_store.read_with(cx, |lsp_store, cx| {
+                language_server_id_for_binary_status(
+                    lsp_store,
+                    first_worktree_id,
+                    &language_server_name,
+                    cx,
+                )
+            }),
+            Some(language_server_id)
+        );
+
+        let second_lsp_store = second_project.read_with(cx, |project, _| project.lsp_store());
+        assert_eq!(
+            second_lsp_store.read_with(cx, |lsp_store, cx| {
+                language_server_id_for_binary_status(
+                    lsp_store,
+                    first_worktree_id,
+                    &language_server_name,
+                    cx,
+                )
+            }),
+            None
+        );
+    }
 
     #[test]
     fn should_log_lsp_request_failure_suppresses_known_noise() {

@@ -25,7 +25,7 @@ use ui::{
     ContextMenu, ContextMenuEntry, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*,
 };
 
-use util::{ResultExt, paths::PathExt};
+use util::paths::PathExt;
 use workspace::{StatusItemView, ToggleWorktreeSecurity, Workspace};
 
 use crate::lsp_log_view;
@@ -710,10 +710,6 @@ impl LanguageServers {
         message: Option<&str>,
         id: LanguageServerId,
     ) {
-        if id == LanguageServerId(0) {
-            return;
-        }
-
         let binary_status_message = message.map(SharedString::new);
         if matches!(
             binary_status,
@@ -966,7 +962,6 @@ impl LspButton {
         };
         let mut updated = false;
 
-        // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
         match e {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
