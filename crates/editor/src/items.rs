@@ -855,7 +855,7 @@ impl Item for Editor {
     }
 
     fn can_save_as(&self, cx: &App) -> bool {
-        self.buffer.read(cx).is_singleton()
+        !self.read_only(cx) && self.buffer.read(cx).is_singleton()
     }
 
     fn can_split(&self) -> bool {
@@ -932,6 +932,9 @@ impl Item for Editor {
     }
 
     fn can_save(&self, cx: &App) -> bool {
+        if self.read_only(cx) {
+            return false;
+        }
         let buffer = &self.buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton() {
             buffer.read(cx).project_path(cx).is_some()
