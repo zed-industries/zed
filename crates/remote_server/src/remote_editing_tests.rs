@@ -24,7 +24,10 @@ use git::{
     Oid,
     repository::{CommitData, GitCommitTemplate, RepoPath, Worktree as GitWorktree},
 };
-use gpui::{AppContext as _, Entity, SharedString, TestAppContext, UpdateGlobal, VisualContext};
+use gpui::{
+    AppContext as _, Entity, ImageSource, IntoElement as _, SharedString, TestAppContext,
+    UpdateGlobal, VisualContext, img, px, size,
+};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Point,
@@ -36,8 +39,9 @@ use lsp::{
 };
 use node_runtime::NodeRuntime;
 use project::{
-    ProgressToken, Project,
+    ProgressToken, Project, ProjectPath,
     agent_server_store::AgentServerCommand,
+    image_store,
     search::{SearchQuery, SearchResult},
 };
 use remote::RemoteClient;
@@ -338,6 +342,87 @@ async fn do_search_and_assert(
 
     assert!(receiver.rx.recv().await.is_err());
     buffers
+}
+
+struct RemoteImageTestView {
+    source: ImageSource,
+}
+
+impl gpui::Render for RemoteImageTestView {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        img(self.source.clone())
+    }
+}
+
+#[gpui::test]
+async fn test_remote_project_image_source(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project": {
+                "docs": {
+                    "image.ppm": "P3\n1 1\n255\n255 0 0\n"
+                }
+            }
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project"), true, cx)
+        })
+        .await
+        .expect("remote worktree should open");
+    let worktree_id = worktree.read_with(cx, |worktree, _cx| worktree.id());
+    let source = image_store::project_image_source(
+        project.downgrade(),
+        ProjectPath {
+            worktree_id,
+            path: rel_path("docs/image.ppm").into(),
+        },
+    );
+    let ImageSource::Custom(load_image) = source else {
+        panic!("expected a project-backed image source");
+    };
+    let loaded_bytes = Arc::new(std::sync::Mutex::new(None));
+    let observed_source = ImageSource::from({
+        let loaded_bytes = loaded_bytes.clone();
+        move |window: &mut gpui::Window, cx: &mut gpui::App| {
+            let result = load_image(window, cx);
+            if let Some(Ok(image)) = &result {
+                *loaded_bytes.lock().expect("loaded image mutex poisoned") =
+                    image.as_bytes(0).map(ToOwned::to_owned);
+            }
+            result
+        }
+    });
+
+    let (view, cx) = cx.add_window_view(|_window, _cx| RemoteImageTestView {
+        source: observed_source,
+    });
+    cx.draw(Default::default(), size(px(10.), px(10.)), {
+        let view = view.clone();
+        move |_, _| view.into_any_element()
+    });
+    cx.run_until_parked();
+    cx.draw(Default::default(), size(px(10.), px(10.)), move |_, _| {
+        view.into_any_element()
+    });
+
+    assert_eq!(
+        loaded_bytes
+            .lock()
+            .expect("loaded image mutex poisoned")
+            .as_deref(),
+        Some([0, 0, 255, 255].as_slice())
+    );
 }
 
 #[gpui::test]

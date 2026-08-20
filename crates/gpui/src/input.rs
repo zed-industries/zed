@@ -1,4 +1,6 @@
-use crate::{App, Bounds, Context, Entity, InputHandler, Pixels, UTF16Selection, Window};
+use crate::{
+    App, Bounds, ClipboardItem, Context, Entity, InputHandler, Pixels, UTF16Selection, Window,
+};
 use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
@@ -34,6 +36,13 @@ pub trait EntityInputHandler: 'static + Sized {
 
     /// See [`InputHandler::unmark_text`] for details
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>);
+
+    /// See [`InputHandler::paste`] for details
+    fn paste(&mut self, item: ClipboardItem, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = item.text() {
+            self.replace_text_in_range(None, &text, window, cx);
+        }
+    }
 
     /// See [`InputHandler::replace_text_in_range`] for details
     fn replace_text_in_range(
@@ -177,6 +186,11 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     fn unmark_text(&mut self, window: &mut Window, cx: &mut App) {
         self.view
             .update(cx, |view, cx| view.unmark_text(window, cx));
+    }
+
+    fn paste(&mut self, item: ClipboardItem, window: &mut Window, cx: &mut App) {
+        self.view
+            .update(cx, |view, cx| view.paste(item, window, cx));
     }
 
     fn bounds_for_range(

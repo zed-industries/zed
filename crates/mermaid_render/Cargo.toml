@@ -29,5 +29,5 @@ gpui = { workspace = true, features = ["test-support"] }
 mermaid_render = { path = ".", features = ["test-support"] }
 usvg.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

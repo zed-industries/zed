@@ -265,10 +265,20 @@ impl Editor {
             return None;
         }
 
+        let debounce_duration = if debounce {
+            let registered_provider = self.edit_prediction_provider.as_ref()?;
+            let settings = all_language_settings(None, cx);
+            settings
+                .edit_predictions
+                .debounce_for_delegate(registered_provider.provider.name())
+        } else {
+            Duration::ZERO
+        };
+
         self.edit_prediction_provider()?.refresh(
             buffer,
             cursor_buffer_position,
-            debounce,
+            debounce_duration,
             trigger,
             cx,
         );
