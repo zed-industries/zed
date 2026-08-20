@@ -699,8 +699,7 @@ fn tooltip_for_server_binary(
         .map(Path::new)
         .unwrap_or(&server_binary.path);
 
-    let display_path = target_path.compact().to_string_lossy().into_owned();
-    let display_path = path_style.normalize(&display_path);
+    let display_path = path_style.normalize(&target_path.compact().to_string_lossy());
 
     match runtime {
         Some(runtime) => format!("{display_path} ({runtime})"),
