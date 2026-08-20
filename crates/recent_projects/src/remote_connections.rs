@@ -154,6 +154,11 @@ pub async fn open_remote_project(
         });
 
         if let Some(remote_connection) = remote_connection {
+            log::info!(
+                "reusing existing workspace window for {} ({}) instead of connecting",
+                connection_options.display_name(),
+                connection_options.connection_type(),
+            );
             let (resolved_paths, paths_with_positions) =
                 determine_paths_with_positions(&remote_connection, paths).await;
 
