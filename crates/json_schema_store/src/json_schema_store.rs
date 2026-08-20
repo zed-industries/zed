@@ -449,45 +449,48 @@ pub fn all_schema_file_associations(
         .flat_map(|(_, glob_strings)| glob_strings)
         .cloned();
     let jsonc_globs = extension_globs.chain(override_globs).collect::<Vec<_>>();
+    let settings_file_matches = schema_file_match_entries(paths::settings_file());
+    let keymap_file_matches = schema_file_match_entries(paths::keymap_file());
+    let mut tasks_file_matches = schema_file_match_entries(paths::tasks_file());
+    tasks_file_matches.push(
+        paths::local_tasks_file_relative_path()
+            .as_unix_str()
+            .to_string(),
+    );
+    let mut debug_file_matches = schema_file_match_entries(paths::debug_scenarios_file());
+    debug_file_matches.push(
+        paths::local_debug_file_relative_path()
+            .as_unix_str()
+            .to_string(),
+    );
+    let snippet_file_matches =
+        schema_file_match_entries(paths::snippets_dir().join("*.json").as_path());
 
     let mut file_associations = serde_json::json!([
         {
-            "fileMatch": [
-                schema_file_match(paths::settings_file()),
-            ],
+            "fileMatch": settings_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}settings"),
         },
         {
             "fileMatch": [
-            paths::local_settings_file_relative_path()],
+                paths::local_settings_file_relative_path()
+            ],
             "url": format!("{SCHEMA_URI_PREFIX}project_settings"),
         },
         {
-            "fileMatch": [schema_file_match(paths::keymap_file())],
+            "fileMatch": keymap_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}keymap"),
         },
         {
-            "fileMatch": [
-                schema_file_match(paths::tasks_file()),
-                paths::local_tasks_file_relative_path()
-            ],
+            "fileMatch": tasks_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}tasks"),
         },
         {
-            "fileMatch": [
-                schema_file_match(paths::debug_scenarios_file()),
-                paths::local_debug_file_relative_path()
-            ],
+            "fileMatch": debug_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}debug_tasks"),
         },
         {
-            "fileMatch": [
-                schema_file_match(
-                    paths::snippets_dir()
-                        .join("*.json")
-                        .as_path()
-                )
-            ],
+            "fileMatch": snippet_file_matches,
             "url": format!("{SCHEMA_URI_PREFIX}snippets"),
         },
         {
@@ -619,11 +622,80 @@ fn root_schema_from_action_schema(
     schema
 }
 
+/// Build the LSP fileMatch entries for `path`.
+///
+/// The JSON LSP matches incoming file URIs against these glob patterns,
+/// so we register both the symlinked location (if any) and the resolved
+/// canonical path. Without this, opening `~/.config/zed/settings.json`
+/// when it is a symlink to a file under a different directory no longer
+/// binds the settings schema (zed-industries/zed#54888).
+fn schema_file_match_entries(path: &std::path::Path) -> Vec<String> {
+    let mut out = Vec::with_capacity(2);
+    out.push(stripped_match(path));
+    if let Ok(canonical) = path.canonicalize() {
+        if canonical != path {
+            out.push(stripped_match(&canonical));
+        }
+    }
+    out
+}
+
 #[inline]
-fn schema_file_match(path: &std::path::Path) -> String {
-    path.strip_prefix(path.parent().unwrap().parent().unwrap())
-        .unwrap()
+fn stripped_match(path: &std::path::Path) -> String {
+    let parent = path.parent().and_then(|p| p.parent()).unwrap_or(path);
+    path.strip_prefix(parent)
+        .unwrap_or(path)
         .display()
         .to_string()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn stripped_match_drops_two_parent_components() {
+        let path = PathBuf::from("/home/user/.config/zed/settings.json");
+        assert_eq!(stripped_match(&path), "zed/settings.json");
+    }
+
+    #[test]
+    fn schema_file_match_entries_returns_single_for_regular_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Some platforms expose the temp directory through a symlinked prefix.
+        // Canonicalize the root so this test only covers non-symlinked files.
+        let root = tmp.path().canonicalize().unwrap();
+        let zed_dir = root.join("zed");
+        fs::create_dir(&zed_dir).unwrap();
+        let regular = zed_dir.join("settings.json");
+        fs::write(&regular, "{}").unwrap();
+        let entries = schema_file_match_entries(&regular);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0], "zed/settings.json");
+    }
+
+    #[test]
+    fn schema_file_match_entries_returns_both_for_symlink() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let zed_dir = tmp.path().join("zed");
+        fs::create_dir(&zed_dir).unwrap();
+        let target = tmp.path().join("settings_target.json");
+        fs::write(&target, "{}").unwrap();
+        let link = zed_dir.join("settings.json");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target, &link).unwrap();
+        let entries = schema_file_match_entries(&link);
+        assert!(entries.iter().any(|entry| entry == "zed/settings.json"));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.ends_with("settings_target.json"))
+        );
+        assert_eq!(entries.len(), 2);
+    }
 }
