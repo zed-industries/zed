@@ -99,29 +99,15 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         None
     }
 
-    fn to_lsp_params_or_response(
-        &self,
-        path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
-        cx: &App,
-    ) -> Result<
-        LspParamsOrResponse<<Self::LspRequest as lsp::request::Request>::Params, Self::Response>,
-    > {
-        if self.check_capabilities(language_server.adapter_server_capabilities()) {
-            Ok(LspParamsOrResponse::Params(self.to_lsp(
-                path,
-                buffer,
-                language_server,
-                cx,
-            )?))
-        } else {
-            Ok(LspParamsOrResponse::Response(Default::default()))
-        }
-    }
-
-    /// When false, `to_lsp_params_or_response` default implementation will return the default response.
+    /// Returns whether the given static or dynamic capability supports this request.
     fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool;
+
+    fn response_without_request(
+        &self,
+        _applicable_capabilities: &[AdapterServerCapabilities],
+    ) -> Option<Self::Response> {
+        None
+    }
 
     fn to_lsp(
         &self,
@@ -166,11 +152,6 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     ) -> Result<Self::Response>;
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
-}
-
-pub enum LspParamsOrResponse<P, R> {
-    Params(P),
-    Response(R),
 }
 
 #[derive(Debug)]
@@ -978,39 +959,24 @@ impl LspCommand for PrepareRename {
             .rename_provider
             .is_some_and(|capability| match capability {
                 OneOf::Left(enabled) => enabled,
-                OneOf::Right(options) => options.prepare_provider.unwrap_or(false),
+                OneOf::Right(_) => true,
             })
     }
 
-    fn to_lsp_params_or_response(
+    fn response_without_request(
         &self,
-        path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
-        cx: &App,
-    ) -> Result<LspParamsOrResponse<lsp::TextDocumentPositionParams, PrepareRenameResponse>> {
-        let rename_provider = language_server
-            .adapter_server_capabilities()
-            .server_capabilities
-            .rename_provider;
-        match rename_provider {
-            Some(lsp::OneOf::Right(RenameOptions {
-                prepare_provider: Some(true),
-                ..
-            })) => Ok(LspParamsOrResponse::Params(self.to_lsp(
-                path,
-                buffer,
-                language_server,
-                cx,
-            )?)),
-            Some(lsp::OneOf::Right(_)) => Ok(LspParamsOrResponse::Response(
-                PrepareRenameResponse::OnlyUnpreparedRenameSupported,
-            )),
-            Some(lsp::OneOf::Left(true)) => Ok(LspParamsOrResponse::Response(
-                PrepareRenameResponse::OnlyUnpreparedRenameSupported,
-            )),
-            _ => anyhow::bail!("Rename not supported"),
-        }
+        applicable_capabilities: &[AdapterServerCapabilities],
+    ) -> Option<Self::Response> {
+        (!applicable_capabilities.iter().any(|capabilities| {
+            matches!(
+                capabilities.server_capabilities.rename_provider.as_ref(),
+                Some(lsp::OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    ..
+                }))
+            )
+        }))
+        .then_some(PrepareRenameResponse::OnlyUnpreparedRenameSupported)
     }
 
     fn to_lsp(
@@ -3558,21 +3524,6 @@ impl LspCommand for GetCodeActions {
                 }
             }
         }
-    }
-
-    fn to_lsp_params_or_response(
-        &self,
-        path: &Path,
-        buffer: &Buffer,
-        language_server: &Arc<LanguageServer>,
-        cx: &App,
-    ) -> Result<LspParamsOrResponse<lsp::CodeActionParams, Vec<CodeAction>>> {
-        Ok(LspParamsOrResponse::Params(self.to_lsp(
-            path,
-            buffer,
-            language_server,
-            cx,
-        )?))
     }
 
     fn to_lsp(
