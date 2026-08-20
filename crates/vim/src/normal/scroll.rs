@@ -107,7 +107,7 @@ impl Vim {
         cx: &mut Context<Vim>,
     ) {
         self.update_editor(cx, |vim, editor, cx| {
-            let should_move_cursor = editor.newest_selection_on_screen(cx).is_eq();
+            let should_move_cursor = editor.newest_selection_on_screen(window, cx).is_eq();
             let display_snapshot = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let old_top = editor.scroll_top_display_point(&display_snapshot, cx);
 

@@ -36,7 +36,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-project_panel.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
