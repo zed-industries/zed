@@ -605,16 +605,29 @@ impl Search {
                     continue;
                 };
 
-                if matched_buffers > Search::MAX_SEARCH_RESULT_FILES
-                    || matches > Search::MAX_SEARCH_RESULT_RANGES
-                {
-                    _ = tx.send(SearchResult::LimitReached).await;
+                if matched_buffers >= Search::MAX_SEARCH_RESULT_FILES {
+                    tx.send(SearchResult::LimitReached).await?;
                     break;
                 }
+
+                let remaining_matches = Search::MAX_SEARCH_RESULT_RANGES.saturating_sub(matches);
+                let mut ranges = ranges;
+                let limit_reached = ranges.len() >= remaining_matches;
+                ranges.truncate(remaining_matches);
+
+                if ranges.is_empty() && limit_reached {
+                    tx.send(SearchResult::LimitReached).await?;
+                    break;
+                }
+
                 matched_buffers += 1;
                 matches += ranges.len();
 
-                _ = tx.send(SearchResult::Buffer { buffer, ranges }).await?;
+                tx.send(SearchResult::Buffer { buffer, ranges }).await?;
+                if limit_reached {
+                    tx.send(SearchResult::LimitReached).await?;
+                    break;
+                }
             }
             anyhow::Ok(())
         })
