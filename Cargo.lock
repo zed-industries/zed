@@ -23772,10 +23772,14 @@ dependencies = [
 name = "ztracing"
 version = "0.1.0"
 dependencies = [
+ "async-channel 2.5.0",
+ "js-sys",
  "tracing",
  "tracing-subscriber",
  "tracing-tracy",
  "tracy-client",
+ "wasm-bindgen",
+ "web-sys",
  "zlog",
  "ztracing_macro",
 ]
