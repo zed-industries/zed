@@ -163,14 +163,14 @@ The prediction debounce controls how long Zed waits after you stop typing before
 
 The default debounce depends on the provider:
 
-| Provider | Default |
-| --- | ---: |
-| GitHub Copilot | 75 ms |
-| Codestral | 150 ms |
-| Zed | 0 ms |
-| Mercury | 0 ms |
-| Ollama | 0 ms |
-| OpenAI-compatible API | 0 ms |
+| Provider              | Default |
+| --------------------- | ------: |
+| GitHub Copilot        |   75 ms |
+| Codestral             |  150 ms |
+| Zed                   |    0 ms |
+| Mercury               |    0 ms |
+| Ollama                |    0 ms |
+| OpenAI-compatible API |    0 ms |
 
 Set `prediction_debounce` to `0` to disable the additional delay. Normal request throttling can still apply. Explicitly requesting a prediction with {#action editor::ShowEditPrediction} bypasses the configured debounce.
 
