@@ -189,6 +189,13 @@ struct ServerInfo {
     message: Option<SharedString>,
 }
 
+#[derive(Default, Clone)]
+struct ServerMetadata {
+    server_version: Option<SharedString>,
+    binary_display_path: Option<SharedString>,
+    process_id: Option<u32>,
+}
+
 impl ServerInfo {
     fn server_selector(&self) -> LanguageServerSelector {
         LanguageServerSelector::Id(self.id)
@@ -275,13 +282,13 @@ impl LanguageServerState {
                         .map(|(server_id, status)| {
                             (
                                 server_id,
-                                (
-                                    status.server_readable_version.clone(),
-                                    status.binary.as_ref().map(|binary| {
+                                ServerMetadata {
+                                    server_version: status.server_readable_version.clone(),
+                                    binary_display_path: status.binary.as_ref().map(|binary| {
                                         tooltip_for_server_binary(binary, path_style)
                                     }),
-                                    status.process_id,
-                                ),
+                                    process_id: status.process_id,
+                                },
                             )
                         })
                         .collect::<HashMap<_, _>>()
@@ -369,12 +376,14 @@ impl LanguageServerState {
                 .or_else(|| server_info.binary_status.as_ref()?.message.as_ref())
                 .cloned();
 
-            let (server_version, binary_display_path, process_id) = server_metadata
+            let ServerMetadata {
+                server_version,
+                binary_display_path,
+                process_id,
+            } = server_metadata
                 .get(&server_info.id)
-                .map(|(version, binary_display_path, process_id)| {
-                    (version.clone(), binary_display_path.clone(), *process_id)
-                })
-                .unwrap_or((None, None, None));
+                .cloned()
+                .unwrap_or_default();
 
             let server_message = message.clone();
 
@@ -682,7 +691,7 @@ impl LanguageServerState {
 fn tooltip_for_server_binary(
     server_binary: &lsp::LanguageServerBinary,
     path_style: PathStyle,
-) -> String {
+) -> SharedString {
     let runtime = path_style.file_name(&server_binary.path).and_then(|name| {
         ["node", "python"]
             .into_iter()
@@ -702,8 +711,8 @@ fn tooltip_for_server_binary(
     let display_path = path_style.normalize(&target_path.compact().to_string_lossy());
 
     match runtime {
-        Some(runtime) => format!("{display_path} ({runtime})"),
-        None => display_path,
+        Some(runtime) => format!("{display_path} ({runtime})").into(),
+        None => display_path.into(),
     }
 }
 
