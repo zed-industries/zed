@@ -145,6 +145,11 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// The provider-enforced input size required for explicit compaction.
+    fn minimum_explicit_compaction_input_tokens(&self) -> Option<u64> {
+        None
+    }
+
     fn compact(
         &self,
         _request: LanguageModelRequest,
