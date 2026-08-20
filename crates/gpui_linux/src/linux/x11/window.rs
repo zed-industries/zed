@@ -1320,6 +1320,10 @@ impl X11WindowStatePtr {
     }
 
     pub fn set_active(&self, focus: bool) {
+        if focus {
+            self.clear_attention().log_err();
+        }
+
         let callback = self.callbacks.borrow_mut().active_status_change.take();
         if let Some(mut fun) = callback {
             fun(focus);
@@ -1328,6 +1332,27 @@ impl X11WindowStatePtr {
         if let Some(adapter) = self.state.borrow_mut().accesskit_adapter.as_mut() {
             adapter.update_window_focus_state(focus);
         }
+    }
+
+    fn clear_attention(&self) -> anyhow::Result<()> {
+        let Some(mut hints) = WmHints::get(&*self.xcb, self.x_window)
+            .context("X11 request for WM_HINTS urgency failed")?
+            .reply()
+            .context("X11 reply for WM_HINTS urgency failed")?
+        else {
+            return Ok(());
+        };
+
+        if hints.urgent {
+            hints.urgent = false;
+            check_reply(
+                || "X11 ChangeProperty for WM_HINTS urgency failed.",
+                hints.set(&*self.xcb, self.x_window),
+            )?;
+            xcb_flush(&self.xcb);
+        }
+
+        Ok(())
     }
 
     pub fn set_hovered(&self, focus: bool) {
