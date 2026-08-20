@@ -108,9 +108,7 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let current_servers = self
-            .local_language_server_ids_for_request(&buffer, &GetDocumentColor, cx)
-            .unwrap_or_else(|| self.relevant_server_ids_for_capability_check(&buffer, cx));
+        let current_servers = self.language_server_ids_for_request(&buffer, &GetDocumentColor, cx);
 
         let mut servers_to_query = None;
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
