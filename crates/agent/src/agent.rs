@@ -817,6 +817,7 @@ impl NativeAgent {
         let subscriptions = vec![
             cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
+            cx.subscribe(&thread_handle, Self::handle_thread_continuation_requested),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread, cx)
             }),
@@ -1334,6 +1335,37 @@ impl NativeAgent {
         session.acp_thread.update(cx, |acp_thread, cx| {
             acp_thread.update_token_usage(usage.0.clone(), cx);
         });
+    }
+
+    /// A non-blocking tool call finished while the thread was idle: start a
+    /// continuation turn so its queued result is delivered to the model, and
+    /// forward the turn's events to the session's ACP thread so the activity
+    /// is visible (mirrors how MCP prompts drive thread turns).
+    fn handle_thread_continuation_requested(
+        &mut self,
+        thread: Entity<Thread>,
+        _: &ContinuationRequested,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.sessions.get(thread.read(cx).id()) else {
+            return;
+        };
+        let acp_thread = session.acp_thread.clone();
+        let response_stream = match thread.update(cx, |thread, cx| thread.send_existing(cx)) {
+            Ok(response_stream) => response_stream,
+            Err(error) => {
+                log::error!("Failed to start continuation turn: {error:?}");
+                return;
+            }
+        };
+        let connection = Some(NativeAgentConnection(cx.entity()));
+        NativeAgentConnection::handle_thread_events(
+            response_stream,
+            acp_thread.downgrade(),
+            connection,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn handle_project_event(
