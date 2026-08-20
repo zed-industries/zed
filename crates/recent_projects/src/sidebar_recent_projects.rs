@@ -234,7 +234,8 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         };
 
         match &recent_workspace.location {
-            SerializedWorkspaceLocation::Local => {
+            SerializedWorkspaceLocation::Local
+            | SerializedWorkspaceLocation::LocalFromFile { .. } => {
                 if let Some(handle) = window.window_handle().downcast::<MultiWorkspace>() {
                     let paths = recent_workspace.paths.paths().to_vec();
                     cx.defer(move |cx| {
@@ -346,7 +347,8 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
         };
 
         let icon = icon_for_remote_connection(match &workspace.location {
-            SerializedWorkspaceLocation::Local => None,
+            SerializedWorkspaceLocation::Local
+            | SerializedWorkspaceLocation::LocalFromFile { .. } => None,
             SerializedWorkspaceLocation::Remote(options) => Some(options),
         });
 
