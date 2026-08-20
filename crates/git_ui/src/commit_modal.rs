@@ -191,10 +191,19 @@ impl CommitModal {
                 let mut editor =
                     commit_message_editor(buffer, None, project.clone(), false, window, cx);
                 editor.sync_selections(panel_editor, cx).detach();
+                editor.set_read_only(git_panel.is_generating_commit_message());
 
                 editor
             })
         });
+
+        cx.observe(&git_panel, |this, panel, cx| {
+            let generating = panel.read(cx).is_generating_commit_message();
+            this.commit_editor
+                .update(cx, |editor, _| editor.set_read_only(generating));
+            cx.notify();
+        })
+        .detach();
 
         let commit_message = commit_editor.read(cx).text(cx);
 
