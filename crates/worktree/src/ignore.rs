@@ -4,6 +4,9 @@ use std::{ffi::OsStr, path::Path, sync::Arc};
 #[derive(Clone, Debug)]
 pub struct IgnoreStack {
     pub repo_root: Option<Arc<Path>>,
+    /// The repository root, or the worktree root when no repository contains
+    /// the worktree.
+    /// Global ignore patterns are matched relative to this path.
     pub global_ignore_root: Option<Arc<Path>>,
     pub top: Arc<IgnoreStackEntry>,
 }

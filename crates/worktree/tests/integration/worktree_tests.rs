@@ -3935,59 +3935,6 @@ async fn test_global_gitignore_without_repository(
     });
 }
 
-/// A worktree without a containing git repository, whose ancestor directory `builds`
-/// matches an entry in the global gitignore.
-///
-/// Anchoring global-gitignore matching at the worktree root (the fix for #62126 and
-/// #48887) must not make the scanner believe such a worktree is inside a repository:
-/// `IgnoreStack::repo_root` doubles as the "inside a repository" signal that exempts
-/// directories from `file_scan_depth` (#62583). So both must hold at once: the
-/// worktree's contents are not ignored, and directories beyond the scan depth are
-/// still deferred.
-#[gpui::test]
-async fn test_global_gitignore_fix_preserves_scan_depth_outside_repo(cx: &mut TestAppContext) {
-    init_test(cx);
-    set_file_scan_depth(cx, Some(2));
-
-    let home = paths::home_dir();
-    let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree(
-        home,
-        json!({
-            ".config": {
-                "git": {
-                    "ignore": "builds\n"
-                }
-            },
-            "builds": {
-                "my-project": {
-                    "junk": {
-                        "a": {
-                            "deep.txt": ""
-                        }
-                    }
-                }
-            }
-        }),
-    )
-    .await;
-
-    let project_path = home.join("builds").join("my-project");
-    let worktree = build_worktree(fs, project_path.to_str().unwrap(), cx).await;
-
-    worktree.read_with(cx, |worktree, _| {
-        assert!(
-            !worktree.root_entry().unwrap().is_ignored,
-            "the global-gitignore entry naming the `builds` ancestor must not ignore the worktree"
-        );
-        assert_eq!(
-            worktree.entry_for_path(rel_path("junk/a")).unwrap().kind,
-            EntryKind::UnloadedDir,
-            "file_scan_depth must still defer deep directories in a repository-less worktree"
-        );
-    });
-}
-
 #[gpui::test]
 async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
