@@ -9646,6 +9646,9 @@ async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut Tes
 #[gpui::test]
 async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.language_detection = Some(false);
+    });
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [], cx).await;
@@ -9675,6 +9678,24 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
     );
 
     editor.update_in(cx, |editor, window, cx| {
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    update_test_editor_settings(cx, &|settings| {
+        settings.language_detection = Some(true);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
         editor.insert("fn main() {}", window, cx);
     });
     cx.run_until_parked();
@@ -9753,6 +9774,10 @@ async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext
     });
 
     cx.run_until_parked();
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
     assert_eq!(
         buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
         PLAIN_TEXT.name()

@@ -10971,7 +10971,7 @@ impl Editor {
 
     fn detect_buffer_language(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
         self.language_detection_task = Task::ready(());
-        if DisableAiSettings::get_global(cx).disable_ai {
+        if !EditorSettings::get_global(cx).language_detection {
             return;
         }
         let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
@@ -10987,7 +10987,7 @@ impl Editor {
                 .await;
             let Some((buffer_snapshot, language_registry)) =
                 buffer_entity.read_with(cx, |buffer, cx| {
-                    if DisableAiSettings::get_global(cx).disable_ai
+                    if !EditorSettings::get_global(cx).language_detection
                         || !Self::is_eligible_for_language_detection(buffer)
                     {
                         return None;
