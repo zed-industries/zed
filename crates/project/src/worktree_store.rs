@@ -50,7 +50,7 @@ pub struct WorktreePaths {
 
 impl PartialEq for WorktreePaths {
     fn eq(&self, other: &Self) -> bool {
-        self.paths == other.paths && self.main_paths == other.main_paths
+        self.ordered_pairs().eq(other.ordered_pairs())
     }
 }
 
@@ -181,6 +181,28 @@ impl WorktreeIdCounter {
 }
 
 impl Global for WorktreeIdCounter {}
+
+/// Summarizes worktree ownership and current snapshot sizes.
+#[derive(Debug, Default)]
+pub struct WorktreeStoreDiagnostics {
+    pub worktree_slots: usize,
+    pub live_worktrees: usize,
+    pub visible_worktrees: usize,
+    pub strong_handles: usize,
+    pub dead_weak_handles: usize,
+    pub loading_worktrees: usize,
+    pub total_entries: usize,
+    pub visible_entries: usize,
+    pub largest_worktree: Option<LargestWorktreeDiagnostics>,
+}
+
+/// Identifies the worktree with the largest current snapshot.
+#[derive(Debug)]
+pub struct LargestWorktreeDiagnostics {
+    pub path: PathBuf,
+    pub entries: usize,
+    pub visible_entries: usize,
+}
 
 pub struct WorktreeStore {
     next_entry_id: Arc<AtomicUsize>,
@@ -346,6 +368,57 @@ impl WorktreeStore {
             anyhow::Ok(())
         })
         .detach();
+    }
+
+    /// Returns worktree ownership and current snapshot size diagnostics.
+    pub fn diagnostics(&self, cx: &App) -> WorktreeStoreDiagnostics {
+        let mut diagnostics = WorktreeStoreDiagnostics {
+            worktree_slots: self.worktrees.len(),
+            loading_worktrees: self.loading_worktrees.len(),
+            ..WorktreeStoreDiagnostics::default()
+        };
+
+        for handle in &self.worktrees {
+            let worktree = match handle {
+                WorktreeHandle::Strong(worktree) => {
+                    diagnostics.strong_handles += 1;
+                    Some(worktree.clone())
+                }
+                WorktreeHandle::Weak(worktree) => {
+                    let worktree = worktree.upgrade();
+                    if worktree.is_none() {
+                        diagnostics.dead_weak_handles += 1;
+                    }
+                    worktree
+                }
+            };
+            let Some(worktree) = worktree else {
+                continue;
+            };
+
+            diagnostics.live_worktrees += 1;
+            let worktree = worktree.read(cx);
+            diagnostics.visible_worktrees += usize::from(worktree.is_visible());
+            let snapshot = worktree.snapshot();
+            let entries = snapshot.entry_count();
+            let visible_entries = snapshot.visible_entry_count();
+            diagnostics.total_entries += entries;
+            diagnostics.visible_entries += visible_entries;
+
+            let is_largest = diagnostics
+                .largest_worktree
+                .as_ref()
+                .is_none_or(|largest| entries > largest.entries);
+            if is_largest {
+                diagnostics.largest_worktree = Some(LargestWorktreeDiagnostics {
+                    path: worktree.abs_path().to_path_buf(),
+                    entries,
+                    visible_entries,
+                });
+            }
+        }
+
+        diagnostics
     }
 
     /// Iterates through all worktrees, including ones that don't appear in the project panel
@@ -724,27 +797,21 @@ impl WorktreeStore {
                 }
             };
 
-            self.loading_worktrees
-                .insert(abs_path.clone(), task.shared());
+            let loading_task = cx.spawn({
+                let abs_path = abs_path.clone();
+                async move |this, cx| {
+                    let result = task.await;
+                    this.update(cx, |this, cx| {
+                        this.loading_worktrees.remove(&abs_path);
+                        if !visible || !this.scanning_enabled || result.is_err() {
+                            this.update_initial_scan_state(cx);
+                        }
+                    })
+                    .ok();
 
-            if visible && self.scanning_enabled {
-                *self.initial_scan_complete.0.borrow_mut() = false;
-            }
-        }
-        let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
-                this.loading_worktrees.remove(&abs_path);
-                if !visible || !this.scanning_enabled || result.is_err() {
-                    this.update_initial_scan_state(cx);
-                }
-            })
-            .ok();
-
-            match result {
-                Ok(worktree) => {
-                    if !is_via_collab {
+                    if let Ok(worktree) = &result
+                        && !is_via_collab
+                    {
                         if let Some((trusted_worktrees, worktree_store)) = this
                             .update(cx, |_, cx| {
                                 TrustedWorktrees::try_get_global(cx).zip(Some(cx.entity()))
@@ -763,16 +830,25 @@ impl WorktreeStore {
 
                         this.update(cx, |this, cx| {
                             if this.scanning_enabled && visible {
-                                this.observe_worktree_scan_completion(&worktree, cx);
+                                this.observe_worktree_scan_completion(worktree, cx);
                             }
                         })
                         .ok();
                     }
-                    Ok(worktree)
+
+                    result
                 }
-                Err(err) => Err((*err).cloned()),
+            });
+
+            self.loading_worktrees
+                .insert(abs_path.clone(), loading_task.shared());
+
+            if visible && self.scanning_enabled {
+                *self.initial_scan_complete.0.borrow_mut() = false;
             }
-        })
+        }
+        let task = self.loading_worktrees.get(&abs_path).unwrap().clone();
+        cx.background_spawn(async move { task.await.map_err(|error| (*error).cloned()) })
     }
 
     fn create_remote_worktree(
@@ -1329,7 +1405,7 @@ impl WorktreeStore {
         let entry_id = ProjectEntryId::from_proto(request.entry_id);
         let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id);
         let rel_path = RelPath::from_unix_str(&request.new_path)
-            .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
+            .with_context(|| format!("received invalid relative path {:?}", request.new_path))?;
 
         let (scan_id, task) = this.update(&mut cx, |this, cx| {
             let worktree = this
@@ -1410,7 +1486,8 @@ impl WorktreeStore {
                 let folder_path = snapshot.abs_path().to_path_buf();
                 let main_path = snapshot
                     .root_repo_common_dir()
-                    .map(|dir| crate::git_store::repo_identity_path(dir))
+                    .filter(|dir| !crate::git_store::is_submodule_git_dir(dir))
+                    .map(|dir| crate::git_store::repo_identity_path(dir, snapshot.path_style()))
                     .filter(|repo_path| {
                         snapshot.root_repo_is_linked_worktree()
                             || *repo_path == folder_path.as_path()
