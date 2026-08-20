@@ -279,6 +279,7 @@ async fn build_remote_server_from_source(
         let output = command
             .kill_on_drop(true)
             .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
             .output()
             .await?;
         anyhow::ensure!(

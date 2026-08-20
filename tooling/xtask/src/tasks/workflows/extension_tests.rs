@@ -8,7 +8,7 @@ use crate::tasks::workflows::{
     },
     runners,
     steps::{
-        self, BASH_SHELL, CommonJobConditions, FluentBuilder, NamedJob,
+        self, BASH_SHELL, CommonJobConditions, CommonPermissionSets, FluentBuilder, NamedJob,
         cache_rust_dependencies_namespace, named,
     },
     vars::{PathCondition, StepOutput, WorkflowInput, one_workflow_per_non_main_branch_and_token},
@@ -41,6 +41,7 @@ pub(crate) fn extension_tests() -> Workflow {
     let working_directory = WorkflowInput::string("working-directory", Some(".".to_owned()));
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default().workflow_call(
                 WorkflowCall::default()

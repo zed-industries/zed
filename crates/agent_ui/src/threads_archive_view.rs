@@ -18,9 +18,9 @@ use editor::Editor;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window, list,
-    prelude::*, px,
+    AnyElement, App, Context, Decorations, DismissEvent, Entity, EventEmitter, FocusHandle,
+    Focusable, ListState, Render, SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
+    list, prelude::*, px,
 };
 use itertools::Itertools as _;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -36,7 +36,6 @@ use ui::{
     Scrollbars, Tab, ThreadItem, Tooltip, WithScrollbar, prelude::*,
     utils::platform_title_bar_height,
 };
-use ui_input::ErasedEditor;
 use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
@@ -858,7 +857,7 @@ impl ThreadsArchiveView {
             settings::SidebarSide::Left
         );
         let sidebar_on_right = !sidebar_on_left;
-        let not_fullscreen = !window.is_fullscreen();
+        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
         let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =
@@ -869,8 +868,10 @@ impl ThreadsArchiveView {
 
         h_flex()
             .h(header_height)
-            .mt_px()
-            .pb_px()
+            .map(|header| match window.window_decorations() {
+                Decorations::Client { .. } => header.mt(px(-1.)),
+                Decorations::Server => header.mt_px().pb_px(),
+            })
             .when(left_window_controls, |this| {
                 this.children(Self::render_left_window_controls(window, cx))
             })
@@ -1300,22 +1301,6 @@ impl PickerDelegate for ProjectPickerDelegate {
                 .unwrap_or(DEFAULT_THREAD_TITLE)
         )
         .into()
-    }
-
-    fn render_editor(
-        &self,
-        editor: &Arc<dyn ErasedEditor>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        h_flex()
-            .flex_none()
-            .h_9()
-            .px_2p5()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .child(editor.render(window, cx))
     }
 
     fn match_count(&self) -> usize {

@@ -56,13 +56,13 @@ feature_flags.workspace = true
 file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
-git.workspace = true
-git_ui.workspace = true
 fuzzy.workspace = true
+git.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+idna.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
@@ -105,15 +105,15 @@ terminal_view.workspace = true
 text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
-time.workspace = true
 ui.workspace = true
-ui_input.workspace = true
+unicode-script.workspace = true
 unicode-segmentation.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 workspace.workspace = true
+git_ui_core.workspace = true
 zed_actions.workspace = true
 image.workspace = true
 reqwest_client = { workspace = true, optional = true }
@@ -124,7 +124,6 @@ agent = { workspace = true, features = ["test-support"] }
 agent_servers = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
-clock = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 eval_utils.workspace = true
@@ -134,18 +133,15 @@ indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
-node_runtime = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
 remote_connection = { workspace = true, features = ["test-support"] }
-remote_server = { workspace = true, features = ["test-support"] }
 
 search = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+shlex.workspace = true
 reqwest_client.workspace = true
 tempfile.workspace = true
 vim.workspace = true
-tree-sitter-md.workspace = true
-unindent.workspace = true
 terminal = { workspace = true, features = ["test-support"] }

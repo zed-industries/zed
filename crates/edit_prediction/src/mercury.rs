@@ -1,7 +1,9 @@
 use crate::{
-    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionInputs,
-    EditPredictionModelInput, EditPredictionStartedDebugEvent, EditPredictionStore,
-    open_ai_response::text_from_response, prediction::EditPredictionResult, zeta::compute_edits,
+    DebugEvent, EditPredictionFinishedDebugEvent, EditPredictionId, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore,
+    open_ai_response::text_from_response,
+    prediction::{EditPredictionInputs, EditPredictionResult},
+    zeta::compute_edits,
 };
 use anyhow::{Context as _, Result};
 use cloud_llm_client::EditPredictionRejectReason;
