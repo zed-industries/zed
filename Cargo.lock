@@ -10025,6 +10025,7 @@ dependencies = [
  "language",
  "lsp",
  "menu",
+ "path",
  "project",
  "proto",
  "release_channel",
