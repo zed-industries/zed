@@ -12,7 +12,10 @@ fn main() {
 
     // Populate git sha environment variable if git is available
     println!("cargo:rerun-if-changed=../../.git/logs/HEAD");
-    if let Some(output) = Command::new("git")
+    if let Ok(git_sha) = std::env::var("ZED_COMMIT_SHA") {
+        // Deterministic build environments (Nix, dcargo) inject the sha.
+        println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
+    } else if let Some(output) = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .output()
         .ok()

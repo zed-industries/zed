@@ -1,0 +1,42 @@
+# Declarative, sha256-pinned tools and plan-time env probes. Every setting
+# names the packages it applies to; only those packages' actions key on it,
+# so edits here have exactly the declared blast radius (and comment or
+# command-text changes rebuild nothing).
+
+[tools.protoc]
+version = "35.1"
+url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-osx-aarch_64.zip"
+sha256 = "193289af0470c6a1aada357d4fba0bbf8d78bfaac8b5e42ca30af2ef75583de2"
+bin = "bin/protoc"
+env = "PROTOC"
+packages = ["proto", "livekit_api"]
+
+[tools.cmake]
+version = "4.1.2"
+url = "https://github.com/Kitware/CMake/releases/download/v4.1.2/cmake-4.1.2-macos-universal.tar.gz"
+sha256 = "3be85f5b999e327b1ac7d804cbc9acd767059e9f603c42ec2765f6ab68fbd367"
+bin = "cmake-4.1.2-macos-universal/CMake.app/Contents/bin/cmake"
+env = "CMAKE"
+packages = ["webrtc-sys", "wasmtime-c-api-impl"]
+
+[tools.webrtc-prebuilt]
+version = "0001d84-4"
+url = "https://github.com/zed-industries/livekit-rust-sdks/releases/download/webrtc-0001d84-4/webrtc-mac-arm64-release.zip"
+sha256 = "09ba71bfbc15c6aacced7fe20451a9648dfe648c24295f28d75fc386dbd7281a"
+path = "mac-arm64-release"
+env = "LK_CUSTOM_WEBRTC"
+packages = ["webrtc-sys"]
+
+[env.ZED_COMMIT_SHA]
+command = "git rev-parse HEAD"
+packages = ["zed", "cli", "remote_server"]
+profiles = ["release"]
+
+
+# Reads outside a package's root that its actions perform; paths are
+# relative to the named package's root, granted and hashed as inputs.
+[extra-inputs]
+extension_host = ["../extension_api/wit"]
+gpui_apple = ["../gpui/src"]
+prompt_store = ["../git_ui/src/commit_message_prompt.txt"]
+release_channel = ["../zed/RELEASE_CHANNEL"]

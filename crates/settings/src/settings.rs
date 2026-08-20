@@ -117,12 +117,17 @@ impl fmt::Display for WorktreeId {
     }
 }
 
+#[cfg(not(debug_assertions))]
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
 #[include = "settings/*"]
 #[include = "keymaps/*"]
 #[exclude = "*.DS_Store"]
 pub struct SettingsAssets;
+
+// Dev builds read the checkout's files at runtime; see assets crate.
+#[cfg(debug_assertions)]
+util::dev_fs_embed!(pub struct SettingsAssets, "assets");
 
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());

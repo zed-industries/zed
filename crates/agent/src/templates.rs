@@ -5,10 +5,15 @@ use rust_embed::RustEmbed;
 use serde::Serialize;
 use std::sync::Arc;
 
+#[cfg(not(debug_assertions))]
 #[derive(RustEmbed)]
 #[folder = "src/templates"]
 #[include = "*.hbs"]
 struct Assets;
+
+// Dev builds read the checkout's templates at runtime; see assets crate.
+#[cfg(debug_assertions)]
+util::dev_fs_embed!(struct Assets, "crates/agent/src/templates");
 
 pub struct Templates(Handlebars<'static>);
 

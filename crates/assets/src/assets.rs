@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use gpui::{App, AssetSource, Result, SharedString};
 use rust_embed::RustEmbed;
 
+#[cfg(not(debug_assertions))]
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
 #[include = "fonts/**/*"]
@@ -16,6 +17,11 @@ use rust_embed::RustEmbed;
 #[include = "*.md"]
 #[exclude = "*.DS_Store"]
 pub struct Assets;
+
+// Dev builds read assets from the checkout at runtime: live reload, and
+// no build-time path baked into a cacheable artifact.
+#[cfg(debug_assertions)]
+util::dev_fs_embed!(pub struct Assets, "assets");
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {

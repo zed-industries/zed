@@ -1192,3 +1192,76 @@ Line 3"#
         );
     }
 }
+
+/// The checkout that produced this binary, resolved at runtime by walking
+/// up from the executable path (target/debug/zed lives two levels below
+/// the repo root). Dev-only affordances use this instead of baking a
+/// build-time path into the artifact, which would point at the wrong
+/// checkout in any other worktree and defeats build caching.
+pub fn dev_repo_root() -> Option<&'static std::path::Path> {
+    use std::path::PathBuf;
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let exe = std::env::current_exe().and_then(|p| p.canonicalize()).ok()?;
+        exe.ancestors()
+            .find(|dir| dir.join("Cargo.lock").exists())
+            .map(|dir| dir.to_path_buf())
+    })
+    .as_deref()
+}
+
+/// All files under a repo-relative directory, as sorted dir-relative
+/// paths. Backs the dev implementations of rust_embed asset sources.
+pub fn dev_embedded_file_names(repo_rel: &str) -> Vec<std::borrow::Cow<'static, str>> {
+    use std::borrow::Cow;
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<Cow<'static, str>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else if path.file_name().is_some_and(|name| name != ".DS_Store") {
+                if let Ok(rel) = path.strip_prefix(root) {
+                    out.push(Cow::Owned(rel.to_string_lossy().into_owned()));
+                }
+            }
+        }
+    }
+    let root = dev_repo_root()
+        .expect("dev asset loading requires running from within the checkout")
+        .join(repo_rel);
+    let mut names = Vec::new();
+    walk(&root, &root, &mut names);
+    names.sort();
+    names
+}
+
+/// A rust_embed-compatible asset source for dev builds: reads the
+/// checkout's files at runtime (live reload) instead of embedding them,
+/// and bakes no build-time path into the artifact.
+#[macro_export]
+macro_rules! dev_fs_embed {
+    ($vis:vis struct $name:ident, $repo_rel:literal) => {
+        $crate::dev_fs_embed!($vis struct $name, $repo_rel, exclude_suffixes = []);
+    };
+    ($vis:vis struct $name:ident, $repo_rel:literal, exclude_suffixes = [$($suffix:literal),*]) => {
+        $vis struct $name;
+
+        impl ::rust_embed::RustEmbed for $name {
+            fn get(file_path: &str) -> Option<::rust_embed::EmbeddedFile> {
+                let root = $crate::dev_repo_root()
+                    .expect("dev asset loading requires running from within the checkout")
+                    .join($repo_rel);
+                ::rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
+            }
+
+            fn iter() -> ::rust_embed::Filenames {
+                ::rust_embed::Filenames::Dynamic(Box::new(
+                    $crate::dev_embedded_file_names($repo_rel)
+                        .into_iter()
+                        .filter(|path| true $(&& !path.ends_with($suffix))*),
+                ))
+            }
+        }
+    };
+}

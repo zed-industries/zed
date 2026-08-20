@@ -4,10 +4,15 @@ use anyhow::Context as _;
 use language_core::{LanguageConfig, LanguageQueries, QUERY_FILENAME_PREFIXES};
 use rust_embed::RustEmbed;
 
+#[cfg(not(debug_assertions))]
 #[derive(RustEmbed)]
 #[folder = "src/"]
 #[exclude = "*.rs"]
 struct GrammarDir;
+
+// Dev builds read the checkout's query files at runtime; see assets crate.
+#[cfg(debug_assertions)]
+util::dev_fs_embed!(struct GrammarDir, "crates/grammars/src", exclude_suffixes = [".rs"]);
 
 /// Register all built-in native tree-sitter grammars with the provided registration function.
 ///
