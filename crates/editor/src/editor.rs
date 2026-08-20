@@ -8218,6 +8218,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         let buffer = self.buffer.clone();
         let (buffers, target) = match target {
             FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
