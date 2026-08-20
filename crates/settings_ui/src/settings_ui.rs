@@ -1699,7 +1699,7 @@ impl SettingsWindow {
     }
 
     fn clear_search(&mut self, window: &mut Window, cx: &mut Context<SettingsWindow>) {
-        if !self.search_bar.read(cx).text(cx).is_empty() {
+        if !self.search_bar.read(cx).is_empty(cx) {
             self.search_bar.update(cx, |editor, cx| {
                 editor.set_text("", window, cx);
             });
@@ -2582,7 +2582,7 @@ impl SettingsWindow {
     // }
 
     fn render_search(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        let has_query = !self.search_bar.read(cx).text(cx).is_empty();
+        let has_query = !self.search_bar.read(cx).is_empty(cx);
 
         h_flex()
             .py_1()
