@@ -3327,6 +3327,38 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         self.resume_subagent_thread(session_id, cx)
     }
 
+    fn steer_subagent(
+        &self,
+        session_id: acp::SessionId,
+        message: String,
+        cx: &mut App,
+    ) -> Result<Option<usize>> {
+        let Some(parent_thread_entity) = self.thread.upgrade() else {
+            anyhow::bail!("Parent thread no longer exists".to_string());
+        };
+        let (subagent_thread, entry_count) = self.agent.update(cx, |agent, cx| {
+            let session = agent
+                .sessions
+                .get(&session_id)
+                .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
+            let entry_count = session.acp_thread.read(cx).entries().len();
+            anyhow::Ok((session.thread.clone(), entry_count))
+        })??;
+
+        // Only direct children may be steered, so a session's behavior stays
+        // predictable for the thread that spawned it.
+        let is_direct_child = subagent_thread.read(cx).parent_thread_id().as_ref()
+            == Some(parent_thread_entity.read(cx).id());
+        if !is_direct_child {
+            anyhow::bail!("Session {session_id} is not a subagent of this thread");
+        }
+
+        let steered = subagent_thread.update(cx, |thread, cx| {
+            thread.steer(ClientUserMessageId::new(), [message], cx)
+        });
+        Ok(steered.then_some(entry_count))
+    }
+
     fn create_sibling_thread(
         &self,
         request: SiblingThreadRequest,
@@ -3471,26 +3503,49 @@ impl SubagentHandle for NativeSubagentHandle {
             });
 
             let result = match task.await {
-                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
-                    thread
-                        .last_message()
-                        .and_then(|message| {
-                            let content = message.as_agent_message()?
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    AgentMessageContent::Text(text) => Some(text.as_str()),
-                                    _ => None,
-                                })
-                                .join("\n\n");
-                            if content.is_empty() {
-                                None
-                            } else {
-                                Some( content)
-                            }
+                SubagentPromptResult::Completed => {
+                    // Non-blocking tool calls may still be executing when the
+                    // turn ends; their results steer continuation turns
+                    // (driven by the agent's ContinuationRequested handler).
+                    // Wait for the subagent to become quiescent so the parent
+                    // receives its truly final output rather than a summary
+                    // that predates those results.
+                    let (quiet_tx, mut quiet_rx) = mpsc::unbounded();
+                    let _subscription = cx.update(|cx| {
+                        cx.observe(&thread, move |_, _| {
+                            quiet_tx.unbounded_send(()).ok();
                         })
-                        .context("No response from subagent")
-                }),
+                    });
+                    loop {
+                        let quiescent = thread.read_with(cx, |thread, _| thread.is_quiescent());
+                        if quiescent {
+                            break;
+                        }
+                        if quiet_rx.next().await.is_none() {
+                            break;
+                        }
+                    }
+                    thread.read_with(cx, |thread, _cx| {
+                        thread
+                            .last_message()
+                            .and_then(|message| {
+                                let content = message.as_agent_message()?
+                                    .content
+                                    .iter()
+                                    .filter_map(|c| match c {
+                                        AgentMessageContent::Text(text) => Some(text.as_str()),
+                                        _ => None,
+                                    })
+                                    .join("\n\n");
+                                if content.is_empty() {
+                                    None
+                                } else {
+                                    Some( content)
+                                }
+                            })
+                            .context("No response from subagent")
+                    })
+                }
                 SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
                 SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
                 SubagentPromptResult::ContextWindowWarning => {

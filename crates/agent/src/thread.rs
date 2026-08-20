@@ -780,6 +780,20 @@ pub trait ThreadEnvironment {
         ))
     }
 
+    /// Steers a running subagent session with a follow-up message: the
+    /// message is incorporated at the session's next reasoning boundary and
+    /// no direct response is returned. Returns `Ok(Some(entry_count))` when
+    /// the session was running and thus steered, `Ok(None)` when it is idle
+    /// and should be resumed with a new turn instead.
+    fn steer_subagent(
+        &self,
+        _session_id: acp::SessionId,
+        _message: String,
+        _cx: &mut App,
+    ) -> Result<Option<usize>> {
+        Ok(None)
+    }
+
     /// Creates an independent sibling thread visible in the agent sidebar.
     /// Unlike subagents, sibling threads are first-class threads that persist
     /// and run in parallel without reporting results back to the parent.
@@ -1263,6 +1277,12 @@ pub struct Thread {
     /// running to completion. The UI sets this to deliver a "steering" queued
     /// message mid-task; by default queued messages wait for the turn to finish.
     end_turn_at_next_boundary: bool,
+    /// User messages appended mid-turn via [`Thread::steer`]. Held back until
+    /// the turn ends at the next reasoning boundary so they land after the
+    /// in-flight assistant message (with its tool uses and results) in the
+    /// conversation; the turn's outer loop then delivers them as a
+    /// continuation on the same event stream.
+    steered_messages: Vec<UserMessage>,
     /// Tool calls the model chose to run non-blockingly (`"blocking": false`
     /// in the tool input) that are still executing independently of any turn,
     /// keyed by tool use id.
@@ -1416,6 +1436,7 @@ impl Thread {
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
+            steered_messages: Vec::new(),
             non_blocking_tool_calls: HashMap::default(),
             queued_non_blocking_results: Vec::new(),
             pending_message: None,
@@ -1801,6 +1822,7 @@ impl Thread {
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
+            steered_messages: Vec::new(),
             non_blocking_tool_calls: HashMap::default(),
             queued_non_blocking_results: Vec::new(),
             pending_message: None,
@@ -2554,6 +2576,43 @@ impl Thread {
         self.run_turn(cx)
     }
 
+    /// Appends a user message that steers the currently running turn: the
+    /// turn ends at the next reasoning boundary and the message is processed
+    /// as a continuation on the same event stream, mirroring the UI's
+    /// steering flow. The message is held back from the conversation until
+    /// the boundary so it lands after the in-flight assistant message.
+    /// Returns `false` when no turn is running — callers should start a new
+    /// turn instead (e.g. resuming an idle subagent session).
+    pub fn steer<T>(
+        &mut self,
+        id: ClientUserMessageId,
+        content: impl IntoIterator<Item = T>,
+        cx: &mut Context<Self>,
+    ) -> bool
+    where
+        T: Into<UserMessageContent>,
+    {
+        if self.running_turn.is_none() {
+            return false;
+        }
+        self.steered_messages.push(UserMessage {
+            id,
+            content: content.into_iter().map(Into::into).collect::<Arc<_>>(),
+        });
+        self.end_turn_at_next_boundary = true;
+        cx.notify();
+        true
+    }
+
+    /// Whether the thread has no running turn and no non-blocking tool calls
+    /// still executing or awaiting delivery. Subagent drivers use this to
+    /// wait for a subagent's truly final output.
+    pub(crate) fn is_quiescent(&self) -> bool {
+        self.running_turn.is_none()
+            && self.non_blocking_tool_calls.is_empty()
+            && self.queued_non_blocking_results.is_empty()
+    }
+
     /// Force a manual context compaction using the summary strategy,
     /// regardless of the current token usage or context window size.
     pub fn compact(
@@ -2728,7 +2787,23 @@ impl Thread {
                     let continue_with_results = this
                         .update(cx, |this, cx| {
                             this.flush_pending_message(cx);
-                            if this.drain_finished_non_blocking_tool_calls(&event_stream, cx) {
+                            let delivered_results =
+                                this.drain_finished_non_blocking_tool_calls(&event_stream, cx);
+                            let has_steered_messages = !this.steered_messages.is_empty();
+                            if delivered_results || has_steered_messages {
+                                if has_steered_messages {
+                                    // The steer flag ended the previous turn
+                                    // at this boundary; consume it so the
+                                    // continuation runs to completion.
+                                    this.end_turn_at_next_boundary = false;
+                                    for message in this.steered_messages.drain(..) {
+                                        event_stream.send_user_message(&message);
+                                        this.messages.push(Arc::new(Message::User(message)));
+                                    }
+                                    this.updated_at = Utc::now();
+                                    this.clear_summary();
+                                    cx.notify();
+                                }
                                 true
                             } else {
                                 // Mark the thread idle in the same update that
@@ -2736,6 +2811,7 @@ impl Thread {
                                 // right now takes the continuation-request path
                                 // instead of being stranded in the queue.
                                 this.running_turn.take();
+                                cx.notify();
                                 false
                             }
                         })
@@ -3617,6 +3693,7 @@ impl Thread {
                     owning_message_ix,
                     event_stream,
                     cancellation_rx,
+                    None,
                     cx,
                 ));
             } else {
@@ -3634,7 +3711,7 @@ impl Thread {
             return None;
         }
 
-        if !blocking && !self.is_subagent() {
+        if !blocking {
             log::debug!("Running tool {} non-blockingly", tool_use.name);
             return Some(self.run_tool_non_blocking(
                 tool,
@@ -3657,6 +3734,7 @@ impl Thread {
             owning_message_ix,
             event_stream,
             cancellation_rx,
+            None,
             cx,
         ))
     }
@@ -3670,6 +3748,7 @@ impl Thread {
         owning_message_ix: usize,
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
+        non_blocking_identity_tx: Option<oneshot::Sender<serde_json::Value>>,
         cx: &mut Context<Self>,
     ) -> Task<(usize, LanguageModelToolResult)> {
         // A workspace can become restricted after a thread has already started.
@@ -3706,6 +3785,7 @@ impl Thread {
             self.sandbox_grants.clone(),
             Some(cx.weak_entity()),
         );
+        *tool_event_stream.non_blocking_identity_tx.borrow_mut() = non_blocking_identity_tx;
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
@@ -3772,7 +3852,9 @@ impl Thread {
     /// independently of the turn, the model immediately receives a
     /// placeholder result carrying an `async_tool_call_id`, and the real
     /// result is delivered later as a new user message (see
-    /// [`Thread::drain_finished_non_blocking_tool_calls`]).
+    /// [`Thread::drain_finished_non_blocking_tool_calls`]). Tools that opt in
+    /// via [`AgentTool::provides_non_blocking_identity`] can additionally
+    /// patch identity metadata (e.g. a new session id) into the placeholder.
     fn run_tool_non_blocking(
         &mut self,
         tool: Arc<dyn AnyAgentTool>,
@@ -3787,6 +3869,12 @@ impl Thread {
         // A dedicated cancellation channel keeps the tool running across
         // turn cancellations: the model was told the call runs independently.
         let (cancellation_tx, cancellation_rx) = watch::channel(false);
+        let (identity_tx, identity_rx) = if tool.provides_non_blocking_identity() {
+            let (identity_tx, identity_rx) = oneshot::channel();
+            (Some(identity_tx), Some(identity_rx))
+        } else {
+            (None, None)
+        };
         let tool_task = self.run_tool(
             tool,
             ToolInput::ready(input),
@@ -3795,6 +3883,7 @@ impl Thread {
             owning_message_ix,
             event_stream,
             cancellation_rx,
+            identity_tx,
             cx,
         );
         self.non_blocking_tool_calls.insert(
@@ -3817,27 +3906,41 @@ impl Thread {
         })
         .detach();
 
-        Task::ready((
-            owning_message_ix,
-            LanguageModelToolResult {
-                tool_use_id,
-                tool_name,
-                is_error: false,
-                content: vec![LanguageModelToolResultContent::Text(Arc::from(
-                    serde_json::json!({
-                        "async_tool_call_id": async_id.as_ref(),
-                        "status": "running",
-                        "note": concat!(
-                            "This tool call is running non-blockingly. Its result will ",
-                            "arrive later as a user message with the same async_tool_call_id. ",
-                            "Do not wait for it; continue with other work."
-                        ),
-                    })
-                    .to_string(),
-                ))],
-                output: None,
-            },
-        ))
+        cx.foreground_executor().spawn(async move {
+            // When the tool reports identity metadata it arrives right after
+            // startup; a dropped sender (tool finished or failed before
+            // reporting) falls back to the generic placeholder.
+            let identity = match identity_rx {
+                Some(identity_rx) => identity_rx.await.ok(),
+                None => None,
+            };
+            let mut envelope = serde_json::json!({
+                "async_tool_call_id": async_id.as_ref(),
+                "status": "running",
+                "note": concat!(
+                    "This tool call is running non-blockingly. Its result will ",
+                    "arrive later as a user message with the same async_tool_call_id. ",
+                    "Do not wait for it; continue with other work."
+                ),
+            });
+            if let (Some(envelope_object), Some(serde_json::Value::Object(identity))) =
+                (envelope.as_object_mut(), identity)
+            {
+                envelope_object.extend(identity);
+            }
+            (
+                owning_message_ix,
+                LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name,
+                    is_error: false,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        envelope.to_string(),
+                    ))],
+                    output: None,
+                },
+            )
+        })
     }
 
     /// Short, distinctive id for a non-blocking tool call (e.g. "a~K4u"): a
@@ -3995,6 +4098,7 @@ impl Thread {
             owning_message_ix,
             event_stream,
             cancellation_rx,
+            None,
             cx,
         ))
     }
@@ -4322,32 +4426,28 @@ impl Thread {
                     // The `blocking` property is offered on every tool
                     // without tool authors opting in; the runtime strips it
                     // from the input before the tool runs (see
-                    // `handle_tool_use_event`). Subagent threads are excluded
-                    // because nothing would deliver a late result once their
-                    // turn has ended.
-                    if !self.is_subagent() {
-                        if let Some(properties) = schema
-                            .get_mut("properties")
-                            .and_then(|value| value.as_object_mut())
-                        {
-                            properties
-                                .entry(BLOCKING_INPUT_PROPERTY.to_string())
-                                .or_insert_with(|| {
-                                    serde_json::json!({
-                                        "type": "boolean",
-                                        "default": true,
-                                        "description": concat!(
-                                            "Whether the agent waits for this tool call's result ",
-                                            "before continuing (default true). Set to false for ",
-                                            "long-running work whose result is not needed for the ",
-                                            "current reasoning step: the tool keeps running ",
-                                            "independently, the call immediately returns an ",
-                                            "async_tool_call_id, and the real result is delivered ",
-                                            "later as a user message carrying the same id."
-                                        ),
-                                    })
-                                });
-                        }
+                    // `handle_tool_use_event`).
+                    if let Some(properties) = schema
+                        .get_mut("properties")
+                        .and_then(|value| value.as_object_mut())
+                    {
+                        properties
+                            .entry(BLOCKING_INPUT_PROPERTY.to_string())
+                            .or_insert_with(|| {
+                                serde_json::json!({
+                                    "type": "boolean",
+                                    "default": true,
+                                    "description": concat!(
+                                        "Whether the agent waits for this tool call's result ",
+                                        "before continuing (default true). Set to false for ",
+                                        "long-running work whose result is not needed for the ",
+                                        "current reasoning step: the tool keeps running ",
+                                        "independently, the call immediately returns an ",
+                                        "async_tool_call_id, and the real result is delivered ",
+                                        "later as a user message carrying the same id."
+                                    ),
+                                })
+                            });
                     }
                     Some(LanguageModelRequestTool::function(
                         tool_name.to_string(),
@@ -5461,6 +5561,14 @@ where
         false
     }
 
+    /// Whether the tool reports identity metadata for a non-blocking call's
+    /// immediate response (via
+    /// [`ToolCallEventStream::report_non_blocking_identity`]). Runtime-only
+    /// opt-in; tools that don't override it get the generic placeholder.
+    fn provides_non_blocking_identity() -> bool {
+        false
+    }
+
     /// Some tools rely on a provider for the underlying billing or other reasons.
     /// Allow the tool to check if they are compatible, or should be filtered out.
     fn supports_provider(_provider: &LanguageModelProviderId) -> bool {
@@ -5535,6 +5643,10 @@ pub trait AnyAgentTool {
     fn supports_input_streaming(&self) -> bool {
         false
     }
+    /// See [`AgentTool::provides_non_blocking_identity`].
+    fn provides_non_blocking_identity(&self) -> bool {
+        false
+    }
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
@@ -5575,6 +5687,10 @@ where
 
     fn supports_input_streaming(&self) -> bool {
         T::supports_input_streaming()
+    }
+
+    fn provides_non_blocking_identity(&self) -> bool {
+        T::provides_non_blocking_identity()
     }
 
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
@@ -5837,6 +5953,10 @@ pub struct ToolCallEventStream {
     /// sandbox grant is recorded so it survives reopening. `None` in tests and
     /// for streams not tied to a live thread.
     thread: Option<WeakEntity<Thread>>,
+    /// Channel for a tool to contribute identity metadata to a non-blocking
+    /// call's immediate response (see [`AgentTool::provides_non_blocking_identity`]).
+    /// `None` when the call is blocking.
+    non_blocking_identity_tx: Rc<RefCell<Option<oneshot::Sender<serde_json::Value>>>>,
 }
 
 impl ToolCallEventStream {
@@ -5921,6 +6041,17 @@ impl ToolCallEventStream {
             cancellation_rx,
             sandbox_grants,
             thread,
+            non_blocking_identity_tx: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// Reports identity metadata for a non-blocking call's immediate response
+    /// (e.g. `spawn_agent` reports the new session id so the parent can
+    /// reference the session before it finishes). No-op when the call is
+    /// blocking — the final result already carries everything the model needs.
+    pub fn report_non_blocking_identity(&self, metadata: serde_json::Value) {
+        if let Some(sender) = self.non_blocking_identity_tx.borrow_mut().take() {
+            sender.send(metadata).ok();
         }
     }
 
