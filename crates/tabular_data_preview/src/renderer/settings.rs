@@ -1,7 +1,7 @@
 use gpui::{Anchor, Entity};
 use ui::{
-    ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconPosition,
-    IconSize, Label, PopoverMenu, Tooltip, prelude::*,
+    ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconName, IconPosition, IconSize,
+    Label, PopoverMenu, Tooltip, prelude::*,
 };
 
 use crate::{
@@ -45,7 +45,7 @@ pub(crate) fn settings_popover_menu(
 ) -> PopoverMenu<ContextMenu> {
     PopoverMenu::new("table-settings-menu")
         .trigger_with_tooltip(
-            IconButton::new("table-settings-trigger", IconName::Settings)
+            IconButton::new("table-settings-trigger", IconName::Filter)
                 .icon_size(IconSize::Small)
                 .size(ButtonSize::Compact),
             Tooltip::text("Table Settings"),
