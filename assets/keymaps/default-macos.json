@@ -766,7 +766,7 @@
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
       "f5": "debugger::Rerun",
-      "cmd-w": "workspace::CloseActiveDock",
+      "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
     },
   },
   {
