@@ -763,9 +763,42 @@ impl ExcerptBoundaryInfo {
         self.start_text_anchor().buffer_id
     }
     pub fn buffer<'a>(&self, snapshot: &'a MultiBufferSnapshot) -> &'a BufferSnapshot {
-        snapshot
-            .buffer_for_id(self.buffer_id())
-            .expect("buffer snapshot not found for excerpt boundary")
+        let buffer_id = self.buffer_id();
+        snapshot.buffer_for_id(buffer_id).unwrap_or_else(|| {
+            // This state has crashed in the field for months without local
+            // reproduction, so describe it thoroughly: the panic message is
+            // the only diagnostic that comes back in crash reports.
+            let mut excerpt_buffer_ids = Vec::new();
+            for excerpt in snapshot.excerpts.iter() {
+                let excerpt_ids = (
+                    excerpt.buffer_id,
+                    excerpt.range.context.start.buffer_id,
+                    excerpt.path_key_index,
+                );
+                if excerpt_buffer_ids.last() != Some(&excerpt_ids) {
+                    excerpt_buffer_ids.push(excerpt_ids);
+                }
+            }
+            let present_buffer_ids = snapshot
+                .buffers
+                .iter()
+                .map(|(id, state)| (*id, state.path_key_index))
+                .collect::<Vec<_>>();
+            panic!(
+                "buffer snapshot not found for excerpt boundary: sought buffer {buffer_id} at \
+                 path index {:?}; buffers present (id, path index): {present_buffer_ids:?}; \
+                 excerpts present (buffer id, anchor buffer id, path index): \
+                 {excerpt_buffer_ids:?}; singleton={}, has_inverted_diff={}, \
+                 trailing_excerpt_update_count={}",
+                match self.start_anchor {
+                    Anchor::Excerpt(anchor) => Some(anchor.path),
+                    Anchor::Min | Anchor::Max => None,
+                },
+                snapshot.singleton,
+                snapshot.has_inverted_diff,
+                snapshot.trailing_excerpt_update_count,
+            )
+        })
     }
 }
 
@@ -3135,16 +3168,26 @@ fn build_excerpt_ranges(
     context_line_count: u32,
     buffer_snapshot: &BufferSnapshot,
 ) -> Vec<ExcerptRange<Point>> {
+    let max_point = buffer_snapshot.max_point();
     ranges
         .into_iter()
         .map(|range| {
-            let start_row = range.start.row.saturating_sub(context_line_count);
+            // Ranges arrive from external sources like language servers, which
+            // can produce reversed ranges. A reversed range would produce an
+            // excerpt whose anchors resolve backward, which panics when the
+            // excerpt is summarized.
+            let (range_start, range_end) = if range.start <= range.end {
+                (range.start, range.end)
+            } else {
+                (range.end, range.start)
+            };
+            let start_row = range_start.row.saturating_sub(context_line_count);
             let start = Point::new(start_row, 0);
-            let end_row = (range.end.row + context_line_count).min(buffer_snapshot.max_point().row);
+            let end_row = (range_end.row + context_line_count).min(max_point.row);
             let end = Point::new(end_row, buffer_snapshot.line_len(end_row));
             ExcerptRange {
                 context: start..end,
-                primary: range,
+                primary: range_start..range_end,
             }
         })
         .collect()
@@ -6875,6 +6918,21 @@ impl MultiBufferSnapshot {
                 all_buffer_path_keys.contains(&excerpt.path_key),
                 "excerpt path key not found in active path keys: {:#?}",
                 excerpt.path_key
+            );
+            assert!(
+                self.buffers.get(&excerpt.buffer_id).is_some(),
+                "excerpt references buffer {:#?}, which has no snapshot",
+                excerpt.buffer_id
+            );
+            assert_eq!(
+                excerpt.range.context.start.buffer_id, excerpt.buffer_id,
+                "excerpt context start anchor belongs to a different buffer: {:#?}",
+                excerpt.range
+            );
+            assert_eq!(
+                excerpt.range.context.end.buffer_id, excerpt.buffer_id,
+                "excerpt context end anchor belongs to a different buffer: {:#?}",
+                excerpt.range
             );
             assert_eq!(
                 self.path_keys.get_index(excerpt.path_key_index.0 as usize),
