@@ -6105,7 +6105,8 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
             })
             .await
             .unwrap()
-            .text,
+            .text
+            .to_string(),
         expected_contents,
         "Moved file's contents should be preserved"
     );
@@ -6152,7 +6153,8 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
             })
             .await
             .unwrap()
-            .text,
+            .text
+            .to_string(),
         expected_contents,
         "Moved file's contents should be preserved"
     );

@@ -8,7 +8,7 @@ use extension::{
     ExtensionLanguageServerProxy, ExtensionManifest,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
-use futures::future::join_all;
+use futures::future::{FutureExt as _, join_all};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, Task, WeakEntity};
 use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
@@ -157,13 +157,17 @@ impl HeadlessExtensionStore {
                     config.matcher.clone(),
                     config.hidden,
                     Arc::new(move || {
-                        Ok(LoadedLanguage {
-                            config: config.clone(),
-                            queries: LanguageQueries::default(),
-                            context_provider: None,
-                            toolchain_provider: None,
-                            manifest_name: None,
-                        })
+                        let config = config.clone();
+                        async move {
+                            Ok(LoadedLanguage {
+                                config,
+                                queries: LanguageQueries::default(),
+                                context_provider: None,
+                                toolchain_provider: None,
+                                manifest_name: None,
+                            })
+                        }
+                        .boxed()
                     }),
                 );
             })?;

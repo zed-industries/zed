@@ -2787,6 +2787,14 @@ impl Editor {
             key_context.add("diffs_expanded");
         }
 
+        if self
+            .nav_history
+            .as_ref()
+            .is_some_and(ItemNavHistory::is_preview_item)
+        {
+            key_context.add("in_preview");
+        }
+
         key_context
     }
 
