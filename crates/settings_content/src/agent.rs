@@ -336,6 +336,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
+    /// Whether to create git checkpoints for agent turns, allowing changes to be restored.
+    ///
+    /// Default: true
+    pub enable_checkpoints: Option<bool>,
     /// Whether to show the merge conflict indicator in the status bar
     /// that offers to resolve conflicts using the agent.
     ///
