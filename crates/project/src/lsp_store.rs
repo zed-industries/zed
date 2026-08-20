@@ -2769,7 +2769,7 @@ impl LocalLspStore {
             self.lsp_tree
                 .get(path, language.name(), language.manifest(), &delegate, cx)
         {
-            let server_and_adapter =
+            let Some((server, adapter)) =
                 self.language_servers
                     .get(&server_id)
                     .and_then(|server_state| {
@@ -2781,10 +2781,9 @@ impl LocalLspStore {
                         } else {
                             None
                         }
-                    });
-            let (server, adapter) = match server_and_adapter {
-                Some(server_and_adapter) => server_and_adapter,
-                None => continue,
+                    })
+            else {
+                continue;
             };
 
             buffer_handle.update(cx, |buffer, cx| {
