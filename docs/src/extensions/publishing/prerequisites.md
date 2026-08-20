@@ -11,7 +11,7 @@ Note that maintainers will raise non-compliance during the publishing process. S
 
 ## General Requirements
 
-- Test your extension locally at the submodule commit you are submitting.
+- Test your extension within Zed manually at the submodule commit you are submitting.
 - Publish functionality that is not already available in the extension registry.
   - If you face issues with an existing extension, first try contributing to the existing extension. See the [FAQ](./faq.md#reporting-issues-and-improvements) for more details on this requirement.
 - Do not misuse the extension API to work around its current limitations.
