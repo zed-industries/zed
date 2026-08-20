@@ -35,6 +35,7 @@ pub(crate) fn generate_register_action(type_name: &Ident) -> TokenStream2 {
                         deprecated_aliases: <#type_name as gpui::Action>::deprecated_aliases(),
                         deprecation_message: <#type_name as gpui::Action>::deprecation_message(),
                         documentation: <#type_name as gpui::Action>::documentation(),
+                        keywords: <#type_name as gpui::Action>::keywords(),
                     }
                 }
 
