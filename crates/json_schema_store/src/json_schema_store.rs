@@ -316,19 +316,8 @@ async fn resolve_dynamic_schema(
                 .chain(languages.available_lsp_adapter_names())
                 .map(|name| name.to_string())
                 .collect();
-
-            let mut i = 0;
-            while i < lsp_adapter_names.len() {
-                let mut j = i + 1;
-                while j < lsp_adapter_names.len() {
-                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
-                        lsp_adapter_names.swap_remove(j);
-                    } else {
-                        j += 1;
-                    }
-                }
-                i += 1;
-            }
+            lsp_adapter_names.sort_unstable();
+            lsp_adapter_names.dedup();
 
             cx.update(|cx| {
                 let font_names = &cx.text_system().all_font_names();
@@ -381,19 +370,8 @@ async fn resolve_dynamic_schema(
                 .chain(languages.available_lsp_adapter_names())
                 .map(|name| name.to_string())
                 .collect();
-
-            let mut i = 0;
-            while i < lsp_adapter_names.len() {
-                let mut j = i + 1;
-                while j < lsp_adapter_names.len() {
-                    if lsp_adapter_names[i] == lsp_adapter_names[j] {
-                        lsp_adapter_names.swap_remove(j);
-                    } else {
-                        j += 1;
-                    }
-                }
-                i += 1;
-            }
+            lsp_adapter_names.sort_unstable();
+            lsp_adapter_names.dedup();
 
             let language_names = &languages
                 .language_names()

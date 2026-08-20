@@ -41,6 +41,7 @@ use std::{
     fmt,
     ops::ControlFlow,
     path::PathBuf,
+    rc::Rc,
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
@@ -341,6 +342,12 @@ pub enum RemoteClientEvent {
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
+
+/// A callback invoked whenever a remote client is created, allowing other
+/// subsystems to react to new remote connections.
+pub struct OnRemoteClientCreated(pub Rc<dyn Fn(Entity<RemoteClient>, &mut App)>);
+
+impl Global for OnRemoteClientCreated {}
 
 /// Identifies the socket on the remote server so that reconnects
 /// can re-join the same project.

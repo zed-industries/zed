@@ -107,10 +107,6 @@ impl HeadlessExtensionStore {
             }
 
             if extensions_changed {
-                // Notify listeners (e.g. the JSON schema store) that the set of
-                // loaded extensions may have changed, so that cached schemas are
-                // regenerated. This mirrors the local `ExtensionStore`, which
-                // emits the same event after every extension load.
                 this.update(cx, |_, cx| notify_extensions_changed(cx))
                     .log_err();
             }
@@ -297,9 +293,6 @@ impl HeadlessExtensionStore {
 
             Self::load_extension(this.clone(), extension, cx).await?;
 
-            // The extension was loaded after the initial sync, so notify
-            // listeners (e.g. the JSON schema store) that the set of loaded
-            // extensions has changed, so that cached schemas are regenerated.
             this.update(cx, |_, cx| notify_extensions_changed(cx))
                 .log_err();
 

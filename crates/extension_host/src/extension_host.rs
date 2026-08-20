@@ -42,11 +42,12 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::RemoteClient;
+use remote::{OnRemoteClientCreated, RemoteClient};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{SemanticTokenRules, Settings, SettingsStore};
 use std::ops::RangeInclusive;
+use std::rc::Rc;
 use std::str::FromStr;
 use std::sync::LazyLock;
 use std::{
@@ -289,6 +290,12 @@ pub fn init(
     });
 
     cx.set_global(GlobalExtensionStore(store));
+
+    cx.set_global(OnRemoteClientCreated(Rc::new(|client, cx| {
+        if let Some(store) = ExtensionStore::try_global(cx) {
+            store.update(cx, |store, cx| store.register_remote_client(client, cx));
+        }
+    })));
 }
 
 impl ExtensionStore {
