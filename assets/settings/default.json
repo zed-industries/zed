@@ -1277,6 +1277,14 @@
     //
     // Example: "terminal_init_command": "claude"
     "terminal_init_command": "",
+    // Maximum size in bytes of a terminal tool command's output that is sent
+    // to the agent, when the command didn't request specific head/tail lines.
+    // Output beyond this limit is truncated. Larger values give the agent
+    // more context from verbose commands, but use more of the model's context
+    // window per tool call.
+    //
+    // Default: 16384
+    "terminal_output_limit": 16384,
     // How thinking blocks should be displayed by default in the agent panel.
     //
     // Default: auto

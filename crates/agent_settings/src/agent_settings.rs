@@ -23,6 +23,11 @@ use settings::{
 };
 use util::ResultExt as _;
 
+/// Default size in bytes of a terminal tool command's output sent to the agent
+/// when no head/tail line selection was requested. Overridable via the
+/// `terminal_output_limit` agent setting.
+pub const DEFAULT_TERMINAL_OUTPUT_LIMIT: u64 = 16 * 1024;
+
 pub use crate::agent_profile::*;
 pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
@@ -242,6 +247,7 @@ pub struct AgentSettings {
     pub show_merge_conflict_indicator: bool,
     pub tool_permissions: ToolPermissions,
     pub sandbox_permissions: SandboxPermissions,
+    pub terminal_output_limit: u64,
 }
 
 impl AgentSettings {
@@ -818,6 +824,9 @@ impl Settings for AgentSettings {
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
             tool_permissions: compile_tool_permissions(agent.tool_permissions),
             sandbox_permissions: compile_sandbox_permissions(agent.sandbox_permissions),
+            terminal_output_limit: agent
+                .terminal_output_limit
+                .unwrap_or(DEFAULT_TERMINAL_OUTPUT_LIMIT),
         }
     }
 }
@@ -994,6 +1003,33 @@ mod tests {
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
     use std::path::PathBuf;
+
+    #[gpui::test]
+    fn test_terminal_output_limit_defaults(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            let settings = AgentSettings::get_global(cx);
+            assert_eq!(
+                settings.terminal_output_limit,
+                DEFAULT_TERMINAL_OUTPUT_LIMIT
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_terminal_output_limit_user_override(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::test(cx);
+            store.update_user_settings(cx, |content| {
+                let agent = content.agent.get_or_insert_with(Default::default);
+                agent.terminal_output_limit = Some(4096);
+            });
+            cx.set_global(store);
+            let settings = AgentSettings::get_global(cx);
+            assert_eq!(settings.terminal_output_limit, 4096);
+        });
+    }
 
     #[test]
     fn test_parse_auto_compact_threshold() {
