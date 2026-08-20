@@ -11,6 +11,7 @@ import argparse
 import os
 import time
 from datetime import datetime, timedelta, timezone
+from functools import cache
 
 import requests
 
@@ -161,47 +162,11 @@ def fetch_open_pull_requests():
         cursor = page["pageInfo"]["endCursor"]
 
 
-def fetch_pull_request(number):
-    data = github_graphql(
-        """
-        query($owner: String!, $repo: String!, $number: Int!) {
-          repository(owner: $owner, name: $repo) {
-            pullRequest(number: $number) {
-              number
-              state
-              isDraft
-              createdAt
-              author { __typename login }
-              labels(first: 100) { nodes { name } }
-              commits(last: 1) {
-                nodes {
-                  commit { pushedDate committedDate }
-                }
-              }
-              timelineItems(
-                last: 20,
-                itemTypes: [CONVERT_TO_DRAFT_EVENT, READY_FOR_REVIEW_EVENT]
-              ) {
-                nodes {
-                  __typename
-                  ... on ConvertToDraftEvent { createdAt }
-                  ... on ReadyForReviewEvent { createdAt }
-                }
-              }
-            }
-          }
-        }
-        """,
-        {"owner": REPO_OWNER, "repo": REPO_NAME, "number": number},
-    )
-    return data["repository"]["pullRequest"]
-
-
+@cache
 def fetch_comments(number):
     return github_rest_get_paginated(
         f"repos/{REPO_OWNER}/{REPO_NAME}/issues/{number}/comments"
     )
-
 
 
 def post_comment(number, body, dry_run):
@@ -269,37 +234,40 @@ def latest_draft_activity_at(pull_request):
 
 
 def latest_marker_comment_at(comments, marker, not_before=None):
-    timestamps = [
-        parse_datetime(comment["created_at"])
-        for comment in comments
-        if marker in (comment.get("body") or "")
-        and (
-            not_before is None
-            or parse_datetime(comment["created_at"]) >= not_before
-        )
-    ]
-    return max(timestamps, default=None)
+    latest_timestamp = None
+    for comment in comments:
+        if marker not in (comment.get("body") or ""):
+            continue
+        timestamp = parse_datetime(comment["created_at"])
+        if not_before is not None and timestamp < not_before:
+            continue
+        if latest_timestamp is None or timestamp > latest_timestamp:
+            latest_timestamp = timestamp
+    return latest_timestamp
 
 
-def draft_action(pull_request, comments, now):
-    activity_at = latest_draft_activity_at(pull_request)
-    if activity_at is None:
-        return None
+def find_stale_drafts(pull_requests, now):
+    stale_drafts = []
+    for pull_request in pull_requests:
+        activity_at = latest_draft_activity_at(pull_request)
+        if activity_at is not None and now - activity_at >= DRAFT_WARNING_AFTER:
+            stale_drafts.append((pull_request, activity_at))
+    return stale_drafts
 
+
+def draft_action(activity_at, comments, now):
+    # A previous run may have posted the explanation but failed to close the PR.
     if latest_marker_comment_at(comments, DRAFT_CLOSE_MARKER, activity_at):
-        return "close"
+        return None, True
 
     warning_at = latest_marker_comment_at(
         comments, DRAFT_WARNING_MARKER, activity_at
     )
     if warning_at is not None:
         if now - warning_at >= DRAFT_CLOSE_AFTER_WARNING:
-            return "close"
+            return DRAFT_CLOSE_COMMENT, True
         return None
-
-    if now - activity_at >= DRAFT_WARNING_AFTER:
-        return "warn"
-    return None
+    return DRAFT_WARNING_COMMENT, False
 
 
 def is_bare_cla_check(comment_body):
@@ -327,26 +295,19 @@ def latest_cla_retry_at(comments):
     )
 
 
-def cla_action(pull_request, comments, now):
-    if pull_request.get("state") != "OPEN":
-        return None
-    if now - parse_datetime(pull_request["createdAt"]) < CLA_RETRY_AFTER:
-        return None
-
-    author = pull_request.get("author") or {}
-    if author.get("__typename") != "User" or not author.get("login"):
-        return None
-    if CLA_SIGNED_LABEL in label_names(pull_request):
-        return None
-    if author_has_comment_other_than_cla_check(comments, author["login"]):
+def cla_action(author, comments, now):
+    if author_has_comment_other_than_cla_check(comments, author):
         return None
 
     retry_at = latest_cla_retry_at(comments)
     if retry_at is None:
-        return "retry"
-    if now - retry_at >= CLA_CLOSE_AFTER_RETRY:
-        return "close"
-    return None
+        return CLA_RETRY_COMMENT, False
+    if now - retry_at < CLA_CLOSE_AFTER_RETRY:
+        return None
+    # A previous run may have posted the explanation but failed to close the PR.
+    if latest_marker_comment_at(comments, CLA_CLOSE_MARKER) is not None:
+        return None, True
+    return CLA_CLOSE_COMMENT, True
 
 
 def needs_cla_follow_up(pull_request, now):
@@ -364,47 +325,41 @@ def retry_or_close_unsigned_pull_requests(pull_requests, now, dry_run):
     for pull_request in pull_requests:
         number = pull_request["number"]
         comments = fetch_comments(number)
-        action = cla_action(pull_request, comments, now)
-        if action == "retry":
-            print(f"PR #{number}: asking the CLA bot to check again")
-            post_comment(number, CLA_RETRY_COMMENT, dry_run)
-        elif action == "close":
+        action = cla_action(pull_request["author"]["login"], comments, now)
+        if action is None:
+            continue
+        comment, should_close = action
+        if should_close:
             print(f"PR #{number}: closing because the CLA is unsigned")
-            if latest_marker_comment_at(comments, CLA_CLOSE_MARKER) is None:
-                post_comment(number, CLA_CLOSE_COMMENT, dry_run)
+            if comment is not None:
+                post_comment(number, comment, dry_run)
             close_pull_request(number, dry_run)
             closed += 1
+        else:
+            print(f"PR #{number}: asking the CLA bot to check again")
+            post_comment(number, comment, dry_run)
     return closed
 
 
-def warn_or_close_stale_draft_pull_requests(pull_requests, now, dry_run):
+def warn_or_close_stale_draft_pull_requests(stale_drafts, now, dry_run):
     warned = closed = 0
-    for pull_request in pull_requests:
+    for pull_request, activity_at in stale_drafts:
         number = pull_request["number"]
-        activity_at = latest_draft_activity_at(pull_request)
-        if activity_at is None or now - activity_at < DRAFT_WARNING_AFTER:
-            continue
-
-        fresh_pull_request = fetch_pull_request(number)
-        if fresh_pull_request is None:
-            continue
         comments = fetch_comments(number)
-        action = draft_action(fresh_pull_request, comments, now)
-
-        if action == "warn":
-            print(f"PR #{number}: warning about a stale draft")
-            post_comment(number, DRAFT_WARNING_COMMENT, dry_run)
-            warned += 1
-        elif action == "close":
+        action = draft_action(activity_at, comments, now)
+        if action is None:
+            continue
+        comment, should_close = action
+        if should_close:
             print(f"PR #{number}: closing a stale draft")
-            if latest_marker_comment_at(
-                comments,
-                DRAFT_CLOSE_MARKER,
-                latest_draft_activity_at(fresh_pull_request),
-            ) is None:
-                post_comment(number, DRAFT_CLOSE_COMMENT, dry_run)
+            if comment is not None:
+                post_comment(number, comment, dry_run)
             close_pull_request(number, dry_run)
             closed += 1
+        else:
+            print(f"PR #{number}: warning about a stale draft")
+            post_comment(number, comment, dry_run)
+            warned += 1
     return warned, closed
 
 
@@ -424,7 +379,7 @@ def run(now, dry_run):
         dry_run,
     )
     draft_warned, draft_closed = warn_or_close_stale_draft_pull_requests(
-        pull_requests, now, dry_run
+        find_stale_drafts(pull_requests, now), now, dry_run
     )
     print(
         "Cleanup complete: "
