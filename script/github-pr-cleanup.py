@@ -385,33 +385,26 @@ def warn_or_close_stale_draft_pull_requests(pull_requests, now, dry_run):
         if activity_at is None or now - activity_at < DRAFT_WARNING_AFTER:
             continue
 
-        comments = fetch_comments(number)
-        action = draft_action(pull_request, comments, now)
-        if action is None:
-            continue
-
         fresh_pull_request = fetch_pull_request(number)
-        fresh_comments = fetch_comments(number)
         if fresh_pull_request is None:
             continue
-        fresh_action = draft_action(fresh_pull_request, fresh_comments, now)
+        comments = fetch_comments(number)
+        action = draft_action(fresh_pull_request, comments, now)
 
-        if action == "warn" and fresh_action == "warn":
+        if action == "warn":
             print(f"PR #{number}: warning about a stale draft")
             post_comment(number, DRAFT_WARNING_COMMENT, dry_run)
             warned += 1
-        elif action == "close" and fresh_action == "close":
+        elif action == "close":
             print(f"PR #{number}: closing a stale draft")
             if latest_marker_comment_at(
-                fresh_comments,
+                comments,
                 DRAFT_CLOSE_MARKER,
                 latest_draft_activity_at(fresh_pull_request),
             ) is None:
                 post_comment(number, DRAFT_CLOSE_COMMENT, dry_run)
             close_pull_request(number, dry_run)
             closed += 1
-        else:
-            print(f"PR #{number}: draft activity changed before action, skipping")
     return warned, closed
 
 
