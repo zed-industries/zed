@@ -385,7 +385,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -417,7 +417,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -448,7 +448,10 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    movement::next_word_end(map, head, false),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -474,7 +477,10 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    movement::next_word_end(map, head, false),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -2294,6 +2300,11 @@ impl Editor {
         pane.update(cx, |pane, cx| {
             if allow_preview && !was_existing {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+                editor.update(cx, |editor, cx| {
+                    editor
+                        .buffer
+                        .update(cx, |buffer, cx| buffer.refresh_preview(cx))
+                });
             }
             if was_existing && !allow_preview {
                 pane.unpreview_item_if_preview(item.item_id());
@@ -2361,7 +2372,7 @@ impl Editor {
         })
     }
 
-    fn go_to_definition_of_kind(
+    pub(crate) fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
         split: bool,
