@@ -382,6 +382,12 @@ pub struct ToggleCommandPattern {
 #[serde(deny_unknown_fields)]
 pub struct NewThread;
 
+/// Creates a new conversation thread seeded with the current editor or terminal selection.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewThreadWithSelection;
+
 /// Creates a new external agent conversation thread.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
@@ -507,6 +513,10 @@ pub enum AgentInitialContent {
         auto_submit: bool,
     },
     FromExternalSource(ExternalSourcePrompt),
+    /// A selection resolved before the thread existed. It is applied once the
+    /// thread's message editor is built, which is the earliest point at which
+    /// the mention can be registered.
+    Selection(crate::completion_provider::AgentContextSelection),
 }
 
 impl From<ExternalSourcePrompt> for AgentInitialContent {

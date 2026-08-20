@@ -598,6 +598,9 @@ pub struct ConversationView {
     thread_store: Option<Entity<ThreadStore>>,
     pub(crate) thread_id: ThreadId,
     pub(crate) root_session_id: Option<acp::SessionId>,
+    /// Retained across connection and authentication retries until the first
+    /// thread view consumes it.
+    pending_initial_content: Option<AgentInitialContent>,
     server_state: ServerState,
     focus_handle: FocusHandle,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -868,6 +871,7 @@ impl ConversationView {
             thread_store,
             thread_id,
             root_session_id: resume_session_id.clone(),
+            pending_initial_content: initial_content,
             server_state: Self::initial_state(
                 agent.clone(),
                 connection_store,
@@ -876,7 +880,6 @@ impl ConversationView {
                 work_dirs,
                 title,
                 project,
-                initial_content,
                 source,
                 window,
                 cx,
@@ -1003,7 +1006,6 @@ impl ConversationView {
             work_dirs,
             title,
             self.project.clone(),
-            None,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -1028,7 +1030,6 @@ impl ConversationView {
         work_dirs: Option<PathList>,
         title: Option<SharedString>,
         project: Entity<Project>,
-        initial_content: Option<AgentInitialContent>,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1172,6 +1173,7 @@ impl ConversationView {
                             conversation
                         });
 
+                        let initial_content = this.pending_initial_content.take();
                         let current = this.new_thread_view(
                             thread,
                             conversation.clone(),
@@ -4755,8 +4757,19 @@ pub(crate) mod tests {
         init_test(cx);
 
         let connection = AuthGatedAgentConnection::new();
-        let (conversation_view, cx) =
-            setup_conversation_view(StubAgentServer::new(connection), cx).await;
+        let initial_prompt = "Continue with this context";
+        let initial_content = AgentInitialContent::ContentBlock {
+            blocks: vec![acp::ContentBlock::Text(acp::TextContent::new(
+                initial_prompt,
+            ))],
+            auto_submit: false,
+        };
+        let (conversation_view, cx) = setup_conversation_view_with_initial_content(
+            StubAgentServer::new(connection),
+            initial_content,
+            cx,
+        )
+        .await;
 
         // When new_session returns AuthRequired, the server should transition
         // to Connected + Unauthenticated rather than getting stuck in Loading.
@@ -4835,6 +4848,11 @@ pub(crate) mod tests {
             assert!(
                 active.read(cx).thread_error.is_none(),
                 "The new thread should have no errors"
+            );
+            assert_eq!(
+                active.read(cx).message_editor.read(cx).text(cx),
+                initial_prompt,
+                "initial content should survive authentication and seed the new thread"
             );
         });
 

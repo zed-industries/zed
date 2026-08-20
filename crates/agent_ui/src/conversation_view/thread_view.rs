@@ -847,6 +847,9 @@ impl ThreadView {
                             cx,
                         );
                     }
+                    AgentInitialContent::Selection(selection) => {
+                        editor.insert_selections(selection, window, cx);
+                    }
                 }
             } else if let Some(draft) = thread.read(cx).draft_prompt() {
                 editor.set_message(draft.to_vec(), window, cx);

@@ -42,7 +42,7 @@ use crate::AgentPanel;
 use crate::mention_set::MentionSet;
 
 #[derive(Clone)]
-pub(crate) enum AgentContextSelection {
+pub enum AgentContextSelection {
     Editor(Vec<(Entity<Buffer>, Range<text::Anchor>)>),
     Terminal(Vec<String>),
 }
