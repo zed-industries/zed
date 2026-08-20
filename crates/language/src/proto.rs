@@ -442,9 +442,9 @@ pub fn deserialize_diagnostics(
             } else {
                 None
             };
-            Some(DiagnosticEntry {
-                range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
-                diagnostic: Diagnostic {
+            Some(DiagnosticEntry::new(
+                deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
+                Diagnostic {
                     source: diagnostic.source,
                     severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
                         proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
@@ -474,7 +474,7 @@ pub fn deserialize_diagnostics(
                     },
                     data,
                 },
-            })
+            ))
         })
         .collect()
 }
