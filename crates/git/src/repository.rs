@@ -1411,7 +1411,38 @@ impl GitRepository for RealGitRepository {
             );
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let changes = parse_git_diff_raw(&show_stdout);
+            let changes_primary = parse_git_diff_raw(&show_stdout);
+
+            // If this is a stash commit with a 3rd parent (stash^3), it contains untracked files.
+            let untracked_commit = format!("{commit}^3");
+            let untracked_output = git
+                .build_command(&[
+                    "show",
+                    "--format=",
+                    "-z",
+                    "--no-renames",
+                    "--raw",
+                    "--no-abbrev",
+                ])
+                .arg(&untracked_commit)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await;
+
+            let untracked_stdout = untracked_output
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| String::from_utf8_lossy(&output.stdout).to_string());
+
+            let changes = changes_primary.chain(
+                untracked_stdout
+                    .as_deref()
+                    .map(parse_git_diff_raw)
+                    .into_iter()
+                    .flatten(),
+            );
 
             let mut cat_file_process = git
                 .build_command(&["cat-file", "--batch=%(objectsize)"])

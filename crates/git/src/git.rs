@@ -67,6 +67,8 @@ actions!(
         StageFile,
         /// Unstages the current file.
         UnstageFile,
+        /// Stashes changes for the selected file or directory.
+        StashFile,
         // per-section
         /// Stages every entry in the section containing the selected entry.
         StageSection,
