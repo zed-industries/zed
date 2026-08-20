@@ -1545,7 +1545,7 @@ impl TaskStatus {
 }
 
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
-const FIND_HYPERLINK_THROTTLE_MS: Duration = Duration::from_millis(100);
+const FIND_HYPERLINK_THROTTLE: Duration = Duration::from_millis(100);
 
 /// Minimum pointer movement before a left click begins a selection. This keeps
 /// a click that jitters by a pixel or two (such as the window-focusing click)
@@ -2460,7 +2460,7 @@ impl Terminal {
                     + (position.y - last_pos.y).abs())
                     > FIND_HYPERLINK_THROTTLE_PX;
                 let time_elapsed =
-                    now.duration_since(self.last_mouse_move_time) > FIND_HYPERLINK_THROTTLE_MS;
+                    now.duration_since(self.last_mouse_move_time) > FIND_HYPERLINK_THROTTLE;
                 distance_moved || time_elapsed
             });
 
