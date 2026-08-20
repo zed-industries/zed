@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, session_alias};
 
 /// Spawn a sub-agent for a well-scoped task.
 ///
@@ -93,7 +93,7 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
                 output,
                 session_info: _, // Don't show this to the model
             } => serde_json::to_string(
-                &serde_json::json!({ "session_id": session_id, "output": output }),
+                &serde_json::json!({ "session_id": session_alias(&session_id), "output": output }),
             )
             .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
             .into(),
@@ -102,7 +102,7 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
                 error,
                 session_info: _, // Don't show this to the model
             } => serde_json::to_string(
-                &serde_json::json!({ "session_id": session_id, "error": error }),
+                &serde_json::json!({ "session_id": session_id.as_ref().map(session_alias), "error": error }),
             )
             .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
             .into(),
@@ -241,7 +241,7 @@ impl AgentTool for SpawnAgentTool {
             })?;
 
             event_stream.report_non_blocking_identity(serde_json::json!({
-                "session_id": session_info.session_id,
+                "session_id": session_alias(&session_info.session_id),
             }));
 
             let send_result = subagent.send(input.message, cx).await;

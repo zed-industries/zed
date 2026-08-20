@@ -3947,12 +3947,11 @@ impl Thread {
     /// fixed prefix and a random-looking suffix, so it stands out in the
     /// model's context and is unlikely to collide with anything else in it.
     fn fresh_async_tool_call_id(&self) -> SharedString {
-        const CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         loop {
             let bytes = Uuid::new_v4().into_bytes();
             let suffix: String = bytes[..3]
                 .iter()
-                .map(|byte| CHARSET[*byte as usize % CHARSET.len()] as char)
+                .map(|byte| SHORT_ID_CHARSET[*byte as usize % SHORT_ID_CHARSET.len()] as char)
                 .collect();
             let id = SharedString::from(format!("a~{suffix}"));
             let in_flight = self
@@ -5145,6 +5144,9 @@ enum CompactionInsertion {
     Manual { marker_id: ClientUserMessageId },
 }
 
+/// Charset for short, distinctive runtime ids (e.g. `a~K4u`, `s~t93`).
+const SHORT_ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
 /// Splits the runtime-managed `blocking` flag out of a tool call's input.
 /// Tools never see the property; absent or malformed values mean blocking.
 fn split_blocking_flag(mut input: serde_json::Value) -> (serde_json::Value, bool) {
@@ -5154,6 +5156,28 @@ fn split_blocking_flag(mut input: serde_json::Value) -> (serde_json::Value, bool
         .and_then(|value| value.as_bool())
         .unwrap_or(true);
     (input, blocking)
+}
+
+/// Short, token-efficient alias for a subagent session id (e.g. `s~t93`),
+/// deterministically derived from the session id (FNV-1a) so it needs no
+/// mapping table and stays stable across restarts. Presented to the model
+/// wherever a session reference is useful (non-blocking spawn placeholders,
+/// spawn_agent output); resolved back to the real session id wherever a
+/// `session_id` is accepted.
+pub(crate) fn session_alias(session_id: &acp::SessionId) -> SharedString {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for byte in session_id.to_string().bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    let mut alias = String::from("s~");
+    for _ in 0..3 {
+        alias.push(SHORT_ID_CHARSET[(hash % SHORT_ID_CHARSET.len() as u64) as usize] as char);
+        hash /= SHORT_ID_CHARSET.len() as u64;
+    }
+    SharedString::from(alias)
 }
 
 /// Builds the user message content carrying a finished non-blocking tool

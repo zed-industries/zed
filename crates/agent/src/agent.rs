@@ -840,6 +840,21 @@ impl NativeAgent {
         acp_thread
     }
 
+    /// Resolves a short session alias (`s~…`, see [`session_alias`]) back to
+    /// the real session id. Unknown aliases and full session ids pass through
+    /// unchanged.
+    fn resolve_session_id(&self, session_id: &acp::SessionId) -> acp::SessionId {
+        let session_id_string = session_id.to_string();
+        if !session_id_string.starts_with("s~") {
+            return session_id.clone();
+        }
+        self.sessions
+            .keys()
+            .find(|id| session_alias(id).as_ref() == session_id_string)
+            .cloned()
+            .unwrap_or_else(|| session_id.clone())
+    }
+
     pub fn models(&self) -> &LanguageModels {
         &self.models
     }
@@ -3170,6 +3185,7 @@ impl NativeThreadEnvironment {
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, _cx| {
+            let session_id = agent.resolve_session_id(&session_id);
             let session = agent
                 .sessions
                 .get(&session_id)
@@ -3337,9 +3353,10 @@ impl ThreadEnvironment for NativeThreadEnvironment {
             anyhow::bail!("Parent thread no longer exists".to_string());
         };
         let (subagent_thread, entry_count) = self.agent.update(cx, |agent, cx| {
+            let resolved_session_id = agent.resolve_session_id(&session_id);
             let session = agent
                 .sessions
-                .get(&session_id)
+                .get(&resolved_session_id)
                 .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
             let entry_count = session.acp_thread.read(cx).entries().len();
             anyhow::Ok((session.thread.clone(), entry_count))
