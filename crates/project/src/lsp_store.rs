@@ -8113,7 +8113,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> HashMap<Range<BufferRow>, Task<Result<CacheInlayHints>>> {
         let next_hint_id = self.next_hint_id.clone();
-        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
+        let capability_probe = InlayHints {
+            range: text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()),
+        };
+        let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
         let lsp_data = self.latest_lsp_data(&buffer, cx);
         let query_version = lsp_data.buffer_version.clone();
         if let InvalidationStrategy::RefreshRequested { server_id } = invalidate {
@@ -9866,45 +9869,20 @@ impl LspStore {
         })
     }
 
-    fn local_lsp_servers_for_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Vec<LanguageServerId> {
-        let Some(local) = self.as_local() else {
-            return Vec::new();
-        };
-
-        let snapshot = buffer.read(cx).snapshot();
-
-        buffer.update(cx, |buffer, cx| {
-            local
-                .language_servers_for_buffer(buffer, cx)
-                .map(|(_, server)| server.server_id())
-                .filter(|server_id| {
-                    self.as_local().is_none_or(|local| {
-                        local
-                            .buffers_opened_in_servers
-                            .get(&snapshot.remote_id())
-                            .is_some_and(|servers| servers.contains(server_id))
-                    })
-                })
-                .collect()
-        })
-    }
-
-    fn local_language_server_ids_for_request<R>(
+    fn language_server_ids_for_request<R>(
         &self,
         buffer: &Entity<Buffer>,
         request: &R,
         cx: &mut App,
-    ) -> Option<HashSet<LanguageServerId>>
+    ) -> HashSet<LanguageServerId>
     where
         R: LspCommand,
     {
-        let local = self.as_local()?;
+        let Some(local) = self.as_local() else {
+            return self.relevant_server_ids_for_capability_check(buffer, cx);
+        };
         let buffer_id = buffer.read(cx).remote_id();
-        Some(buffer.update(cx, |buffer, cx| {
+        buffer.update(cx, |buffer, cx| {
             local
                 .language_servers_for_buffer(buffer, cx)
                 .filter(|(adapter, server)| {
@@ -9918,7 +9896,7 @@ impl LspStore {
                         .is_some_and(|servers| servers.contains(server_id))
                 })
                 .collect()
-        }))
+        })
     }
 
     fn request_multiple_lsp_locally<P, R>(

@@ -10,7 +10,7 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, ReadGlobal as _, SharedString, Task};
 use language::{Buffer, LanguageName, language_settings::all_language_settings};
-use lsp::{AdapterServerCapabilities, LanguageServerId};
+use lsp::LanguageServerId;
 use rpc::{TypedEnvelope, proto};
 use settings::{
     DefaultSemanticTokenRules, SemanticTokenRule, SemanticTokenRules, Settings as _, SettingsStore,
@@ -88,7 +88,8 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> SemanticTokensTask {
         let version_queried_for = buffer.read(cx).version();
-        let current_servers = self.relevant_server_ids_for_capability_check(&buffer, cx);
+        let capability_probe = SemanticTokensFull { for_server: None };
+        let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
         let mut refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
@@ -296,61 +297,50 @@ impl LspStore {
                 Some(tokens)
             })
         } else {
+            let full_request = SemanticTokensFull { for_server: None };
             let token_tasks = self
-                .local_lsp_servers_for_buffer(&buffer, cx)
+                .language_server_ids_for_request(buffer, &full_request, cx)
                 .into_iter()
                 .filter(|&server_id| {
                     for_server.is_none_or(|for_server_id| for_server_id == server_id)
                 })
-                .filter_map(|server_id| {
-                    let capabilities = AdapterServerCapabilities {
-                        server_capabilities: self.lsp_server_capabilities.get(&server_id)?.clone(),
-                        code_action_kinds: None,
-                    };
+                .map(|server_id| {
                     let request_task = match self.semantic_tokens_result_id(server_id, buffer, cx) {
                         Some(result_id) => {
                             let delta_request = SemanticTokensDelta {
                                 previous_result_id: result_id,
                             };
-                            if !delta_request.check_capabilities(capabilities.clone()) {
-                                let full_request = SemanticTokensFull {
-                                    for_server: Some(server_id),
-                                };
-                                if !full_request.check_capabilities(capabilities) {
-                                    return None;
-                                }
-
-                                self.request_lsp(
-                                    buffer.clone(),
-                                    LanguageServerToQuery::Other(server_id),
-                                    full_request,
-                                    cx,
-                                )
-                            } else {
+                            if self
+                                .language_server_ids_for_request(buffer, &delta_request, cx)
+                                .contains(&server_id)
+                            {
                                 self.request_lsp(
                                     buffer.clone(),
                                     LanguageServerToQuery::Other(server_id),
                                     delta_request,
                                     cx,
                                 )
+                            } else {
+                                self.request_lsp(
+                                    buffer.clone(),
+                                    LanguageServerToQuery::Other(server_id),
+                                    SemanticTokensFull {
+                                        for_server: Some(server_id),
+                                    },
+                                    cx,
+                                )
                             }
                         }
-                        None => {
-                            let request = SemanticTokensFull {
+                        None => self.request_lsp(
+                            buffer.clone(),
+                            LanguageServerToQuery::Other(server_id),
+                            SemanticTokensFull {
                                 for_server: Some(server_id),
-                            };
-                            if !request.check_capabilities(capabilities) {
-                                return None;
-                            }
-                            self.request_lsp(
-                                buffer.clone(),
-                                LanguageServerToQuery::Other(server_id),
-                                request,
-                                cx,
-                            )
-                        }
+                            },
+                            cx,
+                        ),
                     };
-                    Some(async move { (server_id, request_task.await) })
+                    async move { (server_id, request_task.await) }
                 })
                 .collect::<Vec<_>>();
             if token_tasks.is_empty() {
