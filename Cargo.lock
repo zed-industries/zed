@@ -22865,6 +22865,7 @@ dependencies = [
  "encoding_rs",
  "fs",
  "futures 0.3.32",
+ "futures-lite 1.13.0",
  "fuzzy",
  "git",
  "gpui",
