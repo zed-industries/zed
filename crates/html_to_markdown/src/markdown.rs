@@ -25,10 +25,8 @@ impl HandleTag for WebpageChromeRemover {
         tag: &HtmlElement,
         _writer: &mut MarkdownWriter,
     ) -> StartTagOutcome {
-        match tag.tag() {
-            "head" | "script" | "style" | "nav" | "aside" | "footer" | "form" | "svg"
-            | "iframe" | "noscript" => return StartTagOutcome::Skip,
-            _ => {}
+        if self.should_handle(tag.tag()) {
+            return StartTagOutcome::Skip;
         }
 
         StartTagOutcome::Continue
