@@ -5,8 +5,6 @@ pub use fs_watcher::requires_poll_watcher;
 use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
-#[cfg(feature = "test-support")]
-use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
@@ -1402,7 +1400,6 @@ pub struct FakeFs {
     // Use an unfair lock to ensure tests are deterministic.
     state: Arc<Mutex<FakeFsState>>,
     executor: gpui::BackgroundExecutor,
-    case_sensitive: AtomicBool,
 }
 
 #[cfg(feature = "test-support")]
@@ -1758,7 +1755,6 @@ impl FakeFs {
                 remove_dir_errors: Default::default(),
                 case_sensitive: true,
             })),
-            case_sensitive: AtomicBool::new(true),
         });
 
         executor.spawn({
@@ -1779,7 +1775,6 @@ impl FakeFs {
 
     /// Configures whether the fake filesystem reports as case-sensitive.
     pub fn set_case_sensitive(&self, case_sensitive: bool) {
-        self.case_sensitive.store(case_sensitive, Ordering::Release);
         self.state.lock().case_sensitive = case_sensitive;
     }
 
@@ -3357,7 +3352,7 @@ impl Fs for FakeFs {
     }
 
     async fn is_case_sensitive(&self) -> bool {
-        self.case_sensitive.load(Ordering::Acquire)
+        self.state.lock().case_sensitive
     }
 
     fn subscribe_to_jobs(&self) -> JobEventReceiver {
