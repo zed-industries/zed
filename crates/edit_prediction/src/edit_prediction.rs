@@ -2809,7 +2809,7 @@ impl EditPredictionStore {
         let related_files = self.context_for_project(&project, cx);
         let allow_jump = is_cloud_zeta && cx.has_flag::<EditPredictionJumpsFeatureFlag>();
         let mode = match all_language_settings(snapshot.file(), cx).edit_predictions_mode() {
-            EditPredictionsMode::Eager => PredictEditsMode::Eager,
+            EditPredictionsMode::Eager | EditPredictionsMode::InlineOnly => PredictEditsMode::Eager,
             EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
         };
 
