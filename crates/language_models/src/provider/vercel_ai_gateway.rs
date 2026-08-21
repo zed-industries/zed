@@ -520,12 +520,14 @@ async fn list_models(
             provider: PROVIDER_NAME,
             error,
         })?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response =
         client
             .send(request)
             .await
             .map_err(|error| LanguageModelCompletionError::HttpSend {
                 provider: PROVIDER_NAME,
+                host,
                 error,
             })?;
 
