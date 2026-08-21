@@ -29,7 +29,7 @@ use language::{
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "benchmarks"))]
 use gpui::AppContext as _;
 
 use rope::DimensionPair;
@@ -3356,6 +3356,137 @@ impl MultiBuffer {
 
     fn check_invariants(&self, cx: &App) {
         self.read(cx).check_invariants();
+    }
+}
+
+/// Character generator for `MultiBuffer::build_random_for_benchmarks`, vendored
+/// from `util::RandomCharIter`'s non-`SIMPLE_TEXT` branch rather than reused
+/// directly: `util::RandomCharIter` lives behind `util`'s `test-support`
+/// feature, which the `benchmarks` feature must not pull in (see this crate's
+/// `benchmarks` feature). Kept as an exact algorithmic copy, verified by
+/// `random_for_benchmarks_matches_random` in `multi_buffer_tests`, so a
+/// benchmark seed produces the same text `randomly_edit_excerpts` would have
+/// produced.
+#[cfg(any(test, feature = "benchmarks"))]
+struct BenchmarkRandomCharIter<T: rand::Rng>(T);
+
+#[cfg(any(test, feature = "benchmarks"))]
+impl<T: rand::Rng> Iterator for BenchmarkRandomCharIter<T> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use rand::seq::IndexedRandom as _;
+
+        match self.0.random_range(0..100) {
+            0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.0).copied(),
+            20..=32 => char::from_u32(self.0.random_range(('α' as u32)..('ω' as u32 + 1))),
+            33..=45 => ['✋', '✅', '❌', '❎', '⭐'].choose(&mut self.0).copied(),
+            46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.0).copied(),
+            _ => Some(self.0.random_range(b'a'..b'z' + 1).into()),
+        }
+    }
+}
+
+/// Production-faithful equivalents of `build_simple`/`build_random`, usable by
+/// production-rendering benchmarks (`crates/benchmarks`) through the narrow
+/// `benchmarks` feature instead of `test-support`. `build_simple` and
+/// `build_random` above stay `test`/`test-support`-only rather than widening
+/// their own `cfg` because `randomly_edit_excerpts` depends on
+/// `util::RandomCharIter`, which brings in `util`'s `test-support` feature.
+#[cfg(any(test, feature = "benchmarks"))]
+impl MultiBuffer {
+    pub fn build_simple_for_benchmarks(text: &str, cx: &mut gpui::App) -> Entity<Self> {
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        cx.new(|cx| Self::singleton(buffer, cx))
+    }
+
+    pub fn build_random_for_benchmarks(
+        rng: &mut impl rand::Rng,
+        cx: &mut gpui::App,
+    ) -> Entity<Self> {
+        cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+            let mutation_count = rng.random_range(1..=5);
+            multibuffer.randomly_edit_excerpts_for_benchmarks(rng, mutation_count, cx);
+            multibuffer
+        })
+    }
+
+    /// Mirrors `randomly_edit_excerpts`'s algorithm exactly, substituting
+    /// `BenchmarkRandomCharIter` for `util::RandomCharIter` as the only
+    /// test-support-only dependency it has. Kept as a separate function
+    /// rather than sharing an implementation so that a future change to the
+    /// `test-support` version (e.g. restoring `SIMPLE_TEXT` support) cannot
+    /// accidentally widen the `benchmarks` feature's dependencies; a drift
+    /// between the two is instead caught by
+    /// `random_for_benchmarks_matches_random`.
+    fn randomly_edit_excerpts_for_benchmarks(
+        &mut self,
+        rng: &mut impl rand::Rng,
+        mutation_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        use rand::prelude::*;
+        use std::env;
+
+        let max_buffers = env::var("MAX_BUFFERS")
+            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
+            .unwrap_or(5);
+
+        let mut buffers = Vec::new();
+        for _ in 0..mutation_count {
+            let snapshot = self.snapshot(cx);
+            let buffer_ids = snapshot.all_buffer_ids().collect::<Vec<_>>();
+            if buffer_ids.is_empty() || (rng.random() && buffer_ids.len() < max_buffers) {
+                let buffer_handle = if rng.random() || self.buffers.is_empty() {
+                    let text = BenchmarkRandomCharIter(&mut *rng)
+                        .take(10)
+                        .collect::<String>();
+                    buffers.push(cx.new(|cx| Buffer::local(text, cx)));
+                    buffers.last().unwrap().clone()
+                } else {
+                    self.buffers.values().choose(rng).unwrap().buffer.clone()
+                };
+
+                let buffer = buffer_handle.read(cx);
+                let buffer_snapshot = buffer.snapshot();
+                let mut next_min_start_ix = 0;
+                let ranges = (0..rng.random_range(0..5))
+                    .filter_map(|_| {
+                        if next_min_start_ix >= buffer.len() {
+                            return None;
+                        }
+                        let end_ix = buffer.clip_offset(
+                            rng.random_range(next_min_start_ix..=buffer.len()),
+                            Bias::Right,
+                        );
+                        let start_ix = buffer
+                            .clip_offset(rng.random_range(next_min_start_ix..=end_ix), Bias::Left);
+                        next_min_start_ix = buffer.text().ceil_char_boundary(end_ix + 1);
+                        Some(ExcerptRange::new(start_ix..end_ix))
+                    })
+                    .collect::<Vec<_>>();
+
+                let path_key = PathKey::for_buffer(&buffer_handle, cx);
+                self.set_merged_excerpt_ranges_for_path(
+                    path_key,
+                    buffer_handle,
+                    &buffer_snapshot,
+                    ranges,
+                    cx,
+                );
+            } else {
+                let path_key = self
+                    .snapshot
+                    .borrow()
+                    .buffers
+                    .get(&buffer_ids.choose(rng).unwrap())
+                    .unwrap()
+                    .path_key
+                    .clone();
+                self.remove_excerpts(path_key, cx);
+            }
+        }
     }
 }
 

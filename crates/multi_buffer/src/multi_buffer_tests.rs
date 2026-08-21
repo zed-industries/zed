@@ -5310,6 +5310,27 @@ fn test_new_empty_buffers_title_can_be_set(cx: &mut App) {
     assert_eq!(multibuffer.read(cx).title(cx), "Hey");
 }
 
+/// Guards `MultiBuffer::build_random_for_benchmarks` and
+/// `BenchmarkRandomCharIter` (see `multi_buffer.rs`) against drifting from
+/// `MultiBuffer::build_random`: given the same rng sequence, the two must
+/// produce byte-identical multi-buffer content, since production-rendering
+/// benchmarks rely on `build_random_for_benchmarks` to reproduce the same
+/// input shape `build_random` would have produced.
+#[gpui::test(iterations = 50)]
+fn random_for_benchmarks_matches_random(cx: &mut App, mut rng: StdRng) {
+    let production_multibuffer = MultiBuffer::build_random(&mut rng.clone(), cx);
+    let benchmark_multibuffer = MultiBuffer::build_random_for_benchmarks(&mut rng, cx);
+
+    let production_snapshot = production_multibuffer.read(cx).snapshot(cx);
+    let benchmark_snapshot = benchmark_multibuffer.read(cx).snapshot(cx);
+
+    assert_eq!(
+        production_snapshot.excerpts().count(),
+        benchmark_snapshot.excerpts().count(),
+    );
+    assert_eq!(production_snapshot.text(), benchmark_snapshot.text());
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
     let multibuffer = if rng.random() {

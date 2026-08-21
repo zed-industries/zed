@@ -85,29 +85,33 @@ for isolated_crate in agent editor language_model project; do
   fi
 done
 
-# `lsp`, `language`, and `multi_buffer` are not part of the loop below:
-# `display_map`/`editor_render`/`markdown_renderer` (the benchmarks that
-# remain in this package) directly call test-only APIs with no production
-# equivalent — `LanguageRegistry::test`, `language::rust_lang`,
-# `MultiBuffer::build_simple`/`build_random` — independent of
-# `edit_file_tool`. `language/test-support` enables both `lsp/test-support`
-# and `settings/test-support` directly, so both keep showing up transitively
-# despite `benchmarks` no longer requesting either itself. This is real,
-# tracked debt, not a gap in this script: `theme`, `util`, and `settings` are
-# the crates whose benchmark usage turned out to need no test-only API at all
+# `lsp` and `language` are not part of the loop below: `markdown_renderer`
+# (the only benchmark left that needs either) directly calls test-only APIs
+# with no production equivalent — `LanguageRegistry::test`,
+# `language::rust_lang` — independent of `edit_file_tool`. `language/
+# test-support` enables both `lsp/test-support` and `settings/test-support`
+# directly, so both keep showing up transitively despite `benchmarks` no
+# longer requesting either itself. This is real, tracked debt, not a gap in
+# this script: `theme`, `util`, `settings`, and `multi_buffer` are the crates
+# whose benchmark usage turned out to need no test-only API at all
 # (`theme::LoadThemes`, `theme_settings::init`), one narrow enough to vendor
 # into `benchmarks::bench_utils` instead (`util::RandomCharIter`, a
 # synthetic-text generator with no production analogue), or one narrow
 # enough to move behind its own dedicated feature instead of `test-support`
-# (`settings`'s `benchmarks` feature, gating `SettingsStore::benchmarks` and
-# `benchmark_settings` — see `crates/settings/src/settings_file.rs`, which
-# keeps their settings content byte-identical to `SettingsStore::test`'s so
-# switching does not change what a benchmark measures). So `benchmarks` no
-# longer needs a direct `test-support` edge to any of the three. This checks
-# only for a *direct* edge from `benchmarks` to each crate's `test-support`
-# feature, not for the feature's absence from the whole resolved graph, since
-# `language`/`multi_buffer` keep populating `settings/test-support`
-# (transitively, through `language`) until they get the same treatment.
+# (`settings`'s and `multi_buffer`'s `benchmarks` features, gating
+# `SettingsStore::benchmarks`/`benchmark_settings` and `MultiBuffer::
+# build_simple_for_benchmarks`/`build_random_for_benchmarks` respectively —
+# see `crates/settings/src/settings_file.rs` and
+# `crates/multi_buffer/src/multi_buffer.rs`, which keep their fixtures
+# byte-identical to the `test-support` versions' so switching does not change
+# what a benchmark measures). So `benchmarks` no longer needs a direct
+# `test-support` edge to any of the four. This checks only for a *direct*
+# edge from `benchmarks` to each crate's `test-support` feature, not for the
+# feature's absence from the whole resolved graph, since `language` keeps
+# populating `settings/test-support` (transitively) until it gets the same
+# treatment; `multi_buffer` is checked separately below since nothing else
+# `benchmarks` depends on populates its `test-support` feature at all
+# anymore.
 for foundational_crate in theme util settings; do
   output=$(cargo tree \
     --offline \
@@ -122,7 +126,7 @@ for foundational_crate in theme util settings; do
   # un-suffixed "test-support" feature line is where its direct dependents
   # are actually listed; checking the couple of lines after it for a
   # "benchmarks" edge is enough to catch a direct request without also
-  # matching the expected indirect one from `language`/`multi_buffer`.
+  # matching the expected indirect one from `language`.
   if echo "${output}" \
     | grep -A2 "[|\`]-- ${foundational_crate} feature \"test-support\"\$" \
     | grep --quiet 'benchmarks v'; then
@@ -145,6 +149,46 @@ output=$(cargo tree \
   --invert settings)
 if ! echo "${output}" | grep --quiet 'settings feature "benchmarks"'; then
   echo "benchmarks no longer requests settings' \"benchmarks\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# `crates/benchmarks/Cargo.toml` used to directly request `multi_buffer`'s
+# `test-support` feature, entirely to reach `MultiBuffer::build_simple`/
+# `build_random` for `display_map`/`editor_render`'s fixtures. `multi_buffer`
+# now exposes `build_simple_for_benchmarks`/`build_random_for_benchmarks`
+# behind its own narrow `benchmarks` feature instead (see
+# `crates/multi_buffer/Cargo.toml` and `crates/multi_buffer/src/
+# multi_buffer.rs`), so unlike `theme`/`util`/`settings` above, this checks
+# `multi_buffer`'s `test-support` feature is absent from `benchmarks`' whole
+# resolved graph, not just as a direct edge: nothing else `benchmarks`
+# depends on has a legitimate reason to reach it either.
+output=$(cargo tree \
+  --offline \
+  --package benchmarks \
+  --edges features \
+  --invert multi_buffer)
+if echo "${output}" | grep --quiet 'multi_buffer feature "test-support"'; then
+  echo "benchmarks pulls multi_buffer's \"test-support\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# The check above proves `benchmarks` no longer reaches `multi_buffer`'s
+# `test-support` feature; this proves `multi_buffer`'s own `benchmarks`
+# feature (which `build_simple_for_benchmarks`/`build_random_for_benchmarks`
+# live behind) doesn't itself resolve to any dependency's `test-support`,
+# the same guarantee the top of this script proves for `gpui`'s `bench`
+# feature.
+output=$(cargo tree \
+  --offline \
+  --package multi_buffer \
+  --no-default-features \
+  --features benchmarks \
+  --edges features \
+  --invert multi_buffer)
+if echo "${output}" | grep --quiet 'test-support'; then
+  echo "multi_buffer's \"benchmarks\" feature pulls in \"test-support\":"
   echo "${output}"
   exit 1
 fi

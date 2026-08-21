@@ -24,7 +24,7 @@ gpui_platform = { workspace = true, features = ["bench", "font-kit"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 markdown.workspace = true
-multi_buffer = { workspace = true, features = ["test-support"] }
+multi_buffer = { workspace = true, features = ["benchmarks"] }
 project.workspace = true
 settings = { workspace = true, features = ["benchmarks"] }
 text.workspace = true

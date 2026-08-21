@@ -19,7 +19,7 @@ fn to_tab_point_benchmark(c: &mut Criterion) {
         let text = RandomCharIter::new(&mut rng)
             .take(length)
             .collect::<String>();
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple_for_benchmarks(&text, cx));
 
         let buffer_snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
         use editor::display_map::*;
@@ -64,7 +64,7 @@ fn to_fold_point_benchmark(c: &mut Criterion) {
         let text = RandomCharIter::new(&mut rng)
             .take(length)
             .collect::<String>();
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple_for_benchmarks(&text, cx));
 
         let buffer_snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
         use editor::display_map::*;
@@ -145,7 +145,7 @@ fn create_highlight_endpoints_benchmark(c: &mut Criterion) {
         text.push_str("; }\n");
     }
 
-    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let buffer = cx.update(|cx| MultiBuffer::build_simple_for_benchmarks(&text, cx));
     let buffer_snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
     let highlight_ranges = highlight_ranges
         .into_iter()
@@ -240,7 +240,7 @@ fn highlighted_chunks_benchmark(c: &mut Criterion) {
         let text = std::iter::repeat_n(line, LINE_COUNT)
             .collect::<Vec<_>>()
             .join("\n");
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple_for_benchmarks(&text, cx));
         let map = cx.new(|cx| {
             DisplayMap::new(
                 buffer,

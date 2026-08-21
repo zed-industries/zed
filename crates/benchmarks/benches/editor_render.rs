@@ -18,7 +18,7 @@ fn editor_multi_cursor_input(line_count: &usize, cx: &mut BenchAppContext) {
     init_context(cx);
 
     let text = "line:\n".repeat(*line_count);
-    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let buffer = cx.update(|cx| MultiBuffer::build_simple_for_benchmarks(&text, cx));
 
     let mut window = cx.add_empty_window();
     let editor = window.update(|window, cx| {
@@ -70,7 +70,7 @@ fn open_editor_with_one_long_line(cx: &mut BenchAppContext) {
 
     let text = String::from_iter(["char"; 1000]);
     cx.bench_iter(move |cx| {
-        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let buffer = cx.update(|cx| MultiBuffer::build_simple_for_benchmarks(&text, cx));
 
         let mut window = cx.add_empty_window();
         window.update(|window, cx| {
@@ -96,9 +96,9 @@ fn editor_render(cx: &mut BenchAppContext) {
             let text = RandomCharIter::new(&mut rng)
                 .take(text_len)
                 .collect::<String>();
-            MultiBuffer::build_simple(&text, cx)
+            MultiBuffer::build_simple_for_benchmarks(&text, cx)
         } else {
-            MultiBuffer::build_random(&mut rng, cx)
+            MultiBuffer::build_random_for_benchmarks(&mut rng, cx)
         }
     });
 
