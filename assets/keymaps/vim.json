@@ -379,6 +379,11 @@
       "ctrl-r": "vim::PushRegister",
       "insert": "vim::ToggleReplace",
       "ctrl-o": "vim::TemporaryNormal",
+    },
+  },
+  {
+    "context": "vim_mode == insert && os == macos",
+    "bindings": {
       "ctrl-s": "editor::ShowSignatureHelp",
     },
   },

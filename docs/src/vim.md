@@ -578,7 +578,6 @@ If you're using vim mode on Linux or Windows, you may find it overrides keybindi
     "ctrl-y": "editor::Undo",               // vim default: line up
     "ctrl-t": "project_symbols::Toggle",    // vim default: go to older tag
     "ctrl-o": "workspace::Open",            // vim default: go back
-    "ctrl-s": "workspace::Save",            // vim default: show signature
     "ctrl-b": "workspace::ToggleLeftDock"   // vim default: down
   }
 },
