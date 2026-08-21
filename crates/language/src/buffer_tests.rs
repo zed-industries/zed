@@ -3517,6 +3517,78 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_markdown_inline_entity_reference_highlighting(cx: &mut TestAppContext) {
+    let markdown_language = markdown_lang();
+    let markdown_inline_language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "markdown-inline".into(),
+                grammar: Some("markdown-inline".into()),
+                ..Default::default()
+            },
+            Some(tree_sitter_md::INLINE_LANGUAGE.into()),
+        )
+        .with_highlights_query(include_str!(
+            "../../grammars/src/markdown-inline/highlights.scm"
+        ))
+        .unwrap()
+        .with_injection_query(include_str!(
+            "../../grammars/src/markdown-inline/injections.scm"
+        ))
+        .unwrap(),
+    );
+    let syntax_theme =
+        SyntaxTheme::new([("string.special".to_string(), gpui::rgba(0xff0000ff).into())]);
+    markdown_language.set_theme(&syntax_theme);
+    markdown_inline_language.set_theme(&syntax_theme);
+    let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor.clone()));
+    language_registry.add(markdown_language.clone());
+    language_registry.add(markdown_inline_language);
+
+    let text = indoc! {"
+        Entities like &lt; &gt; &amp; &nbsp; should be highlighted.
+        But plain ampersands & and words should not.
+    "};
+    let buffer = cx.new(|cx| {
+        let mut buffer = Buffer::local(text, cx);
+        buffer.set_language_registry(language_registry);
+        buffer.set_language(Some(markdown_language), cx);
+        buffer
+    });
+
+    cx.run_until_parked();
+
+    buffer.read_with(cx, |buffer, _cx| {
+        let snapshot = buffer.snapshot();
+        let highlight_id = syntax_theme
+            .highlight_id("string.special")
+            .map(HighlightId::new);
+        assert!(highlight_id.is_some(), "string.special not in test theme");
+        let mut runs: Vec<String> = Vec::new();
+        let mut previous_chunk_matched = false;
+        let chunks = snapshot.chunks(
+            0..snapshot.len(),
+            LanguageAwareStyling {
+                tree_sitter: true,
+                diagnostics: false,
+            },
+        );
+        for chunk in chunks {
+            let chunk_matches = chunk.syntax_highlight_id == highlight_id;
+            if chunk_matches {
+                match runs.last_mut() {
+                    Some(last_run) if previous_chunk_matched => last_run.push_str(chunk.text),
+                    _ => runs.push(chunk.text.to_string()),
+                }
+            }
+            previous_chunk_matched = chunk_matches;
+        }
+
+        assert_eq!(runs, vec!["&lt;", "&gt;", "&amp;", "&nbsp;"]);
+    });
+}
+
+#[gpui::test]
 fn test_syntax_layer_at_for_combined_injections(cx: &mut App) {
     init_settings(cx, |_| {});
 

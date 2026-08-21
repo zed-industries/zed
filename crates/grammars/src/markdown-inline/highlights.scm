@@ -33,3 +33,5 @@
   (uri_autolink)
   (email_autolink)
 ] @link_uri.markup
+
+(entity_reference) @string.special
