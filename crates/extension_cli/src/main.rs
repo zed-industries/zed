@@ -419,6 +419,8 @@ enum ExtensionManifestValidationError {
     MissingName,
     #[error("extension manifest must specify a description")]
     MissingDescription,
+    #[error("extension manifest description must be more expressive than the name")]
+    DescriptionNotLongerThanName,
     #[error("extension manifest must specify at least one author")]
     MissingAuthors,
     #[error("extension manifest must specify a repository")]
@@ -445,6 +447,14 @@ fn validate_extension_manifest(
         .is_none_or(|description| description.trim().is_empty());
     if description_is_empty {
         return Err(ExtensionManifestValidationError::MissingDescription);
+    }
+
+    let description_is_longer_than_name =
+        manifest.description.as_ref().is_some_and(|description| {
+            description.trim().chars().count() > manifest.name.trim().chars().count()
+        });
+    if !description_is_longer_than_name {
+        return Err(ExtensionManifestValidationError::DescriptionNotLongerThanName);
     }
 
     if manifest
@@ -744,6 +754,30 @@ mod tests {
         assert_eq!(
             validate_extension_manifest(&manifest),
             Err(ExtensionManifestValidationError::MissingDescription),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_description_equal_to_name() {
+        let manifest = ExtensionManifest {
+            description: Some("Test Extension".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::DescriptionNotLongerThanName),
+        );
+    }
+
+    #[test]
+    fn test_validate_manifest_description_shorter_than_name() {
+        let manifest = ExtensionManifest {
+            description: Some("Test".to_string()),
+            ..valid_manifest()
+        };
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(ExtensionManifestValidationError::DescriptionNotLongerThanName),
         );
     }
 
