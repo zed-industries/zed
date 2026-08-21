@@ -215,6 +215,7 @@ fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
+    pub is_shallow_boundary: bool,
 }
 
 #[derive(Debug)]
@@ -284,7 +285,10 @@ fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
             }
         })
         .collect();
-    CommitDiff { files }
+    CommitDiff {
+        files,
+        is_shallow_boundary: diff.is_shallow_boundary,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -4371,7 +4375,10 @@ impl GitStore {
 
         let commit_diff = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.load_commit_diff(envelope.payload.commit)
+                repository_handle.load_commit_diff(
+                    envelope.payload.commit,
+                    envelope.payload.ignore_shallow_boundary,
+                )
             })
             .await??;
         Ok(proto::LoadCommitDiffResponse {
@@ -4385,6 +4392,7 @@ impl GitStore {
                     is_binary: file.is_binary,
                 })
                 .collect(),
+            is_shallow_boundary: commit_diff.is_shallow_boundary,
         })
     }
 
@@ -6980,12 +6988,16 @@ impl Repository {
         })
     }
 
-    pub fn load_commit_diff(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
+    pub fn load_commit_diff(
+        &mut self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+    ) -> oneshot::Receiver<Result<CommitDiff>> {
         let id = self.id;
         self.send_job("load_commit_diff", None, move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .load_commit(commit, cx)
+                    .load_commit(commit, ignore_shallow_boundary, cx)
                     .await
                     .map(decode_commit_diff),
                 RepositoryState::Remote(RemoteRepositoryState {
@@ -6996,6 +7008,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             commit,
+                            ignore_shallow_boundary,
                         })
                         .await?;
                     Ok(CommitDiff {
@@ -7011,6 +7024,7 @@ impl Repository {
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
+                        is_shallow_boundary: response.is_shallow_boundary,
                     })
                 }
             }

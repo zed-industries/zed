@@ -85,6 +85,7 @@ pub struct CommitView {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
+    is_shallow_boundary: bool,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -187,8 +188,32 @@ impl CommitView {
         window: &mut Window,
         cx: &mut App,
     ) {
+        Self::open_with_options(
+            commit_sha,
+            repo,
+            workspace,
+            stash,
+            file_filter,
+            false,
+            window,
+            cx,
+        )
+    }
+
+    fn open_with_options(
+        commit_sha: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        stash: Option<usize>,
+        file_filter: Option<RepoPath>,
+        ignore_shallow_boundary: bool,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
+            .update(cx, |repo, _| {
+                repo.load_commit_diff(commit_sha.clone(), ignore_shallow_boundary)
+            })
             .ok();
         let commit_details = repo
             .update(cx, |repo, _| repo.show(commit_sha.clone()))
@@ -273,6 +298,7 @@ impl CommitView {
         cx: &mut Context<Self>,
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
+        let is_shallow_boundary = commit_diff.is_shallow_boundary;
         let multibuffer = cx.new(|cx| {
             let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
             multibuffer.set_all_diff_hunks_expanded(cx);
@@ -497,8 +523,50 @@ impl CommitView {
             project,
             workspace,
             remote,
+            is_shallow_boundary,
             _load_diff_task: load_diff_task,
         }
+    }
+
+    fn render_shallow_boundary_notice(&self) -> impl IntoElement {
+        let commit_sha = self.commit.sha.to_string();
+        let repository = self.repository.downgrade();
+        let workspace = self.workspace.clone();
+        let stash = self.stash;
+        v_flex()
+            .flex_grow(1.)
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .child(
+                Label::new("This commit is at the boundary of a shallow clone.")
+                    .color(Color::Muted),
+            )
+            .child(
+                Label::new(
+                    "Its parent history was not fetched, so the changes it introduced cannot be shown.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                Button::new("load-shallow-snapshot", "Load Full Snapshot")
+                    .style(ButtonStyle::Filled)
+                    .tooltip(Tooltip::text(
+                        "Show every file at this commit as added. This can be slow in large repositories.",
+                    ))
+                    .on_click(move |_, window, cx| {
+                        Self::open_with_options(
+                            commit_sha.clone(),
+                            repository.clone(),
+                            workspace.clone(),
+                            stash,
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    }),
+            )
     }
 
     fn render_commit_avatar(
@@ -1240,6 +1308,7 @@ impl Item for CommitView {
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
+                is_shallow_boundary: self.is_shallow_boundary,
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
@@ -1260,6 +1329,9 @@ impl Render for CommitView {
                 !self.editor.read(cx).rhs_editor().read(cx).is_empty(cx),
                 |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
             )
+            .when(self.is_shallow_boundary, |this| {
+                this.child(self.render_shallow_boundary_notice())
+            })
     }
 }
 

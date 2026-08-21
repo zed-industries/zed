@@ -530,6 +530,7 @@ pub struct CommitDetails {
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
+    pub is_shallow_boundary: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -620,6 +621,28 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
         Some(_) => Ok(Some(read_commit_blob(stdout, info_line, newline).await?)),
         None => Ok(None),
     }
+}
+
+async fn is_shallow_boundary_commit(
+    git: &GitBinary,
+    shallow_file_path: &Path,
+    commit: &str,
+) -> Result<bool> {
+    let shallow_contents = match smol::fs::read_to_string(shallow_file_path).await {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).context("reading shallow file");
+        }
+    };
+
+    let oid = git
+        .run(&["rev-parse", "--verify", &format!("{commit}^{{commit}}")])
+        .await
+        .context("resolving commit for shallow boundary check")?;
+    Ok(shallow_contents
+        .lines()
+        .any(|line| line.trim() == oid.trim()))
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -878,7 +901,12 @@ pub trait GitRepository: Send + Sync {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
+    fn load_commit(
+        &self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(
         &self,
         path: RepoPath,
@@ -1384,9 +1412,24 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
+    fn load_commit(
+        &self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>> {
         let git = self.git_binary();
+        let shallow_file_path = self.common_dir.join("shallow");
         cx.background_spawn(async move {
+            if !ignore_shallow_boundary
+                && is_shallow_boundary_commit(&git, &shallow_file_path, &commit).await?
+            {
+                return Ok(CommitDiff {
+                    files: Vec::new(),
+                    is_shallow_boundary: true,
+                });
+            }
+
             let show_output = git
                 .build_command(&[
                     "show",
@@ -1475,7 +1518,10 @@ impl GitRepository for RealGitRepository {
                 })
             }
 
-            Ok(CommitDiff { files })
+            Ok(CommitDiff {
+                files,
+                is_shallow_boundary: false,
+            })
         })
         .boxed()
     }
@@ -4548,7 +4594,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "type change"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load type-changed commit");
         assert_eq!(commit_diff.files.len(), 1);
@@ -4601,7 +4647,7 @@ mod tests {
         .expect("failed to open repository");
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that adds a gitlink");
         assert_eq!(commit_diff.files.len(), 2);
@@ -4631,7 +4677,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "update submodule"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that updates a gitlink");
         let [gitlink] = commit_diff.files.as_slice() else {
@@ -4652,7 +4698,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "remove submodule"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that deletes a gitlink");
         let [gitlink] = commit_diff.files.as_slice() else {
@@ -4665,6 +4711,86 @@ mod tests {
         );
         assert_eq!(gitlink.new_content, None);
         assert!(!gitlink.is_binary);
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_shallow_boundary(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let source_dir = tempfile::tempdir().expect("failed to create source repository");
+        git_init_repo(source_dir.path());
+        fs::write(source_dir.path().join("a.txt"), "one\n").expect("failed to write a.txt");
+        git_command(source_dir.path(), ["add", "a.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "first"]);
+        fs::write(source_dir.path().join("a.txt"), "two\n").expect("failed to update a.txt");
+        fs::write(source_dir.path().join("b.txt"), "new\n").expect("failed to write b.txt");
+        git_command(source_dir.path(), ["add", "a.txt", "b.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "second"]);
+
+        let clone_dir = tempfile::tempdir().expect("failed to create clone directory");
+        git_command(
+            clone_dir.path(),
+            [
+                "clone".to_string(),
+                "--depth=1".to_string(),
+                format!("file://{}", source_dir.path().display()),
+                "shallow".to_string(),
+            ],
+        );
+
+        let repository = RealGitRepository::new(
+            &clone_dir.path().join("shallow").join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open shallow repository");
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load boundary commit");
+        assert!(commit_diff.is_shallow_boundary);
+        assert_eq!(commit_diff.files.len(), 0);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), true, cx.to_async())
+            .await
+            .expect("failed to load boundary commit snapshot");
+        assert!(!commit_diff.is_shallow_boundary);
+        let files = commit_diff
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_unix_str().to_owned(),
+                    file.old_content.clone(),
+                    file.status(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files,
+            vec![
+                ("a.txt".to_string(), None, CommitFileStatus::Added),
+                ("b.txt".to_string(), None, CommitFileStatus::Added),
+            ]
+        );
+
+        let source_repository = RealGitRepository::new(
+            &source_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open source repository");
+        let commit_diff = source_repository
+            .load_commit("HEAD~1".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load root commit");
+        assert!(!commit_diff.is_shallow_boundary);
+        assert_eq!(commit_diff.files.len(), 1);
     }
 
     #[gpui::test]
