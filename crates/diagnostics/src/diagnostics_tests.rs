@@ -1514,8 +1514,18 @@ async fn test_diagnostics_views_update_when_only_markdown_changes(cx: &mut TestA
         .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
-    assert!(editor_content_with_blocks(&project_editor, cx).contains("§ `x`"));
-    assert!(editor_content_with_blocks(&buffer_editor, cx).contains("§ `x`"));
+    let expected_content = indoc! {"
+        § main.rs
+        § -----
+        x § `x`"};
+    assert_eq!(
+        editor_content_with_blocks(&project_editor, cx),
+        expected_content
+    );
+    assert_eq!(
+        editor_content_with_blocks(&buffer_editor, cx),
+        expected_content
+    );
 
     lsp_store
         .update(cx, |lsp_store, cx| {
@@ -1550,12 +1560,18 @@ async fn test_diagnostics_views_update_when_only_markdown_changes(cx: &mut TestA
         .advance_clock(DIAGNOSTICS_UPDATE_DEBOUNCE + Duration::from_millis(10));
     cx.run_until_parked();
 
-    let project_content = editor_content_with_blocks(&project_editor, cx);
-    let buffer_content = editor_content_with_blocks(&buffer_editor, cx);
-    assert!(project_content.contains("§ x"), "{project_content}");
-    assert!(buffer_content.contains("§ x"), "{buffer_content}");
-    assert!(!project_content.contains("§ `x`"), "{project_content}");
-    assert!(!buffer_content.contains("§ `x`"), "{buffer_content}");
+    let expected_content = indoc! {"
+        § main.rs
+        § -----
+        x § x"};
+    assert_eq!(
+        editor_content_with_blocks(&project_editor, cx),
+        expected_content
+    );
+    assert_eq!(
+        editor_content_with_blocks(&buffer_editor, cx),
+        expected_content
+    );
 }
 
 #[gpui::test]
