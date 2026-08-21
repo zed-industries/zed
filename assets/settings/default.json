@@ -1807,31 +1807,44 @@
     // "copilot": {
     //   "enterprise_uri": "",
     //   "proxy": "",
-    //   "proxy_no_verify": false
-    //   "enable_next_edit_suggestions": true
+    //   "proxy_no_verify": false,
+    //   "enable_next_edit_suggestions": true,
+    //   // The debounce delay in milliseconds before automatically requesting a prediction.
+    //   // Set to 0 to request predictions immediately.
+    //   "prediction_debounce": 75
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
+      "prediction_debounce": 75,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+      "prediction_debounce": 150,
     },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
     },
     "open_ai_compatible_api": {
       "api_url": "",
       "model": "",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
+    },
+    "zed": {
+      "prediction_debounce": 0,
+    },
+    "mercury": {
+      "prediction_debounce": 0,
     },
     // Controls whether Zed may collect training data when using Zed's Edit Predictions.
     // Data is only captured when the project is detected as open source.
