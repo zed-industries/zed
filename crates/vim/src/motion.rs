@@ -2624,7 +2624,9 @@ fn matching(
     let line_range = line_range.start.to_offset(&map.buffer_snapshot())
         ..line_range.end.to_offset(&map.buffer_snapshot());
 
-    if let Some(preproc_range) = find_matching_c_preprocessor_directive(map, line_range, offset) {
+    if let Some(preproc_range) =
+        find_matching_c_preprocessor_directive(map, line_range.clone(), offset)
+    {
         return preproc_range.to_display_point(map);
     }
 
@@ -2688,6 +2690,16 @@ fn matching(
                     return opening_range.start.to_display_point(map);
                 }
             }
+        }
+    }
+
+    if snapshot
+        .chars_at(offset)
+        .next()
+        .is_some_and(|ch| get_bracket_pair(ch).is_some())
+    {
+        if let Some(destination) = find_matching_bracket_text_based(map, offset, line_range) {
+            return destination.to_display_point(map);
         }
     }
 
@@ -4195,6 +4207,27 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq(indoc! {r"<Button onClick=ˇ{() => {}}></Button>"});
+    }
+
+    #[gpui::test]
+    async fn test_matching_brackets_in_tsx_strings(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_tsx(cx).await;
+
+        cx.set_state(r#"<Button title='ˇ[this]' />"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"<Button title='[thisˇ]' />"#, Mode::Normal);
+
+        cx.set_state(r#"<Button title='[thisˇ]' />"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"<Button title='ˇ[this]' />"#, Mode::Normal);
+
+        cx.set_state(r#"const value = "ˇ[this]";"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"const value = "[thisˇ]";"#, Mode::Normal);
+
+        cx.set_state(r#"const value = "[thisˇ]";"#, Mode::Normal);
+        cx.simulate_keystrokes("%");
+        cx.assert_state(r#"const value = "ˇ[this]";"#, Mode::Normal);
     }
 
     #[gpui::test]
