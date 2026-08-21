@@ -985,10 +985,7 @@ impl WindowsPlatformInner {
     }
 
     fn handle_end_session(&self) -> Option<isize> {
-        let callback = self.state.callbacks.quit.take();
-        if let Some(mut callback) = callback {
-            callback();
-        }
+        self.with_callback(|callbacks| &callbacks.quit, |callback| callback());
         unsafe { PostQuitMessage(0) };
         Some(0)
     }
