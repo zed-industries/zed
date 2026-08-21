@@ -560,10 +560,11 @@ pub async fn list_models(
         .extra_headers(extra_headers)
         .body(AsyncBody::default())
         .map_err(OpenRouterError::BuildRequestBody)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
-        .map_err(OpenRouterError::HttpSend)?;
+        .map_err(|error| OpenRouterError::HttpSend { host, error })?;
 
     let mut body = String::new();
     response
@@ -656,7 +657,7 @@ pub enum OpenRouterError {
     BuildRequestBody(http::Error),
 
     /// Failed to send the HTTP request
-    HttpSend(anyhow::Error),
+    HttpSend { host: String, error: anyhow::Error },
 
     /// Failed to deserialize the response from JSON
     DeserializeResponse(serde_json::Error),
@@ -796,7 +797,11 @@ impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError
         let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
         match error {
             OpenRouterError::BuildRequestBody(error) => Self::BuildRequestBody { provider, error },
-            OpenRouterError::HttpSend(error) => Self::HttpSend { provider, error },
+            OpenRouterError::HttpSend { host, error } => Self::HttpSend {
+                provider,
+                host,
+                error,
+            },
             OpenRouterError::DeserializeResponse(error) => {
                 Self::DeserializeResponse { provider, error }
             }
@@ -938,14 +943,18 @@ mod tests {
     fn shared_transport_errors_retain_language_model_classification() {
         let error = OpenRouterError::ChatCompletion(open_ai::RequestError::HttpSend {
             provider: "OpenRouter".to_string(),
+            host: "openrouter.ai".to_string(),
             error: anyhow!("network unavailable"),
         });
         let error = language_model_core::LanguageModelCompletionError::from(error);
 
         assert!(matches!(
             error,
-            language_model_core::LanguageModelCompletionError::HttpSend { provider, .. }
-                if provider.0 == "OpenRouter"
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                ..
+            } if provider.0 == "OpenRouter" && host == "openrouter.ai"
         ));
     }
 }
