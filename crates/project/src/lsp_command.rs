@@ -4515,7 +4515,7 @@ impl GetDocumentDiagnostics {
                 kind,
                 value: diagnostic.message,
             }),
-            None => diagnostic.message.into(),
+            None => lsp::DiagnosticMessage::from(diagnostic.message),
         };
 
         Ok(lsp::Diagnostic {
