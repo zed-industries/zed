@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::{HashMap, HashSet};
 use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
-use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
+use gpui::{Entity, MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
 use language::{BufferId, ClientCommand};
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
@@ -58,40 +58,21 @@ impl Default for CodeLensState {
     }
 }
 
-pub(super) fn try_handle_client_command(
+pub(super) fn handle_client_command(
+    client_command: ClientCommand,
     action: &CodeAction,
     editor: &mut Editor,
-    workspace: &gpui::Entity<workspace::Workspace>,
+    workspace: &Entity<workspace::Workspace>,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> bool {
-    let Some(command) = action.lsp_action.command() else {
-        return false;
-    };
-
-    let arguments = command.arguments.as_deref().unwrap_or_default();
-    let project = workspace.read(cx).project().clone();
-    let client_command = project
-        .read(cx)
-        .lsp_store()
-        .read(cx)
-        .language_server_adapter_for_id(action.server_id)
-        .and_then(|adapter| adapter.adapter.client_command(&command.command, arguments))
-        .or_else(|| match command.command.as_str() {
-            "editor.action.showReferences"
-            | "editor.action.goToLocations"
-            | "editor.action.peekLocations" => Some(ClientCommand::ShowLocations),
-            _ => None,
-        });
-
     match client_command {
-        Some(ClientCommand::ScheduleTask(task_template)) => {
+        ClientCommand::ScheduleTask(task_template) => {
             schedule_task(task_template, action, editor, workspace, window, cx)
         }
-        Some(ClientCommand::ShowLocations) => {
-            try_show_references(arguments, action, editor, window, cx)
+        ClientCommand::ShowLocations(arguments) => {
+            try_show_references(&arguments, action, editor, window, cx)
         }
-        None => false,
     }
 }
 
@@ -664,25 +645,53 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
 
                                             let action = action.clone();
                                             if let Some(workspace) = editor.workspace() {
-                                                if try_handle_client_command(
-                                                    &action, editor, &workspace, window, cx,
-                                                ) {
-                                                    return;
-                                                }
-
                                                 let project = workspace.read(cx).project().clone();
+                                                let workspace = workspace.downgrade();
+                                                let editor_handle = editor_handle.clone();
                                                 if let Some(buffer) = editor
                                                     .buffer()
                                                     .read(cx)
                                                     .buffer(action.range.start.buffer_id)
                                                 {
-                                                    project
+                                                    let task = cx.spawn_in(window, async move |_, cx| {
+                                                        let (_, client_command) = project
                                                         .update(cx, |project, cx| {
-                                                            project.apply_code_action(
-                                                                buffer, action, true, cx,
+                                                            project.apply_code_action_with_client_command(
+                                                                buffer,
+                                                                action.clone(),
+                                                                true,
+                                                                cx,
                                                             )
                                                         })
-                                                        .detach_and_log_err(cx);
+                                                        .await?;
+
+                                                        if let Some(client_command) = client_command
+                                                            && let Some(editor) =
+                                                                editor_handle.upgrade()
+                                                            && let Some(workspace) = workspace.upgrade()
+                                                        {
+                                                            let handled = editor.update_in(
+                                                                cx,
+                                                                |editor, window, cx| {
+                                                                    handle_client_command(
+                                                                        client_command,
+                                                                        &action,
+                                                                        editor,
+                                                                        &workspace,
+                                                                        window,
+                                                                        cx,
+                                                                    )
+                                                                },
+                                                            )?;
+
+                                                            if handled {
+                                                                return anyhow::Ok(());
+                                                            }
+                                                        }
+
+                                                        anyhow::Ok(())
+                                                    });
+                                                    editor.detach_and_notify_err(task, window, cx);
                                                 }
                                             }
                                         });
