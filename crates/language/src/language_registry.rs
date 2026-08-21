@@ -8,14 +8,15 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
 pub use language_core::{
-    BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate,
-    QUERY_FILENAME_PREFIXES, ServerHealth,
+    BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate, QueryFile,
+    QueryFileContents, QueryFiles, ServerHealth,
 };
 use settings::{AllLanguageSettingsContent, LanguageSettingsContent, WorktreeId};
 
 use futures::{
     Future,
     channel::{mpsc, oneshot},
+    future::{BoxFuture, FutureExt as _},
 };
 use globset::GlobSet;
 use gpui::{App, BackgroundExecutor};
@@ -108,6 +109,9 @@ pub struct LoadedLanguage {
     pub manifest_name: Option<ManifestName>,
 }
 
+pub type LanguageLoader =
+    Arc<dyn Fn() -> BoxFuture<'static, Result<LoadedLanguage>> + Send + Sync + 'static>;
+
 impl LanguageRegistry {
     pub fn new(executor: BackgroundExecutor) -> Self {
         let this = Self {
@@ -198,13 +202,17 @@ impl LanguageRegistry {
             config.hidden,
             None,
             Arc::new(move || {
-                Ok(LoadedLanguage {
-                    config: config.clone(),
-                    queries: Default::default(),
-                    toolchain_provider: None,
-                    context_provider: None,
-                    manifest_name: None,
-                })
+                let config = config.clone();
+                async move {
+                    Ok(LoadedLanguage {
+                        config,
+                        queries: Default::default(),
+                        toolchain_provider: None,
+                        context_provider: None,
+                        manifest_name: None,
+                    })
+                }
+                .boxed()
             }),
         )
     }
@@ -381,7 +389,7 @@ impl LanguageRegistry {
         matcher: Arc<LanguageMatcher>,
         hidden: bool,
         manifest_name: Option<ManifestName>,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+        load: LanguageLoader,
     ) {
         let state = &mut *self.state.write();
 
@@ -466,7 +474,7 @@ impl LanguageRegistry {
             matcher: language.config.matcher.clone(),
             hidden: language.config.hidden,
             manifest_name: None,
-            load: Arc::new(|| Err(anyhow!("already loaded"))),
+            load: Arc::new(|| async { Err(anyhow!("already loaded")) }.boxed()),
             loaded: true,
         });
         state.add(language);
@@ -640,7 +648,7 @@ impl LanguageRegistry {
                 self.executor
                     .spawn(async move {
                         let language = async {
-                            let loaded_language = (language_load)()?;
+                            let loaded_language = (language_load)().await?;
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
