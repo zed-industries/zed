@@ -50,29 +50,59 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   done
 fi
 
-# `crates/benchmarks/Cargo.toml` also directly requests `test-support` from
-# several application crates, to build fixtures and harnesses its benchmarks
-# exercise. `theme` and `util` are the two of those whose benchmark usage
-# turned out to need no test-only API at all (`theme::LoadThemes`,
-# `theme_settings::init`) or one narrow enough to vendor into
-# `benchmarks::bench_utils` instead (`util::RandomCharIter`, a
-# synthetic-text generator with no production analogue), so `benchmarks` no
-# longer needs a direct `test-support` edge to either.
-#
-# `editor` and `project` remain out of scope: their own `test-support`
-# features are load-bearing for other benchmarks (e.g. `edit_file_tool`, via
-# `TestAppContext`/`FakeFs`/`FakeLspAdapter`/`Project::test`) and both
-# require `theme`/`util`'s `test-support` internally regardless of what
-# `benchmarks` itself requests. So this checks only for a *direct* edge from
-# `benchmarks` to each crate's `test-support` feature (the one path this
-# change controls), not for the feature's absence from the whole resolved
-# graph, which `editor`/`project` will keep populating until they get the
-# same treatment. `agent`, `language`, `language_model`, `lsp`, and
-# `settings` remain direct edges too: `edit_file_tool.rs` relies on
-# genuinely test-only APIs from them (`SettingsStore::update_user_settings`,
-# `FakeLspAdapter`, `FakeLanguageModel`, agent's own test-support surface)
-# with no production equivalent, deeply coupled to the same
-# `agent`/`editor`/`project` harness.
+# `crates/benchmarks/Cargo.toml` used to also directly request `test-support`
+# from `agent`, `editor`, `language_model`, `lsp`, and `project`, entirely to
+# build the `edit_file_tool` benchmark's `TestAppContext`/`FakeFs`/
+# `FakeLspAdapter`/`FakeLanguageModel`/`Project::test` harness. That benchmark
+# now lives in its own `edit_file_tool_benchmarks` package (see its crate
+# docs), so `benchmarks` no longer needs any test-only surface from those five
+# crates at all. Unlike the `theme`/`util` check below, this checks the whole
+# resolved graph rather than only a direct edge: nothing else `benchmarks`
+# depends on has a legitimate reason to reach `test-support` through any of
+# them either.
+for isolated_crate in agent editor language_model project; do
+  # `agent` is no longer in `benchmarks`' resolved graph at all (not merely
+  # test-support-free), so `cargo tree --invert` fails to find it; that is
+  # the strongest possible form of isolation, so treat it as a pass rather
+  # than an error.
+  if ! output=$(cargo tree \
+    --offline \
+    --package benchmarks \
+    --edges features \
+    --invert "${isolated_crate}" 2>&1); then
+    if echo "${output}" | grep --quiet 'did not match any packages'; then
+      continue
+    fi
+    echo "failed to resolve \"${isolated_crate}\" in benchmarks' dependency graph:"
+    echo "${output}"
+    exit 1
+  fi
+
+  if echo "${output}" | grep --quiet "${isolated_crate} feature \"test-support\""; then
+    echo "benchmarks pulls \"test-support\" into \"${isolated_crate}\":"
+    echo "${output}"
+    exit 1
+  fi
+done
+
+# `lsp`, `language`, `multi_buffer`, and `settings` are not part of the loop
+# above: `display_map`/`editor_render`/`markdown_renderer` (the benchmarks
+# that remain in this package) directly call test-only APIs with no
+# production equivalent — `SettingsStore::test`, `LanguageRegistry::test`,
+# `language::rust_lang`, `MultiBuffer::build_simple`/`build_random` —
+# independent of `edit_file_tool`. `settings/test-support` also enables
+# `gpui/test-support`, and `language/test-support` also enables
+# `lsp/test-support`, so both show up transitively too. This is real,
+# tracked debt, not a gap in this script: `theme` and `util` are the two
+# foundational crates whose benchmark usage turned out to need no test-only
+# API at all (`theme::LoadThemes`, `theme_settings::init`) or one narrow
+# enough to vendor into `benchmarks::bench_utils` instead
+# (`util::RandomCharIter`, a synthetic-text generator with no production
+# analogue), so `benchmarks` no longer needs a direct `test-support` edge to
+# either. This checks only for a *direct* edge from `benchmarks` to each
+# crate's `test-support` feature, not for the feature's absence from the
+# whole resolved graph, since `language`/`multi_buffer`/`settings` keep
+# populating it until they get the same treatment.
 for foundational_crate in theme util; do
   output=$(cargo tree \
     --offline \
@@ -87,7 +117,7 @@ for foundational_crate in theme util; do
   # un-suffixed "test-support" feature line is where its direct dependents
   # are actually listed; checking the couple of lines after it for a
   # "benchmarks" edge is enough to catch a direct request without also
-  # matching the expected indirect one from `editor`/`project`.
+  # matching the expected indirect one from `language`/`multi_buffer`/`settings`.
   if echo "${output}" \
     | grep -A2 "[|\`]-- ${foundational_crate} feature \"test-support\"\$" \
     | grep --quiet 'benchmarks v'; then
@@ -96,3 +126,16 @@ for foundational_crate in theme util; do
     exit 1
   fi
 done
+
+# `edit_file_tool_benchmarks` is the isolated package `edit_file_tool` moved
+# into. It is intentionally *not* held to the isolation bar above: it still
+# needs `test-support` from `agent`, `editor`, `language`, `language_model`,
+# `lsp`, `project`, and `settings` for the same harness this script used to
+# document against `benchmarks`. That is tracked debt toward eventually
+# having no benchmark depend on `test-support` at all, not a gap this script
+# hides — confirm the package still exists and builds rather than silently
+# skipping it.
+if ! cargo tree --offline --package edit_file_tool_benchmarks >/dev/null; then
+  echo "edit_file_tool_benchmarks package is missing or fails to resolve"
+  exit 1
+fi

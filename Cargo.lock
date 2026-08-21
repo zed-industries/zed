@@ -2112,31 +2112,22 @@ dependencies = [
 name = "benchmarks"
 version = "0.1.0"
 dependencies = [
- "action_log",
- "agent",
- "agent_settings",
  "assets",
  "criterion",
  "editor",
- "futures 0.3.32",
  "gpui",
  "gpui_platform",
  "itertools 0.14.0",
  "language",
- "language_model",
- "lsp",
  "markdown",
  "multi_buffer",
  "project",
- "prompt_store",
  "rand 0.9.4",
- "serde_json",
  "settings",
  "text",
  "theme",
  "theme_settings",
  "ui",
- "util",
  "zed_actions",
 ]
 
@@ -5330,6 +5321,32 @@ dependencies = [
  "elliptic-curve",
  "rfc6979",
  "signature 1.6.4",
+]
+
+[[package]]
+name = "edit_file_tool_benchmarks"
+version = "0.1.0"
+dependencies = [
+ "action_log",
+ "agent",
+ "agent_settings",
+ "assets",
+ "benchmarks",
+ "criterion",
+ "editor",
+ "futures 0.3.32",
+ "gpui",
+ "language",
+ "language_model",
+ "lsp",
+ "project",
+ "prompt_store",
+ "rand 0.9.4",
+ "serde_json",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
 ]
 
 [[package]]
