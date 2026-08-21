@@ -97,7 +97,13 @@ pub fn request_prediction(
         let cursor_in_editable = cursor_offset_in_excerpt.saturating_sub(editable_range.start);
         let prefix = editable_text[..cursor_in_editable].to_string();
         let suffix = editable_text[cursor_in_editable..].to_string();
-        let prompt = format_fim_prompt(prompt_format, &prefix, &suffix);
+
+        let is_deepseek_fim = prompt_format == EditPredictionPromptFormat::DeepseekFim;
+        let (request_prompt, request_suffix) = if is_deepseek_fim {
+            (prefix.clone(), Some(suffix))
+        } else {
+            (format_fim_prompt(prompt_format, &prefix, &suffix), None)
+        };
         let stop_tokens = get_fim_stop_tokens();
 
         let max_tokens = settings.max_output_tokens;
@@ -105,7 +111,8 @@ pub fn request_prediction(
         let (response_text, request_id) = open_ai_compatible::send_custom_server_request(
             provider,
             &settings,
-            prompt,
+            request_prompt,
+            request_suffix,
             max_tokens,
             stop_tokens,
             api_key,
@@ -178,7 +185,10 @@ fn format_fim_prompt(
             format!("<fim_prefix>{prefix}<fim_suffix>{suffix}<fim_middle>")
         }
         EditPredictionPromptFormat::DeepseekCoder => {
-            format!("<｜fim▁begin｜>{prefix}<｜fim▁hole｜>{suffix}<｜fim▁end｜>")
+            format!("<｜fim▁begin｜>{prefix}<｜fim▁end｜>{suffix}<｜fim▁end｜>")
+        }
+        EditPredictionPromptFormat::DeepseekFim => {
+            String::new()
         }
         EditPredictionPromptFormat::Qwen | EditPredictionPromptFormat::CodeGemma => {
             format!("<|fim_prefix|>{prefix}<|fim_suffix|>{suffix}<|fim_middle|>")

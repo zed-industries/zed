@@ -279,6 +279,7 @@ pub(crate) fn request_prediction_with_zeta(
                                 provider,
                                 custom_settings,
                                 prompt,
+                                None,
                                 max_tokens,
                                 stop_tokens,
                                 open_ai_compatible_api_key.clone(),
@@ -307,6 +308,7 @@ pub(crate) fn request_prediction_with_zeta(
                                 provider,
                                 custom_settings,
                                 prompt,
+                                None,
                                 max_tokens,
                                 stop_tokens_for_format(zeta_format)
                                     .iter()
@@ -351,6 +353,7 @@ pub(crate) fn request_prediction_with_zeta(
                             .map(|token| std::borrow::Cow::Borrowed(*token))
                             .collect(),
                         max_tokens: Some(2048),
+                        suffix: None,
                         environment,
                     };
 
