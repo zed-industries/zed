@@ -7,13 +7,13 @@ description: "Themes for Zed extensions."
 
 The `themes` directory in an extension should contain one or more theme files.
 
-Each theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/themes/v0.2.0.json`](https://zed.dev/schema/themes/v0.2.0.json).
+Each theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/themes/v0.2.1.json`](https://zed.dev/schema/themes/v0.2.1.json).
 
 See [this blog post](https://zed.dev/blog/user-themes-now-in-preview) for additional background on creating themes.
 
 ## Theme JSON Structure
 
-The structure of a Zed theme is defined in the [Zed Theme JSON Schema](https://zed.dev/schema/themes/v0.2.0.json).
+The structure of a Zed theme is defined in the [Zed Theme JSON Schema](https://zed.dev/schema/themes/v0.2.1.json).
 
 A Zed theme consists of a Theme Family object including:
 
