@@ -124,11 +124,23 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub keep_selection_on_copy: Option<bool>,
+    /// Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    /// when the terminal application has enabled mouse reporting (e.g. vim with
+    /// mouse=a, htop). When false, these clicks are forwarded to the application
+    /// instead, and hyperlinks can still be opened with shift-cmd-click
+    /// (shift-ctrl-click).
+    ///
+    /// Default: true
+    pub open_links_in_mouse_mode: Option<bool>,
     /// Whether to show the terminal button in the status bar.
     ///
     /// Default: true
     pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
+    /// Whether the terminal panel should open on startup.
+    ///
+    /// Default: false
+    pub starts_open: Option<bool>,
     /// Whether the terminal panel should use flexible (proportional) sizing.
     ///
     /// Default: true
@@ -136,13 +148,11 @@ pub struct TerminalSettingsContent {
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// Default height when the terminal is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_height: Option<f32>,
+    pub default_height: Option<crate::PixelSetting>,
     /// The maximum number of lines to keep in the scrollback history.
     /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
     /// 0 disables the scrolling.
@@ -179,6 +189,10 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: false
     pub show_count_badge: Option<bool>,
+    /// What to do when the `BEL` character (`\a`) is printed to terminal.
+    ///
+    /// Default: "system"
+    pub bell: Option<TerminalBell>,
 }
 
 /// Shell configuration to open the terminal with.
@@ -392,6 +406,29 @@ pub struct TerminalToolbarContent {
     ///
     /// Default: true
     pub breadcrumbs: Option<bool>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBell {
+    /// Play an OS-specific alert sound.
+    #[default]
+    System,
+    /// Do not play any sound.
+    Off,
 }
 
 #[derive(

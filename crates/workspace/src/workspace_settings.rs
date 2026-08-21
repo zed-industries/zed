@@ -2,12 +2,14 @@ use std::{num::NonZeroUsize, time::Duration};
 
 use crate::DockPosition;
 use collections::HashMap;
+use gpui::{App, Subscription};
 use serde::Deserialize;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
+use settings::{CommandAliasTarget, SettingsStore};
 
 #[derive(RegisterSetting)]
 pub struct WorkspaceSettings {
@@ -20,11 +22,14 @@ pub struct WorkspaceSettings {
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
     pub restore_on_startup: settings::RestoreOnStartupBehavior,
+    pub cli_default_open_behavior: settings::CliDefaultOpenBehavior,
+    pub default_open_behavior: settings::DefaultOpenBehavior,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
-    pub command_aliases: HashMap<String, String>,
+    pub accessible_mode: bool,
+    pub command_aliases: HashMap<String, CommandAliasTarget>,
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_last_window_closed: settings::OnLastWindowClosed,
@@ -33,6 +38,7 @@ pub struct WorkspaceSettings {
     pub close_on_file_delete: bool,
     pub close_panel_on_toggle: bool,
     pub use_system_window_tabs: bool,
+    pub fullscreen_mode: settings::FullscreenMode,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
@@ -77,7 +83,7 @@ impl Settings for WorkspaceSettings {
         Self {
             active_pane_modifiers: ActivePanelModifiers {
                 border_size: Some(
-                    workspace
+                    *workspace
                         .active_pane_modifiers
                         .unwrap()
                         .border_size
@@ -99,10 +105,13 @@ impl Settings for WorkspaceSettings {
             show_call_status_icon: workspace.show_call_status_icon.unwrap(),
             autosave: workspace.autosave.unwrap(),
             restore_on_startup: workspace.restore_on_startup.unwrap(),
+            cli_default_open_behavior: workspace.cli_default_open_behavior.unwrap(),
+            default_open_behavior: workspace.default_open_behavior.unwrap(),
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
             use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),
             use_system_prompts: workspace.use_system_prompts.unwrap(),
+            accessible_mode: workspace.accessible_mode.unwrap(),
             command_aliases: workspace.command_aliases.clone(),
             max_tabs: workspace.max_tabs,
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
@@ -118,6 +127,7 @@ impl Settings for WorkspaceSettings {
             close_on_file_delete: workspace.close_on_file_delete.unwrap(),
             close_panel_on_toggle: workspace.close_panel_on_toggle.unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
+            fullscreen_mode: workspace.fullscreen_mode.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
             focus_follows_mouse: FocusFollowsMouse {
@@ -136,6 +146,39 @@ impl Settings for WorkspaceSettings {
             },
         }
     }
+}
+
+/// Provides convenient access to whether "accessible mode" is enabled, mirroring
+/// [`theme::ActiveTheme`] for the active theme. Import this trait to call
+/// `cx.accessible_mode()`.
+pub trait AccessibleMode {
+    /// Returns whether accessible mode is enabled.
+    fn accessible_mode(&self) -> bool;
+}
+
+impl AccessibleMode for App {
+    fn accessible_mode(&self) -> bool {
+        WorkspaceSettings::get_global(self).accessible_mode
+    }
+}
+
+/// Observes changes to the accessible-mode setting, invoking `callback` with the
+/// new value whenever it changes. Mirrors the common
+/// `cx.observe_global::<SettingsStore>` pattern, but only fires when the value
+/// actually changes. The returned [`Subscription`] must be retained for the
+/// callback to keep firing.
+pub fn observe_accessible_mode(
+    cx: &mut App,
+    mut callback: impl FnMut(bool, &mut App) + 'static,
+) -> Subscription {
+    let mut last = cx.accessible_mode();
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let current = cx.accessible_mode();
+        if current != last {
+            last = current;
+            callback(current, cx);
+        }
+    })
 }
 
 impl Settings for TabBarSettings {

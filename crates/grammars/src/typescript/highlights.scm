@@ -123,7 +123,7 @@
     ] @function.method))
 
 (new_expression
-  constructor: (identifier) @type)
+  constructor: (identifier) @type.class)
 
 (nested_type_identifier
   module: (identifier) @type)
@@ -192,6 +192,26 @@
       (identifier)
       (shorthand_property_identifier_pattern)
     ]) @variable.parameter))
+
+(required_parameter
+  (_
+    (object_assignment_pattern
+      left: (shorthand_property_identifier_pattern) @variable.parameter)))
+
+(required_parameter
+  (_
+    (assignment_pattern
+      left: (identifier) @variable.parameter)))
+
+(optional_parameter
+  (_
+    (object_assignment_pattern
+      left: (shorthand_property_identifier_pattern) @variable.parameter)))
+
+(optional_parameter
+  (_
+    (assignment_pattern
+      left: (identifier) @variable.parameter)))
 
 (optional_parameter
   (identifier) @variable.parameter)

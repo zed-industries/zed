@@ -44,7 +44,7 @@ for any type name, such as `AnyElement` or `LspStore`.
 - `Global`: A singleton type which has only one value, that is stored in the `App`.
 - `Event`: A data type that can be sent by an `Entity` to subscribers.
 - `Action`: An event that represents a user's keyboard input that can be handled by listeners
-  Example: `file finder: toggle`
+  Example: {#action file_finder::Toggle}
 - `Observing`: Reacting to notifications that entities have changed.
 - `Subscription`: An event handler that is used to react to the changes of state in the application.
   1. Emitted event handling
@@ -113,7 +113,7 @@ h_flex()
 
 - `DapStore`: Is an entity that manages debugger sessions
 - `debugger::Session`: An entity that manages the lifecycle of a debug session and communication with DAPs.
-- `BreakpointStore`: Is an entity that manages breakpoints states in local and remote instances of Zed
+- `BreakpointStore`: Is an entity that manages breakpoint states in local and remote instances of Zed
 - `DebugSession`: Manages a debug session's UI and running state
 - `RunningState`: Directly manages all the views of a debug session
 - `VariableList`: The variable and watch list view of a debug session

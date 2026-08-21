@@ -4,11 +4,11 @@ from Cloudflare.
 - `open-source-website-assets` is used for `install.sh`
 - `docs-proxy` is used for `https://zed.dev/docs`
 
-On push to `main`, both of these (and the files they depend on) are uploaded to Cloudflare.
+During docs deployments, both of these (and the files they depend on) are uploaded to Cloudflare.
 
 ### Deployment
 
-These functions are deployed on push to main by the deploy_cloudflare.yml workflow. Worker Rules in Cloudflare intercept requests to zed.dev and proxy them to the appropriate workers.
+These functions are deployed by the docs deployment workflows. Worker Rules in Cloudflare intercept requests to zed.dev and proxy them to the appropriate workers.
 
 ### Testing
 

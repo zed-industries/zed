@@ -1,11 +1,13 @@
 use gpui::{
-    Context, Empty, EventEmitter, IntoElement, ParentElement, Render, SharedString, Window,
+    App, Context, Empty, EventEmitter, IntoElement, ParentElement, Render, SharedString, Window,
 };
 use settings::Settings;
 use ui::{Button, Tooltip, prelude::*};
 use util::paths::PathStyle;
 
-use crate::{StatusItemView, item::ItemHandle, workspace_settings::StatusBarSettings};
+use crate::{
+    HideStatusItem, StatusItemView, item::ItemHandle, workspace_settings::StatusBarSettings,
+};
 
 pub struct ActiveFileName {
     project_path: Option<SharedString>,
@@ -65,5 +67,11 @@ impl StatusItemView for ActiveFileName {
             self.full_path = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings.status_bar.get_or_insert_default().show_active_file = Some(false);
+        }))
     }
 }

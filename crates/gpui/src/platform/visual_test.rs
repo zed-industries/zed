@@ -83,7 +83,7 @@ impl Platform for VisualTestPlatform {
 
     fn quit(&self) {}
 
-    fn restart(&self, _binary_path: Option<PathBuf>) {}
+    fn restart(&self, _binary_path: Option<PathBuf>, _arguments: Vec<std::ffi::OsString>) {}
 
     fn activate(&self, _ignoring_other_apps: bool) {}
 
@@ -176,6 +176,8 @@ impl Platform for VisualTestPlatform {
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {}
 
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -200,6 +202,14 @@ impl Platform for VisualTestPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         self.platform.set_cursor_style(style)
+    }
+
+    fn hide_cursor_until_mouse_moves(&self) {
+        self.platform.hide_cursor_until_mouse_moves();
+    }
+
+    fn is_cursor_visible(&self) -> bool {
+        self.platform.is_cursor_visible()
     }
 
     fn should_auto_hide_scrollbars(&self) -> bool {

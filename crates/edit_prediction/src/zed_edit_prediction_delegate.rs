@@ -1,14 +1,17 @@
-use std::{cmp, sync::Arc};
+use std::{cmp, sync::Arc, time::Duration};
 
 use client::{Client, UserStore};
 use cloud_llm_client::EditPredictionRejectReason;
 use edit_prediction_types::{
     DataCollectionState, EditPredictionDelegate, EditPredictionDiscardReason,
-    EditPredictionIconSet, SuggestionDisplayType,
+    EditPredictionIconSet, EditPredictionRequestTrigger, SuggestionDisplayType,
 };
+use feature_flags::FeatureFlagAppExt;
+use fs::Fs;
 use gpui::{App, Entity, prelude::*};
 use language::{Buffer, ToPoint as _};
 use project::Project;
+use settings::{EditPredictionDataCollectionChoice, update_settings_file};
 
 use crate::{BufferEditPrediction, EditPredictionStore};
 
@@ -73,7 +76,8 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 self.store
                     .read(cx)
                     .is_file_open_source(&self.project, file, cx);
-            if self.store.read(cx).data_collection_choice.is_enabled(cx) {
+
+            if self.store.read(cx).is_data_collection_enabled(cx) {
                 DataCollectionState::Enabled {
                     is_project_open_source,
                 }
@@ -83,15 +87,37 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
                 }
             }
         } else {
-            return DataCollectionState::Disabled {
+            DataCollectionState::Disabled {
                 is_project_open_source: false,
-            };
+            }
         }
     }
 
+    fn can_toggle_data_collection(&self, cx: &App) -> bool {
+        if cx.is_staff() {
+            return false;
+        }
+
+        self.store
+            .read(cx)
+            .is_data_collection_allowed_by_organization(cx)
+    }
+
     fn toggle_data_collection(&mut self, cx: &mut App) {
-        self.store.update(cx, |store, cx| {
-            store.toggle_data_collection_choice(cx);
+        let fs = <dyn Fs>::global(cx);
+        let is_currently_enabled = self.store.read(cx).is_data_collection_enabled(cx);
+        update_settings_file(fs, cx, move |settings, _| {
+            let edit_predictions = settings
+                .project
+                .all_languages
+                .edit_predictions
+                .get_or_insert_default();
+
+            edit_predictions.allow_data_collection = Some(if is_currently_enabled {
+                EditPredictionDataCollectionChoice::No
+            } else {
+                EditPredictionDataCollectionChoice::Yes
+            });
         });
     }
 
@@ -116,7 +142,8 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
         &mut self,
         buffer: Entity<language::Buffer>,
         cursor_position: language::Anchor,
-        _debounce: bool,
+        debounce_duration: Duration,
+        trigger: EditPredictionRequestTrigger,
         cx: &mut Context<Self>,
     ) {
         let store = self.store.read(cx);
@@ -137,7 +164,14 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
             }
 
             store.refresh_context(&self.project, &buffer, cursor_position, cx);
-            store.refresh_prediction_from_buffer(self.project.clone(), buffer, cursor_position, cx)
+            store.refresh_prediction_from_buffer(
+                self.project.clone(),
+                buffer,
+                cursor_position,
+                debounce_duration,
+                trigger,
+                cx,
+            )
         });
     }
 
@@ -189,12 +223,21 @@ impl EditPredictionDelegate for ZedEditPredictionDelegate {
 
             let Some(edits) = prediction.interpolate(&snapshot) else {
                 store.reject_current_prediction(
-                    EditPredictionRejectReason::InterpolatedEmpty,
+                    EditPredictionRejectReason::InterpolateFailed,
                     &self.project,
                     cx,
                 );
                 return None;
             };
+
+            if edits.is_empty() {
+                store.reject_current_prediction(
+                    EditPredictionRejectReason::InterpolatedEmpty,
+                    &self.project,
+                    cx,
+                );
+                return None;
+            }
 
             let cursor_row = cursor_position.to_point(&snapshot).row;
             let (closest_edit_ix, (closest_edit_range, _)) =

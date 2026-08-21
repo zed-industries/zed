@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use editor::{Editor, MultiBufferOffset};
 use gpui::{
-    Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task,
-    WeakEntity, Window,
+    App, Context, Entity, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription,
+    Task, WeakEntity, Window,
 };
 use language::Diagnostic;
 use project::project_settings::{GoToDiagnosticSeverityFilter, ProjectSettings};
 use settings::Settings;
 use ui::{Button, ButtonLike, Color, Icon, IconName, Label, Tooltip, h_flex, prelude::*};
 use util::ResultExt;
-use workspace::{StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
+use workspace::{HideStatusItem, StatusItemView, ToolbarItemEvent, Workspace, item::ItemHandle};
 
 use crate::{Deploy, IncludeWarnings, ProjectDiagnosticsEditor};
 
@@ -64,13 +64,20 @@ impl Render for DiagnosticIndicator {
                 .message
                 .split_once('\n')
                 .map_or(&*diagnostic.message, |(first, _)| first);
+            let diagnostics_already_active = self.any_active_diagnostics(cx);
+            let tooltip = if !diagnostics_already_active {
+                "Expand Diagnostics"
+            } else {
+                "Next Diagnostic"
+            };
             Some(
                 Button::new("diagnostic_message", SharedString::new(message))
                     .label_size(LabelSize::Small)
                     .truncate(true)
-                    .tooltip(|_window, cx| {
+                    .tab_index(0isize)
+                    .tooltip(move |_window, cx| {
                         Tooltip::for_action(
-                            "Next Diagnostic",
+                            tooltip,
                             &editor::actions::GoToDiagnostic::default(),
                             cx,
                         )
@@ -83,10 +90,32 @@ impl Render for DiagnosticIndicator {
             None
         };
 
+        let diagnostics_label = match (self.summary.error_count, self.summary.warning_count) {
+            (0, 0) => "Project diagnostics: no problems".to_string(),
+            (errors, warnings) => {
+                let mut parts = Vec::new();
+                if errors > 0 {
+                    parts.push(format!(
+                        "{errors} error{}",
+                        if errors == 1 { "" } else { "s" }
+                    ));
+                }
+                if warnings > 0 {
+                    parts.push(format!(
+                        "{warnings} warning{}",
+                        if warnings == 1 { "" } else { "s" }
+                    ));
+                }
+                format!("Project diagnostics: {}", parts.join(", "))
+            }
+        };
+
         indicator
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
+                    .tab_index(0isize)
+                    .aria_label(diagnostics_label)
                     .tooltip(move |_window, cx| {
                         Tooltip::for_action("Project Diagnostics", &Deploy, cx)
                     })
@@ -154,10 +183,18 @@ impl DiagnosticIndicator {
         }
     }
 
+    fn any_active_diagnostics(&self, cx: &mut Context<Self>) -> bool {
+        if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
+            editor.read(cx).any_active_diagnostics()
+        } else {
+            false
+        }
+    }
+
     fn go_to_next_diagnostic(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(editor) = self.active_editor.as_ref().and_then(|e| e.upgrade()) {
             editor.update(cx, |editor, cx| {
-                editor.go_to_diagnostic_impl(
+                editor.go_to_diagnostic_at_cursor(
                     editor::Direction::Next,
                     GoToDiagnosticSeverityFilter::default(),
                     window,
@@ -223,5 +260,11 @@ impl StatusItemView for DiagnosticIndicator {
             self._observe_active_editor = None;
         }
         cx.notify();
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<HideStatusItem> {
+        Some(HideStatusItem::new(|settings| {
+            settings.diagnostics.get_or_insert_default().button = Some(false);
+        }))
     }
 }

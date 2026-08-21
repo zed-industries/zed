@@ -38,7 +38,7 @@ impl X11Display {
 
 impl PlatformDisplay for X11Display {
     fn id(&self) -> DisplayId {
-        DisplayId::new(self.x_screen_index as u32)
+        DisplayId::new(self.x_screen_index as u64)
     }
 
     fn uuid(&self) -> anyhow::Result<Uuid> {
