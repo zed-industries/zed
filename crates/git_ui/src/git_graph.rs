@@ -873,7 +873,6 @@ struct CommitLineKey {
 
 struct GraphData {
     lane_states: SmallVec<[LaneState; 8]>,
-    lane_colors: HashMap<ActiveLaneIdx, BranchColor>,
     parent_to_lanes: HashMap<Oid, SmallVec<[usize; 1]>>,
     next_color: BranchColor,
     accent_colors_count: usize,
@@ -889,7 +888,6 @@ impl GraphData {
     fn new(accent_colors_count: usize) -> Self {
         GraphData {
             lane_states: SmallVec::default(),
-            lane_colors: HashMap::default(),
             parent_to_lanes: HashMap::default(),
             next_color: BranchColor(0),
             accent_colors_count,
@@ -904,7 +902,6 @@ impl GraphData {
 
     fn clear(&mut self) {
         self.lane_states.clear();
-        self.lane_colors.clear();
         self.parent_to_lanes.clear();
         self.commits.clear();
         self.lines.clear();
@@ -925,13 +922,10 @@ impl GraphData {
             })
     }
 
-    fn get_lane_color(&mut self, lane_idx: ActiveLaneIdx) -> BranchColor {
-        let accent_colors_count = self.accent_colors_count;
-        *self.lane_colors.entry(lane_idx).or_insert_with(|| {
-            let color_idx = self.next_color;
-            self.next_color = BranchColor((self.next_color.0 + 1) % accent_colors_count as u8);
-            color_idx
-        })
+    fn allocate_color(&mut self) -> BranchColor {
+        let color = self.next_color;
+        self.next_color = BranchColor((color.0 + 1) % self.accent_colors_count as u8);
+        color
     }
 
     fn add_commits(&mut self, commits: &[Arc<InitialGraphCommitData>]) {
@@ -948,7 +942,16 @@ impl GraphData {
 
             let commit_lane = commit_lane.unwrap_or_else(|| self.first_empty_lane_idx());
 
-            let commit_color = self.get_lane_color(commit_lane);
+            // Color identifies a branch, not a column: a commit keeps the color of the
+            // lane it continues, so a branch that gets pushed to a different column
+            // stays the same color and two unrelated branches that happen to reuse a
+            // column don't. A lane with no color yet is either a new tip or a merge
+            // parent whose color was deferred until it landed, and starts a new color.
+            let inherited_color = match self.lane_states.get(commit_lane) {
+                Some(LaneState::Active { color, .. }) => *color,
+                _ => None,
+            };
+            let commit_color = inherited_color.unwrap_or_else(|| self.allocate_color());
 
             if let Some(lanes) = self.parent_to_lanes.remove(&commit.sha) {
                 for lane_column in lanes {
