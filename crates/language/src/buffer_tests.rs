@@ -3467,7 +3467,7 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
         Annotation in the middle <!--is rendered badly.-->\n\n\
         An inline comment can span <!--multiple\nlines--> within a paragraph.\n\n\
         Ordinary inline HTML: <em>emphasized</em>.\n\n\
-        Entities like &lt; &gt; &amp; &nbsp; are highlighted.";
+        Entities like &lt; &gt; &amp; &nbsp; &#169; are highlighted.";
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry);
@@ -3515,6 +3515,10 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
             ]
         );
         assert_eq!(highlighted_text("tag"), vec!["em", "em"]);
+        assert_eq!(
+            highlighted_text("string.special"),
+            vec!["&lt;", "&gt;", "&amp;", "&nbsp;", "&#169;"]
+        );
     });
 }
 

@@ -34,4 +34,7 @@
   (email_autolink)
 ] @link_uri.markup
 
-(entity_reference) @string.special
+[
+  (entity_reference)
+  (numeric_character_reference)
+] @string.special
