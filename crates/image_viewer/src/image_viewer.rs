@@ -22,6 +22,7 @@ use persistence::ImageViewerDb;
 use project::{
     ImageItem, Project, ProjectPath, git_store::GitStoreEvent, image_store::ImageItemEvent,
 };
+use rpc::{ErrorCode, ErrorExt as _};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
@@ -821,14 +822,17 @@ impl ProjectItem for ImageView {
     fn for_broken_project_item(
         abs_path: &Path,
         is_local: bool,
-        e: &anyhow::Error,
+        error: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InvalidItemView>
     where
         Self: Sized,
     {
-        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+        if error.error_code() != ErrorCode::Internal {
+            return None;
+        }
+        Some(InvalidItemView::new(abs_path, is_local, error, window, cx))
     }
 }
 
@@ -1088,6 +1092,7 @@ pub fn init(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::anyhow;
     use fs::{FakeFs, Fs as _};
     use gpui::{TestAppContext, VisualTestContext};
     use settings::SettingsStore;
@@ -1347,6 +1352,43 @@ mod tests {
         cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
             split_image_view.clone().into_any_element()
         });
+    }
+
+    #[gpui::test]
+    async fn test_failure_view_is_only_for_undecodable_images(cx: &mut TestAppContext) {
+        init_test(cx);
+        let cx = cx.add_empty_window();
+        let abs_path = Path::new("/root/image.ppm");
+
+        let for_typed_error = cx.update(|window, cx| {
+            ImageView::for_broken_project_item(
+                abs_path,
+                true,
+                &anyhow!(ErrorCode::Disconnected),
+                window,
+                cx,
+            )
+        });
+        assert!(
+            for_typed_error.is_none(),
+            "a typed failure has to keep propagating, so that its own handling \
+             (reporting the lost connection, here) still happens"
+        );
+
+        let for_internal_error = cx.update(|window, cx| {
+            ImageView::for_broken_project_item(
+                abs_path,
+                true,
+                &anyhow!("Image format Farbfeld not supported"),
+                window,
+                cx,
+            )
+        });
+        assert!(
+            for_internal_error.is_some(),
+            "a file that is really there but cannot be shown as an image should \
+             report that in its own tab"
+        );
     }
 }
 

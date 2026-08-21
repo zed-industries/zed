@@ -30,7 +30,10 @@ use project::{
     project_settings::ProjectSettings, search::SearchQuery,
 };
 use rope::TextSummary;
-use rpc::proto::{self, update_view};
+use rpc::{
+    ErrorCode, ErrorExt as _,
+    proto::{self, update_view},
+};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
@@ -1597,11 +1600,17 @@ impl ProjectItem for Editor {
     fn for_broken_project_item(
         abs_path: &Path,
         is_local: bool,
-        e: &anyhow::Error,
+        error: &anyhow::Error,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<InvalidItemView> {
-        Some(InvalidItemView::new(abs_path, is_local, e, window, cx))
+        if !matches!(
+            error.error_code(),
+            ErrorCode::Internal | ErrorCode::BinaryFile
+        ) {
+            return None;
+        }
+        Some(InvalidItemView::new(abs_path, is_local, error, window, cx))
     }
 }
 

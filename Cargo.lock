@@ -8778,6 +8778,7 @@ dependencies = [
  "log",
  "menu",
  "project",
+ "rpc",
  "settings",
  "theme",
  "theme_settings",

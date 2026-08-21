@@ -893,25 +893,21 @@ impl ProjectItemRegistry {
                         }
                         Err(e) => {
                             log::warn!("Failed to open a project item: {e:#}");
-                            if e.error_code() == ErrorCode::Internal {
-                                if let Some(abs_path) =
-                                    entry_abs_path.as_deref().filter(|_| is_file)
-                                {
-                                    if let Some(broken_project_item_view) =
-                                        cx.update(|window, cx| {
-                                            T::for_broken_project_item(
-                                                abs_path, is_local, &e, window, cx,
-                                            )
-                                        })?
-                                    {
-                                        let build_workspace_item = Box::new(
-                                            move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
-                                                cx.new(|_| broken_project_item_view).boxed_clone()
-                                            },
+                            if let Some(abs_path) = entry_abs_path.as_deref().filter(|_| is_file) {
+                                if let Some(broken_project_item_view) =
+                                    cx.update(|window, cx| {
+                                        T::for_broken_project_item(
+                                            abs_path, is_local, &e, window, cx,
                                         )
-                                        as Box<_>;
-                                        return Ok((None, build_workspace_item));
-                                    }
+                                    })?
+                                {
+                                    let build_workspace_item = Box::new(
+                                        move |_: &mut Pane, _: &mut Window, cx: &mut Context<Pane>| {
+                                            cx.new(|_| broken_project_item_view).boxed_clone()
+                                        },
+                                    )
+                                    as Box<_>;
+                                    return Ok((None, build_workspace_item));
                                 }
                             }
                             Err(e)
