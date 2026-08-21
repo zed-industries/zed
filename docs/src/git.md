@@ -59,6 +59,20 @@ The colored bars in the gutter that show added, modified, and deleted lines can 
 
 Zed wraps commit messages at 72 characters (a Git convention). To change this, search for "Git Commit" in Settings and adjust **Preferred Line Length**.
 
+#### Opening Files on Double-Click
+
+By default, clicking a file in the Git Panel opens its diff. To also open the actual file in
+the editor when you double-click a row (a single click still opens the diff), enable
+**Open File On Double-Click** in **Panels > Git Panel**, or set it in `settings.json`:
+
+```json
+{
+  "git_panel": {
+    "open_file_on_double_click": true
+  }
+}
+```
+
 ## Project Diff
 
 You can see all of the changes captured by Git in Zed by opening the Project Diff ({#kb git::Diff}), accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.
