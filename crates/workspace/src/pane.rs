@@ -2048,7 +2048,7 @@ impl Pane {
                                 );
                                 window.prompt(
                                     PromptLevel::Warning,
-                                    &format!("Unable to save file: {}", &err),
+                                    &format!("Unable to save file: {err}"),
                                     Some(&detail),
                                     &["Close Without Saving", "Cancel"],
                                     cx,
@@ -4058,25 +4058,38 @@ impl Pane {
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
-        let is_remote = self
+        let (should_block, needs_wsl_translation) = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.project().read(cx).is_via_collab() {
+                let project = workspace.project().read(cx);
+
+                if project.is_via_collab() {
                     workspace.show_error("Cannot drop files on a remote project", cx);
-                    true
-                } else {
-                    false
+                    return (true, false);
                 }
+                if project.is_via_remote_server() {
+                    if !project.is_via_wsl(cx) {
+                        workspace.show_error(
+                            "Cannot drop local files on a remote SSH/Docker project",
+                            cx,
+                        );
+                        return (true, false);
+                    }
+                    return (false, true);
+                }
+                (false, false)
             })
-            .unwrap_or(true);
-        if is_remote {
+            .unwrap_or((true, false));
+        if should_block {
             return;
         }
 
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
+                let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
+                    // `fs` is the host's file system even for remote projects, so probe the paths as they were dropped, before translating them to the remote's path style.
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
                         is_file_checks.push(fs.is_file(path))
@@ -4092,6 +4105,40 @@ impl Pane {
                     if !has_files_to_open {
                         split_direction = None;
                     }
+
+                    let paths = if needs_wsl_translation {
+                        let mut translated = Vec::with_capacity(paths.len());
+                        for path in &paths {
+                            log::debug!("dropped Windows path {}", path.display());
+                            let fut = project.read_with(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(path, cx)
+                            });
+                            match fut.await {
+                                Ok(wsl_path) => {
+                                    log::debug!("translated to WSL path {}", wsl_path.display());
+                                    translated.push(wsl_path);
+                                }
+                                Err(e) => log::warn!(
+                                    "wslpath failed for {}: {e:#}, dropping this path",
+                                    path.display()
+                                ),
+                            }
+                        }
+                        if translated.is_empty() && !paths.is_empty() {
+                            workspace
+                                .update_in(cx, |workspace, _, cx| {
+                                    workspace.show_error(
+                                        "Could not translate the dropped paths into WSL paths",
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            return;
+                        }
+                        translated
+                    } else {
+                        paths
+                    };
 
                     if let Ok((open_task, to_pane)) =
                         workspace.update_in(cx, |workspace, window, cx| {
@@ -4309,7 +4356,11 @@ impl Render for Pane {
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
-        let is_local = project.read(cx).is_local();
+        // WSL remotes accept dropped host files too, since their paths can be translated with `wslpath`; see `Pane::handle_external_paths_drop`.
+        let accepts_external_paths = {
+            let project = project.read(cx);
+            project.is_local() || project.is_via_wsl(cx)
+        };
 
         v_flex()
             .key_context(key_context)
@@ -4484,7 +4535,7 @@ impl Render for Pane {
                     .overflow_hidden()
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
-                    .when(is_local, |div| {
+                    .when(accepts_external_paths, |div| {
                         div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     })
                     .map(|div| {
@@ -4535,7 +4586,7 @@ impl Render for Pane {
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<DraggedSelection>("", |style| style.visible())
-                            .when(is_local, |div| {
+                            .when(accepts_external_paths, |div| {
                                 div.group_drag_over::<ExternalPaths>("", |style| style.visible())
                             })
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
@@ -4610,6 +4661,10 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
+    pub fn is_preview_item(&self) -> bool {
+        self.history.0.lock().preview_item_id == Some(self.item.id())
+    }
+
     pub fn push<D: 'static + Any + Send + Sync>(
         &mut self,
         data: Option<D>,
@@ -4621,19 +4676,18 @@ impl ItemNavHistory {
             .upgrade()
             .is_some_and(|item| item.include_in_nav_history())
         {
-            let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
+            let is_preview_item = self.is_preview_item();
             self.history
                 .push(data, self.item.clone(), is_preview_item, row, cx);
         }
     }
 
     pub fn navigation_entry(&self, data: Option<Arc<dyn Any + Send + Sync>>) -> NavigationEntry {
-        let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
         NavigationEntry {
             item: self.item.clone(),
             data,
             timestamp: 0,
-            is_preview: is_preview_item,
+            is_preview: self.is_preview_item(),
             row: None,
         }
     }
