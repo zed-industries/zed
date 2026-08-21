@@ -85,7 +85,6 @@ zstd.workspace = true
 release_channel.workspace = true
 
 [dev-dependencies]
-assets.workspace = true
 async-io.workspace = true
 agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
@@ -116,3 +115,6 @@ theme_settings.workspace = true
 unindent = { workspace = true }
 
 zlog.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["editor"]

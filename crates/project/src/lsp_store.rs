@@ -2424,9 +2424,20 @@ impl LocalLspStore {
                 anyhow::Ok(())
             })??;
 
-            let mut edits = None;
+            let mut edits = None::<Vec<lsp::TextEdit>>;
             for range in lsp_ranges {
-                if let Some(mut edit) = language_server
+                if edits.as_ref().is_some_and(|edits| {
+                    edits
+                        .iter()
+                        .any(|kept| kept.range.start <= range.start && range.end <= kept.range.end)
+                }) {
+                    log::debug!(
+                        "language server {}: skipping range formatting request for {range:?}: an earlier response already covers it",
+                        language_server.name()
+                    );
+                    continue;
+                }
+                if let Some(range_edits) = language_server
                     .request::<lsp::request::RangeFormatting>(
                         lsp::DocumentRangeFormattingParams {
                             text_document: text_document.clone(),
@@ -2439,7 +2450,50 @@ impl LocalLspStore {
                     .await
                     .into_response()?
                 {
-                    edits.get_or_insert_with(Vec::new).append(&mut edit);
+                    let kept_edits = edits.get_or_insert_with(Vec::new);
+                    let mut new_edits = Vec::new();
+                    let mut overlaps_earlier_response = false;
+                    for edit in range_edits {
+                        let is_duplicate = kept_edits
+                            .iter()
+                            .any(|kept| kept.range == edit.range && kept.new_text == edit.new_text);
+                        if is_duplicate {
+                            continue;
+                        }
+                        if kept_edits
+                            .iter()
+                            .any(|kept| lsp_ranges_conflict(&edit.range, &kept.range))
+                        {
+                            overlaps_earlier_response = true;
+                            break;
+                        }
+                        new_edits.push(edit);
+                    }
+                    if overlaps_earlier_response {
+                        log::debug!(
+                            "language server {} returned range formatting edits for {range:?} that overlap an earlier response and differ; dropping the whole response",
+                            language_server.name()
+                        );
+                        continue;
+                    }
+                    let response_start = kept_edits.len();
+                    let mut dropped_within_response = 0_usize;
+                    for edit in new_edits {
+                        if kept_edits[response_start..]
+                            .iter()
+                            .any(|kept| lsp_ranges_overlap(&edit.range, &kept.range))
+                        {
+                            dropped_within_response += 1;
+                            continue;
+                        }
+                        kept_edits.push(edit);
+                    }
+                    if dropped_within_response > 0 {
+                        log::debug!(
+                            "language server {} returned overlapping edits within one range formatting response for {range:?}; dropped {dropped_within_response} later edit(s)",
+                            language_server.name()
+                        );
+                    }
                 }
             }
             edits
@@ -3381,7 +3435,7 @@ impl LocalLspStore {
                 })
                 .collect::<Vec<_>>();
 
-            lsp_edits.sort_unstable_by_key(|(range, _)| (range.start, range.end));
+            lsp_edits.sort_by_key(|(range, _)| (range.start, range.end));
 
             let mut lsp_edits = lsp_edits.into_iter().peekable();
             let mut edits = Vec::new();
@@ -9409,6 +9463,15 @@ impl LspStore {
             let abs_path = abs_path
                 .to_file_path_ext(path_style)
                 .map_err(|()| anyhow!("can't convert URI to path"))?;
+
+            let fs = lsp_store.update(cx, |lsp_store, _cx| {
+                lsp_store.as_local().map(|local| local.fs.clone())
+            })?;
+            let abs_path = if let Some(fs) = fs {
+                fs.canonicalize(&abs_path).await.unwrap_or(abs_path)
+            } else {
+                abs_path
+            };
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -13669,6 +13732,18 @@ fn server_capabilities_support_range_formatting(capabilities: &lsp::ServerCapabi
         capabilities.document_range_formatting_provider.as_ref(),
         Some(provider) if *provider != OneOf::Left(false)
     )
+}
+
+fn lsp_ranges_conflict(a: &lsp::Range, b: &lsp::Range) -> bool {
+    if a.start == a.end || b.start == b.end {
+        a.start <= b.end && b.start <= a.end
+    } else {
+        lsp_ranges_overlap(a, b)
+    }
+}
+
+fn lsp_ranges_overlap(a: &lsp::Range, b: &lsp::Range) -> bool {
+    a.start < b.end && b.start < a.end
 }
 
 fn subscribe_to_binary_statuses(

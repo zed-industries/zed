@@ -81,8 +81,8 @@ gaoya = "0.2.0"
 [features]
 dynamic_prompts = []
 
-[package.metadata.cargo-machete]
-ignored = ["wasmtime"]
+[package.metadata.cargo-shear]
+ignored = ["wasmtime", "workspace"]
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
