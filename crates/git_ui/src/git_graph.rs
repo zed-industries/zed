@@ -3429,15 +3429,15 @@ impl GitGraph {
                     for (color_idx, builders) in lines {
                         let line_color = accent_colors.color_for_index(color_idx as u32);
 
-                        for builder in builders {
-                            if let Ok(path) = builder.build() {
-                                // we paint each color on it's own layer to stop overlapping lines
-                                // of different colors changing the color of a line
-                                window.paint_layer(bounds, |window| {
+                        // Each color gets its own layer so that overlapping lines of
+                        // different colors don't blend into each other.
+                        window.paint_layer(bounds, |window| {
+                            for builder in builders {
+                                if let Ok(path) = builder.build() {
                                     window.paint_path(path, line_color);
-                                });
+                                }
                             }
-                        }
+                        });
                     }
                 })
             },
