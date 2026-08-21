@@ -1624,7 +1624,11 @@ impl GitPanel {
 
         if self.commit_editor.read(cx).is_focused(window) {
             dispatch_context.add("CommitEditor");
-        } else if self.focus_handle.contains_focused(window, cx) {
+        } else if self.focus_handle.contains_focused(window, cx) || self.context_menu.is_some() {
+            // Preserve the panel's `ChangesList` context while a context menu
+            // is open. Its focus handle may not appear as a descendant of the
+            // panel until the next frame, so `FocusHandle::contains_focused`
+            // would return `false`.
             dispatch_context.add("menu");
             dispatch_context.add("ChangesList");
         }
@@ -12885,6 +12889,49 @@ mod tests {
                 "should have ChangesList context after re-focusing changes list"
             );
         });
+
+        // Case 5: Focus a newly opened context menu before it appears in the
+        // rendered dispatch tree. It should preserve the "menu" and
+        // "ChangesList" contexts so the resolved bindings do not flicker.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.focus_editor(&FocusEditor, window, cx);
+        });
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(panel.commit_editor.read(cx).is_focused(window));
+
+            let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+                menu.context(panel.focus_handle.clone())
+                    .action("Stage All", StageAll.boxed_clone())
+            });
+
+            panel.set_context_menu(
+                context_menu.clone(),
+                gpui::point(px(0.), px(0.)),
+                None,
+                window,
+                cx,
+            );
+
+            let context_menu_focus_handle = context_menu.focus_handle(cx);
+            context_menu_focus_handle.focus(window, cx);
+
+            // The menu was focused without rendering another frame, so the
+            // previous dispatch tree does not yet recognize it as a descendant
+            // of `GitPanel`.
+            assert!(context_menu_focus_handle.is_focused(window));
+            assert!(!panel.focus_handle.contains_focused(window, cx));
+
+            // Ensure that, even if the panel doesn't contain the focused
+            // handle, we still have the `menu` and `ChangesList` contexts
+            // present if the context menu is opened.
+            let context = panel.dispatch_context(window, cx);
+            assert!(context.contains("GitPanel"));
+            assert!(context.contains("ChangesList"));
+            assert!(context.contains("menu"));
+            assert!(!context.contains("CommitEditor"));
+        })
     }
 
     #[gpui::test]
