@@ -1487,19 +1487,21 @@ mod tests {
             diagnostics: vec![
                 // no newlines
                 lsp::Diagnostic {
-                    message: "use of moved value `a`".into(),
+                    message: lsp::DiagnosticMessage::from("use of moved value `a`"),
                     ..Default::default()
                 },
                 // newline at the end of a code span
                 lsp::Diagnostic {
-                    message: "consider importing this struct: `use b::c;\n`".into(),
+                    message: lsp::DiagnosticMessage::from(
+                        "consider importing this struct: `use b::c;\n`",
+                    ),
                     ..Default::default()
                 },
                 // code span starting right after a newline
                 lsp::Diagnostic {
-                    message: "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
-                        .to_string()
-                        .into(),
+                    message: lsp::DiagnosticMessage::from(
+                        "cannot borrow `self.d` as mutable\n`self` is a `&` reference".to_string(),
+                    ),
                     ..Default::default()
                 },
             ],

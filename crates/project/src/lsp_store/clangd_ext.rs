@@ -71,7 +71,7 @@ pub fn register_notifications(
                             range,
                             severity: Some(INACTIVE_DIAGNOSTIC_SEVERITY),
                             source: Some(CLANGD_SERVER_NAME.to_string()),
-                            message: INACTIVE_REGION_MESSAGE.into(),
+                            message: lsp::DiagnosticMessage::from(INACTIVE_REGION_MESSAGE),
                             tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
                             ..lsp::Diagnostic::default()
                         })
