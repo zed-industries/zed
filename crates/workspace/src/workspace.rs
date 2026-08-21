@@ -7637,11 +7637,13 @@ impl Workspace {
                         .save_active_item(SaveIntent::FormatAndSave, window, cx)
                         .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
                 }))
-                .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, window, cx| {
-                    workspace
-                        .save_active_item(SaveIntent::SaveWithoutFormat, window, cx)
-                        .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
-                }))
+                .on_action(cx.listener(
+                    |workspace, _: &SaveWithoutFormat, window, cx| {
+                        workspace
+                            .save_active_item(SaveIntent::SaveWithoutFormat, window, cx)
+                            .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                    },
+                ))
             })
             .on_action(cx.listener(|workspace, _: &SaveAs, window, cx| {
                 workspace
