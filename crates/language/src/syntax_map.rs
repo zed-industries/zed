@@ -76,7 +76,7 @@ impl Drop for SyntaxSnapshot {
 pub struct SyntaxMapCaptures<'a> {
     layers: Vec<SyntaxMapCapturesLayer<'a>>,
     active_layer_count: usize,
-    grammars: Vec<&'a Grammar>,
+    grammars: Vec<&'a Arc<Grammar>>,
 }
 
 #[derive(Default)]
@@ -1252,7 +1252,7 @@ impl<'a> SyntaxMapCaptures<'a> {
         result
     }
 
-    pub fn grammars(&self) -> &[&'a Grammar] {
+    pub fn grammars(&self) -> &[&'a Arc<Grammar>] {
         &self.grammars
     }
 

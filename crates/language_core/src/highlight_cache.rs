@@ -1,12 +1,14 @@
-use crate::highlight_map::{CaptureId, CapturedRange};
+use crate::grammar::Grammar;
+use crate::highlight_map::{CaptureId, CapturedRange, HighlightId};
 use collections::FxHasher;
 use lru::LruCache;
 use parking_lot::Mutex;
 use smallvec::{Array, SmallVec};
-use std::{hash::Hash, hash::Hasher as _, sync::Arc};
+use std::{fmt, hash::Hash, hash::Hasher as _, ops::Range, sync::Arc};
 
 pub const MAX_TEXT_CAPTURES_CACHE_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_TEXT_CAPTURES_ENTRY_BYTES: usize = MAX_TEXT_CAPTURES_CACHE_BYTES / 8;
+pub const MAX_CHUNK_HIGHLIGHT_CACHE_BYTES: usize = 10 * 1024 * 1024;
 const APPROXIMATE_LRU_NODE_BYTES: usize = 4 * size_of::<usize>();
 
 struct CostBudgetedLru<K: Hash + Eq, V> {
@@ -48,6 +50,11 @@ impl<K: Hash + Eq, V> CostBudgetedLru<K, V> {
             };
             self.total_cost -= evicted_cost;
         }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.total_cost = 0;
     }
 }
 
@@ -144,16 +151,67 @@ fn chunks_match_text<'a>(text: &str, text_chunks: impl Iterator<Item = &'a str>)
     remaining.is_empty()
 }
 
+pub type HighlightRun = (Range<usize>, HighlightId);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightCaptureRef {
     pub grammar_index: usize,
     pub capture_id: CaptureId,
 }
 
+#[derive(Clone, Debug)]
+pub struct ChunkCaptureRun {
+    pub range: Range<usize>,
+    pub stack: SmallVec<[HighlightCaptureRef; 4]>,
+}
+
+#[derive(Clone)]
+pub struct ChunkCaptures {
+    pub grammars: SmallVec<[Arc<Grammar>; 2]>,
+    pub runs: Arc<[ChunkCaptureRun]>,
+}
+
+pub struct ChunkHighlightCache(Mutex<CostBudgetedLru<usize, ChunkCaptures>>);
+
+impl Default for ChunkHighlightCache {
+    fn default() -> Self {
+        Self(Mutex::new(CostBudgetedLru::new(
+            MAX_CHUNK_HIGHLIGHT_CACHE_BYTES,
+            MAX_CHUNK_HIGHLIGHT_CACHE_BYTES,
+        )))
+    }
+}
+
+impl fmt::Debug for ChunkHighlightCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChunkHighlightCache")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ChunkHighlightCache {
+    pub fn get(&self, chunk_id: usize) -> Option<ChunkCaptures> {
+        self.0.lock().get(&chunk_id).cloned()
+    }
+
+    pub fn insert(&self, chunk_id: usize, captures: ChunkCaptures) {
+        let cost = captures.grammars.len() * size_of::<Arc<Grammar>>()
+            + captures
+                .runs
+                .iter()
+                .map(|run| size_of::<ChunkCaptureRun>() + small_vec_heap_bytes(&run.stack))
+                .sum::<usize>();
+        self.0.lock().insert(chunk_id, captures, cost);
+    }
+
+    pub fn clear(&mut self) {
+        self.0.get_mut().clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ops::Range;
 
     #[test]
     fn test_budget_evicts_least_recently_used() {
@@ -191,6 +249,17 @@ mod tests {
         assert_eq!(cache.get(&"a"), Some(&1));
         assert_eq!(cache.get(&"b"), None);
         assert_eq!(cache.total_cost, 40 + overhead);
+    }
+
+    #[test]
+    fn test_clear_resets_the_budget() {
+        let overhead = CostBudgetedLru::<&str, u32>::ENTRY_OVERHEAD_BYTES;
+        let mut cache = CostBudgetedLru::<&str, u32>::new(90 + overhead, 100);
+        cache.insert("a", 1, 90);
+        cache.clear();
+        assert_eq!(cache.total_cost, 0);
+        cache.insert("b", 2, 90);
+        assert_eq!(cache.get(&"b"), Some(&2));
     }
 
     #[test]
