@@ -24,7 +24,6 @@ gpui_platform.workspace = true
 language.workspace = true
 log.workspace = true
 reqwest_client.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings_content.workspace = true
@@ -34,5 +33,5 @@ theme_settings.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 wasmtime.workspace = true

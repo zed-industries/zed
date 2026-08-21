@@ -286,7 +286,7 @@ impl LspAdapter for EsLintLspAdapter {
         let file_path = requested_file_path
             .as_ref()
             .and_then(|abs_path| abs_path.strip_prefix(worktree_root).ok())
-            .and_then(|p| RelPath::unix(&p).ok().map(ToOwned::to_owned))
+            .and_then(|p| RelPath::from_unix_str(&p).ok().map(ToOwned::to_owned))
             .unwrap_or_else(|| RelPath::empty().to_owned());
         let override_options = cx.update(|cx| {
             language_server_settings_for(

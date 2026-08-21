@@ -29,16 +29,17 @@ smallvec.workspace = true
 strum.workspace = true
 theme.workspace = true
 ui_macros.workspace = true
+web-time.workspace = true
 gpui_util.workspace = true
-
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["log"]
 
 [features]
 default = []
+derive_inspector_reflection = []

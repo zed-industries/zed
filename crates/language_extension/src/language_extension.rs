@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use extension::{ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy};
 use gpui::{App, Entity, WeakEntity};
-use language::{LanguageMatcher, LanguageName, LanguageRegistry, LoadedLanguage};
+use language::{LanguageLoader, LanguageMatcher, LanguageName, LanguageRegistry};
 use project::LspStore;
 
 #[derive(Clone)]
@@ -48,9 +48,9 @@ impl ExtensionLanguageProxy for LanguageServerRegistryProxy {
         &self,
         language: LanguageName,
         grammar: Option<Arc<str>>,
-        matcher: LanguageMatcher,
+        matcher: Arc<LanguageMatcher>,
         hidden: bool,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + Send + Sync + 'static>,
+        load: LanguageLoader,
     ) {
         self.language_registry
             .register_language(language, grammar, matcher, hidden, None, load);

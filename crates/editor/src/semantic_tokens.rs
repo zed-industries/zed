@@ -6,12 +6,11 @@ use gpui::{
     App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
 };
 use itertools::Itertools;
-use language::language_settings::LanguageSettings;
+use language::{LanguageName, LanguageRegistry, language_settings::LanguageSettings};
+use lsp::LanguageServerId;
 use project::{
-    lsp_store::{
-        BufferSemanticToken, BufferSemanticTokens, RefreshForServer, SemanticTokenStylizer,
-        TokenType,
-    },
+    LspStore,
+    lsp_store::{BufferSemanticToken, BufferSemanticTokens, SemanticTokenStylizer, TokenType},
     project_settings::ProjectSettings,
 };
 use settings::{
@@ -103,7 +102,7 @@ impl Editor {
     ) {
         self.semantic_token_state.toggle_enabled();
         self.invalidate_semantic_tokens(None);
-        self.refresh_semantic_tokens(None, None, cx);
+        self.refresh_semantic_tokens(None, false, cx);
     }
 
     pub(super) fn invalidate_semantic_tokens(&mut self, for_buffer: Option<BufferId>) {
@@ -116,7 +115,7 @@ impl Editor {
     pub(super) fn refresh_semantic_tokens(
         &mut self,
         buffer_id: Option<BufferId>,
-        for_server: Option<RefreshForServer>,
+        server_refreshed: bool,
         cx: &mut Context<Self>,
     ) {
         if !self.lsp_data_enabled() || !self.semantic_token_state.enabled() {
@@ -133,7 +132,7 @@ impl Editor {
         }
 
         let mut invalidate_semantic_highlights_for_buffers = HashSet::default();
-        if for_server.is_some() {
+        if server_refreshed {
             invalidate_semantic_highlights_for_buffers.extend(
                 self.semantic_token_state
                     .fetched_for_buffers
@@ -216,9 +215,9 @@ impl Editor {
                             }) {
                                 None
                             } else {
-                                sema.semantic_tokens(buffer, for_server, cx).map(
-                                    |task| async move { (buffer_id, query_version, task.await) },
-                                )
+                                sema.semantic_tokens(buffer, cx).map(|task| async move {
+                                    (buffer_id, query_version, task.await)
+                                })
                             }
                         })
                         .collect::<Vec<_>>()
@@ -289,6 +288,15 @@ impl Editor {
                         let Some(project) = project.upgrade() else {
                             return;
                         };
+                        let precedences = {
+                            let project = project.read(cx);
+                            server_precedences(
+                                project.lsp_store().read(cx),
+                                project.languages(),
+                                language_name.as_ref(),
+                                &tokens,
+                            )
+                        };
                         editor.display_map.update(cx, |display_map, cx| {
                             project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
                                 let mut token_highlights = Vec::new();
@@ -306,6 +314,7 @@ impl Editor {
                                     token_highlights.extend(buffer_into_editor_highlights(
                                         &server_tokens,
                                         stylizer,
+                                        precedences.get(&server_id).copied().unwrap_or_default(),
                                         &multi_buffer_snapshot,
                                         &mut interner,
                                         theme,
@@ -313,7 +322,10 @@ impl Editor {
                                 }
 
                                 token_highlights.sort_by(|a, b| {
-                                    a.range.start.cmp(&b.range.start, &multi_buffer_snapshot)
+                                    a.range
+                                        .start
+                                        .cmp(&b.range.start, &multi_buffer_snapshot)
+                                        .then_with(|| a.precedence.cmp(&b.precedence))
                                 });
                                 Arc::make_mut(&mut display_map.semantic_token_highlights).insert(
                                     buffer_id,
@@ -330,9 +342,44 @@ impl Editor {
     }
 }
 
+fn server_precedences(
+    lsp_store: &LspStore,
+    languages: &LanguageRegistry,
+    language_name: Option<&LanguageName>,
+    tokens: &HashMap<LanguageServerId, Arc<[BufferSemanticToken]>>,
+) -> HashMap<LanguageServerId, u32> {
+    let ordered_adapters = language_name
+        .map(|language_name| languages.lsp_adapters(language_name))
+        .unwrap_or_default();
+
+    // We base this on the ids that are present rather than the adapter count,
+    // otherwise a server we can't resolve an adapter for outranks the
+    // configured ones and overrides them
+    let configured_base = tokens.keys().map(|id| id.0).max().map_or(0, |max| max + 1);
+
+    tokens
+        .keys()
+        .map(|&server_id| {
+            let configured_precedence = lsp_store
+                .language_server_adapter_for_id(server_id)
+                .and_then(|adapter| {
+                    ordered_adapters
+                        .iter()
+                        .position(|ordered_adapter| ordered_adapter.name == adapter.name)
+                });
+            let precedence = match configured_precedence {
+                Some(index) => configured_base + index,
+                None => server_id.0,
+            };
+            (server_id, precedence as u32)
+        })
+        .collect()
+}
+
 fn buffer_into_editor_highlights<'a, 'b>(
     buffer_tokens: &'a [BufferSemanticToken],
     stylizer: &'a SemanticTokenStylizer,
+    precedence: u32,
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
     theme: &'a SyntaxTheme,
@@ -346,7 +393,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
         .into_iter()
         .tuples::<(_, _)>()
         .zip(buffer_tokens)
-        .filter_map(|((multi_buffer_start, multi_buffer_end), token)| {
+        .filter_map(move |((multi_buffer_start, multi_buffer_end), token)| {
             let range = multi_buffer_start?..multi_buffer_end?;
             let style = convert_token(stylizer, theme, token.token_type, token.token_modifiers)?;
             let style = interner.intern(style);
@@ -356,6 +403,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
                 token_type: token.token_type,
                 token_modifiers: token.token_modifiers,
                 server_id: stylizer.server_id(),
+                precedence,
             })
         })
 }
@@ -467,6 +515,7 @@ mod tests {
     use futures::StreamExt as _;
     use gpui::{
         AppContext as _, Entity, Focusable as _, HighlightStyle, TestAppContext, UpdateGlobal as _,
+        VisualTestContext,
     };
     use language::{
         Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageAwareStyling, LanguageConfig,
@@ -481,8 +530,8 @@ mod tests {
     use rope::{Point, PointUtf16};
     use serde_json::json;
     use settings::{
-        GlobalLspSettingsContent, LanguageSettingsContent, SemanticTokenRule, SemanticTokenRules,
-        SemanticTokens, SettingsStore,
+        ConfiguredLanguageServer, GlobalLspSettingsContent, LanguageSettingsContent,
+        SemanticTokenRule, SemanticTokenRules, SemanticTokens, SettingsStore,
     };
     use workspace::{MultiWorkspace, WorkspaceHandle as _};
 
@@ -862,10 +911,11 @@ mod tests {
         let toml_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "TOML".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1066,6 +1116,285 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn lsp_semantic_tokens_multiserver_precedence(cx: &mut TestAppContext) {
+        use gpui::Rgba;
+
+        init_test(cx, |_| {});
+
+        let toml_settings = |language_servers: [&str; 2]| LanguageSettingsContent {
+            semantic_tokens: Some(SemanticTokens::Full),
+            language_servers: Some(
+                language_servers
+                    .into_iter()
+                    .map(ConfiguredLanguageServer::new)
+                    .collect(),
+            ),
+            ..LanguageSettingsContent::default()
+        };
+
+        update_test_language_settings(cx, &|language_settings| {
+            language_settings
+                .languages
+                .0
+                .insert("TOML".into(), toml_settings(["toml1", "toml2"]));
+        });
+
+        let red = Rgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        };
+        let blue = Rgba {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 1.0,
+        };
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.global_lsp_settings = Some(GlobalLspSettingsContent {
+                        semantic_token_rules: Some(SemanticTokenRules {
+                            rules: Vec::from([
+                                SemanticTokenRule {
+                                    token_type: Some("property".to_string()),
+                                    foreground_color: Some(red),
+                                    font_style: Some(SemanticTokenFontStyle::Italic),
+                                    ..SemanticTokenRule::default()
+                                },
+                                SemanticTokenRule {
+                                    token_type: Some("number".to_string()),
+                                    foreground_color: Some(blue),
+                                    ..SemanticTokenRule::default()
+                                },
+                            ]),
+                        }),
+                        ..GlobalLspSettingsContent::default()
+                    });
+                });
+            });
+        });
+
+        let toml_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TOML".into(),
+                matcher: (LanguageMatcher {
+                    path_suffixes: vec!["toml".into()],
+                    ..LanguageMatcher::default()
+                })
+                .into(),
+                ..LanguageConfig::default()
+            },
+            None,
+        ));
+
+        let app_state = cx.update(workspace::AppState::test);
+
+        cx.update(|cx| {
+            assets::Assets.load_test_fonts(cx);
+            crate::init(cx);
+            workspace::init(app_state.clone(), cx);
+        });
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+        let mut toml_server_1 = language_registry.register_fake_lsp(
+            toml_language.name(),
+            FakeLspAdapter {
+                name: "toml1",
+                capabilities: lsp::ServerCapabilities {
+                    semantic_tokens_provider: Some(
+                        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                            lsp::SemanticTokensOptions {
+                                legend: lsp::SemanticTokensLegend {
+                                    token_types: vec!["property".into()],
+                                    token_modifiers: Vec::new(),
+                                },
+                                full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                                ..lsp::SemanticTokensOptions::default()
+                            },
+                        ),
+                    ),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                    lsp::SemanticTokens {
+                                        data: vec![
+                                            0, // delta_line
+                                            0, // delta_start
+                                            5, // length
+                                            0, // token_type
+                                            0, // token_modifiers_bitset
+                                        ],
+                                        result_id: Some("a".into()),
+                                    },
+                                )))
+                            },
+                        );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+        let mut toml_server_2 = language_registry.register_fake_lsp(
+            toml_language.name(),
+            FakeLspAdapter {
+                name: "toml2",
+                capabilities: lsp::ServerCapabilities {
+                    semantic_tokens_provider: Some(
+                        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                            lsp::SemanticTokensOptions {
+                                legend: lsp::SemanticTokensLegend {
+                                    token_types: vec!["number".into()],
+                                    token_modifiers: Vec::new(),
+                                },
+                                full: Some(lsp::SemanticTokensFullOptions::Delta { delta: None }),
+                                ..lsp::SemanticTokensOptions::default()
+                            },
+                        ),
+                    ),
+                    ..lsp::ServerCapabilities::default()
+                },
+                initializer: Some(Box::new(move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                            move |_, _| async move {
+                                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                    lsp::SemanticTokens {
+                                        data: vec![
+                                            0, // delta_line
+                                            2, // delta_start
+                                            1, // length
+                                            0, // token_type
+                                            0, // token_modifiers_bitset
+                                        ],
+                                        result_id: Some("a".into()),
+                                    },
+                                )))
+                            },
+                        );
+                })),
+                ..FakeLspAdapter::default()
+            },
+        );
+        language_registry.add(toml_language.clone());
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                EditorLspTestContext::root_path(),
+                json!({
+                    ".git": {},
+                    "dir": {
+                        "foo.toml": "a = 1\nb = 2\n",
+                    }
+                }),
+            )
+            .await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(EditorLspTestContext::root_path(), true, cx)
+            })
+            .await
+            .unwrap();
+        cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
+            .await;
+
+        let toml_file = cx.read(|cx| workspace.file_project_paths(cx)[0].clone());
+        let toml_item = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(toml_file, None, true, window, cx)
+            })
+            .await
+            .expect("Could not open test file");
+
+        let editor = cx.update(|_, cx| {
+            toml_item
+                .act_as::<Editor>(cx)
+                .expect("Opened test file wasn't an editor")
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx), cx)
+        });
+
+        let _toml_server_1 = toml_server_1.next().await.unwrap();
+        let _toml_server_2 = toml_server_2.next().await.unwrap();
+
+        let refetch_semantic_tokens = |editor: &Entity<Editor>, cx: &mut VisualTestContext| {
+            editor.update_in(cx, |editor, _, cx| {
+                editor.edit([(MultiBufferOffset(0)..MultiBufferOffset(1), "a")], cx);
+            });
+            cx.executor().advance_clock(Duration::from_millis(200));
+            let task = editor.update_in(cx, |e, _, _| e.semantic_token_state.take_update_task());
+            cx.run_until_parked();
+            task
+        };
+
+        refetch_semantic_tokens(&editor, cx).await;
+
+        let red_italic = HighlightStyle {
+            color: Some(red.into()),
+            font_style: Some(FontStyle::Italic),
+            ..HighlightStyle::default()
+        };
+        let blue = HighlightStyle {
+            color: Some(blue.into()),
+            ..HighlightStyle::default()
+        };
+        assert_eq!(
+            extract_painted_semantic_styles(&editor, cx),
+            vec![
+                Some(red_italic),
+                Some(red_italic),
+                Some(blue),
+                Some(red_italic),
+                Some(red_italic),
+                None,
+            ],
+            "`toml2` is configured last, so it replaces `toml1` where they overlap and `toml1` resumes after"
+        );
+
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .languages
+                        .0
+                        .insert("TOML".into(), toml_settings(["toml2", "toml1"]));
+                });
+            });
+        });
+
+        refetch_semantic_tokens(&editor, cx).await;
+
+        assert_eq!(
+            extract_painted_semantic_styles(&editor, cx),
+            vec![
+                Some(red_italic),
+                Some(red_italic),
+                Some(red_italic),
+                Some(red_italic),
+                Some(red_italic),
+                None,
+            ],
+            "`toml1` is configured last, so it replaces `toml2` across its entire range"
+        );
+    }
+
+    #[gpui::test]
     async fn lsp_semantic_tokens_multibuffer_part(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
@@ -1089,10 +1418,11 @@ mod tests {
         let toml_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "TOML".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["toml".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1100,10 +1430,11 @@ mod tests {
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1378,10 +1709,11 @@ mod tests {
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: (LanguageMatcher {
                     path_suffixes: vec!["rs".into()],
                     ..LanguageMatcher::default()
-                },
+                })
+                .into(),
                 ..LanguageConfig::default()
             },
             None,
@@ -1836,7 +2168,7 @@ mod tests {
                         syntax: IndexMap::from_iter([(
                             "function".to_string(),
                             HighlightStyleContent {
-                                color: Some("#ff0000".to_string()),
+                                color: Some("#ff0000".into()),
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
@@ -1878,7 +2210,7 @@ mod tests {
                         syntax: IndexMap::from_iter([(
                             "function".to_string(),
                             HighlightStyleContent {
-                                color: Some("#0000ff".to_string()),
+                                color: Some("#0000ff".into()),
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
@@ -2005,7 +2337,7 @@ mod tests {
                             syntax: IndexMap::from_iter([(
                                 "function".to_string(),
                                 HighlightStyleContent {
-                                    color: Some("#00ff00".to_string()),
+                                    color: Some("#00ff00".into()),
                                     background_color: None,
                                     font_style: None,
                                     font_weight: None,
@@ -2507,15 +2839,15 @@ mod tests {
             buffer.update_diagnostics(
                 LanguageServerId(0),
                 DiagnosticSet::new(
-                    [DiagnosticEntry {
-                        range: PointUtf16::new(0, 3)..PointUtf16::new(0, 7),
-                        diagnostic: Diagnostic {
+                    [DiagnosticEntry::new(
+                        PointUtf16::new(0, 3)..PointUtf16::new(0, 7),
+                        Diagnostic {
                             severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "unused function".into(),
                             ..Default::default()
                         },
-                    }],
+                    )],
                     buffer,
                 ),
                 cx,
@@ -2565,6 +2897,30 @@ mod tests {
             "expected 'main' chunk to have both diagnostic and semantic styling: {:?}",
             chunks
         );
+    }
+
+    fn extract_painted_semantic_styles(
+        editor: &Entity<Editor>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<Option<HighlightStyle>> {
+        editor.update_in(cx, |editor, window, cx| {
+            editor
+                .snapshot(window, cx)
+                .display_snapshot
+                .chunks(
+                    crate::display_map::DisplayRow(0)..crate::display_map::DisplayRow(1),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    crate::HighlightStyles::default(),
+                )
+                .flat_map(|chunk| {
+                    let style = chunk.highlight_style;
+                    chunk.text.chars().map(move |_| style).collect::<Vec<_>>()
+                })
+                .collect()
+        })
     }
 
     fn extract_semantic_highlight_styles(

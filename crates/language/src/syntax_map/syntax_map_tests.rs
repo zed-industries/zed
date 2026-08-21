@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    LanguageConfig, LanguageMatcher, LanguageQueries, buffer_tests::markdown_inline_lang,
-    markdown_lang, rust_lang,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries,
+    buffer_tests::markdown_inline_lang, markdown_lang, rust_lang,
 };
 use gpui::App;
 use pretty_assertions::assert_eq;
@@ -930,6 +930,71 @@ fn test_empty_combined_injections_inside_injections(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_combined_injection_with_leading_content_layer_ordering(cx: &mut App) {
+    // Regression test for "layers out of order".
+    //
+    // A combined injection stores its layer `range` as the parent's full
+    // `outer_range`, but the parse queue orders steps by `ParseStep::range()`,
+    // which for a combined injection is the parsed node span. When the parent
+    // layer has content before its first injected range (here: leading HEEx
+    // markup before the first `<% %>` directive), those two ranges start at
+    // different offsets. A nested combined injection then inherits the wide
+    // `outer_range` (starting at 0) but is ordered by the narrow node span,
+    // landing after a sibling injection and breaking the sorted-by-start
+    // invariant.
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let heex = Arc::new(heex_lang());
+    let elixir = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: LanguageName::new_static("Elixir"),
+                matcher: Arc::new(LanguageMatcher {
+                    path_suffixes: vec![String::from("ex")],
+                    ..Default::default()
+                }),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter::Language::new(tree_sitter_elixir::LANGUAGE)),
+        )
+        .with_injection_query(
+            r#"
+            ((string (quoted_content) @injection.content)
+             (#set! injection.language "html")
+             (#set! injection.combined))
+            ((string (quoted_content) @injection.content)
+             (#set! injection.language "Markdown")
+             (#set! injection.combined))
+            "#,
+        )
+        .unwrap(),
+    );
+    registry.add(heex.clone());
+    registry.add(elixir);
+    registry.add(Arc::new(html_lang()));
+    registry.add(markdown_lang());
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+<div>leading markup before any directive</div>
+<a href={"early-attr"}>x</a>
+<%= "mid" %>
+<% y = "code" %>
+<b class={"late-attr"}>z</b>
+<%= "tail" %>
+"#
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    // In debug builds, `reparse` runs `check_invariants`, which panics with
+    // "layers out of order" if the produced layers are not correctly sorted.
+    syntax_map.reparse(heex, &buffer);
+}
+
+#[gpui::test]
 fn test_comment_triggered_injection_toggle(cx: &mut App) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
@@ -1321,8 +1386,8 @@ fn check_interpolation(
             check_node_edits(
                 depth,
                 range,
-                old_node.child(i as u32).unwrap(),
-                new_node.child(i as u32).unwrap(),
+                old_node.child(i).unwrap(),
+                new_node.child(i).unwrap(),
                 old_buffer,
                 new_buffer,
                 edits,
@@ -1397,10 +1462,11 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HTML".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["html".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_html::LANGUAGE.into()),
@@ -1419,10 +1485,11 @@ fn ruby_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Ruby".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_ruby::LANGUAGE.into()),
@@ -1441,10 +1508,11 @@ fn erb_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "ERB".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::LANGUAGE.into()),
@@ -1477,10 +1545,11 @@ fn elixir_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Elixir".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_elixir::LANGUAGE.into()),
@@ -1497,10 +1566,11 @@ fn heex_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "HEEx".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["heex".into()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_heex::LANGUAGE.into()),
@@ -1529,10 +1599,11 @@ fn python_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: "Python".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["py".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             line_comments: vec!["# ".into()],
             ..Default::default()
         },
