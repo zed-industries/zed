@@ -199,6 +199,8 @@ fn get_fim_stop_tokens() -> Vec<String> {
     vec![
         "<|endoftext|>".to_string(),
         "<|file_separator|>".to_string(),
+        "<|file_sep|>".to_string(),
+        "<|repo_name|>".to_string(),
         "<|fim_pad|>".to_string(),
         "<|fim_prefix|>".to_string(),
         "<|fim_middle|>".to_string(),
@@ -220,6 +222,8 @@ fn clean_fim_completion(response: &str) -> String {
     let end_tokens = [
         "<|endoftext|>",
         "<|file_separator|>",
+        "<|file_sep|>",
+        "<|repo_name|>",
         "<|fim_pad|>",
         "<|fim_prefix|>",
         "<|fim_middle|>",
