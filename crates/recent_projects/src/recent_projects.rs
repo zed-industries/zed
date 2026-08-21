@@ -567,6 +567,18 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+
+    // Subscribe to worktree additions to register remote clients with the extension store
+    cx.observe_new(
+        |workspace: &mut Workspace, _window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+            if let Some(client) = workspace.project().read(cx).remote_client()
+                && let Some(extension_store) = extension_host::ExtensionStore::try_global(cx)
+            {
+                extension_store.update(cx, |store, cx| store.register_remote_client(client, cx));
+            }
+        },
+    )
+    .detach();
 }
 
 #[cfg(target_os = "windows")]
