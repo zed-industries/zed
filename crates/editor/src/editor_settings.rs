@@ -111,6 +111,7 @@ pub struct Scrollbar {
     pub diagnostics: ScrollbarDiagnostics,
     pub cursors: bool,
     pub axes: ScrollbarAxes,
+    pub active_scope_markers: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -252,6 +253,7 @@ impl Settings for EditorSettings {
                     horizontal: axes.horizontal.unwrap(),
                     vertical: axes.vertical.unwrap(),
                 },
+                active_scope_markers: scrollbar.active_scope_markers.unwrap(),
             },
             minimap: Minimap {
                 show: minimap.show.unwrap(),

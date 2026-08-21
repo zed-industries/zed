@@ -584,7 +584,7 @@ impl Editor {
         }
         self.refresh_active_diagnostics(cx);
         self.refresh_inline_diagnostics(true, window, cx);
-        self.scrollbar_marker_state.dirty = true;
+        self.scrollbar_marker_state.mark_buffer_changed();
         cx.notify();
     }
 
