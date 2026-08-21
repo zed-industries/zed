@@ -305,7 +305,12 @@ impl AgentConnectionStore {
             Ok(connection) => Ok(AgentConnectedState { connection }),
             Err(err) => match err.downcast::<LoadError>() {
                 Ok(load_error) => Err(load_error),
-                Err(err) => Err(LoadError::Other(SharedString::from(err.to_string()))),
+                Err(err) => {
+                    log::error!("failed to connect to agent server: {err:?}");
+                    // `{:#}` keeps the whole context chain; `to_string` would
+                    // keep only the outermost message and hide the root cause.
+                    Err(LoadError::Other(SharedString::from(format!("{err:#}"))))
+                }
             },
         });
         (new_version_rx, loading_status_rx, connect_task)
