@@ -4859,10 +4859,10 @@ impl RenderedText {
 /// its `Start` and matching `End`, yielding a balanced stream for `push_html`.
 ///
 /// Code blocks whose source start offset is present in `code_block_html` are
-/// replaced with the syntax-highlighted fragment captured during rendering
-/// (see [`RenderedText::code_block_html_by_source_offset`]); pulldown's own
-/// events for that block are skipped. Blocks without a cached fragment fall back
-/// to pulldown's plain `<pre><code>`.
+/// replaced with the syntax-highlighted fragment built at copy time (see
+/// [`Markdown::code_block_html_for_selection`]); pulldown's own events for
+/// that block are skipped. Blocks without a cached fragment fall back to
+/// pulldown's plain `<pre><code>`.
 ///
 /// pulldown only recognizes `<url>` and `[text](url)` link forms; the preview
 /// linkifies bare URLs (e.g. `http://example.com` with no markup) as a
