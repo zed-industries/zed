@@ -349,7 +349,9 @@ fn get_tests(t_bin: &str) -> impl ExactSizeIterator<Item = (String, String)> {
     );
 
     let out = test_list
-        .chunks_exact_mut(2)
+        .as_chunks_mut::<2>()
+        .0
+        .iter()
         .map(|pair| {
             // Be resilient against changes to these constants.
             if consts::SUF_NORMAL < consts::SUF_MDATA {

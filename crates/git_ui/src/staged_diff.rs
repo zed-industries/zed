@@ -730,7 +730,7 @@ impl Render for StagedDiffToolbar {
 mod tests {
     use crate::project_diff::{self, ProjectDiff};
     use git::repository::RepoPath;
-    use gpui::{Action as _, TestAppContext};
+    use gpui::TestAppContext;
     use language::Point;
     use project::{FakeFs, Fs as _};
     use serde_json::json;
