@@ -1137,12 +1137,24 @@ pub struct CheckPidError {
     pid: u32,
 }
 async fn check_server_running(pid: u32) -> std::io::Result<bool> {
-    new_command("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .output()
-        .await
-        .map(|output| output.status.success())
+    Ok(process_exists(pid))
+}
+
+fn process_exists(pid: u32) -> bool {
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+    system.process(sysinfo::Pid::from_u32(pid)).is_some()
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::process_exists;
+
+    #[test]
+    fn process_exists_finds_current_process() {
+        assert!(process_exists(std::process::id()));
+    }
 }
 
 fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
@@ -1155,11 +1167,7 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
 
     log::debug!("Checking if process with PID {} exists...", pid);
 
-    let system = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
-    );
-
-    if system.process(sysinfo::Pid::from_u32(pid)).is_some() {
+    if process_exists(pid) {
         log::debug!(
             "Process with PID {} exists. NOT spawning new server, but attaching to existing one.",
             pid
