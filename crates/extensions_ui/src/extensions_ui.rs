@@ -2,7 +2,6 @@ mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
-use std::cmp::Ordering;
 use std::sync::OnceLock;
 use std::time::Duration;
 use std::{any::TypeId, ops::Range, sync::Arc};
@@ -13,6 +12,7 @@ use collections::{BTreeMap, BTreeSet};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionIndexEntry, ExtensionManifest, ExtensionStore};
+use futures::future::OptionFuture;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use git::{GitHostingProviderRegistry, parse_git_remote_url};
 use gpui::{
@@ -20,6 +20,7 @@ use gpui::{
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TaskExt, TextStyle,
     UniformListScrollHandle, WeakEntity, Window, actions, point, uniform_list,
 };
+use itertools::Itertools;
 use picker::{Picker, PickerDelegate};
 use project::DirectoryLister;
 
@@ -368,34 +369,159 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
     })
 }
 
-#[derive(Clone, PartialEq)]
-enum InstalledExtensionMetadata {
-    Unknown,
-    // We would like to surface installed extensions that are no longer published
-    // upstream, but we cannot currently determine that properly: the `/extensions`
-    // endpoint returns a fixed set of 1000 extensions, so we might show niece
-    // extensions as no longer published when they are actually not
-    // NoLongerPublished,
-    Available(Arc<ExtensionMetadata>),
+/// Everything we know about a single extension, consolidated from the local
+/// extension store and remote responses.
+#[derive(Clone, Default)]
+struct ExtensionEntry {
+    manifest: Option<Arc<ExtensionManifest>>,
+    dev: bool,
+    /// The most recent remote metadata we have seen for this extension, kept
+    /// across searches. Note that `None` does not mean the extension is
+    /// unpublished: the `/extensions` endpoint returns a bounded, filtered set,
+    /// so we cannot currently surface a "no longer published" state.
+    metadata: Option<Arc<ExtensionMetadata>>,
 }
 
-#[derive(Clone, PartialEq)]
-enum ExtensionEntry {
-    Installed {
-        manifest: Arc<ExtensionManifest>,
-        metadata: InstalledExtensionMetadata,
-    },
-    NotInstalled {
-        metadata: Arc<ExtensionMetadata>,
-    },
-    Dev(Arc<ExtensionManifest>),
+impl ExtensionEntry {
+    fn is_installed(&self) -> bool {
+        self.manifest.is_some()
+    }
+
+    fn provides(&self, provides: ExtensionProvides) -> bool {
+        if let Some(manifest) = &self.manifest {
+            manifest.provides().contains(&provides)
+        } else if let Some(metadata) = &self.metadata {
+            metadata.manifest.provides.contains(&provides)
+        } else {
+            false
+        }
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum ExtensionSortGroup {
-    Local,
-    Dev,
-    Published,
+/// A row in the extensions list, referencing an [`ExtensionEntry`] together with
+/// the view to render it as. A dev extension and its published counterpart can
+/// both be shown, as separate rows over the same entry.
+#[derive(Clone)]
+enum DisplayedExtension {
+    Local(Arc<str>),
+    Remote(Arc<str>),
+}
+
+/// The consolidated extension state backing the list: everything we know about
+/// each extension, the current local and remote search results, and the rows
+/// composed from them.
+#[derive(Default)]
+struct ExtensionList {
+    entries: BTreeMap<Arc<str>, ExtensionEntry>,
+    /// Ids of the installed extensions matching the current search, sorted by name.
+    local_search_results: Vec<Arc<str>>,
+    /// Ids of the current remote search results, in server order.
+    remote_search_results: Vec<Arc<str>>,
+    displayed: Vec<DisplayedExtension>,
+}
+
+impl ExtensionList {
+    fn get(&self, extension_id: &str) -> Option<&ExtensionEntry> {
+        self.entries.get(extension_id)
+    }
+
+    /// Syncs the installed state into the entries and recomputes the local search
+    /// results. `matching_extension_ids` of `None` means there is no search query.
+    fn update_installed_extensions(
+        &mut self,
+        installed_extensions: &BTreeMap<Arc<str>, ExtensionIndexEntry>,
+        matching_extension_ids: Option<&BTreeSet<Arc<str>>>,
+    ) {
+        for entry in self.entries.values_mut() {
+            entry.manifest = None;
+            entry.dev = false;
+        }
+        for (extension_id, installed_extension) in installed_extensions {
+            let entry = self.entries.entry(extension_id.clone()).or_default();
+            entry.manifest = Some(installed_extension.manifest.clone());
+            entry.dev = installed_extension.dev;
+        }
+
+        self.local_search_results = installed_extensions
+            .keys()
+            .filter(|extension_id| {
+                matching_extension_ids
+                    .is_none_or(|matching_ids| matching_ids.contains(*extension_id))
+            })
+            .cloned()
+            .sorted_by_cached_key(|extension_id| {
+                installed_extensions
+                    .get(extension_id)
+                    .map(|extension| extension.manifest.name.to_ascii_lowercase())
+            })
+            .collect();
+    }
+
+    fn set_remote_search_results(&mut self, remote_extensions: Vec<ExtensionMetadata>) {
+        self.remote_search_results = remote_extensions
+            .into_iter()
+            .map(|metadata| {
+                let metadata = Arc::new(metadata);
+                let extension_id = metadata.id.clone();
+                self.entries
+                    .entry(extension_id.clone())
+                    .or_default()
+                    .metadata = Some(metadata);
+                extension_id
+            })
+            .collect();
+    }
+
+    fn rebuild_displayed(
+        &mut self,
+        filter: ExtensionFilter,
+        provides_filter: Option<ExtensionProvides>,
+    ) {
+        // The server already applies the provides filter to remote results, but
+        // they can be stale for one fetch cycle after the filter changed, so apply
+        // it locally to all rows to avoid briefly showing another category.
+        let matches_provides = |extension_id: &Arc<str>| {
+            provides_filter.is_none_or(|provides| {
+                self.entries
+                    .get(extension_id)
+                    .is_some_and(|entry| entry.provides(provides))
+            })
+        };
+
+        let local_ids = self
+            .local_search_results
+            .iter()
+            .filter(|extension_id| matches_provides(extension_id));
+        let remote_ids = self
+            .remote_search_results
+            .iter()
+            .filter(|extension_id| matches_provides(extension_id));
+
+        self.displayed = match filter {
+            ExtensionFilter::All => local_ids
+                .filter(|extension_id| {
+                    self.entries
+                        .get(*extension_id)
+                        .is_some_and(|entry| entry.dev)
+                })
+                .cloned()
+                .map(DisplayedExtension::Local)
+                .chain(remote_ids.cloned().map(DisplayedExtension::Remote))
+                .collect(),
+            ExtensionFilter::Installed => {
+                local_ids.cloned().map(DisplayedExtension::Local).collect()
+            }
+            ExtensionFilter::NotInstalled => remote_ids
+                .filter(|extension_id| {
+                    self.entries
+                        .get(*extension_id)
+                        .is_none_or(|entry| !entry.is_installed())
+                })
+                .cloned()
+                .map(DisplayedExtension::Remote)
+                .collect(),
+        };
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -415,118 +541,6 @@ impl ExtensionFetchState {
     }
 }
 
-impl ExtensionEntry {
-    fn id(&self) -> &Arc<str> {
-        match self {
-            Self::Installed { manifest, .. } | Self::Dev(manifest) => &manifest.id,
-            Self::NotInstalled { metadata } => &metadata.id,
-        }
-    }
-
-    fn name(&self) -> &str {
-        match self {
-            Self::Installed {
-                metadata: InstalledExtensionMetadata::Available(metadata),
-                ..
-            }
-            | Self::NotInstalled { metadata } => &metadata.manifest.name,
-            Self::Installed { manifest, .. } | Self::Dev(manifest) => &manifest.name,
-        }
-    }
-
-    fn metadata(&self) -> Option<&Arc<ExtensionMetadata>> {
-        match self {
-            Self::Installed {
-                metadata: InstalledExtensionMetadata::Available(metadata),
-                ..
-            }
-            | Self::NotInstalled { metadata } => Some(metadata),
-            Self::Installed { .. } | Self::Dev(_) => None,
-        }
-    }
-
-    fn repository_url(&self) -> Option<&str> {
-        match self {
-            Self::Installed {
-                metadata: InstalledExtensionMetadata::Available(metadata),
-                ..
-            }
-            | Self::NotInstalled { metadata } => Some(&metadata.manifest.repository),
-            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
-                manifest.repository.as_deref()
-            }
-        }
-    }
-
-    fn provides(&self, provides: ExtensionProvides) -> bool {
-        match self {
-            Self::Installed { manifest, .. } | Self::Dev(manifest) => {
-                manifest.provides().contains(&provides)
-            }
-            Self::NotInstalled { metadata } => metadata.manifest.provides.contains(&provides),
-        }
-    }
-
-    fn download_count(&self) -> Option<u64> {
-        self.metadata().map(|metadata| metadata.download_count)
-    }
-
-    fn is_installed(&self) -> bool {
-        matches!(self, Self::Installed { .. } | Self::Dev(_))
-    }
-
-    fn sort_group(&self) -> ExtensionSortGroup {
-        match self {
-            Self::Dev(_) => ExtensionSortGroup::Dev,
-            Self::Installed {
-                metadata: InstalledExtensionMetadata::Unknown,
-                ..
-            } => ExtensionSortGroup::Local,
-            Self::Installed {
-                metadata: InstalledExtensionMetadata::Available(_),
-                ..
-            }
-            | Self::NotInstalled { .. } => ExtensionSortGroup::Published,
-        }
-    }
-
-    fn compare(left: &Self, right: &Self) -> Ordering {
-        left.sort_group()
-            .cmp(&right.sort_group())
-            .then_with(|| {
-                if left.sort_group() == ExtensionSortGroup::Published {
-                    match (left.download_count(), right.download_count()) {
-                        (Some(left), Some(right)) => right.cmp(&left),
-                        _ => Ordering::Equal,
-                    }
-                } else {
-                    Ordering::Equal
-                }
-            })
-            .then_with(|| {
-                left.name()
-                    .to_ascii_lowercase()
-                    .cmp(&right.name().to_ascii_lowercase())
-            })
-            .then_with(|| left.id().cmp(right.id()))
-    }
-
-    fn card(&self, cx: &App) -> ExtensionCard {
-        match self {
-            Self::Installed {
-                manifest,
-                metadata: InstalledExtensionMetadata::Unknown,
-            } => ExtensionCard::for_installed(manifest.clone(), cx),
-            Self::Installed {
-                metadata: InstalledExtensionMetadata::Available(metadata),
-                ..
-            }
-            | Self::NotInstalled { metadata } => ExtensionCard::for_remote(metadata, cx),
-            Self::Dev(manifest) => ExtensionCard::for_dev(manifest.clone(), cx),
-        }
-    }
-}
-
 pub struct ExtensionsPage {
     workspace: WeakEntity<Workspace>,
     provider_registry: Arc<GitHostingProviderRegistry>,
@@ -534,13 +548,13 @@ pub struct ExtensionsPage {
     fetch_state: ExtensionFetchState,
     fetch_generation: usize,
     filter: ExtensionFilter,
-    extension_entries: Vec<ExtensionEntry>,
-    filtered_extension_indices: Vec<usize>,
+    extensions: ExtensionList,
     query_editor: Entity<Editor>,
     query_contains_error: bool,
     provides_filter: Option<ExtensionProvides>,
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
+    local_search_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
 }
 
@@ -596,15 +610,16 @@ impl ExtensionsPage {
                 fetch_state: ExtensionFetchState::Fetching,
                 fetch_generation: 0,
                 filter: ExtensionFilter::All,
-                extension_entries: Vec::new(),
-                filtered_extension_indices: Vec::new(),
+                extensions: ExtensionList::default(),
                 query_contains_error: false,
                 provides_filter,
                 extension_fetch_task: None,
+                local_search_task: None,
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
             };
+            this.update_local_search_results(cx);
             this.fetch_extensions(
                 this.search_query(cx),
                 Some(BTreeSet::from_iter(this.provides_filter)),
@@ -667,41 +682,78 @@ impl ExtensionsPage {
         }
     }
 
-    fn filter_extension_entries(&mut self, cx: &mut Context<Self>) {
-        self.filtered_extension_indices.clear();
-        self.filtered_extension_indices.extend(
-            self.extension_entries
-                .iter()
-                .enumerate()
-                .filter(|(_, extension)| match self.filter {
-                    ExtensionFilter::All => true,
-                    ExtensionFilter::Installed => extension.is_installed(),
-                    ExtensionFilter::NotInstalled => !extension.is_installed(),
-                })
-                .filter(|(_, extension)| {
-                    self.provides_filter
-                        .is_none_or(|provides| extension.provides(provides))
-                })
-                .map(|(index, _)| index),
-        );
+    /// Runs the search against the locally installed extensions, independently of
+    /// the remote fetch, so local results show up without waiting for the server.
+    fn update_local_search_results(&mut self, cx: &mut Context<Self>) {
+        let search = self.search_query(cx);
+        let installed_extensions = ExtensionStore::global(cx)
+            .read(cx)
+            .installed_extensions()
+            .clone();
 
+        self.local_search_task = Some(cx.spawn(async move |this, cx| {
+            let matching_extension_ids: OptionFuture<_> = search
+                .as_ref()
+                .map(async |search| {
+                    if let Some(extension_id) = search.strip_prefix("id:") {
+                        installed_extensions
+                            .contains_key(extension_id)
+                            .then(|| BTreeSet::from([Arc::<str>::from(extension_id)]))
+                            .unwrap_or_default()
+                    } else {
+                        let installed = installed_extensions.iter().collect::<Vec<_>>();
+                        let match_candidates = installed
+                            .iter()
+                            .enumerate()
+                            .map(|(index, (_, extension))| {
+                                StringMatchCandidate::new(index, &extension.manifest.name)
+                            })
+                            .collect::<Vec<_>>();
+
+                        let matches = match_strings(
+                            &match_candidates,
+                            search,
+                            false,
+                            true,
+                            match_candidates.len(),
+                            &Default::default(),
+                            cx.background_executor().clone(),
+                        )
+                        .await;
+                        matches
+                            .into_iter()
+                            .filter_map(|matched| {
+                                installed
+                                    .get(matched.candidate_id)
+                                    .map(|(extension_id, _)| (*extension_id).clone())
+                            })
+                            .collect()
+                    }
+                })
+                .into();
+
+            let matching_extension_ids = matching_extension_ids.await;
+
+            this.update(cx, |this, cx| {
+                this.extensions.update_installed_extensions(
+                    &installed_extensions,
+                    matching_extension_ids.as_ref(),
+                );
+                this.rebuild_displayed_extensions(cx);
+            })
+            .ok();
+        }));
+    }
+
+    fn rebuild_displayed_extensions(&mut self, cx: &mut Context<Self>) {
+        self.extensions
+            .rebuild_displayed(self.filter, self.provides_filter);
         cx.notify();
     }
 
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
         self.list.set_offset(point(px(0.), px(0.)));
         cx.notify();
-    }
-
-    fn entry_for_installed_extension(installed_extension: &ExtensionIndexEntry) -> ExtensionEntry {
-        if installed_extension.dev {
-            ExtensionEntry::Dev(installed_extension.manifest.clone())
-        } else {
-            ExtensionEntry::Installed {
-                manifest: installed_extension.manifest.clone(),
-                metadata: InstalledExtensionMetadata::Unknown,
-            }
-        }
     }
 
     fn fetch_extensions(
@@ -717,17 +769,6 @@ impl ExtensionsPage {
         cx.notify();
 
         let extension_store = ExtensionStore::global(cx);
-        let installed_extensions =
-            Arc::new(extension_store.read(cx).installed_extensions().clone());
-
-        if search.is_none() {
-            self.extension_entries = installed_extensions
-                .values()
-                .map(Self::entry_for_installed_extension)
-                .collect();
-            self.extension_entries.sort_by(ExtensionEntry::compare);
-            self.filter_extension_entries(cx);
-        }
 
         let remote_extensions = if let Some(id) = search
             .as_ref()
@@ -750,50 +791,6 @@ impl ExtensionsPage {
         };
 
         cx.spawn(async move |this, cx| {
-            let matching_installed_extension_ids = if let Some(search) = search {
-                if let Some(extension_id) = search.strip_prefix("id:") {
-                    Some(
-                        installed_extensions
-                            .contains_key(extension_id)
-                            .then(|| BTreeSet::from([Arc::<str>::from(extension_id)]))
-                            .unwrap_or_default(),
-                    )
-                } else {
-                    let installed_extension_ids =
-                        installed_extensions.keys().cloned().collect::<Vec<_>>();
-                    let match_candidates = installed_extension_ids
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(index, extension_id)| {
-                            installed_extensions.get(extension_id).map(|extension| {
-                                StringMatchCandidate::new(index, &extension.manifest.name)
-                            })
-                        })
-                        .collect::<Vec<_>>();
-
-                    let matches = match_strings(
-                        &match_candidates,
-                        &search,
-                        false,
-                        true,
-                        match_candidates.len(),
-                        &Default::default(),
-                        cx.background_executor().clone(),
-                    )
-                    .await;
-                    Some(
-                        matches
-                            .into_iter()
-                            .filter_map(|matched| {
-                                installed_extension_ids.get(matched.candidate_id).cloned()
-                            })
-                            .collect(),
-                    )
-                }
-            } else {
-                None
-            };
-
             let fetch_result = remote_extensions.await;
 
             let result = this.update(cx, |this, cx| {
@@ -801,82 +798,22 @@ impl ExtensionsPage {
                     return Ok(());
                 }
 
-                let matches_local_search = |extension_id: &Arc<str>| {
-                    matching_installed_extension_ids
-                        .as_ref()
-                        .is_none_or(|matching_ids| matching_ids.contains(extension_id))
-                };
-
                 match fetch_result {
                     Ok(remote_extensions) => {
                         this.fetch_state = ExtensionFetchState::Succeeded;
-                        let remote_extensions = remote_extensions
-                            .into_iter()
-                            .map(Arc::new)
-                            .collect::<Vec<_>>();
-
-                        let mut matched_remote_extension_ids = BTreeSet::new();
-                        let mut extension_entries = Vec::new();
-                        for remote_extension in remote_extensions {
-                            if let Some(installed_extension) =
-                                installed_extensions.get(&remote_extension.id)
-                            {
-                                matched_remote_extension_ids.insert(remote_extension.id.clone());
-                                if installed_extension.dev {
-                                    if matches_local_search(&remote_extension.id) {
-                                        extension_entries.push(ExtensionEntry::Dev(
-                                            installed_extension.manifest.clone(),
-                                        ));
-                                    }
-                                    extension_entries.push(ExtensionEntry::NotInstalled {
-                                        metadata: remote_extension,
-                                    });
-                                } else {
-                                    extension_entries.push(ExtensionEntry::Installed {
-                                        manifest: installed_extension.manifest.clone(),
-                                        metadata: InstalledExtensionMetadata::Available(
-                                            remote_extension,
-                                        ),
-                                    });
-                                }
-                            } else {
-                                extension_entries.push(ExtensionEntry::NotInstalled {
-                                    metadata: remote_extension,
-                                });
-                            }
-                        }
-
-                        extension_entries.extend(
-                            installed_extensions
-                                .iter()
-                                .filter(|(extension_id, _)| {
-                                    !matched_remote_extension_ids.contains(*extension_id)
-                                        && matches_local_search(extension_id)
-                                })
-                                .map(|(_, installed_extension)| {
-                                    Self::entry_for_installed_extension(installed_extension)
-                                }),
-                        );
-
-                        this.extension_entries = extension_entries;
-                        this.extension_entries.sort_by(ExtensionEntry::compare);
-                        this.filter_extension_entries(cx);
+                        this.extensions.set_remote_search_results(remote_extensions);
+                        this.rebuild_displayed_extensions(cx);
                         if let Some(callback) = on_complete {
                             callback(this, cx);
                         }
                         Ok(())
                     }
                     Err(error) => {
+                        // Keep the last successfully fetched remote extensions so that
+                        // going offline doesn't wipe the list; the failure banner is
+                        // shown instead.
                         this.fetch_state = ExtensionFetchState::Failed;
-                        this.extension_entries = installed_extensions
-                            .iter()
-                            .filter(|(extension_id, _)| matches_local_search(extension_id))
-                            .map(|(_, installed_extension)| {
-                                Self::entry_for_installed_extension(installed_extension)
-                            })
-                            .collect();
-                        this.extension_entries.sort_by(ExtensionEntry::compare);
-                        this.filter_extension_entries(cx);
+                        this.rebuild_displayed_extensions(cx);
                         Err(error)
                     }
                 }
@@ -895,28 +832,65 @@ impl ExtensionsPage {
     ) -> Vec<ExtensionCard> {
         range
             .filter_map(|index| {
-                let extension_index = *self.filtered_extension_indices.get(index)?;
-                let extension = self.extension_entries.get(extension_index)?;
-                Some(self.render_extension(extension, cx))
+                let row = self.extensions.displayed.get(index)?.clone();
+                self.render_extension(&row, cx)
             })
             .collect()
     }
 
     fn render_extension(
         &self,
-        extension: &ExtensionEntry,
+        row: &DisplayedExtension,
         cx: &mut Context<Self>,
-    ) -> ExtensionCard {
-        let mut card = extension.card(cx);
-        if let Some(repository_url) = extension.repository_url() {
-            card = card.repository_icon(self.get_repository_icon(repository_url));
-        }
-        if extension.metadata().is_none() {
-            return card;
+    ) -> Option<ExtensionCard> {
+        let entry = match row {
+            DisplayedExtension::Local(extension_id) | DisplayedExtension::Remote(extension_id) => {
+                self.extensions.get(extension_id)?
+            }
+        };
+        let (card, repository_url, is_remote_card) = match row {
+            DisplayedExtension::Local(_) => {
+                let manifest = entry.manifest.as_ref()?;
+                if entry.dev {
+                    (
+                        ExtensionCard::for_dev(manifest.clone(), cx),
+                        manifest.repository.as_deref(),
+                        false,
+                    )
+                } else if let Some(metadata) = &entry.metadata {
+                    (
+                        ExtensionCard::for_remote(metadata, cx),
+                        Some(metadata.manifest.repository.as_str()),
+                        true,
+                    )
+                } else {
+                    (
+                        ExtensionCard::for_installed(manifest.clone(), cx),
+                        manifest.repository.as_deref(),
+                        false,
+                    )
+                }
+            }
+            DisplayedExtension::Remote(_) => {
+                let metadata = entry.metadata.as_ref()?;
+                (
+                    ExtensionCard::for_remote(metadata, cx),
+                    Some(metadata.manifest.repository.as_str()),
+                    true,
+                )
+            }
+        };
+
+        let card = match repository_url {
+            Some(repository_url) => card.repository_icon(self.get_repository_icon(repository_url)),
+            None => card,
+        };
+        if !is_remote_card {
+            return Some(card);
         }
 
         let weak_self = cx.weak_entity();
-        card.context_menu(move |extension_id, authors, window, cx| {
+        Some(card.context_menu(move |extension_id, authors, window, cx| {
             let this = weak_self.upgrade()?;
             Some(Self::render_remote_extension_context_menu(
                 &this,
@@ -925,7 +899,7 @@ impl ExtensionsPage {
                 window,
                 cx,
             ))
-        })
+        }))
     }
 
     fn render_remote_extension_context_menu(
@@ -1098,6 +1072,9 @@ impl ExtensionsPage {
         on_complete: Option<Box<dyn FnOnce(&mut Self, &mut Context<Self>) + Send>>,
         cx: &mut Context<ExtensionsPage>,
     ) {
+        // Local results don't need to wait for the debounce or the remote fetch.
+        self.update_local_search_results(cx);
+
         self.fetch_state = ExtensionFetchState::Fetching;
         self.fetch_generation = self.fetch_generation.wrapping_add(1);
         cx.notify();
@@ -1144,9 +1121,11 @@ impl ExtensionsPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
 
-        let fetch_failure_is_relevant =
-            self.fetch_state.failed() && self.filter != ExtensionFilter::Installed;
-        let message = if self.fetch_state.is_fetching() {
+        // The `Installed` filter is fully local, so fetch progress and failure are
+        // only relevant to the other filters.
+        let fetch_is_relevant = self.filter != ExtensionFilter::Installed;
+        let fetch_failure_is_relevant = self.fetch_state.failed() && fetch_is_relevant;
+        let message = if self.fetch_state.is_fetching() && fetch_is_relevant {
             "Loading extensions…"
         } else if fetch_failure_is_relevant {
             "Failed to load extensions. Please check your connection and try again."
@@ -1653,7 +1632,7 @@ impl Render for ExtensionsPage {
                                                 "All",
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::All;
-                                                    this.filter_extension_entries(cx);
+                                                    this.rebuild_displayed_extensions(cx);
                                                     this.scroll_to_top(cx);
                                                 }),
                                             ),
@@ -1661,7 +1640,7 @@ impl Render for ExtensionsPage {
                                                 "Installed",
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::Installed;
-                                                    this.filter_extension_entries(cx);
+                                                    this.rebuild_displayed_extensions(cx);
                                                     this.scroll_to_top(cx);
                                                 }),
                                             ),
@@ -1669,7 +1648,7 @@ impl Render for ExtensionsPage {
                                                 "Not Installed",
                                                 cx.listener(|this, _event, _, cx| {
                                                     this.filter = ExtensionFilter::NotInstalled;
-                                                    this.filter_extension_entries(cx);
+                                                    this.rebuild_displayed_extensions(cx);
                                                     this.scroll_to_top(cx);
                                                 }),
                                             ),
@@ -1742,7 +1721,7 @@ impl Render for ExtensionsPage {
             )
             .child(self.render_feature_upsells(cx))
             .child(v_flex().px_4().size_full().overflow_y_hidden().map(|this| {
-                let count = self.filtered_extension_indices.len();
+                let count = self.extensions.displayed.len();
 
                 if count == 0 {
                     this.child(self.render_empty_state(cx)).into_any_element()
