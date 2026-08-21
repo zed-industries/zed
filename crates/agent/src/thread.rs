@@ -1824,7 +1824,28 @@ impl Thread {
             end_turn_at_next_boundary: false,
             steered_messages: Vec::new(),
             non_blocking_tool_calls: HashMap::default(),
-            queued_non_blocking_results: Vec::new(),
+            // Non-blocking tool calls that were in flight when the thread was
+            // last saved ended with the app that ran them: queue a synthetic
+            // failure for each so the agent is told their results will never
+            // arrive (delivered via the usual drain/continuation path).
+            queued_non_blocking_results: db_thread
+                .pending_non_blocking_tool_calls
+                .into_iter()
+                .map(|call| FinishedNonBlockingToolCall {
+                    async_id: call.async_id,
+                    tool_call_id: scoped_tool_call_id(call.owning_message_ix, &call.tool_use_id),
+                    result: LanguageModelToolResult {
+                        tool_use_id: call.tool_use_id,
+                        tool_name: call.tool_name,
+                        is_error: true,
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                            "Zed was restarted before this tool call completed; \
+                             its result is unavailable.",
+                        ))],
+                        output: None,
+                    },
+                })
+                .collect(),
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1956,6 +1977,16 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            pending_non_blocking_tool_calls: self
+                .non_blocking_tool_calls
+                .iter()
+                .map(|(tool_use_id, call)| crate::db::DbNonBlockingToolCall {
+                    async_id: call.async_id.clone(),
+                    tool_use_id: tool_use_id.clone(),
+                    tool_name: call.tool_name.clone(),
+                    owning_message_ix: call.owning_message_ix,
+                })
+                .collect(),
         };
 
         cx.background_spawn(async move {
@@ -2622,6 +2653,13 @@ impl Thread {
         self.running_turn.is_none()
             && self.non_blocking_tool_calls.is_empty()
             && self.queued_non_blocking_results.is_empty()
+    }
+
+    /// Whether finished non-blocking tool results are waiting to be
+    /// delivered to the model (e.g. synthetic failures synthesized at load
+    /// for calls that were in flight when the thread was last saved).
+    pub(crate) fn has_queued_non_blocking_results(&self) -> bool {
+        !self.queued_non_blocking_results.is_empty()
     }
 
     /// Force a manual context compaction using the summary strategy,
@@ -3901,6 +3939,7 @@ impl Thread {
             tool_use_id.clone(),
             NonBlockingToolCall {
                 async_id: async_id.clone(),
+                tool_name: tool_name.clone(),
                 owning_message_ix,
                 _cancellation_tx: cancellation_tx,
             },
@@ -5227,6 +5266,7 @@ fn non_blocking_result_message_content(
 /// result can be matched back to its model-facing async id and ACP tool call.
 struct NonBlockingToolCall {
     async_id: SharedString,
+    tool_name: Arc<str>,
     owning_message_ix: usize,
     /// Kept so the tool's cancellation channel stays open for the life of the
     /// call — non-blocking calls outlive individual turns.

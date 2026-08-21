@@ -826,7 +826,7 @@ impl NativeAgent {
         self.sessions.insert(
             session_id,
             Session {
-                thread: thread_handle,
+                thread: thread_handle.clone(),
                 acp_thread: acp_thread.clone(),
                 project_id,
                 _subscriptions: subscriptions,
@@ -834,6 +834,15 @@ impl NativeAgent {
                 ref_count,
             },
         );
+
+        // A thread reopened with non-blocking tool calls that were in flight
+        // when last saved has synthetic results queued for them; deliver
+        // them via a continuation turn.
+        thread_handle.update(cx, |thread, cx| {
+            if thread.has_queued_non_blocking_results() {
+                cx.emit(ContinuationRequested);
+            }
+        });
 
         self.update_available_commands_for_project(project_id, cx);
 
