@@ -1,7 +1,8 @@
 use crate::{
-    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinitionSplit,
-    GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, HighlightKey, Navigated,
-    PointForPosition, SelectPhase, editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
+    Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
+    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind,
+    HighlightKey, Navigated, OpenResultsIn, PointForPosition, SelectPhase,
+    editor_settings::GoToDefinitionFallback, scroll::ScrollAmount,
 };
 use gpui::{
     App, AsyncWindowContext, Context, Entity, Focusable, HighlightStyle, Modifiers, Pixels, Task,
@@ -207,6 +208,47 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         let focus_handle = self.focus_handle(cx);
+        let picker_definition_click = point.as_valid().is_some()
+            && !Self::is_alt_pressed(&modifiers, cx)
+            && EditorSettings::get_global(cx).lsp_results_location == OpenResultsIn::Picker
+            && self
+                .hovered_link_state
+                .as_ref()
+                .is_none_or(|hovered_link_state| {
+                    hovered_link_state
+                        .links
+                        .iter()
+                        .all(|link| matches!(link, HoverLink::Text(_)))
+                });
+        if picker_definition_click {
+            if !self.focus_handle.is_focused(window) {
+                window.focus(&self.focus_handle, cx);
+            }
+            self.select(
+                SelectPhase::Begin {
+                    position: point.next_valid,
+                    add: false,
+                    click_count: 1,
+                },
+                window,
+                cx,
+            );
+            self.select(SelectPhase::End, window, cx);
+            let type_definition = modifiers.shift;
+            cx.spawn_in(window, async move |_, cx| {
+                cx.update(|window, cx| {
+                    if type_definition {
+                        focus_handle.dispatch_action(&GoToTypeDefinition::default(), window, cx);
+                    } else {
+                        focus_handle.dispatch_action(&GoToDefinition::default(), window, cx);
+                    }
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
+
         let reveal_task = self.cmd_click_reveal_task(point, modifiers, window, cx);
         cx.spawn_in(window, async move |_, cx| {
             let definition_revealed = reveal_task.await.log_err().unwrap_or(Navigated::No);

@@ -845,6 +845,20 @@ mod tests {
         cx.update(|_window, cx| workspace.read(cx).active_modal::<LspLocationsPicker>(cx))
     }
 
+    fn set_picker(cx: &mut EditorLspTestContext) {
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
+                });
+            });
+        });
+    }
+
+    fn definitions(uri: lsp::Uri, ranges: &[(u32, u32, u32)]) -> lsp::GotoDefinitionResponse {
+        lsp::GotoDefinitionResponse::Array(references(uri, ranges))
+    }
+
     fn references(uri: lsp::Uri, ranges: &[(u32, u32, u32)]) -> Vec<lsp::Location> {
         ranges
             .iter()
@@ -1025,13 +1039,7 @@ mod tests {
             cx,
         )
         .await;
-        cx.update(|_window, cx| {
-            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
-                settings.update_user_settings(cx, |settings| {
-                    settings.editor.lsp_results_location = Some(OpenResultsIn::Picker);
-                });
-            });
-        });
+        set_picker(&mut cx);
         cx.set_state(SOURCE);
         cx.lsp
             .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |_params, _| {
@@ -1138,6 +1146,124 @@ mod tests {
         assert!(
             active_picker(&mut cx).is_some(),
             "declaration should open the picker when lsp_results_location is picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_multiple_definitions_honors_lsp_results_location(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        set_picker(&mut cx);
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |params, _| {
+                let uri = params.text_document_position_params.text_document.uri;
+                Ok(Some(definitions(uri, &[(0, 3, 7), (2, 14, 17)])))
+            });
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_click(screen_coord, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "cmd-click should open multiple direct definitions in the picker when lsp_results_location is picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cmd_shift_click_type_definitions_honor_lsp_results_location(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        set_picker(&mut cx);
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoTypeDefinition, _, _>(
+                async move |params, _| {
+                    let uri = params.text_document_position_params.text_document.uri;
+                    Ok(Some(definitions(uri, &[(0, 3, 7), (2, 14, 17)])))
+                },
+            );
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_click(
+            screen_coord,
+            gpui::Modifiers {
+                shift: true,
+                ..gpui::Modifiers::secondary_key()
+            },
+        );
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "cmd-shift-click should open multiple type definitions in the picker when lsp_results_location is picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cmd_click_no_definition_respects_disabled_fallback(cx: &mut TestAppContext) {
+        cx.update(crate::init);
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        set_picker(&mut cx);
+        cx.update(|_window, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.editor.go_to_definition_fallback = Some(GoToDefinitionFallback::None);
+                });
+            });
+        });
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |_params, _| {
+                Ok(None)
+            });
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |_params, _| {
+                panic!(
+                    "cmd-click should not request references when go_to_definition_fallback is none"
+                )
+            });
+
+        let screen_coord = cx
+            .editor(|editor, _, cx| editor.pixel_position_of_cursor(cx))
+            .unwrap();
+        cx.simulate_click(screen_coord, gpui::Modifiers::secondary_key());
+        cx.run_until_parked();
+
+        assert!(
+            active_picker(&mut cx).is_none(),
+            "cmd-click should not open the references picker when go_to_definition_fallback is none"
         );
     }
 }
