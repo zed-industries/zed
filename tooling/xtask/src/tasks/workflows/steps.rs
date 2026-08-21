@@ -215,6 +215,21 @@ pub fn cargo_install_nextest() -> Step<Use> {
     taiki_install_action("nextest")
 }
 
+pub fn setup_windows() -> Step<Run> {
+    named::pwsh(indoc::indoc! {r#"
+        Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1
+        git config --global core.longpaths true
+
+        $targetPath = Join-Path $env:GITHUB_WORKSPACE "target"
+        if ((Get-MpPreference).ExclusionPath -notcontains $targetPath) {
+            Add-MpPreference -ExclusionPath $targetPath
+        }
+        if ((Get-MpPreference).ExclusionPath -notcontains $targetPath) {
+            throw "Failed to exclude $targetPath from Windows Defender"
+        }
+    "#})
+}
+
 pub fn setup_cargo_config(platform: Platform) -> Step<Run> {
     match platform {
         Platform::Windows => named::pwsh(indoc::indoc! {r#"
@@ -264,14 +279,18 @@ pub fn install_rustup_target(target: &str) -> Step<Run> {
     named::bash(format!("rustup target add {target}"))
 }
 
-pub fn cache_rust_dependencies_namespace() -> Step<Use> {
-    named::uses(
+fn namespace_cache_action() -> Step<Use> {
+    Step::new(named::function_name(1)).uses(
         "namespacelabs",
         "nscloud-cache-action",
-        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
+        "c5f8dab7560444c4bf8dbc64f1b203431873c547", // v1.6.1
     )
-    .add_with(("cache", "rust"))
-    .add_with(("path", "~/.rustup"))
+}
+
+pub fn cache_rust_dependencies_namespace() -> Step<Use> {
+    namespace_cache_action()
+        .add_with(("cache", "rust"))
+        .add_with(("path", "~/.rustup"))
 }
 
 pub fn setup_sccache(platform: Platform) -> Step<Run> {
@@ -298,24 +317,14 @@ pub fn show_sccache_stats(platform: Platform) -> Step<Run> {
 }
 
 pub fn cache_nix_dependencies_namespace() -> Step<Use> {
-    named::uses(
-        "namespacelabs",
-        "nscloud-cache-action",
-        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
-    )
-    .add_with(("cache", "nix"))
+    namespace_cache_action().add_with(("cache", "nix"))
 }
 
 pub fn cache_nix_store_macos() -> Step<Use> {
     // On macOS, `/nix` is on a read-only root filesystem so nscloud's `cache: nix`
     // cannot mount or symlink there. Instead we cache a user-writable directory and
     // use nix-store --import/--export in separate steps to transfer store paths.
-    named::uses(
-        "namespacelabs",
-        "nscloud-cache-action",
-        "a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9", // v1
-    )
-    .add_with(("path", "~/nix-cache"))
+    namespace_cache_action().add_with(("path", "~/nix-cache"))
 }
 
 pub fn setup_linux() -> Step<Run> {
