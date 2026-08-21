@@ -203,6 +203,40 @@ mod tests {
         assert_eq!(text_font_size(tree.root(), "+String name"), Some(16.0));
     }
 
+    #[test]
+    fn mindmap_renders_drawable_svg() {
+        let source = r#"mindmap
+            root((Application))
+                Frontend
+                    Components
+                    State
+                    Routing
+                Backend
+                    API
+                    Authentication
+                    Jobs
+                Data
+                    Database
+                    Cache
+                    Backups
+                Operations
+                    Monitoring
+                    Deployment
+        "#;
+        let theme = MermaidTheme::default();
+        let svg = render_mermaid(source, &theme).expect("render failed");
+        let svg = crate::postprocess::postprocess(&svg, &theme).expect("postprocess failed");
+        let mut options = usvg::Options::default();
+        options.fontdb_mut().load_system_fonts();
+        let tree = usvg::Tree::from_str(&svg, &options).expect("SVG parsing failed");
+
+        assert!(tree.root().has_children(), "got: {svg}");
+        assert!(
+            text_font_size(tree.root(), "Application").is_some(),
+            "got: {svg}"
+        );
+    }
+
     fn text_font_size(group: &usvg::Group, expected_text: &str) -> Option<f32> {
         for node in group.children() {
             match node {

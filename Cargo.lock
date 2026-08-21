@@ -10508,6 +10508,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "manatee"
+version = "0.8.0-alpha.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9741945d2b000ec5182e0c35edcff22cb592a3eda4e6efe34663718e3e54617f"
+dependencies = [
+ "indexmap 2.14.0",
+ "libm",
+ "rustc-hash 2.1.1",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "maplit"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10838,6 +10850,7 @@ dependencies = [
  "indexmap 2.14.0",
  "kurbo",
  "libm",
+ "manatee",
  "merman-core",
  "pulldown-cmark 0.13.4",
  "quick-xml 0.41.0",

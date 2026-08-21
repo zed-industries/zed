@@ -18,7 +18,10 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-merman = { version = "=0.8.0-alpha.5", default-features = false, features = ["svg"] }
+merman = { version = "=0.8.0-alpha.5", default-features = false, features = [
+    "layout-cytoscape",
+    "svg",
+] }
 quick-xml.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
