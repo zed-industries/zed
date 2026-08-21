@@ -2014,6 +2014,116 @@ async fn test_spawn_agent_steers_running_subagent(cx: &mut TestAppContext) {
     send.await.unwrap();
 }
 
+/// In-flight non-blocking tool calls are persisted with the thread. After a
+/// "restart" (a fresh Thread from the saved state), each is queued as a
+/// synthetic failure so the agent is told the result will never arrive.
+#[gpui::test]
+async fn test_non_blocking_tool_calls_persist_across_restart(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    let ThreadTest {
+        model,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (_release_tx, release_rx) = oneshot::channel::<()>();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "gated_1".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The call is in flight when the thread is saved.
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(db_thread.pending_non_blocking_tool_calls.len(), 1);
+    let async_id = db_thread.pending_non_blocking_tool_calls[0]
+        .async_id
+        .clone();
+
+    // Simulate a restart: a fresh Thread from the saved state.
+    let (project, context_server_registry, templates) = thread.read_with(cx, |thread, _| {
+        (
+            thread.project.clone(),
+            thread.context_server_registry.clone(),
+            thread.templates.clone(),
+        )
+    });
+    let restored = cx.new(|cx| {
+        Thread::from_db(
+            acp::SessionId::new("restored"),
+            db_thread,
+            project,
+            project_context.clone(),
+            context_server_registry,
+            templates,
+            cx,
+        )
+    });
+    restored.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    assert!(
+        restored.read_with(cx, |thread, _| thread.has_queued_non_blocking_results()),
+        "the restored thread should have the interrupted call queued"
+    );
+
+    // Driving the continuation delivers the synthetic failure with the same
+    // async_tool_call_id.
+    let events = restored
+        .update(cx, |thread, cx| thread.send_existing(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["tool_name"], json!(GatedEchoTool::NAME));
+    assert_eq!(delivery["status"], json!("failed"));
+    assert!(
+        delivery["result"].as_str().unwrap().contains("restarted"),
+        "the synthetic result should explain the interruption: {delivery}"
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("understood");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+}
+
 /// Same bug as `test_tool_call_id_scoped_per_completion_request`, but
 /// exercised through persistence and `Thread::replay()` instead of live
 /// streaming.
