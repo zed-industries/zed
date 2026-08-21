@@ -1865,7 +1865,7 @@ impl LocalWorktree {
                 // refactor of the `fs` crate to expose a Writer interface.
                 let text_string = text.to_string();
                 let normalized_text = match line_ending {
-                    LineEnding::Unix => text_string,
+                    LineEnding::Unix | LineEnding::Raw => text_string,
                     LineEnding::Windows => text_string.replace('\n', "\r\n"),
                 };
 

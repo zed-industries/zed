@@ -2277,11 +2277,19 @@ impl Buffer {
     {
         let old_text = self.as_rope().clone();
         let base_version = self.version();
+        let current_line_ending = self.line_ending();
         cx.background_spawn(async move {
             let old_text = old_text.to_string();
             let mut new_text = new_text.as_ref().to_owned();
-            let line_ending = LineEnding::detect(&new_text);
-            LineEnding::normalize(&mut new_text);
+            // Raw content must reflect the file's exact bytes, so its carriage
+            // returns are kept rather than normalized away.
+            let line_ending = if current_line_ending == LineEnding::Raw {
+                current_line_ending
+            } else {
+                let line_ending = LineEnding::detect(&new_text);
+                LineEnding::normalize(&mut new_text);
+                line_ending
+            };
             let edits = text_diff(&old_text, &new_text);
             Diff {
                 base_version,

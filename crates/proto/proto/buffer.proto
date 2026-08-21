@@ -117,6 +117,7 @@ message BufferChunk {
 enum LineEnding {
   Unix = 0;
   Windows = 1;
+  Raw = 2;
 }
 
 message VectorClockEntry {
