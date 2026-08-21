@@ -393,6 +393,18 @@ impl KeyBindingContextPredicate {
                 let (predicate, source) = Self::parse_expr(source, PRECEDENCE_NOT)?;
                 Ok((KeyBindingContextPredicate::Not(Box::new(predicate)), source))
             }
+            '\'' => {
+                let s = &source[1..];
+                let end = s
+                    .find('\'')
+                    .context("unterminated string in context predicate")?;
+                let value = &s[..end];
+                source = skip_whitespace(&s[end + 1..]);
+                Ok((
+                    KeyBindingContextPredicate::Identifier(value.to_string().into()),
+                    source,
+                ))
+            }
             _ if is_identifier_char(next) => {
                 let len = source
                     .find(|c: char| !is_identifier_char(c) && !is_vim_operator_char(c))
