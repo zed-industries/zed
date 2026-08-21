@@ -7440,6 +7440,77 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_turn_handoff_does_not_cancel_subagent(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let subagent = cx.new(|cx| Thread::new_subagent(&parent, cx));
+
+    parent.update(cx, |thread, _cx| {
+        thread.register_running_subagent(subagent.downgrade());
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Do work".to_string()], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(!thread.is_turn_complete(), "subagent should be running");
+    });
+
+    // Turn handoffs (new turn, queued-message dispatch, compaction) cancel
+    // only the parent's own turn, not the subagent.
+    parent.update(cx, |thread, cx| {
+        thread.cancel_turn(cx).detach();
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            !thread.is_turn_complete(),
+            "subagent must survive turn handoffs"
+        );
+    });
+
+    // Explicit stops still cascade to subagents.
+    parent.update(cx, |thread, cx| {
+        thread.cancel(cx).detach();
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.is_turn_complete(),
+            "subagent should be cancelled on explicit stop"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_subagent_context_window_warning(cx: &mut TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
