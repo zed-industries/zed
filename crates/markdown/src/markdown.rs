@@ -6739,7 +6739,8 @@ mod tests {
                 matcher: LanguageMatcher {
                     path_suffixes: vec!["js".to_string()],
                     ..Default::default()
-                },
+                }
+                .into(),
                 ..Default::default()
             },
             None,
