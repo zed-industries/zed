@@ -322,8 +322,8 @@ fn choose(rng: &mut StdRng, items: &'static [&'static str]) -> &'static str {
 }
 
 fn markdown_language_registry(cx: &BenchAppContext) -> Arc<LanguageRegistry> {
-    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    registry.add(language::rust_lang());
+    let registry = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
+    registry.add(language::rust_lang_for_benchmarks());
     registry
 }
 

@@ -1643,7 +1643,21 @@ pub fn markdown_lang() -> Arc<Language> {
     test_language("markdown", tree_sitter_md::LANGUAGE.into())
 }
 
-#[cfg(any(test, feature = "test-support"))]
+/// A real Rust [`Language`] (the same `config.toml`/`highlights.scm`/etc. that
+/// production Rust editing uses, loaded through [`grammars::load_config`] and
+/// [`grammars::load_queries`]) for use by production-rendering benchmarks
+/// (`crates/benchmarks`) that need to exercise syntax highlighting without
+/// requesting the `test-support` feature, which would also pull in
+/// `lsp/test-support` and `settings/test-support`. Kept separate from
+/// [`rust_lang`] so enabling it doesn't require the rest of `test-support`'s
+/// surface (fake LSP servers, etc).
+#[doc(hidden)]
+#[cfg(any(test, feature = "benchmarks"))]
+pub fn rust_lang_for_benchmarks() -> Arc<Language> {
+    test_language("rust", tree_sitter_rust::LANGUAGE.into())
+}
+
+#[cfg(any(test, feature = "test-support", feature = "benchmarks"))]
 fn test_language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
     Arc::new(
         Language::new(grammars::load_config(name), Some(grammar))
@@ -1691,6 +1705,50 @@ mod tests {
         assert_eq!(
             theme.get_capture_name(map.get(2).unwrap()),
             Some("variable.builtin")
+        );
+    }
+
+    /// Proves `rust_lang_for_benchmarks` (reachable without `test-support`,
+    /// through `language`'s narrow `benchmarks` feature) recognizes Rust and
+    /// highlights it exactly like `rust_lang` does, since
+    /// `crates/benchmarks`' `markdown_renderer` bench relies on this parity
+    /// to keep measuring the same rendering workload `test-support`'s
+    /// `LanguageRegistry::test`/`rust_lang` combination used to.
+    #[test]
+    fn rust_lang_for_benchmarks_matches_rust_lang_highlighting() {
+        let theme = SyntaxTheme::new(
+            [
+                ("keyword", rgba(0x100000ff)),
+                ("function", rgba(0x200000ff)),
+            ]
+            .iter()
+            .map(|(name, color)| (name.to_string(), (*color).into())),
+        );
+
+        let source = Rope::from("fn main() {\n    let value = 1;\n}\n");
+        let benchmark_language = rust_lang_for_benchmarks();
+        let production_language = rust_lang();
+        benchmark_language.set_theme(&theme);
+        production_language.set_theme(&theme);
+
+        let benchmark_highlights = benchmark_language.highlight_text(&source, 0..source.len());
+        let production_highlights = production_language.highlight_text(&source, 0..source.len());
+        assert_eq!(
+            benchmark_highlights, production_highlights,
+            "rust_lang_for_benchmarks should highlight identically to rust_lang"
+        );
+
+        let capture_names: Vec<&str> = benchmark_highlights
+            .iter()
+            .filter_map(|(_, highlight_id)| theme.get_capture_name(*highlight_id))
+            .collect();
+        assert!(
+            capture_names.contains(&"keyword"),
+            "expected a \"keyword\" capture (e.g. `fn`/`let`) in {capture_names:?}"
+        );
+        assert!(
+            capture_names.contains(&"function"),
+            "expected a \"function\" capture (e.g. `main`) in {capture_names:?}"
         );
     }
 

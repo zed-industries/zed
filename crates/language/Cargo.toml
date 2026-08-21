@@ -13,6 +13,12 @@ path = "src/language.rs"
 doctest = false
 
 [features]
+# Gates `rust_lang_for_benchmarks`, a production-faithful equivalent of
+# `rust_lang` for production-rendering benchmarks (`crates/benchmarks`).
+# Deliberately narrow: unlike `test-support`, this must not enable
+# `lsp/test-support` or `settings/test-support`, so `benchmarks` consumers
+# keep compiling production code only.
+benchmarks = ["grammars", "tree-sitter-rust"]
 test-support = [
     "rand",
     "collections/test-support",

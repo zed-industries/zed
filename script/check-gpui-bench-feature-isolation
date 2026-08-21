@@ -85,33 +85,22 @@ for isolated_crate in agent editor language_model project; do
   fi
 done
 
-# `lsp` and `language` are not part of the loop below: `markdown_renderer`
-# (the only benchmark left that needs either) directly calls test-only APIs
-# with no production equivalent — `LanguageRegistry::test`,
-# `language::rust_lang` — independent of `edit_file_tool`. `language/
-# test-support` enables both `lsp/test-support` and `settings/test-support`
-# directly, so both keep showing up transitively despite `benchmarks` no
-# longer requesting either itself. This is real, tracked debt, not a gap in
-# this script: `theme`, `util`, `settings`, and `multi_buffer` are the crates
-# whose benchmark usage turned out to need no test-only API at all
-# (`theme::LoadThemes`, `theme_settings::init`), one narrow enough to vendor
-# into `benchmarks::bench_utils` instead (`util::RandomCharIter`, a
-# synthetic-text generator with no production analogue), or one narrow
-# enough to move behind its own dedicated feature instead of `test-support`
-# (`settings`'s and `multi_buffer`'s `benchmarks` features, gating
-# `SettingsStore::benchmarks`/`benchmark_settings` and `MultiBuffer::
-# build_simple_for_benchmarks`/`build_random_for_benchmarks` respectively —
-# see `crates/settings/src/settings_file.rs` and
-# `crates/multi_buffer/src/multi_buffer.rs`, which keep their fixtures
-# byte-identical to the `test-support` versions' so switching does not change
-# what a benchmark measures). So `benchmarks` no longer needs a direct
-# `test-support` edge to any of the four. This checks only for a *direct*
-# edge from `benchmarks` to each crate's `test-support` feature, not for the
-# feature's absence from the whole resolved graph, since `language` keeps
-# populating `settings/test-support` (transitively) until it gets the same
-# treatment; `multi_buffer` is checked separately below since nothing else
-# `benchmarks` depends on populates its `test-support` feature at all
-# anymore.
+# `theme`, `util`, and `settings` are the crates whose benchmark usage turned
+# out to need no test-only API at all (`theme::LoadThemes`,
+# `theme_settings::init`), one narrow enough to vendor into
+# `benchmarks::bench_utils` instead (`util::RandomCharIter`, a synthetic-text
+# generator with no production analogue), or one narrow enough to move behind
+# its own dedicated feature instead of `test-support` (`settings`'s
+# `benchmarks` feature, gating `SettingsStore::benchmarks`/
+# `benchmark_settings` — see `crates/settings/src/settings_file.rs`, which
+# keeps its fixture byte-identical to the `test-support` version's so
+# switching does not change what a benchmark measures). This checks only for
+# a *direct* edge from `benchmarks` to each crate's `test-support` feature,
+# not for the feature's absence from the whole resolved graph, since
+# `language` used to keep populating `settings/test-support` (transitively)
+# until it got the same treatment below; `multi_buffer` and `language` are
+# checked separately since nothing else `benchmarks` depends on populates
+# either one's `test-support` feature at all anymore.
 for foundational_crate in theme util settings; do
   output=$(cargo tree \
     --offline \
@@ -189,6 +178,99 @@ output=$(cargo tree \
   --invert multi_buffer)
 if echo "${output}" | grep --quiet 'test-support'; then
   echo "multi_buffer's \"benchmarks\" feature pulls in \"test-support\":"
+  echo "${output}"
+  exit 1
+fi
+
+# `crates/benchmarks/Cargo.toml` used to also directly request `language`'s
+# `test-support` feature, entirely for `markdown_renderer`'s
+# `LanguageRegistry::test`/`language::rust_lang` (used to build a Rust
+# `Language` for its embedded-code-block fixtures). `language` now exposes
+# `rust_lang_for_benchmarks` behind its own narrow `benchmarks` feature
+# instead (see `crates/language/Cargo.toml` and
+# `crates/language/src/language.rs`), loading the same `config.toml`/
+# `highlights.scm`/etc. that `rust_lang` does through `grammars::load_config`/
+# `grammars::load_queries`, without requesting `lsp/test-support` or
+# `settings/test-support`. `markdown_renderer` also switched
+# `LanguageRegistry::test` for the always-available `LanguageRegistry::new`,
+# since the only difference between them is a fake language-server download
+# directory `markdown_renderer` never reads. So unlike `theme`/`util`/
+# `settings` above, this checks `language`'s `test-support` feature is absent
+# from `benchmarks`' whole resolved graph, not just as a direct edge: nothing
+# else `benchmarks` depends on has a legitimate reason to reach it either.
+# `lsp` is checked the same way here rather than getting its own loop, since
+# nothing requests `lsp/test-support` directly either: it, and `gpui/
+# test-support` below, only ever showed up because `language/test-support`
+# requested `lsp/test-support` directly and `settings/test-support` (which
+# `language/test-support` also requested) requested `gpui/test-support`, so
+# fixing `language` is what actually drops both.
+for freed_crate in language lsp; do
+  output=$(cargo tree \
+    --offline \
+    --package benchmarks \
+    --edges features \
+    --invert "${freed_crate}")
+
+  if echo "${output}" | grep --quiet "${freed_crate} feature \"test-support\""; then
+    echo "benchmarks pulls \"${freed_crate}\"'s \"test-support\" feature:"
+    echo "${output}"
+    exit 1
+  fi
+done
+
+# The loop above proves `benchmarks` no longer reaches `language`'s
+# `test-support` feature; this proves it still gets `rust_lang_for_benchmarks`
+# some other way, so a future edit can't silently drop the feature request
+# and have `markdown_renderer` start failing to compile without any isolation
+# check explaining why.
+output=$(cargo tree \
+  --offline \
+  --package benchmarks \
+  --edges features \
+  --invert language)
+if ! echo "${output}" | grep --quiet 'language feature "benchmarks"'; then
+  echo "benchmarks no longer requests language's \"benchmarks\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# This proves `language`'s own `benchmarks` feature (which
+# `rust_lang_for_benchmarks` lives behind) doesn't itself resolve to any
+# dependency's `test-support`, the same guarantee the top of this script
+# proves for `gpui`'s `bench` feature and the check above proves for
+# `multi_buffer`'s `benchmarks` feature.
+output=$(cargo tree \
+  --offline \
+  --package language \
+  --no-default-features \
+  --features benchmarks \
+  --edges features \
+  --invert language)
+if echo "${output}" | grep --quiet 'test-support'; then
+  echo "language's \"benchmarks\" feature pulls in \"test-support\":"
+  echo "${output}"
+  exit 1
+fi
+
+# `crates/benchmarks/benches/display_map.rs` used to build its Criterion
+# harness through `gpui::TestAppContext`/`TestDispatcher`, which only
+# resolved because `benchmarks` requested `language`'s `test-support` feature
+# elsewhere: Cargo unifies feature flags across every target built for the
+# same package, so `language/test-support` enabling `settings/test-support`
+# enabling `gpui/test-support` made `gpui::TestAppContext` available to
+# `display_map.rs` too, with no feature request of its own admitting it.
+# `display_map.rs` now builds its app context from `gpui::bench_platform`/
+# `gpui::BenchAppContext` instead, the same production-capable harness
+# `#[gpui::bench]` uses. This checks the whole resolved graph for `gpui`'s
+# `test-support` feature, not just a direct edge, since nothing `benchmarks`
+# depends on has a legitimate reason to reach it either.
+output=$(cargo tree \
+  --offline \
+  --package benchmarks \
+  --edges features \
+  --invert gpui)
+if echo "${output}" | grep --quiet 'gpui feature "test-support"'; then
+  echo "benchmarks pulls gpui's \"test-support\" feature:"
   echo "${output}"
   exit 1
 fi

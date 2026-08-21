@@ -2117,7 +2117,6 @@ dependencies = [
  "editor",
  "gpui",
  "gpui_platform",
- "itertools 0.14.0",
  "language",
  "markdown",
  "multi_buffer",
