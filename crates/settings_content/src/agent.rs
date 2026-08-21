@@ -240,6 +240,9 @@ pub struct AgentSettingsContent {
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
+    /// Provider groups that are collapsed in the model selector.
+    #[serde(default)]
+    pub collapsed_model_groups: Vec<String>,
     /// Model to use for the inline assistant. Defaults to default_model when not specified.
     pub inline_assistant_model: Option<LanguageModelSelection>,
     /// Model to use for the inline assistant when streaming tools are enabled.
@@ -406,6 +409,16 @@ impl AgentSettingsContent {
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
         self.favorite_models
             .retain(|m| !(m.provider == model.provider && m.model == model.model));
+    }
+
+    pub fn set_model_group_collapsed(&mut self, group: &str, collapsed: bool) {
+        if collapsed {
+            if !self.collapsed_model_groups.iter().any(|g| g == group) {
+                self.collapsed_model_groups.push(group.to_string());
+            }
+        } else {
+            self.collapsed_model_groups.retain(|g| g != group);
+        }
     }
 
     pub fn update_favorite_model<F>(&mut self, provider: &str, model: &str, f: F)

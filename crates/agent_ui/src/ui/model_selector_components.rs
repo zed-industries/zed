@@ -14,6 +14,13 @@ enum ModelIcon {
 pub struct ModelSelectorHeader {
     title: SharedString,
     has_border: bool,
+    collapsible: Option<CollapsibleHeader>,
+}
+
+struct CollapsibleHeader {
+    index: usize,
+    collapsed: bool,
+    focused: bool,
 }
 
 impl ModelSelectorHeader {
@@ -21,7 +28,17 @@ impl ModelSelectorHeader {
         Self {
             title: title.into(),
             has_border,
+            collapsible: None,
         }
+    }
+
+    pub fn collapsible(mut self, index: usize, collapsed: bool, focused: bool) -> Self {
+        self.collapsible = Some(CollapsibleHeader {
+            index,
+            collapsed,
+            focused,
+        });
+        self
     }
 }
 
@@ -36,11 +53,51 @@ impl RenderOnce for ModelSelectorHeader {
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
             })
-            .child(
-                Label::new(self.title)
+            .map(|this| {
+                let label = Label::new(self.title)
                     .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
+                    .color(Color::Muted);
+
+                match self.collapsible {
+                    Some(collapsible) => {
+                        let chevron = if collapsible.collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        };
+
+                        // Click handling is left to the picker's own per-entry
+                        // click handler, which routes through `confirm` — the
+                        // same path keyboard toggling uses. A handler here
+                        // would fire in addition to it and toggle twice.
+                        this.child(
+                            h_flex()
+                                .id(("model-selector-group-header", collapsible.index))
+                                .w_full()
+                                .gap_0p5()
+                                .pr_2()
+                                .justify_between()
+                                .rounded_sm()
+                                .when(collapsible.focused, |this| {
+                                    this.bg(cx.theme().colors().ghost_element_selected)
+                                })
+                                .cursor_pointer()
+                                .child(label)
+                                .child(
+                                    Icon::new(chevron)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .tooltip(Tooltip::text(if collapsible.collapsed {
+                                    "Expand Section"
+                                } else {
+                                    "Collapse Section"
+                                })),
+                        )
+                    }
+                    None => this.child(label),
+                }
+            })
     }
 }
 
