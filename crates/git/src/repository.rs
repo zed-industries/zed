@@ -56,6 +56,16 @@ static GRAPH_COMMIT_FORMAT: &str = "--format=%H%x00%P%x00%D";
 /// %H - Full commit hash
 static SEARCH_COMMIT_FORMAT: &str = "--format=%H";
 
+/// Used to collect the distinct authors of a range of commits.
+/// %an - Author name
+/// %ae - Author email
+/// %x00 - Null byte separator
+///
+/// The unmapped forms (`%an`/`%ae` rather than `%aN`/`%aE`) are deliberate: `--author` matches
+/// against the raw author line unless `--use-mailmap` is passed, so listing mailmapped identities
+/// here would produce filters that match nothing.
+static COMMIT_AUTHOR_FORMAT: &str = "--format=%an%x00%ae";
+
 /// Number of commits to load per chunk for the git graph.
 pub const GRAPH_CHUNK_SIZE: usize = 1000;
 
@@ -724,6 +734,67 @@ impl LogSource {
     }
 }
 
+/// The author of a commit, as recorded in the commit itself (without mailmap resolution).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct CommitAuthor {
+    pub name: SharedString,
+    pub email: SharedString,
+}
+
+impl CommitAuthor {
+    /// The `Name <email>` form that git writes into the author line of a commit.
+    pub fn ident(&self) -> String {
+        format!("{} <{}>", self.name, self.email)
+    }
+}
+
+/// Restricts which commits the git graph reports.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GraphFilter {
+    pub source: LogSource,
+    /// When set, only commits written by this author are reported.
+    pub author: Option<CommitAuthor>,
+}
+
+impl GraphFilter {
+    pub fn new(source: LogSource) -> Self {
+        Self {
+            source,
+            author: None,
+        }
+    }
+
+    /// Author arguments must precede the source arguments, because `LogSource::Path` ends its
+    /// arguments with `--` and everything after that is parsed as a pathspec.
+    fn get_args(&self) -> Vec<Cow<'_, str>> {
+        let Some(author) = self.author.as_ref() else {
+            return self.source.get_args();
+        };
+
+        let mut args = vec![
+            // Keeps regex metacharacters in the name and email literal.
+            Cow::Borrowed("--fixed-strings"),
+            Cow::Owned(format!("--author={}", author.ident())),
+        ];
+        args.extend(self.source.get_args());
+        args
+    }
+}
+
+/// Identifies one git graph query. Doubles as the cache key for loaded graph data, so every field
+/// that changes which commits are reported, or in which order, must be part of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct GraphQuery {
+    pub filter: GraphFilter,
+    pub order: LogOrder,
+}
+
+impl GraphQuery {
+    pub fn source(&self) -> &LogSource {
+        &self.filter.source
+    }
+}
+
 pub struct SearchCommitArgs {
     pub query: SharedString,
     pub case_sensitive: bool,
@@ -1067,17 +1138,19 @@ pub trait GitRepository: Send + Sync {
     /// Returns commit SHAs and their parent SHAs for building the graph visualization.
     fn initial_graph_data(
         &self,
-        log_source: LogSource,
-        log_order: LogOrder,
+        query: GraphQuery,
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>>;
 
     fn search_commits(
         &self,
-        log_source: LogSource,
+        filter: GraphFilter,
         search_args: SearchCommitArgs,
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>>;
+
+    /// Lists the distinct authors of the commits reachable from `log_source`, most recent first.
+    fn commit_authors(&self, log_source: LogSource) -> BoxFuture<'_, Result<Vec<CommitAuthor>>>;
 
     fn file_history_changed_files(
         &self,
@@ -3297,16 +3370,15 @@ impl GitRepository for RealGitRepository {
 
     fn initial_graph_data(
         &self,
-        log_source: LogSource,
-        log_order: LogOrder,
+        query: GraphQuery,
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary();
 
         async move {
-            let log_source_args = log_source.get_args();
-            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
-            git_log_command.extend(log_source_args.iter().map(|arg| arg.as_ref()));
+            let filter_args = query.filter.get_args();
+            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, query.order.as_arg()];
+            git_log_command.extend(filter_args.iter().map(|arg| arg.as_ref()));
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -3369,20 +3441,24 @@ impl GitRepository for RealGitRepository {
 
     fn search_commits(
         &self,
-        log_source: LogSource,
+        filter: GraphFilter,
         search_args: SearchCommitArgs,
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary();
 
         async move {
-            let log_source_args = log_source.get_args();
+            // `GraphFilter` already emits `--fixed-strings` when it filters by author, so only add
+            // it here when the filter did not.
+            let filter_args = filter.get_args();
             let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
             let hash_query = commit_hash_search_query(search_args.query.as_str())
                 .map(|query| query.to_ascii_lowercase());
 
             if hash_query.is_none() {
-                args.push("--fixed-strings");
+                if filter.author.is_none() {
+                    args.push("--fixed-strings");
+                }
 
                 if !search_args.case_sensitive {
                     args.push("--regexp-ignore-case");
@@ -3392,7 +3468,7 @@ impl GitRepository for RealGitRepository {
                 args.push(search_args.query.as_str());
             }
 
-            args.extend(log_source_args.iter().map(|arg| arg.as_ref()));
+            args.extend(filter_args.iter().map(|arg| arg.as_ref()));
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -3427,6 +3503,57 @@ impl GitRepository for RealGitRepository {
 
             child.status().await?;
             Ok(())
+        }
+        .boxed()
+    }
+
+    fn commit_authors(&self, log_source: LogSource) -> BoxFuture<'_, Result<Vec<CommitAuthor>>> {
+        let git = self.git_binary();
+
+        async move {
+            let log_source_args = log_source.get_args();
+            let mut args = vec!["log", COMMIT_AUTHOR_FORMAT];
+            args.extend(log_source_args.iter().map(|arg| arg.as_ref()));
+
+            let mut command = git.build_command(&args);
+            command.stdout(Stdio::piped());
+            command.stderr(Stdio::null());
+
+            let mut child = command.spawn()?;
+            let stdout = child.stdout.take().context("failed to get stdout")?;
+            let mut reader = BufReader::new(stdout);
+
+            let mut authors = Vec::new();
+            let mut seen: HashSet<(String, String)> = HashSet::default();
+            let mut line_buffer = String::new();
+
+            loop {
+                line_buffer.clear();
+                let bytes_read = reader.read_line(&mut line_buffer).await?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                let line = line_buffer.trim_end_matches('\n');
+                let Some((name, email)) = line.split_once('\0') else {
+                    continue;
+                };
+
+                if name.is_empty() && email.is_empty() {
+                    continue;
+                }
+
+                if seen.insert((name.to_string(), email.to_string())) {
+                    authors.push(CommitAuthor {
+                        name: name.to_string().into(),
+                        email: email.to_string().into(),
+                    });
+                }
+            }
+
+            child.status().await?;
+            Ok(authors)
         }
         .boxed()
     }
@@ -5060,13 +5187,114 @@ mod tests {
 
         let (request_tx, request_rx) = async_channel::unbounded();
 
-        repo.initial_graph_data(LogSource::Sha(commit_sha), LogOrder::DateOrder, request_tx)
-            .await
-            .unwrap();
+        repo.initial_graph_data(
+            GraphQuery {
+                filter: GraphFilter::new(LogSource::Sha(commit_sha)),
+                order: LogOrder::DateOrder,
+            },
+            request_tx,
+        )
+        .await
+        .unwrap();
 
         let graph_data = request_rx.recv().await.unwrap();
         assert_eq!(graph_data.len(), 1);
         assert_eq!(graph_data[0].sha, commit_sha);
+    }
+
+    #[gpui::test]
+    async fn test_commit_authors_and_author_filter(cx: &mut TestAppContext) {
+        disable_git_global_config();
+
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+
+        // The parentheses and dot would be regex metacharacters if the author argument were not
+        // passed with `--fixed-strings`.
+        let jane = CommitAuthor {
+            name: "A. Dev (jane)".into(),
+            email: "jane@example.com".into(),
+        };
+        let john = CommitAuthor {
+            name: "John Roe".into(),
+            email: "john@example.com".into(),
+        };
+
+        let commit = |message: &str, author: &CommitAuthor| {
+            fs::write(repo_dir.path().join("file"), message).unwrap();
+            git_command(repo_dir.path(), ["add", "file"]);
+            git_command(
+                repo_dir.path(),
+                [
+                    "commit",
+                    "-m",
+                    message,
+                    &format!("--author={}", author.ident()),
+                ],
+            );
+        };
+
+        commit("first", &jane);
+        commit("second", &john);
+        commit("third", &jane);
+
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let authors = repo.commit_authors(LogSource::All).await.unwrap();
+        assert_eq!(authors, vec![jane.clone(), john.clone()]);
+
+        let unfiltered = collect_graph_commits(&repo, None).await;
+        assert_eq!(unfiltered.len(), 3);
+
+        let jane_commits = collect_graph_commits(&repo, Some(jane)).await;
+        assert_eq!(jane_commits.len(), 2);
+
+        let john_commits = collect_graph_commits(&repo, Some(john)).await;
+        assert_eq!(john_commits.len(), 1);
+
+        let missing_commits = collect_graph_commits(
+            &repo,
+            Some(CommitAuthor {
+                name: "Nobody".into(),
+                email: "nobody@example.com".into(),
+            }),
+        )
+        .await;
+        assert!(missing_commits.is_empty());
+    }
+
+    async fn collect_graph_commits(
+        repo: &RealGitRepository,
+        author: Option<CommitAuthor>,
+    ) -> Vec<Arc<InitialGraphCommitData>> {
+        let (request_tx, request_rx) = async_channel::unbounded();
+
+        repo.initial_graph_data(
+            GraphQuery {
+                filter: GraphFilter {
+                    source: LogSource::All,
+                    author,
+                },
+                order: LogOrder::DateOrder,
+            },
+            request_tx,
+        )
+        .await
+        .unwrap();
+
+        let mut commits = Vec::new();
+        while let Ok(chunk) = request_rx.recv().await {
+            commits.extend(chunk);
+        }
+        commits
     }
 
     #[gpui::test]
@@ -6287,9 +6515,15 @@ mod tests {
 
         let graph_commits = async || {
             let (tx, rx) = smol::channel::unbounded();
-            repo.initial_graph_data(LogSource::All, LogOrder::DateOrder, tx)
-                .await
-                .unwrap();
+            repo.initial_graph_data(
+                GraphQuery {
+                    filter: GraphFilter::new(LogSource::All),
+                    order: LogOrder::DateOrder,
+                },
+                tx,
+            )
+            .await
+            .unwrap();
             let mut commits = std::collections::HashSet::new();
             while let Ok(chunk) = rx.try_recv() {
                 for commit in chunk {

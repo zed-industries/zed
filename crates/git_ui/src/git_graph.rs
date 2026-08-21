@@ -1,5 +1,6 @@
 pub use crate::commit_context_menu::{CopyCommitSha, CopyCommitTag, OpenCommitView};
 use crate::{
+    branch_picker,
     commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
     commit_tooltip::CommitAvatar,
     commit_view::CommitView,
@@ -8,19 +9,23 @@ use crate::{
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use file_icons::FileIcons;
+use fuzzy_nucleo::StringMatchCandidate;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{InitialGraphCommitData, LogOrder, LogSource, RepoPath, SearchCommitArgs},
+    repository::{
+        CommitAuthor, GraphFilter, GraphQuery, InitialGraphCommitData, LogOrder, LogSource,
+        RepoPath, SearchCommitArgs,
+    },
     status::{FileStatus, StatusCode, TrackedStatus},
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollHandle, ScrollStrategy,
-    ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
+    Hsla, ManagedView, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollHandle,
+    ScrollStrategy, ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
-    px, uniform_list,
+    px, rems, uniform_list,
 };
 use language::line_diff;
 use markdown::{Markdown, MarkdownElement};
@@ -50,7 +55,7 @@ use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, DiffStat, Divider,
-    HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
+    HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing, PopoverMenu,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
@@ -199,6 +204,256 @@ impl PickerDelegate for CommitTagPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(Label::new(self.tag_names.get(ix)?.clone())),
+        )
+    }
+}
+
+const AUTHOR_LIST_WIDTH_IN_REMS: f32 = 24.;
+
+type SelectAuthorCallback = Arc<dyn Fn(Option<CommitAuthor>, &mut Window, &mut App)>;
+
+/// Popover that lists the authors of the commits currently reachable from the graph's log source,
+/// so the graph can be narrowed to a single contributor.
+struct CommitAuthorPicker {
+    picker: Entity<Picker<CommitAuthorPickerDelegate>>,
+}
+
+impl CommitAuthorPicker {
+    fn new(
+        repository: Entity<Repository>,
+        log_source: LogSource,
+        selected_author: Option<CommitAuthor>,
+        on_select: SelectAuthorCallback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = CommitAuthorPickerDelegate {
+            authors: Vec::new(),
+            matches: vec![CommitAuthorEntry::AllAuthors],
+            selected_author,
+            selected_index: 0,
+            is_loading: true,
+            on_select,
+            picker: cx.entity().downgrade(),
+        };
+
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .initial_width(rems(AUTHOR_LIST_WIDTH_IN_REMS))
+        });
+
+        let authors = repository.update(cx, |repository, cx| {
+            repository.commit_authors(log_source, cx)
+        });
+
+        cx.spawn_in(window, {
+            let picker = picker.clone();
+            async move |_this, cx| {
+                let authors = authors.await;
+                picker
+                    .update_in(cx, |picker, window, cx| {
+                        picker.delegate.is_loading = false;
+                        match authors {
+                            Ok(authors) => picker.delegate.authors = authors,
+                            Err(error) => {
+                                log::error!("failed to list git graph commit authors: {error:?}")
+                            }
+                        }
+                        picker.refresh(window, cx);
+                    })
+                    .ok();
+            }
+        })
+        .detach();
+
+        Self { picker }
+    }
+}
+
+impl EventEmitter<DismissEvent> for CommitAuthorPicker {}
+
+impl Focusable for CommitAuthorPicker {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for CommitAuthorPicker {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w(rems(AUTHOR_LIST_WIDTH_IN_REMS))
+            .child(self.picker.clone())
+    }
+}
+
+enum CommitAuthorEntry {
+    AllAuthors,
+    Author {
+        author: CommitAuthor,
+        positions: Vec<usize>,
+    },
+}
+
+struct CommitAuthorPickerDelegate {
+    authors: Vec<CommitAuthor>,
+    matches: Vec<CommitAuthorEntry>,
+    selected_author: Option<CommitAuthor>,
+    selected_index: usize,
+    is_loading: bool,
+    on_select: SelectAuthorCallback,
+    picker: WeakEntity<CommitAuthorPicker>,
+}
+
+impl PickerDelegate for CommitAuthorPickerDelegate {
+    type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "commit-author"
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Filter by author…".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        if self.is_loading {
+            Some("Loading authors…".into())
+        } else {
+            Some("No authors found".into())
+        }
+    }
+
+    fn match_count(&self) -> usize {
+        self.matches.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = ix;
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let authors = self.authors.clone();
+
+        cx.spawn_in(window, async move |picker, cx| {
+            let matches = if query.is_empty() {
+                authors
+                    .into_iter()
+                    .map(|author| CommitAuthorEntry::Author {
+                        author,
+                        positions: Vec::new(),
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let candidates = authors
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, author)| StringMatchCandidate::new(ix, &author.ident()))
+                    .collect::<Vec<_>>();
+
+                let Ok(executor) = cx.update(|_, cx| cx.background_executor().clone()) else {
+                    return;
+                };
+
+                fuzzy_nucleo::match_strings_async(
+                    &candidates,
+                    &query,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
+                    10000,
+                    &Default::default(),
+                    executor,
+                )
+                .await
+                .into_iter()
+                .filter_map(|candidate| {
+                    Some(CommitAuthorEntry::Author {
+                        author: authors.get(candidate.candidate_id)?.clone(),
+                        positions: candidate.positions,
+                    })
+                })
+                .collect()
+            };
+
+            picker
+                .update(cx, |picker, cx| {
+                    // The reset entry is only offered on an empty query so that it cannot be
+                    // confirmed by accident while the user is typing a name.
+                    picker.delegate.matches = if query.is_empty() {
+                        std::iter::once(CommitAuthorEntry::AllAuthors)
+                            .chain(matches)
+                            .collect()
+                    } else {
+                        matches
+                    };
+                    picker.delegate.selected_index = 0;
+                    cx.notify();
+                })
+                .ok();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let author = match self.matches.get(self.selected_index) {
+            Some(CommitAuthorEntry::AllAuthors) => None,
+            Some(CommitAuthorEntry::Author { author, .. }) => Some(author.clone()),
+            None => return,
+        };
+
+        (self.on_select)(author, window, cx);
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.picker
+            .update(cx, |_this, cx| cx.emit(DismissEvent))
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let entry = self.matches.get(ix)?;
+
+        let (label, positions, is_active) = match entry {
+            CommitAuthorEntry::AllAuthors => (
+                SharedString::from("All Authors"),
+                Vec::new(),
+                self.selected_author.is_none(),
+            ),
+            CommitAuthorEntry::Author { author, positions } => (
+                SharedString::from(author.ident()),
+                positions.clone(),
+                self.selected_author.as_ref() == Some(author),
+            ),
+        };
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(HighlightedLabel::new(label, positions).truncate())
+                .when(is_active, |this| {
+                    this.end_slot(Icon::new(IconName::Check).size(IconSize::Small))
+                }),
         )
     }
 }
@@ -1198,7 +1453,7 @@ pub fn open_or_reuse_graph(
 ) {
     let existing = workspace.items_of_type::<GitGraph>(cx).find(|graph| {
         let graph = graph.read(cx);
-        graph.repo_id == repo_id && graph.log_source == log_source
+        graph.repo_id == repo_id && *graph.log_source() == log_source
     });
 
     let git_graph = if let Some(existing) = existing {
@@ -1316,8 +1571,7 @@ pub struct GitGraph {
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
-    log_source: LogSource,
-    log_order: LogOrder,
+    query: GraphQuery,
     selected_commit_diff: Option<CommitDiff>,
     selected_commit_diff_stats: Option<(usize, usize)>,
     _commit_diff_task: Option<Task<()>>,
@@ -1332,6 +1586,64 @@ pub struct GitGraph {
 }
 
 impl GitGraph {
+    fn log_source(&self) -> &LogSource {
+        &self.query.filter.source
+    }
+
+    fn author_filter(&self) -> Option<&CommitAuthor> {
+        self.query.filter.author.as_ref()
+    }
+
+    /// `true` when the layout has a graph column but a filter makes it meaningless. An
+    /// author-filtered log reports a non-contiguous subset of history, so the lane algorithm never
+    /// sees the parents it needs and every lane would trail a line off the bottom of the canvas.
+    /// Path history is excluded because its layout has no graph column to begin with.
+    fn graph_column_forced_hidden(&self) -> bool {
+        !matches!(self.log_source(), LogSource::Path(_)) && self.author_filter().is_some()
+    }
+
+    /// The mask to lay the table out with: the columns the user hid, plus the graph column while a
+    /// filter makes it meaningless. The user's own mask is left untouched so their choice comes
+    /// back when the filter is cleared.
+    fn effective_column_visibility(&self) -> TableRow<bool> {
+        let mut visibility = self.column_visibility.clone();
+
+        if self.graph_column_forced_hidden()
+            && let Some(graph_hidden) = visibility.as_mut_slice().first_mut()
+        {
+            *graph_hidden = true;
+        }
+
+        visibility
+    }
+
+    fn set_log_source(&mut self, log_source: LogSource, cx: &mut Context<Self>) {
+        if *self.log_source() == log_source {
+            return;
+        }
+
+        self.query.filter.source = log_source;
+        self.reload_for_changed_query(cx);
+    }
+
+    fn set_author_filter(&mut self, author: Option<CommitAuthor>, cx: &mut Context<Self>) {
+        if self.author_filter() == author.as_ref() {
+            return;
+        }
+
+        self.query.filter.author = author;
+        self.reload_for_changed_query(cx);
+    }
+
+    /// Drops the commits loaded for the previous query and starts loading the new one. The fetch
+    /// cannot wait for the next render: the query also keys the cache the render reads from.
+    fn reload_for_changed_query(&mut self, cx: &mut Context<Self>) {
+        self.pending_select_sha = None;
+        self.selected_entry_idx = None;
+        self.invalidate_state(cx);
+        self.fetch_initial_graph_data(cx);
+    }
+
     fn invalidate_state(&mut self, cx: &mut Context<Self>) {
         self.graph_data.clear();
         self.search_state.matches.clear();
@@ -1380,19 +1692,20 @@ impl GitGraph {
             .column_widths
             .read(cx)
             .preview_fractions(window.rem_size());
-        let fractions = redistribute_hidden_fractions(&raw, Some(&self.column_visibility));
+        let visibility = self.effective_column_visibility();
+        let fractions = redistribute_hidden_fractions(&raw, Some(&visibility));
 
         // Hidden columns occupy no space in the layout, so report them as zero here even though
         // the shared redistribution helper preserves their stored width for when they return.
         let value = |idx: usize| {
-            if self.column_visibility.get(idx).copied().unwrap_or(false) {
+            if visibility.get(idx).copied().unwrap_or(false) {
                 0.0
             } else {
                 fractions[idx]
             }
         };
 
-        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let is_path_history = matches!(self.log_source(), LogSource::Path(_));
         let graph_fraction = if is_path_history { 0.0 } else { value(0) };
         let offset = if is_path_history { 0 } else { 1 };
 
@@ -1567,8 +1880,10 @@ impl GitGraph {
             selected_commit_diff_stats: None,
             selected_commit_message: None,
             _selected_commit_message_task: None,
-            log_source,
-            log_order,
+            query: GraphQuery {
+                filter: GraphFilter::new(log_source),
+                order: log_order,
+            },
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
             repo_id,
             changed_files_scroll_handle: UniformListScrollHandle::new(),
@@ -1588,71 +1903,62 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         match event {
-            RepositoryEvent::GraphEvent((source, order), event)
-                if source == &self.log_source && order == &self.log_order =>
-            {
-                match event {
-                    GitGraphEvent::FullyLoaded => {
-                        if let Some(pending_sha_index) =
-                            self.pending_select_sha.take().and_then(|oid| {
-                                repository
-                                    .read(cx)
-                                    .get_graph_data(source.clone(), *order)
-                                    .and_then(|data| data.commit_oid_to_index.get(&oid).copied())
-                            })
-                        {
-                            self.select_entry(pending_sha_index, ScrollStrategy::Nearest, cx);
+            RepositoryEvent::GraphEvent(query, event) if *query == self.query => match event {
+                GitGraphEvent::FullyLoaded => {
+                    if let Some(pending_sha_index) =
+                        self.pending_select_sha.take().and_then(|oid| {
+                            repository
+                                .read(cx)
+                                .get_graph_data(query)
+                                .and_then(|data| data.commit_oid_to_index.get(&oid).copied())
+                        })
+                    {
+                        self.select_entry(pending_sha_index, ScrollStrategy::Nearest, cx);
+                    }
+                    let count = match self.graph_data.max_commit_count {
+                        AllCommitCount::FullyLoaded(count) | AllCommitCount::Loading(count) => {
+                            count
                         }
-                        let count = match self.graph_data.max_commit_count {
-                            AllCommitCount::FullyLoaded(count) | AllCommitCount::Loading(count) => {
-                                count
-                            }
-                            AllCommitCount::NotLoaded => 0,
-                        };
-                        self.graph_data.max_commit_count = AllCommitCount::FullyLoaded(count);
-                        cx.notify();
-                    }
-                    GitGraphEvent::LoadingError => {
-                        cx.notify();
-                    }
-                    GitGraphEvent::CountUpdated(commit_count) => {
-                        let old_count = self.graph_data.commits.len();
-
-                        if let Some(pending_selection_index) =
-                            repository.update(cx, |repository, cx| {
-                                let GraphDataResponse {
-                                    commits,
-                                    is_loading,
-                                    error: _,
-                                } = repository.graph_data(
-                                    source.clone(),
-                                    *order,
-                                    old_count..*commit_count,
-                                    cx,
-                                );
-                                self.graph_data.add_commits(commits);
-
-                                let pending_sha_index = self.pending_select_sha.and_then(|oid| {
-                                    repository.get_graph_data(source.clone(), *order).and_then(
-                                        |data| data.commit_oid_to_index.get(&oid).copied(),
-                                    )
-                                });
-
-                                if !is_loading && pending_sha_index.is_none() {
-                                    self.pending_select_sha.take();
-                                }
-
-                                pending_sha_index
-                            })
-                        {
-                            self.select_entry(pending_selection_index, ScrollStrategy::Nearest, cx);
-                            self.pending_select_sha.take();
-                        }
-
-                        cx.notify();
-                    }
+                        AllCommitCount::NotLoaded => 0,
+                    };
+                    self.graph_data.max_commit_count = AllCommitCount::FullyLoaded(count);
+                    cx.notify();
                 }
-            }
+                GitGraphEvent::LoadingError => {
+                    cx.notify();
+                }
+                GitGraphEvent::CountUpdated(commit_count) => {
+                    let old_count = self.graph_data.commits.len();
+
+                    if let Some(pending_selection_index) =
+                        repository.update(cx, |repository, cx| {
+                            let GraphDataResponse {
+                                commits,
+                                is_loading,
+                                error: _,
+                            } = repository.graph_data(query.clone(), old_count..*commit_count, cx);
+                            self.graph_data.add_commits(commits);
+
+                            let pending_sha_index = self.pending_select_sha.and_then(|oid| {
+                                repository
+                                    .get_graph_data(query)
+                                    .and_then(|data| data.commit_oid_to_index.get(&oid).copied())
+                            });
+
+                            if !is_loading && pending_sha_index.is_none() {
+                                self.pending_select_sha.take();
+                            }
+
+                            pending_sha_index
+                        })
+                    {
+                        self.select_entry(pending_selection_index, ScrollStrategy::Nearest, cx);
+                        self.pending_select_sha.take();
+                    }
+
+                    cx.notify();
+                }
+            },
             RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
                 // Only invalidate if we scanned atleast once,
                 // meaning we are not inside the initial repo loading state
@@ -1662,7 +1968,7 @@ impl GitGraph {
                     self.invalidate_state(cx);
                 }
             }
-            RepositoryEvent::StashEntriesChanged if self.log_source == LogSource::All => {
+            RepositoryEvent::StashEntriesChanged if *self.log_source() == LogSource::All => {
                 // Stash entries initial's scan id is 2, so we don't want to invalidate the graph before that
                 if repository.read(cx).scan_id > 2 {
                     self.pending_select_sha = None;
@@ -1678,7 +1984,7 @@ impl GitGraph {
         if let Some(repository) = self.get_repository(cx) {
             repository.update(cx, |repository, cx| {
                 let commits = repository
-                    .graph_data(self.log_source.clone(), self.log_order, 0..usize::MAX, cx)
+                    .graph_data(self.query.clone(), 0..usize::MAX, cx)
                     .commits;
                 self.graph_data.add_commits(commits);
             });
@@ -2031,7 +2337,7 @@ impl GitGraph {
 
         repo.update(cx, |repo, cx| {
             repo.search_commits(
-                self.log_source.clone(),
+                self.query.filter.clone(),
                 SearchCommitArgs {
                     query: query.clone(),
                     case_sensitive: self.search_state.case_sensitive,
@@ -2301,7 +2607,7 @@ impl GitGraph {
 
             let Some(index) = selected_repository
                 .read(cx)
-                .get_graph_data(this.log_source.clone(), this.log_order)
+                .get_graph_data(&this.query)
                 .and_then(|data| data.commit_oid_to_index.get(&oid))
                 .copied()
             else {
@@ -2493,19 +2799,21 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let is_path_history = matches!(self.log_source(), LogSource::Path(_));
         let columns: &[&str] = if is_path_history {
             &["Description", "Date", "Author", "Commit"]
         } else {
             &["Graph", "Description", "Date", "Author", "Commit"]
         };
 
-        let filter = self.column_visibility.clone();
+        let filter = self.effective_column_visibility();
         let visible_count = filter
             .as_slice()
             .iter()
             .filter(|filtered| !**filtered)
             .count();
+        // While the author filter hides the graph column, the user cannot bring it back by hand.
+        let graph_column_forced_hidden = self.graph_column_forced_hidden();
 
         let focus_handle = self.focus_handle.clone();
         let git_graph = cx.entity();
@@ -2514,7 +2822,8 @@ impl GitGraph {
             for (col_idx, label) in columns.iter().enumerate() {
                 let is_visible = !filter.get(col_idx).copied().unwrap_or(false);
                 // Disable hiding the last remaining visible column.
-                let can_toggle = !is_visible || visible_count > 1;
+                let can_toggle = (!is_visible || visible_count > 1)
+                    && !(col_idx == 0 && graph_column_forced_hidden);
                 let git_graph = git_graph.clone();
                 context_menu = context_menu.toggleable_entry_disabled_when(
                     label.to_string(),
@@ -2534,6 +2843,158 @@ impl GitGraph {
         });
 
         self.set_context_menu(context_menu, position, None, window, cx);
+    }
+
+    /// Renders one filter control: a dropdown trigger labelled with the active value, plus a clear
+    /// button once the filter narrows anything.
+    fn render_filter_chip<M: ManagedView>(
+        &self,
+        id: &'static str,
+        label: SharedString,
+        is_active: bool,
+        tooltip: &'static str,
+        menu: impl Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static,
+        on_clear: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .h_7()
+            .gap_px()
+            .child(
+                PopoverMenu::new(id)
+                    .menu(move |window, cx| menu(window, cx))
+                    .trigger_with_tooltip(
+                        Button::new(SharedString::from(format!("{id}-trigger")), label)
+                            .label_size(LabelSize::Small)
+                            .toggle_state(is_active)
+                            .end_icon(
+                                Icon::new(IconName::ChevronDown)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                        Tooltip::text(tooltip),
+                    ),
+            )
+            .when(is_active, |this| {
+                this.child(
+                    IconButton::new(SharedString::from(format!("{id}-clear")), IconName::Close)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::text("Clear Filter"))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            on_clear(this, window, cx);
+                        })),
+                )
+            })
+    }
+
+    fn render_filter_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let color = cx.theme().colors();
+        let repository = self.get_repository(cx);
+        let workspace = self.workspace.clone();
+        let git_graph = cx.entity();
+
+        let (branch_label, branch_is_active) = match self.log_source() {
+            LogSource::All => (SharedString::from("Branch: All"), false),
+            LogSource::Branch(branch) => (format!("Branch: {branch}").into(), true),
+            LogSource::Sha(sha) => (format!("Commit: {}", sha.display_short()).into(), true),
+            LogSource::Path(path) => (format!("Path: {}", path.as_unix_str()).into(), true),
+        };
+
+        let (author_label, author_is_active) = match self.author_filter() {
+            Some(author) => (SharedString::from(format!("Author: {}", author.name)), true),
+            None => (SharedString::from("Author: All"), false),
+        };
+
+        // A path-history graph is opened against one file and cannot be re-pointed at a branch, so
+        // the branch control has nothing to offer there.
+        let show_branch_filter = !matches!(self.log_source(), LogSource::Path(_));
+        let selected_branch = match self.log_source() {
+            LogSource::Branch(branch) => Some(branch.clone()),
+            _ => None,
+        };
+
+        h_flex()
+            .key_context("GitGraphFilterBar")
+            .w_full()
+            .px_1p5()
+            .py_1()
+            .gap_1p5()
+            .flex_wrap()
+            .border_b_1()
+            .border_color(color.border_variant)
+            .when(show_branch_filter, |this| {
+                let repository = repository.clone();
+                let git_graph = git_graph.clone();
+
+                this.child(self.render_filter_chip(
+                    "git-graph-branch-filter",
+                    branch_label,
+                    branch_is_active,
+                    "Filter by Branch",
+                    move |window, cx| {
+                        let git_graph = git_graph.clone();
+                        let on_select: branch_picker::SelectBranchCallback =
+                            Arc::new(move |branch, _window, cx| {
+                                git_graph.update(cx, |this, cx| {
+                                    this.set_log_source(
+                                        LogSource::Branch(branch.ref_name.clone()),
+                                        cx,
+                                    );
+                                });
+                            });
+
+                        Some(branch_picker::select_popover(
+                            workspace.clone(),
+                            repository.clone(),
+                            selected_branch.clone(),
+                            on_select,
+                            window,
+                            cx,
+                        ))
+                    },
+                    |this, _window, cx| this.set_log_source(LogSource::All, cx),
+                    cx,
+                ))
+            })
+            .child({
+                let log_source = self.log_source().clone();
+                let selected_author = self.author_filter().cloned();
+
+                self.render_filter_chip(
+                    "git-graph-author-filter",
+                    author_label,
+                    author_is_active,
+                    "Filter by Author",
+                    move |window, cx| {
+                        let repository = repository.clone()?;
+                        let git_graph = git_graph.clone();
+                        let on_select: SelectAuthorCallback =
+                            Arc::new(move |author, _window, cx| {
+                                git_graph.update(cx, |this, cx| {
+                                    this.set_author_filter(author, cx);
+                                });
+                            });
+
+                        let picker = cx.new(|cx| {
+                            let picker = CommitAuthorPicker::new(
+                                repository,
+                                log_source.clone(),
+                                selected_author.clone(),
+                                on_select,
+                                window,
+                                cx,
+                            );
+                            picker.focus_handle(cx).focus(window, cx);
+                            picker
+                        });
+
+                        Some(picker)
+                    },
+                    |this, _window, cx| this.set_author_filter(None, cx),
+                    cx,
+                )
+            })
     }
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3590,7 +4051,7 @@ impl GitGraph {
                     .map(|repository| {
                         repository.update(cx, |repository, cx| {
                             repository
-                                .graph_data(self.log_source.clone(), self.log_order, 0..0, cx)
+                                .graph_data(self.query.clone(), 0..0, cx)
                                 .is_loading
                         })
                     })
@@ -3606,12 +4067,7 @@ impl GitGraph {
                             commits,
                             is_loading,
                             error: _,
-                        } = repository.graph_data(
-                            self.log_source.clone(),
-                            self.log_order,
-                            0..usize::MAX,
-                            cx,
-                        );
+                        } = repository.graph_data(self.query.clone(), 0..usize::MAX, cx);
                         self.graph_data.add_commits(commits);
                         (commits.len(), is_loading)
                     })
@@ -3722,7 +4178,7 @@ impl Render for GitGraph {
 
         let error = self.get_repository(cx).and_then(|repo| {
             repo.read(cx)
-                .get_graph_data(self.log_source.clone(), self.log_order)
+                .get_graph_data(&self.query)
                 .and_then(|data| data.error.clone())
         });
 
@@ -3747,11 +4203,12 @@ impl Render for GitGraph {
                     this.child(self.render_loading_spinner(cx))
                 })
         } else {
-            let is_path_history = matches!(self.log_source, LogSource::Path(_));
+            let is_path_history = matches!(self.log_source(), LogSource::Path(_));
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
 
-            let column_filter = self.column_visibility.clone();
+            let effective_visibility = self.effective_column_visibility();
+            let column_filter = effective_visibility.clone();
 
             // The graph column (index 0) only exists in the non-path-history layout and is
             // rendered as a separate canvas outside the table.
@@ -4019,12 +4476,12 @@ impl Render for GitGraph {
                                     )
                                     .child(render_redistributable_columns_resize_handles(
                                         &self.column_widths,
-                                        Some(&self.column_visibility),
+                                        Some(&effective_visibility),
                                         window,
                                         cx,
                                     )),
                                 self.column_widths.clone(),
-                                Some(self.column_visibility.clone()),
+                                Some(effective_visibility.clone()),
                             )
                         }),
                 )
@@ -4087,6 +4544,7 @@ impl Render for GitGraph {
                 v_flex()
                     .size_full()
                     .child(self.render_search_bar(cx))
+                    .child(self.render_filter_bar(cx))
                     .child(div().flex_1().child(content)),
             )
             .children(self.context_menu.as_ref().map(|context_menu| {
@@ -4127,7 +4585,7 @@ impl Item for GitGraph {
                 .file_name()
                 .map(|name| name.to_string_lossy().to_string())
         });
-        let path_history_path = match &self.log_source {
+        let path_history_path = match self.log_source() {
             LogSource::Path(path) => Some(path.as_unix_str().to_string()),
             _ => None,
         };
@@ -4152,7 +4610,7 @@ impl Item for GitGraph {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        if let LogSource::Path(path) = &self.log_source {
+        if let LogSource::Path(path) = self.log_source() {
             return path
                 .as_ref()
                 .file_name()
@@ -4217,6 +4675,8 @@ impl workspace::SerializableItem for GitGraph {
             search_query,
             search_case_sensitive,
             hidden_columns,
+            author_filter_name,
+            author_filter_email,
         )) = db.get_git_graph(item_id, workspace_id).ok().flatten()
         else {
             return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
@@ -4230,6 +4690,8 @@ impl workspace::SerializableItem for GitGraph {
             search_query,
             search_case_sensitive,
             hidden_columns,
+            author_filter_name,
+            author_filter_email,
         };
 
         let window_handle = window.window_handle();
@@ -4258,11 +4720,13 @@ impl workspace::SerializableItem for GitGraph {
 
                 let log_source = persistence::deserialize_log_source(&state);
                 let log_order = persistence::deserialize_log_order(&state);
+                let author_filter = persistence::deserialize_author_filter(&state);
 
                 let git_graph = cx.new(|cx| {
                     let mut graph =
                         GitGraph::new(repo_id, git_store, workspace, Some(log_source), window, cx);
-                    graph.log_order = log_order;
+                    graph.query.order = log_order;
+                    graph.query.filter.author = author_filter;
 
                     if let Some(sha) = &state.selected_sha {
                         graph.select_commit_by_sha(sha.as_str(), cx);
@@ -4330,9 +4794,11 @@ impl workspace::SerializableItem for GitGraph {
             Some(search_query)
         };
 
-        let log_source_type = Some(persistence::serialize_log_source_type(&self.log_source));
-        let log_source_value = persistence::serialize_log_source_value(&self.log_source);
-        let log_order = Some(persistence::serialize_log_order(&self.log_order));
+        let log_source_type = Some(persistence::serialize_log_source_type(self.log_source()));
+        let log_source_value = persistence::serialize_log_source_value(self.log_source());
+        let log_order = Some(persistence::serialize_log_order(&self.query.order));
+        let (author_filter_name, author_filter_email) =
+            persistence::serialize_author_filter(self.author_filter());
         let search_case_sensitive = Some(self.search_state.case_sensitive);
         let hidden_columns = Some(persistence::serialize_hidden_columns(
             self.column_visibility.as_slice(),
@@ -4351,6 +4817,8 @@ impl workspace::SerializableItem for GitGraph {
                 search_query,
                 search_case_sensitive,
                 hidden_columns,
+                author_filter_name,
+                author_filter_email,
             )
             .await
         }))
@@ -4374,7 +4842,7 @@ mod persistence {
     };
     use git::{
         Oid,
-        repository::{LogOrder, LogSource, RepoPath},
+        repository::{CommitAuthor, LogOrder, LogSource, RepoPath},
     };
     use workspace::WorkspaceDb;
 
@@ -4408,6 +4876,10 @@ mod persistence {
             ),
             sql!(
                 ALTER TABLE git_graphs ADD COLUMN hidden_columns INTEGER;
+            ),
+            sql!(
+                ALTER TABLE git_graphs ADD COLUMN author_filter_name TEXT;
+                ALTER TABLE git_graphs ADD COLUMN author_filter_email TEXT;
             ),
         ];
     }
@@ -4485,6 +4957,30 @@ mod persistence {
         }
     }
 
+    pub fn serialize_author_filter(
+        author: Option<&CommitAuthor>,
+    ) -> (Option<String>, Option<String>) {
+        match author {
+            Some(author) => (
+                Some(author.name.to_string()),
+                Some(author.email.to_string()),
+            ),
+            None => (None, None),
+        }
+    }
+
+    /// Both halves must be present: an identity missing either one could not have produced a
+    /// `--author` filter that matches anything.
+    pub fn deserialize_author_filter(state: &SerializedGitGraphState) -> Option<CommitAuthor> {
+        let name = state.author_filter_name.as_ref()?;
+        let email = state.author_filter_email.as_ref()?;
+
+        Some(CommitAuthor {
+            name: name.clone().into(),
+            email: email.clone().into(),
+        })
+    }
+
     /// Packs the per-column visibility mask into a bitmask (bit `i` set means column `i` is
     /// hidden), so it fits in a single integer database column regardless of column count.
     pub fn serialize_hidden_columns(hidden: &[bool]) -> i32 {
@@ -4511,6 +5007,8 @@ mod persistence {
         pub search_query: Option<String>,
         pub search_case_sensitive: Option<bool>,
         pub hidden_columns: Option<i32>,
+        pub author_filter_name: Option<String>,
+        pub author_filter_email: Option<String>,
     }
 
     impl GitGraphsDb {
@@ -4525,15 +5023,17 @@ mod persistence {
                 selected_sha: Option<String>,
                 search_query: Option<String>,
                 search_case_sensitive: Option<bool>,
-                hidden_columns: Option<i32>
+                hidden_columns: Option<i32>,
+                author_filter_name: Option<String>,
+                author_filter_email: Option<String>
             ) -> Result<()> {
                 INSERT OR REPLACE INTO git_graphs(
                     item_id, workspace_id, repo_working_path,
                     log_source_type, log_source_value, log_order,
                     selected_sha, search_query, search_case_sensitive,
-                    hidden_columns
+                    hidden_columns, author_filter_name, author_filter_email
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             }
         }
 
@@ -4549,7 +5049,9 @@ mod persistence {
                 Option<String>,
                 Option<String>,
                 Option<bool>,
-                Option<i32>
+                Option<i32>,
+                Option<String>,
+                Option<String>
             )>> {
                 SELECT
                     repo_working_path,
@@ -4559,7 +5061,9 @@ mod persistence {
                     selected_sha,
                     search_query,
                     search_case_sensitive,
-                    hidden_columns
+                    hidden_columns,
+                    author_filter_name,
+                    author_filter_email
                 FROM git_graphs
                 WHERE item_id = ? AND workspace_id = ?
             }
@@ -4593,7 +5097,7 @@ impl GitGraph {
     }
 
     pub fn log_source_for_test(&self) -> &LogSource {
-        &self.log_source
+        self.log_source()
     }
 }
 
@@ -5305,12 +5809,12 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
+            repo.graph_data(GraphQuery::default(), 0..usize::MAX, cx);
         });
         cx.run_until_parked();
 
         let graph_commits: Vec<Arc<InitialGraphCommitData>> = repository.update(cx, |repo, cx| {
-            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx)
+            repo.graph_data(GraphQuery::default(), 0..usize::MAX, cx)
                 .commits
                 .to_vec()
         });
@@ -5430,7 +5934,7 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
+            repo.graph_data(GraphQuery::default(), 0..usize::MAX, cx);
         });
 
         project
@@ -5448,7 +5952,7 @@ mod tests {
             "initial repository scan should emit HeadChanged"
         );
         let commit_count_after = repository.read_with(cx, |repo, _| {
-            repo.get_graph_data(LogSource::default(), LogOrder::default())
+            repo.get_graph_data(&GraphQuery::default())
                 .map(|data| data.commit_data.len())
                 .unwrap()
         });
@@ -5487,13 +5991,13 @@ mod tests {
         });
 
         repository.update(cx, |repo, cx| {
-            repo.graph_data(LogSource::default(), LogOrder::default(), 0..usize::MAX, cx);
+            repo.graph_data(GraphQuery::default(), 0..usize::MAX, cx);
         });
 
         cx.run_until_parked();
 
         let error = repository.read_with(cx, |repo, _| {
-            repo.get_graph_data(LogSource::default(), LogOrder::default())
+            repo.get_graph_data(&GraphQuery::default())
                 .and_then(|data| data.error.clone())
         });
 
@@ -5730,7 +6234,7 @@ mod tests {
             let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
             assert_eq!(graphs.len(), 1);
             assert_eq!(
-                graphs[0].read(cx).log_source,
+                *graphs[0].read(cx).log_source(),
                 LogSource::Path(tracked1_repo_path.clone())
             );
         });
@@ -5757,7 +6261,7 @@ mod tests {
             let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
             assert_eq!(graphs.len(), 1);
             assert_eq!(
-                graphs[0].read(cx).log_source,
+                *graphs[0].read(cx).log_source(),
                 LogSource::Path(tracked1_repo_path.clone())
             );
         });
@@ -5837,7 +6341,7 @@ mod tests {
                 .max_by_key(|graph| graph.entity_id())
                 .expect("expected a git graph");
             assert_eq!(
-                latest.read(cx).log_source,
+                *latest.read(cx).log_source(),
                 LogSource::Path(tracked2_repo_path)
             );
         });
@@ -5858,6 +6362,8 @@ mod tests {
             search_query: Some("fix bug".to_string()),
             search_case_sensitive: Some(true),
             hidden_columns: None,
+            author_filter_name: Some("Jane Doe".to_string()),
+            author_filter_email: Some("jane@example.com".to_string()),
         };
 
         assert_eq!(
@@ -5874,6 +6380,13 @@ mod tests {
         );
         assert_eq!(state.search_query.as_deref(), Some("fix bug"));
         assert_eq!(state.search_case_sensitive, Some(true));
+        assert_eq!(
+            persistence::deserialize_author_filter(&state),
+            Some(CommitAuthor {
+                name: "Jane Doe".into(),
+                email: "jane@example.com".into(),
+            })
+        );
 
         let all_state = SerializedGitGraphState {
             log_source_type: Some(persistence::LOG_SOURCE_ALL),
@@ -5883,6 +6396,8 @@ mod tests {
             search_query: None,
             search_case_sensitive: None,
             hidden_columns: None,
+            author_filter_name: None,
+            author_filter_email: None,
         };
         assert_eq!(
             persistence::deserialize_log_source(&all_state),
@@ -5892,6 +6407,7 @@ mod tests {
             persistence::deserialize_log_order(&all_state),
             LogOrder::DateOrder
         ));
+        assert_eq!(persistence::deserialize_author_filter(&all_state), None);
 
         let branch_state = SerializedGitGraphState {
             log_source_type: Some(persistence::LOG_SOURCE_BRANCH),
@@ -6041,6 +6557,8 @@ mod tests {
             Some("some query".to_string()),
             Some(true),
             Some(hidden_columns),
+            None,
+            None,
         )
         .await
         .expect("save should succeed");
@@ -6076,7 +6594,7 @@ mod tests {
 
         restored_graph.read_with(&*cx, |graph, _| {
             assert_eq!(
-                graph.log_source,
+                *graph.log_source(),
                 LogSource::All,
                 "log_source should be restored"
             );
@@ -6234,6 +6752,265 @@ mod tests {
 
         git_graph.read_with(&*cx, |graph, _| {
             assert_eq!(graph.search_matches_for_test(), vec![third_sha]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_author_filter_narrows_commits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let jane_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let john_sha = Oid::from_bytes(&[2; 20]).unwrap();
+        let jane_older_sha = Oid::from_bytes(&[3; 20]).unwrap();
+
+        let jane = CommitAuthor {
+            name: "Jane Doe".into(),
+            email: "jane@example.com".into(),
+        };
+        let john = CommitAuthor {
+            name: "John Roe".into(),
+            email: "john@example.com".into(),
+        };
+
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![
+                Arc::new(InitialGraphCommitData {
+                    sha: jane_sha,
+                    parents: smallvec![john_sha],
+                    ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: john_sha,
+                    parents: smallvec![jane_older_sha],
+                    ref_names: vec![],
+                }),
+                Arc::new(InitialGraphCommitData {
+                    sha: jane_older_sha,
+                    parents: smallvec![],
+                    ref_names: vec![],
+                }),
+            ],
+        );
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [
+                (
+                    CommitData {
+                        sha: jane_sha,
+                        parents: smallvec![john_sha],
+                        author_name: jane.name.clone(),
+                        author_email: jane.email.clone(),
+                        commit_timestamp: 3,
+                        subject: "Add feature".into(),
+                        message: "Add feature".into(),
+                    },
+                    false,
+                ),
+                (
+                    CommitData {
+                        sha: john_sha,
+                        parents: smallvec![jane_older_sha],
+                        author_name: john.name.clone(),
+                        author_email: john.email.clone(),
+                        commit_timestamp: 2,
+                        subject: "Fix bug".into(),
+                        message: "Fix bug".into(),
+                    },
+                    false,
+                ),
+                (
+                    CommitData {
+                        sha: jane_older_sha,
+                        parents: smallvec![],
+                        author_name: jane.name.clone(),
+                        author_email: jane.email.clone(),
+                        commit_timestamp: 1,
+                        subject: "Initial commit".into(),
+                        message: "Initial commit".into(),
+                    },
+                    false,
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph
+                    .initial_commit_data_for_test()
+                    .iter()
+                    .map(|commit| commit.sha)
+                    .collect::<Vec<_>>(),
+                vec![jane_sha, john_sha, jane_older_sha],
+            );
+            assert!(!graph.graph_column_forced_hidden());
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.set_author_filter(Some(jane.clone()), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph
+                    .initial_commit_data_for_test()
+                    .iter()
+                    .map(|commit| commit.sha)
+                    .collect::<Vec<_>>(),
+                vec![jane_sha, jane_older_sha],
+            );
+            // A filtered log reports a non-contiguous slice of history, so the lane algorithm has
+            // nothing to draw.
+            assert!(graph.graph_column_forced_hidden());
+            assert_eq!(
+                graph.effective_column_visibility().get(0usize).copied(),
+                Some(true)
+            );
+            // The user's own mask is untouched, so the column comes back when the filter is gone.
+            assert_eq!(graph.column_visibility.get(0usize).copied(), Some(false));
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.set_author_filter(None, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                graph
+                    .initial_commit_data_for_test()
+                    .iter()
+                    .map(|commit| commit.sha)
+                    .collect::<Vec<_>>(),
+                vec![jane_sha, john_sha, jane_older_sha],
+            );
+            assert!(!graph.graph_column_forced_hidden());
+            assert_eq!(
+                graph.effective_column_visibility().get(0usize).copied(),
+                Some(false)
+            );
+        });
+
+        let authors = repository
+            .update(cx, |repository, cx| {
+                repository.commit_authors(LogSource::All, cx)
+            })
+            .await
+            .expect("commit authors should load");
+        assert_eq!(authors, vec![jane, john]);
+    }
+
+    #[gpui::test]
+    async fn test_branch_filter_changes_log_source(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let head_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: head_sha,
+                parents: smallvec![],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(*graph.log_source(), LogSource::All);
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.set_log_source(LogSource::Branch("refs/heads/feature".into()), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(
+                *graph.log_source(),
+                LogSource::Branch("refs/heads/feature".into())
+            );
+            // The branch filter leaves the graph column alone: a single branch is still a
+            // contiguous history.
+            assert!(!graph.graph_column_forced_hidden());
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.set_log_source(LogSource::All, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(*graph.log_source(), LogSource::All);
         });
     }
 

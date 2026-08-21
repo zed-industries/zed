@@ -34,12 +34,12 @@ use git::{
     blame::Blame,
     parse_git_remote_url,
     repository::{
-        Branch, BranchesScanResult, CommitData, CommitDetails, CommitFileStatus, CommitOptions,
-        CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions, FileHistoryChangedFileSets,
-        GitCommitTemplate, GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData,
-        LogOrder, LogSource, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
-        SearchCommitArgs, UpstreamTrackingStatus, Worktree as GitWorktree, delete_branch_flag,
-        is_binary_content,
+        Branch, BranchesScanResult, CommitAuthor, CommitData, CommitDetails, CommitFileStatus,
+        CommitOptions, CreateWorktreeTarget, DiffStatType, DiffType, FetchOptions,
+        FileHistoryChangedFileSets, GitCommitTemplate, GitRepository, GitRepositoryCheckpoint,
+        GraphFilter, GraphQuery, InitialGraphCommitData, LogOrder, LogSource, PushOptions, Remote,
+        RemoteCommandOutput, RepoPath, ResetMode, SearchCommitArgs, UpstreamTrackingStatus,
+        Worktree as GitWorktree, delete_branch_flag, is_binary_content,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -617,7 +617,10 @@ pub struct Repository {
     askpass_delegates: RemoteAskPassDelegates,
     latest_askpass_id: u64,
     repository_state: Shared<Task<Result<RepositoryState, String>>>,
-    initial_graph_data: HashMap<(LogSource, LogOrder), InitialGitGraphData>,
+    initial_graph_data: HashMap<GraphQuery, InitialGitGraphData>,
+    /// Listing authors walks the whole log, and the git graph asks for the list every time its
+    /// author filter is opened, so the walk is shared and cached until the history changes.
+    commit_authors: HashMap<LogSource, Shared<Task<Result<Vec<CommitAuthor>, SharedString>>>>,
     commit_data_handler: CommitDataHandlerState,
     commit_data: HashMap<Oid, CommitDataState>,
 }
@@ -743,7 +746,7 @@ pub enum RepositoryEvent {
     StashEntriesChanged,
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
-    GraphEvent((LogSource, LogOrder), GitGraphEvent),
+    GraphEvent(GraphQuery, GitGraphEvent),
 }
 
 #[derive(Clone, Debug)]
@@ -990,6 +993,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_commit_data);
         client.add_entity_stream_request_handler(Self::handle_get_initial_graph_data);
         client.add_entity_stream_request_handler(Self::handle_search_commits);
+        client.add_entity_request_handler(Self::handle_get_commit_authors);
     }
 
     pub fn is_local(&self) -> bool {
@@ -3878,27 +3882,30 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        let log_order = log_order_from_proto(payload.log_order());
-        let log_source = log_source_from_proto(
+        let order = log_order_from_proto(payload.log_order());
+        let source = log_source_from_proto(
             payload
                 .log_source
                 .context("missing initial graph data log source")?,
         )?;
+        let query = GraphQuery {
+            filter: GraphFilter {
+                source,
+                author: payload.author.map(commit_author_from_proto),
+            },
+            order,
+        };
 
         let (subscriber_sender, subscriber_receiver) = async_channel::unbounded();
         let (cached_commits, error, is_loading) =
             repository_handle.update(&mut cx, |repository, cx| {
-                let response =
-                    repository.graph_data(log_source.clone(), log_order, 0..usize::MAX, cx);
+                let response = repository.graph_data(query.clone(), 0..usize::MAX, cx);
                 let cached_commits = response.commits.to_vec();
                 let error = response.error.clone();
                 let is_loading = response.is_loading;
 
                 if is_loading {
-                    if let Some(graph_data) = repository
-                        .initial_graph_data
-                        .get_mut(&(log_source.clone(), log_order))
-                    {
+                    if let Some(graph_data) = repository.initial_graph_data.get_mut(&query) {
                         graph_data.subscribers.push(subscriber_sender);
                     }
                 }
@@ -3975,12 +3982,15 @@ impl GitStore {
 
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let log_source = log_source_from_proto(
-            envelope
-                .payload
-                .log_source
-                .context("missing search commit log source")?,
-        )?;
+        let filter = GraphFilter {
+            source: log_source_from_proto(
+                envelope
+                    .payload
+                    .log_source
+                    .context("missing search commit log source")?,
+            )?,
+            author: envelope.payload.author.map(commit_author_from_proto),
+        };
         let search_args = SearchCommitArgs {
             query: SharedString::from(envelope.payload.query),
             case_sensitive: envelope.payload.case_sensitive,
@@ -3988,7 +3998,7 @@ impl GitStore {
 
         let (request_tx, request_rx) = async_channel::unbounded();
         repository_handle.update(&mut cx, |repository, cx| {
-            repository.search_commits(log_source, search_args, request_tx, cx);
+            repository.search_commits(filter, search_args, request_tx, cx);
         });
 
         let (mut response_tx, response_rx) = mpsc::unbounded();
@@ -4021,6 +4031,32 @@ impl GitStore {
         .detach();
 
         Ok(response_rx)
+    }
+
+    async fn handle_get_commit_authors(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetCommitAuthors>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetCommitAuthorsResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let log_source = log_source_from_proto(
+            envelope
+                .payload
+                .log_source
+                .context("missing commit authors log source")?,
+        )?;
+
+        let authors = repository_handle
+            .update(&mut cx, |repository, cx| {
+                repository.commit_authors(log_source, cx)
+            })
+            .await
+            .map_err(|error| anyhow!(error))?;
+
+        Ok(proto::GetCommitAuthorsResponse {
+            authors: authors.iter().map(commit_author_to_proto).collect(),
+        })
     }
 
     async fn handle_edit_ref(
@@ -6362,6 +6398,7 @@ impl Repository {
             active_jobs: Default::default(),
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             initial_graph_data: Default::default(),
+            commit_authors: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
         };
@@ -6411,6 +6448,7 @@ impl Repository {
             job_debug_queue: job_debug_queue::GitJobDebugQueue::new(),
             job_id: 0,
             initial_graph_data: Default::default(),
+            commit_authors: Default::default(),
             commit_data: Default::default(),
             commit_data_handler: CommitDataHandlerState::Closed,
         }
@@ -6423,12 +6461,13 @@ impl Repository {
             RepositoryEvent::HeadChanged | RepositoryEvent::BranchListChanged => {
                 if self.scan_id > 2 {
                     self.initial_graph_data.clear();
+                    self.commit_authors.clear();
                 }
             }
             RepositoryEvent::StashEntriesChanged => {
                 if self.scan_id > 2 {
                     self.initial_graph_data
-                        .retain(|(log_source, _), _| *log_source != LogSource::All);
+                        .retain(|query, _| *query.source() != LogSource::All);
                 }
             }
             _ => {}
@@ -7040,17 +7079,60 @@ impl Repository {
         )
     }
 
-    pub fn get_graph_data(
-        &self,
+    pub fn get_graph_data(&self, query: &GraphQuery) -> Option<&InitialGitGraphData> {
+        self.initial_graph_data.get(query)
+    }
+
+    /// Lists the distinct authors of the commits reachable from `log_source`, most recent first.
+    pub fn commit_authors(
+        &mut self,
         log_source: LogSource,
-        log_order: LogOrder,
-    ) -> Option<&InitialGitGraphData> {
-        self.initial_graph_data.get(&(log_source, log_order))
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<Result<Vec<CommitAuthor>, SharedString>>> {
+        if let Some(authors) = self.commit_authors.get(&log_source) {
+            return authors.clone();
+        }
+
+        let repository_state = self.repository_state.clone();
+        let repository_id = self.id;
+
+        let task = cx
+            .background_spawn({
+                let log_source = log_source.clone();
+                async move {
+                    match repository_state.await.map_err(SharedString::from)? {
+                        RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                            .commit_authors(log_source)
+                            .await
+                            .map_err(|error| SharedString::from(error.to_string())),
+                        RepositoryState::Remote(RemoteRepositoryState { client, project_id }) => {
+                            let response = client
+                                .request(proto::GetCommitAuthors {
+                                    project_id: project_id.to_proto(),
+                                    repository_id: repository_id.to_proto(),
+                                    log_source: Some(log_source_to_proto(&log_source)),
+                                })
+                                .await
+                                .map_err(|error| SharedString::from(error.to_string()))?;
+
+                            Ok(response
+                                .authors
+                                .into_iter()
+                                .map(commit_author_from_proto)
+                                .collect())
+                        }
+                    }
+                }
+            })
+            .shared();
+
+        self.commit_authors.insert(log_source, task.clone());
+        task
     }
 
     pub fn search_commits(
         &mut self,
-        log_source: LogSource,
+        filter: GraphFilter,
         search_args: SearchCommitArgs,
         request_tx: async_channel::Sender<Oid>,
         cx: &mut Context<Self>,
@@ -7064,7 +7146,7 @@ impl Repository {
             match repo_state {
                 Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
                     backend
-                        .search_commits(log_source, search_args, request_tx)
+                        .search_commits(filter, search_args, request_tx)
                         .await
                         .log_err();
                 }
@@ -7074,9 +7156,10 @@ impl Repository {
                         .request_stream(proto::SearchCommits {
                             project_id: project_id.to_proto(),
                             repository_id: repository_id.to_proto(),
-                            log_source: Some(log_source_to_proto(&log_source)),
+                            log_source: Some(log_source_to_proto(&filter.source)),
                             query: search_args.query.to_string(),
                             case_sensitive: search_args.case_sensitive,
+                            author: filter.author.as_ref().map(commit_author_to_proto),
                         })
                         .await;
 
@@ -7119,86 +7202,84 @@ impl Repository {
 
     pub fn graph_data(
         &mut self,
-        log_source: LogSource,
-        log_order: LogOrder,
+        query: GraphQuery,
         range: Range<usize>,
         cx: &mut Context<Self>,
     ) -> GraphDataResponse<'_> {
-        let initial_commit_data = self
-            .initial_graph_data
-            .entry((log_source.clone(), log_order))
-            .or_insert_with(|| {
-                let state = self.repository_state.clone();
-                let log_source = log_source.clone();
+        let initial_commit_data =
+            self.initial_graph_data
+                .entry(query.clone())
+                .or_insert_with(|| {
+                    let state = self.repository_state.clone();
+                    let query = query.clone();
 
-                let fetch_task = cx.spawn(async move |repository, cx| {
-                    let state = state.await;
-                    let result = match state {
-                        Ok(RepositoryState::Local(LocalRepositoryState { backend, .. })) => {
-                            Self::local_git_graph_data(
-                                repository.clone(),
-                                backend,
-                                log_source.clone(),
-                                log_order,
-                                cx,
-                            )
-                            .await
-                        }
-                        Ok(RepositoryState::Remote(remote)) => {
-                            Self::remote_git_graph_data(
-                                repository.clone(),
-                                remote,
-                                log_source.clone(),
-                                log_order,
-                                cx,
-                            )
-                            .await
-                        }
-                        Err(e) => Err(SharedString::from(e)),
-                    };
-
-                    repository
-                        .update(cx, |repository, cx| {
-                            if let Some(data) = repository
-                                .initial_graph_data
-                                .get_mut(&(log_source.clone(), log_order))
-                            {
-                                match &result {
-                                    Ok(()) => {
-                                        cx.emit(RepositoryEvent::GraphEvent(
-                                            (log_source.clone(), log_order),
-                                            GitGraphEvent::FullyLoaded,
-                                        ));
-                                    }
-                                    Err(fetch_task_error) => {
-                                        data.subscribers.retain(|sender| {
-                                            sender.try_send(Err(fetch_task_error.clone())).is_ok()
-                                        });
-                                        data.error = Some(fetch_task_error.clone());
-                                        cx.emit(RepositoryEvent::GraphEvent(
-                                            (log_source.clone(), log_order),
-                                            GitGraphEvent::LoadingError,
-                                        ));
-                                    }
-                                }
-                                data.subscribers.clear();
-                            } else {
-                                debug_panic!(
-                                    "This task would be dropped if this entry doesn't exist"
-                                );
+                    let fetch_task = cx.spawn(async move |repository, cx| {
+                        let state = state.await;
+                        let result = match state {
+                            Ok(RepositoryState::Local(LocalRepositoryState {
+                                backend, ..
+                            })) => {
+                                Self::local_git_graph_data(
+                                    repository.clone(),
+                                    backend,
+                                    query.clone(),
+                                    cx,
+                                )
+                                .await
                             }
-                        })
-                        .log_err();
-                });
+                            Ok(RepositoryState::Remote(remote)) => {
+                                Self::remote_git_graph_data(
+                                    repository.clone(),
+                                    remote,
+                                    query.clone(),
+                                    cx,
+                                )
+                                .await
+                            }
+                            Err(e) => Err(SharedString::from(e)),
+                        };
 
-                InitialGitGraphData {
-                    fetch_task,
-                    error: None,
-                    commit_data: Vec::new(),
-                    commit_oid_to_index: HashMap::default(),
-                    subscribers: Vec::new(),
-                }
-            });
+                        repository
+                            .update(cx, |repository, cx| {
+                                if let Some(data) = repository.initial_graph_data.get_mut(&query) {
+                                    match &result {
+                                        Ok(()) => {
+                                            cx.emit(RepositoryEvent::GraphEvent(
+                                                query.clone(),
+                                                GitGraphEvent::FullyLoaded,
+                                            ));
+                                        }
+                                        Err(fetch_task_error) => {
+                                            data.subscribers.retain(|sender| {
+                                                sender
+                                                    .try_send(Err(fetch_task_error.clone()))
+                                                    .is_ok()
+                                            });
+                                            data.error = Some(fetch_task_error.clone());
+                                            cx.emit(RepositoryEvent::GraphEvent(
+                                                query.clone(),
+                                                GitGraphEvent::LoadingError,
+                                            ));
+                                        }
+                                    }
+                                    data.subscribers.clear();
+                                } else {
+                                    debug_panic!(
+                                        "This task would be dropped if this entry doesn't exist"
+                                    );
+                                }
+                            })
+                            .log_err();
+                    });
+
+                    InitialGitGraphData {
+                        fetch_task,
+                        error: None,
+                        commit_data: Vec::new(),
+                        commit_oid_to_index: HashMap::default(),
+                        subscribers: Vec::new(),
+                    }
+                });
 
         let max_start = initial_commit_data.commit_data.len().saturating_sub(1);
         let max_end = initial_commit_data.commit_data.len();
@@ -7213,14 +7294,14 @@ impl Repository {
 
     async fn append_initial_graph_commits(
         this: &WeakEntity<Self>,
-        graph_data_key: &(LogSource, LogOrder),
+        query: &GraphQuery,
         initial_graph_commit_data: Vec<Arc<InitialGraphCommitData>>,
         cx: &mut AsyncApp,
     ) {
         this.update(cx, |repository, cx| {
             let graph_data = repository
                 .initial_graph_data
-                .entry(graph_data_key.clone())
+                .entry(query.clone())
                 .and_modify(|graph_data| {
                     if !graph_data.subscribers.is_empty() {
                         graph_data.subscribers.retain(|sender| {
@@ -7237,7 +7318,7 @@ impl Repository {
                         graph_data.commit_data.push(commit_data);
                     }
                     cx.emit(RepositoryEvent::GraphEvent(
-                        graph_data_key.clone(),
+                        query.clone(),
                         GitGraphEvent::CountUpdated(graph_data.commit_data.len()),
                     ));
                 });
@@ -7255,33 +7336,24 @@ impl Repository {
     async fn local_git_graph_data(
         this: WeakEntity<Self>,
         backend: Arc<dyn GitRepository>,
-        log_source: LogSource,
-        log_order: LogOrder,
+        query: GraphQuery,
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let (request_tx, request_rx) =
             async_channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
 
         let task = cx.background_executor().spawn({
-            let log_source = log_source.clone();
+            let query = query.clone();
             async move {
                 backend
-                    .initial_graph_data(log_source, log_order, request_tx)
+                    .initial_graph_data(query, request_tx)
                     .await
                     .map_err(|err| SharedString::from(err.to_string()))
             }
         });
 
-        let graph_data_key = (log_source, log_order);
-
         while let Ok(initial_graph_commit_data) = request_rx.recv().await {
-            Self::append_initial_graph_commits(
-                &this,
-                &graph_data_key,
-                initial_graph_commit_data,
-                cx,
-            )
-            .await;
+            Self::append_initial_graph_commits(&this, &query, initial_graph_commit_data, cx).await;
         }
 
         task.await?;
@@ -7291,21 +7363,20 @@ impl Repository {
     async fn remote_git_graph_data(
         this: WeakEntity<Self>,
         remote: RemoteRepositoryState,
-        log_source: LogSource,
-        log_order: LogOrder,
+        query: GraphQuery,
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let repository_id = this
             .update(cx, |repository, _| repository.id)
             .map_err(|err| SharedString::from(err.to_string()))?;
-        let graph_data_key = (log_source.clone(), log_order);
         let mut response = remote
             .client
             .request_stream(proto::GetInitialGraphData {
                 project_id: remote.project_id.to_proto(),
                 repository_id: repository_id.to_proto(),
-                log_source: Some(log_source_to_proto(&log_source)),
-                log_order: log_order_to_proto(log_order),
+                log_source: Some(log_source_to_proto(query.source())),
+                log_order: log_order_to_proto(query.order),
+                author: query.filter.author.as_ref().map(commit_author_to_proto),
             })
             .await
             .map_err(|err| SharedString::from(err.to_string()))?;
@@ -7318,7 +7389,7 @@ impl Repository {
                 .map(initial_graph_commit_from_proto)
                 .collect::<Result<Vec<_>>>()
                 .map_err(|err| SharedString::from(err.to_string()))?;
-            Self::append_initial_graph_commits(&this, &graph_data_key, commits, cx).await;
+            Self::append_initial_graph_commits(&this, &query, commits, cx).await;
         }
 
         Ok(())
@@ -10851,6 +10922,20 @@ fn log_source_from_proto(log_source: proto::GitLogSource) -> Result<LogSource> {
         proto::git_log_source::Source::Path(path) => {
             Ok(LogSource::Path(RepoPath::from_proto(&path)?))
         }
+    }
+}
+
+fn commit_author_to_proto(author: &CommitAuthor) -> proto::GitCommitAuthor {
+    proto::GitCommitAuthor {
+        name: author.name.to_string(),
+        email: author.email.to_string(),
+    }
+}
+
+fn commit_author_from_proto(author: proto::GitCommitAuthor) -> CommitAuthor {
+    CommitAuthor {
+        name: author.name.into(),
+        email: author.email.into(),
     }
 }
 

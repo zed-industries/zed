@@ -785,6 +785,11 @@ message GitLogSource {
   }
 }
 
+message GitCommitAuthor {
+  string name = 1;
+  string email = 2;
+}
+
 message GetInitialGraphData {
   uint64 project_id = 1;
   uint64 repository_id = 2;
@@ -797,6 +802,7 @@ message GetInitialGraphData {
     REVERSE_CHRONOLOGICAL = 3;
   }
   LogOrder log_order = 4;
+  optional GitCommitAuthor author = 5;
 }
 
 message InitialGraphCommit {
@@ -815,8 +821,19 @@ message SearchCommits {
   GitLogSource log_source = 3;
   string query = 4;
   bool case_sensitive = 5;
+  optional GitCommitAuthor author = 6;
 }
 
 message SearchCommitsResponse {
   repeated string shas = 1;
+}
+
+message GetCommitAuthors {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  GitLogSource log_source = 3;
+}
+
+message GetCommitAuthorsResponse {
+  repeated GitCommitAuthor authors = 1;
 }

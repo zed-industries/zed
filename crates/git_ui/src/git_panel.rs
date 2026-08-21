@@ -32,9 +32,9 @@ use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
     Branch, CommitData, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions,
-    GitCommitTemplate, GitCommitter, InitialGraphCommitData, LogOrder, LogSource, PushOptions,
-    Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    get_git_committer,
+    GitCommitTemplate, GitCommitter, GraphFilter, GraphQuery, InitialGraphCommitData, LogOrder,
+    LogSource, PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
+    UpstreamTrackingStatus, get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
@@ -6713,12 +6713,15 @@ impl GitPanel {
         let Some(log_source) = Self::commit_history_log_source(active_repository, cx) else {
             return;
         };
-        let log_order = LogOrder::DateOrder;
+        let query = GraphQuery {
+            filter: GraphFilter::new(log_source),
+            order: LogOrder::DateOrder,
+        };
 
         // Kick off the git log fetch so data is ready when the user switches to History.
         // graph_data() is idempotent — if already loading/loaded, this is a no-op.
         active_repository.update(cx, |repository, cx| {
-            repository.graph_data(log_source, log_order, 0..0, cx);
+            repository.graph_data(query, 0..0, cx);
         });
     }
 
@@ -6757,10 +6760,13 @@ impl GitPanel {
             self.set_commit_history(CommitHistory::Loaded(Rc::from([])), cx);
             return;
         };
-        let log_order = LogOrder::DateOrder;
+        let query = GraphQuery {
+            filter: GraphFilter::new(log_source),
+            order: LogOrder::DateOrder,
+        };
 
         let (entries, is_loading, error) = active_repository.update(cx, |repository, cx| {
-            let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
+            let response = repository.graph_data(query, 0..usize::MAX, cx);
             let entries: Rc<[CommitHistoryEntry]> = response
                 .commits
                 .iter()

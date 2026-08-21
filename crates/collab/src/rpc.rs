@@ -518,6 +518,7 @@ impl Server {
             .add_request_stream_handler(
                 forward_read_only_project_stream_request::<proto::SearchCommits>,
             )
+            .add_request_handler(forward_read_only_project_request::<proto::GetCommitAuthors>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRemoveWorktree>)
             .add_request_handler(disallow_guest_request::<proto::GitRenameWorktree>)

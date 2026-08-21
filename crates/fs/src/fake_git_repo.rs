@@ -11,11 +11,11 @@ use git::{
     Oid, RunHook,
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitData, CommitDataReader, CommitDetails, CommitOptions,
-        CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets, GRAPH_CHUNK_SIZE,
-        GitRepository, GitRepositoryCheckpoint, InitialGraphCommitData, LogOrder, LogSource,
-        PushOptions, RefEdit, Remote, RepoPath, ResetMode, SearchCommitArgs, Worktree,
-        commit_hash_search_query,
+        AskPassDelegate, Branch, CommitAuthor, CommitData, CommitDataReader, CommitDetails,
+        CommitOptions, CreateWorktreeTarget, FetchOptions, FileHistoryChangedFileSets,
+        GRAPH_CHUNK_SIZE, GitRepository, GitRepositoryCheckpoint, GraphFilter, GraphQuery,
+        InitialGraphCommitData, LogSource, PushOptions, RefEdit, Remote, RepoPath, ResetMode,
+        SearchCommitArgs, Worktree, commit_hash_search_query,
     },
     stash::GitStash,
     status::{
@@ -53,6 +53,25 @@ pub struct FakeCommitSnapshot {
 pub enum FakeCommitDataEntry {
     Success(CommitData),
     Fail(CommitData),
+}
+
+/// Commits whose data was never registered are treated as matching, so tests that only populate
+/// `graph_commits` keep seeing every commit when no author filter is active.
+fn fake_commit_matches_author(
+    state: &FakeGitRepositoryState,
+    sha: Oid,
+    author: Option<&CommitAuthor>,
+) -> bool {
+    let Some(author) = author else {
+        return true;
+    };
+
+    match state.commit_data.get(&sha) {
+        Some(FakeCommitDataEntry::Success(data) | FakeCommitDataEntry::Fail(data)) => {
+            data.author_name == author.name && data.author_email == author.email
+        }
+        None => false,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1533,8 +1552,7 @@ impl GitRepository for FakeGitRepository {
 
     fn initial_graph_data(
         &self,
-        _log_source: LogSource,
-        _log_order: LogOrder,
+        query: GraphQuery,
         request_tx: Sender<Vec<Arc<InitialGraphCommitData>>>,
     ) -> BoxFuture<'_, Result<()>> {
         let fs = self.fs.clone();
@@ -1542,10 +1560,20 @@ impl GitRepository for FakeGitRepository {
         async move {
             let (graph_commits, simulated_error) =
                 fs.with_git_state(&dot_git_path, false, |state| {
-                    (
-                        state.graph_commits.clone(),
-                        state.simulated_graph_error.clone(),
-                    )
+                    let graph_commits = state
+                        .graph_commits
+                        .iter()
+                        .filter(|commit| {
+                            fake_commit_matches_author(
+                                state,
+                                commit.sha,
+                                query.filter.author.as_ref(),
+                            )
+                        })
+                        .cloned()
+                        .collect::<Vec<_>>();
+
+                    (graph_commits, state.simulated_graph_error.clone())
                 })?;
 
             if let Some(error) = simulated_error {
@@ -1560,9 +1588,40 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn commit_authors(&self, _log_source: LogSource) -> BoxFuture<'_, Result<Vec<CommitAuthor>>> {
+        let fs = self.fs.clone();
+        let dot_git_path = self.dot_git_path.clone();
+        async move {
+            fs.with_git_state(&dot_git_path, false, |state| {
+                let mut authors = Vec::new();
+                let mut seen = HashSet::default();
+
+                for commit in &state.graph_commits {
+                    let Some(FakeCommitDataEntry::Success(data)) =
+                        state.commit_data.get(&commit.sha)
+                    else {
+                        continue;
+                    };
+
+                    let author = CommitAuthor {
+                        name: data.author_name.clone(),
+                        email: data.author_email.clone(),
+                    };
+
+                    if seen.insert(author.clone()) {
+                        authors.push(author);
+                    }
+                }
+
+                authors
+            })
+        }
+        .boxed()
+    }
+
     fn search_commits(
         &self,
-        _log_source: LogSource,
+        filter: GraphFilter,
         search_args: SearchCommitArgs,
         request_tx: Sender<Oid>,
     ) -> BoxFuture<'_, Result<()>> {
@@ -1583,6 +1642,9 @@ impl GitRepository for FakeGitRepository {
                         let FakeCommitDataEntry::Success(commit_data) = entry else {
                             return None;
                         };
+                        if !fake_commit_matches_author(state, *sha, filter.author.as_ref()) {
+                            return None;
+                        }
                         if let Some(hash_query) = hash_query.as_ref() {
                             return sha
                                 .to_string()

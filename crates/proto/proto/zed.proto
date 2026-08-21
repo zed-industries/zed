@@ -507,7 +507,9 @@ message Envelope {
     RefreshFoldingRanges refresh_folding_ranges = 476;
     RefreshDocumentSymbols refresh_document_symbols = 477;
     BlameBufferAtRevision blame_buffer_at_revision = 478;
-    BlameBufferAtRevisionResponse blame_buffer_at_revision_response = 479; // current max
+    BlameBufferAtRevisionResponse blame_buffer_at_revision_response = 479;
+    GetCommitAuthors get_commit_authors = 480;
+    GetCommitAuthorsResponse get_commit_authors_response = 481; // current max
   }
 
   reserved 87 to 88;
