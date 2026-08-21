@@ -27,7 +27,7 @@ use core_foundation::{
     runloop::{
         CFRunLoopActivity, CFRunLoopAddObserver, CFRunLoopGetMain, CFRunLoopObserverContext,
         CFRunLoopObserverCreate, CFRunLoopObserverRef, CFRunLoopRemoveObserver, CFRunLoopRun,
-        kCFRunLoopBeforeWaiting, kCFRunLoopCommonModes,
+        kCFRunLoopAfterWaiting, kCFRunLoopCommonModes,
     },
     string::{CFString, CFStringRef},
 };
@@ -299,7 +299,7 @@ impl MacPlatform {
 
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
-            run_app_until_before_waiting();
+            run_app_through_wake();
             pool.drain();
         }
 
@@ -560,13 +560,10 @@ fn assert_main_thread(operation: &str) {
     );
 }
 
-unsafe fn run_app_until_before_waiting() {
-    // Match winit's macOS pump: stop NSApplication at the last before-wait observer.
-    extern "C" fn stop_before_waiting(
-        _: CFRunLoopObserverRef,
-        _: CFRunLoopActivity,
-        _: *mut c_void,
-    ) {
+unsafe fn run_app_through_wake() {
+    // GPUI frame ticks use a main-queue source, which only runs after the run loop wakes.
+    // Pre-posting an event makes that wake non-blocking; stopping before it starves frames.
+    extern "C" fn observe_run_loop(_: CFRunLoopObserverRef, _: CFRunLoopActivity, _: *mut c_void) {
         unsafe { stop_app_immediately() };
     }
 
@@ -581,15 +578,16 @@ unsafe fn run_app_until_before_waiting() {
         };
         let observer = CFRunLoopObserverCreate(
             ptr::null(),
-            kCFRunLoopBeforeWaiting,
+            kCFRunLoopAfterWaiting,
             0,
-            CFIndex::MAX,
-            stop_before_waiting,
+            CFIndex::MIN,
+            observe_run_loop,
             &mut context,
         );
         assert!(!observer.is_null(), "failed to create AppKit pump observer");
         CFRunLoopAddObserver(run_loop, observer, kCFRunLoopCommonModes);
 
+        post_wake_event();
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.run();
 
@@ -598,12 +596,9 @@ unsafe fn run_app_until_before_waiting() {
     }
 }
 
-unsafe fn stop_app_immediately() {
+unsafe fn post_wake_event() {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
-        app.stop_(nil);
-
-        // NSApplication only observes stop after receiving another event.
         let event = <id as NSEvent>::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2_(
             nil,
             NSEventType::NSApplicationDefined,
@@ -621,6 +616,16 @@ unsafe fn stop_app_immediately() {
         } else {
             app.postEvent_atStart_(event, YES);
         }
+    }
+}
+
+unsafe fn stop_app_immediately() {
+    unsafe {
+        let app: id = msg_send![APP_CLASS, sharedApplication];
+        app.stop_(nil);
+
+        // NSApplication only observes stop after receiving another event.
+        post_wake_event();
     }
 }
 
