@@ -1367,6 +1367,8 @@ pub enum WindowBackgroundContent {
     Opaque,
     Transparent,
     Blurred,
+    MicaBackdrop,
+    MicaAltBackdrop,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
