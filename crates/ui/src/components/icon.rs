@@ -69,11 +69,11 @@ pub enum IconSize {
 impl IconSize {
     pub fn rems(self) -> Rems {
         match self {
-            IconSize::Indicator => rems_from_px(10.),
-            IconSize::XSmall => rems_from_px(12.),
-            IconSize::Small => rems_from_px(14.),
-            IconSize::Medium => rems_from_px(16.),
-            IconSize::XLarge => rems_from_px(48.),
+            IconSize::Indicator => rems_from_px(10_f32),
+            IconSize::XSmall => rems_from_px(12_f32),
+            IconSize::Small => rems_from_px(14_f32),
+            IconSize::Medium => rems_from_px(16_f32),
+            IconSize::XLarge => rems_from_px(48_f32),
             IconSize::Custom(size) => size,
         }
     }
@@ -109,6 +109,20 @@ impl IconSize {
 impl From<IconName> for Icon {
     fn from(icon: IconName) -> Self {
         Icon::new(icon)
+    }
+}
+
+pub fn git_hosting_provider_icon(provider_name: &str) -> IconName {
+    match provider_name {
+        "Bitbucket" => IconName::Bitbucket,
+        "Chromium" => IconName::Gerrit,
+        "Codeberg" => IconName::Codeberg,
+        "Forgejo Self-Hosted" => IconName::Forgejo,
+        "GitHub" => IconName::Github,
+        "GitLab" => IconName::Gitlab,
+        "Gitea" => IconName::Gitea,
+        "SourceHut" => IconName::Sourcehut,
+        _ => IconName::Link,
     }
 }
 

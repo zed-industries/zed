@@ -19,11 +19,10 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-command_palette_hooks.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 futures.workspace = true
-git_ui.workspace = true
+git_ui_core.workspace = true
 git.workspace = true
 gpui.workspace = true
 itertools.workspace = true
@@ -31,7 +30,6 @@ menu.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
 schemars.workspace = true
-search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -45,11 +43,11 @@ client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
+markdown.workspace = true
 markdown_preview.workspace = true
 zed_actions.workspace = true
 telemetry.workspace = true
 notifications.workspace = true
-feature_flags.workspace = true
 fs.workspace = true
 log.workspace = true
 
@@ -60,7 +58,6 @@ editor = { workspace = true, features = ["test-support"] }
 git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
-remote_connection = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
