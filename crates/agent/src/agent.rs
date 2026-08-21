@@ -5,6 +5,7 @@ pub mod outline;
 mod pattern_extraction;
 mod sandboxing;
 mod templates;
+pub mod terminal_provider;
 #[cfg(test)]
 mod tests;
 mod thread;
@@ -3327,6 +3328,28 @@ impl ThreadEnvironment for NativeThreadEnvironment {
                 )
             })?;
         host.list_available_agents(cx)
+    }
+
+    fn read_terminal(
+        &self,
+        id: &str,
+        head: Option<u32>,
+        tail: Option<u32>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<String>> {
+        let content = cx.update(|app| terminal_provider::read_terminal(app, id, head, tail));
+        match content {
+            Some(content) => Task::ready(Ok(content)),
+            None => Task::ready(Err(anyhow!("No open terminal with id {id}"))),
+        }
+    }
+
+    fn list_terminals(
+        &self,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Vec<terminal_provider::TerminalSummary>>> {
+        let terminals = cx.update(|app| terminal_provider::list_terminals(app));
+        Task::ready(Ok(terminals))
     }
 }
 

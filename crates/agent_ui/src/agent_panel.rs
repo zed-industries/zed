@@ -11,7 +11,9 @@ use std::{
 };
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
-use agent::{ContextServerRegistry, SharedThread, ThreadStore};
+use agent::{
+    ContextServerRegistry, SharedThread, ThreadStore, terminal_provider::TerminalContentProvider,
+};
 use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
@@ -1188,6 +1190,78 @@ pub struct AgentPanel {
     is_active: bool,
 }
 
+/// Provides the agent with read access to the terminals open in this panel.
+struct AgentPanelTerminalContentProvider {
+    panel: WeakEntity<AgentPanel>,
+}
+
+impl TerminalContentProvider for AgentPanelTerminalContentProvider {
+    fn read_terminal(
+        &self,
+        id: &str,
+        head: Option<u32>,
+        tail: Option<u32>,
+        cx: &App,
+    ) -> Option<String> {
+            let terminal_id = TerminalId::from_key_string(id).ok()?;
+            let panel = self.panel.upgrade()?;
+            panel.read_with(cx, |panel, cx| {
+                let agent_terminal = panel.terminals.get(&terminal_id)?;
+                let content = agent_terminal
+                    .view
+                    .read(cx)
+                    .terminal()
+                    .read(cx)
+                    .get_content();
+                Some(slice_terminal_content(content, head, tail))
+            })
+    }
+
+    fn list_terminals(&self, cx: &App) -> Vec<agent::terminal_provider::TerminalSummary> {
+        let Some(panel) = self.panel.upgrade() else {
+            return Vec::new();
+        };
+            panel.read_with(cx, |panel, cx| {
+                panel
+                    .terminals
+                    .iter()
+                    .map(|(id, agent_terminal)| {
+                        let title = agent_terminal.terminal_title(cx).to_string();
+                        let cwd = TerminalThreadMetadataStore::try_global(cx)
+                            .and_then(|store| store.read(cx).entry(*id))
+                            .and_then(|metadata| metadata.working_directory.clone())
+                            .map(|path| path.to_string_lossy().to_string());
+                        agent::terminal_provider::TerminalSummary {
+                            id: id.to_key_string(),
+                            title,
+                            cwd,
+                        }
+                    })
+                    .collect()
+            })
+    }
+}
+
+fn slice_terminal_content(content: String, head: Option<u32>, tail: Option<u32>) -> String {
+    let head = head.map(|n| n as usize);
+    let tail = tail.map(|n| n as usize);
+    match (head, tail) {
+        (None, None) => content,
+        (head, tail) => {
+            let lines: Vec<&str> = content.lines().collect();
+            let head_count = head.unwrap_or(lines.len()).min(lines.len());
+            let tail_count = tail.unwrap_or(0).min(lines.len().saturating_sub(head_count));
+            let mut result = lines[..head_count].join("\n");
+            if tail_count > 0 {
+                result.push_str("\n...\n");
+                let start = lines.len() - tail_count;
+                result.push_str(&lines[start..].join("\n"));
+            }
+            result
+        }
+    }
+}
+
 impl AgentPanel {
     fn serialize(&mut self, cx: &mut App) {
         let Some(workspace_id) = self.workspace_id else {
@@ -1590,6 +1664,13 @@ impl AgentPanel {
             last_context_source: None,
             is_active: false,
         };
+
+        agent::terminal_provider::set_terminal_content_provider(
+            Arc::new(AgentPanelTerminalContentProvider {
+                panel: cx.entity().downgrade(),
+            }),
+            cx,
+        );
 
         panel.ensure_native_agent_connection(cx);
         panel

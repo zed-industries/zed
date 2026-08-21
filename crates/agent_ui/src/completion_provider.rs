@@ -8,6 +8,7 @@ use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
 use agent_client_protocol::schema::v1 as acp;
+use agent::terminal_provider::TerminalSummary;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
@@ -299,6 +300,7 @@ pub(crate) enum Match {
     Skill(AvailableSkill),
     Entry(EntryMatch),
     BranchDiff(BranchDiffMatch),
+    Terminal(TerminalMatch),
 }
 
 #[derive(Debug, Clone)]
@@ -317,8 +319,16 @@ impl Match {
             Match::Skill(_) => 1.,
             Match::Fetch(_) => 1.,
             Match::BranchDiff(_) => 1.,
+            Match::Terminal(terminal) => terminal.mat.as_ref().map(|mat| mat.score).unwrap_or(1.),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TerminalMatch {
+    pub id: String,
+    pub title: String,
+    pub mat: Option<StringMatch>,
 }
 
 #[derive(Debug, Clone)]
@@ -817,6 +827,47 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         })
     }
 
+    fn completion_for_terminal(
+        id: String,
+        title: SharedString,
+        source_range: Range<Anchor>,
+        source: Arc<T>,
+        editor: WeakEntity<Editor>,
+        mention_set: WeakEntity<MentionSet>,
+        workspace: Entity<Workspace>,
+        cx: &mut App,
+    ) -> Completion {
+        let uri = MentionUri::Terminal {
+            id,
+            title: title.to_string(),
+        };
+        let new_text = format!("{} ", uri.as_link());
+        let new_text_len = new_text.len();
+        Completion {
+            replace_range: source_range.clone(),
+            new_text,
+            label: CodeLabel::plain(title.to_string(), None),
+            documentation: None,
+            insert_text_mode: None,
+            source: project::CompletionSource::Custom,
+            match_start: None,
+            snippet_deduplication_key: None,
+            icon_path: Some(uri.icon_path(cx)),
+            icon_color: None,
+            confirm: Some(confirm_completion_callback(
+                title,
+                source_range.start,
+                new_text_len - 1,
+                uri,
+                source,
+                editor,
+                mention_set,
+                workspace,
+            )),
+            group: None,
+        }
+    }
+
     pub(crate) fn completion_for_action(
         action: PromptContextAction,
         source_range: Range<Anchor>,
@@ -1099,6 +1150,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(Vec::default());
         };
+        let terminal_summaries = agent::terminal_provider::list_terminals(cx);
         match mode {
             Some(PromptContextType::File) => {
                 let search_files_task = search_files(query, cancellation_flag, &workspace, cx);
@@ -1181,9 +1233,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     None
                 };
 
+                let terminal_task = self.terminal_matches(terminal_summaries, "", cx);
+
                 cx.spawn(async move |_cx| {
                     let mut matches = recent_task.await;
                     matches.extend(entries);
+                    matches.extend(terminal_task.await);
 
                     if let Some(branch_diff_task) = branch_diff_task {
                         if let Some(branch_diff_match) = branch_diff_task.await {
@@ -1216,6 +1271,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                     None
                 };
 
+                let terminal_task = self.terminal_matches(terminal_summaries, &query, cx);
+
                 cx.spawn(async move |cx| {
                     let mut matches = search_files_task
                         .await
@@ -1240,6 +1297,8 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             mat: Some(mat),
                         })
                     }));
+
+                    matches.extend(terminal_task.await);
 
                     if let Some(branch_diff_task) = branch_diff_task {
                         let branch_diff_keyword = PromptContextType::BranchDiff.keyword();
@@ -1271,6 +1330,60 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 })
             }
         }
+    }
+
+    fn terminal_matches(
+        &self,
+        terminal_summaries: Vec<TerminalSummary>,
+        query: &str,
+        cx: &mut App,
+    ) -> Task<Vec<Match>> {
+        if terminal_summaries.is_empty() {
+            return Task::ready(Vec::new());
+        }
+
+        if query.is_empty() {
+            return Task::ready(
+                terminal_summaries
+                    .into_iter()
+                    .map(|terminal| {
+                        Match::Terminal(TerminalMatch {
+                            id: terminal.id,
+                            title: terminal.title,
+                            mat: None,
+                        })
+                    })
+                    .collect(),
+            );
+        }
+
+        let query = query.to_string();
+        let candidates: Vec<StringMatchCandidate> = terminal_summaries
+            .iter()
+            .enumerate()
+            .map(|(ix, terminal)| StringMatchCandidate::new(ix, terminal.title.as_str()))
+            .collect();
+        let executor = cx.background_executor().clone();
+        cx.background_spawn(async move {
+            let matches = fuzzy::match_strings(
+                &candidates,
+                &query,
+                false,
+                true,
+                100,
+                &Arc::new(AtomicBool::default()),
+                executor,
+            )
+            .await;
+            matches
+                .into_iter()
+                .map(|mat| Match::Terminal(TerminalMatch {
+                    id: terminal_summaries[mat.candidate_id].id.clone(),
+                    title: terminal_summaries[mat.candidate_id].title.clone(),
+                    mat: Some(mat),
+                }))
+                .collect()
+        })
     }
 
     fn recent_context_picker_entries(
@@ -1862,6 +1975,18 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                     Match::BranchDiff(branch_diff) => {
                                         Some(Self::build_branch_diff_completion(
                                             branch_diff.base_ref,
+                                            source_range.clone(),
+                                            source.clone(),
+                                            editor.clone(),
+                                            mention_set.clone(),
+                                            workspace.clone(),
+                                            cx,
+                                        ))
+                                    }
+                                    Match::Terminal(terminal) => {
+                                        Some(Self::completion_for_terminal(
+                                            terminal.id,
+                                            terminal.title.into(),
                                             source_range.clone(),
                                             source.clone(),
                                             editor.clone(),

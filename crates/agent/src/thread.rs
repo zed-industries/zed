@@ -5,7 +5,7 @@ use crate::{
     GoToDefinitionTool, GrepTool, ListAgentsAndModelsTool, ListDirectoryTool, MovePathTool,
     ProjectSnapshot, ReadFileTool, RenameTool, SandboxedTerminalTool, SpawnAgentTool,
     SystemPromptTemplate, Template, Templates, TerminalTool, ToolPermissionDecision, WebSearchTool,
-    WriteFileTool, decide_permission_from_settings,
+    WriteFileTool, decide_permission_from_settings, ListTerminalsTool, ReadTerminalTool,
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
@@ -325,6 +325,7 @@ impl UserMessage {
             "<rules>\nThe user has specified the following rules that should be applied:\n";
         const OPEN_DIAGNOSTICS_TAG: &str = "<diagnostics>";
         const OPEN_DIFFS_TAG: &str = "<diffs>";
+        const OPEN_TERMINALS_TAG: &str = "<terminals>";
         const MERGE_CONFLICT_TAG: &str = "<merge_conflicts>";
         const OPEN_SKILLS_TAG: &str =
             "<skills>\nThe user has attached the following agent skills:\n";
@@ -340,6 +341,7 @@ impl UserMessage {
         let mut diffs_context = OPEN_DIFFS_TAG.to_string();
         let mut merge_conflict_context = MERGE_CONFLICT_TAG.to_string();
         let mut skills_context = OPEN_SKILLS_TAG.to_string();
+        let mut terminal_context = OPEN_TERMINALS_TAG.to_string();
 
         for chunk in &*self.content {
             let chunk = match chunk {
@@ -461,6 +463,17 @@ impl UserMessage {
                             let label = format!("{} ({})", name, source);
                             write!(&mut skills_context, "\nSkill: {}\n{}\n", label, content).ok();
                         }
+                        MentionUri::Terminal { .. } => {
+                            write!(
+                                &mut terminal_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "console",
+                                    text: content
+                                }
+                            )
+                            .ok();
+                        }
                     }
 
                     language_model::MessageContent::Text(uri.as_link().to_string())
@@ -547,6 +560,13 @@ impl UserMessage {
             message
                 .content
                 .push(language_model::MessageContent::Text(merge_conflict_context));
+        }
+
+        if terminal_context.len() > OPEN_TERMINALS_TAG.len() {
+            terminal_context.push_str("</terminals>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(terminal_context));
         }
 
         if message.content.len() > len_before_context {
@@ -797,6 +817,30 @@ pub trait ThreadEnvironment {
         Err(anyhow::anyhow!(
             "Listing available agents is not supported in this environment"
         ))
+    }
+
+    /// Reads the current buffer of the terminal with the given id, optionally
+    /// limited to the first `head` / last `tail` lines.
+    fn read_terminal(
+        &self,
+        _id: &str,
+        _head: Option<u32>,
+        _tail: Option<u32>,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<String>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Reading terminals is not supported in this environment"
+        )))
+    }
+
+    /// Lists the terminals currently open in the workspace.
+    fn list_terminals(
+        &self,
+        _cx: &mut AsyncApp,
+    ) -> Task<Result<Vec<crate::terminal_provider::TerminalSummary>>> {
+        Task::ready(Err(anyhow::anyhow!(
+            "Listing terminals is not supported in this environment"
+        )))
     }
 }
 
@@ -2163,6 +2207,8 @@ impl Thread {
             self.project.clone(),
             environment.clone(),
         ));
+        self.add_tool(ReadTerminalTool::new(environment.clone()));
+        self.add_tool(ListTerminalsTool::new(environment.clone()));
         self.add_tool(WebSearchTool);
 
         self.add_tool(AskUserTool);

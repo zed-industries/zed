@@ -166,6 +166,7 @@ impl MentionSet {
             ))),
             MentionUri::PastedImage { .. }
             | MentionUri::TerminalSelection { .. }
+            | MentionUri::Terminal { .. }
             | MentionUri::MergeConflict { .. }
             | MentionUri::Rule { .. } => {
                 Task::ready(Err(anyhow!("Unsupported mention URI type for paste")))
@@ -341,6 +342,7 @@ impl MentionSet {
                 debug_panic!("unexpected terminal URI");
                 Task::ready(Err(anyhow!("unexpected terminal URI")))
             }
+            MentionUri::Terminal { .. } => Task::ready(Ok(Mention::Link)),
             MentionUri::GitDiff { base_ref } => {
                 self.confirm_mention_for_git_diff(base_ref.into(), cx)
             }

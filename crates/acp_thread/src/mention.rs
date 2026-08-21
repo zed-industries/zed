@@ -63,6 +63,13 @@ pub enum MentionUri {
     TerminalSelection {
         line_count: u32,
     },
+    /// References a whole terminal (by its stable internal id) so its current
+    /// buffer can be attached as agent context. `title` is the human-facing
+    /// label shown in the UI; `id` is an opaque UUID the user never sees.
+    Terminal {
+        id: String,
+        title: String,
+    },
     GitDiff {
         base_ref: String,
     },
@@ -232,6 +239,15 @@ impl MentionUri {
                         .parse::<u32>()
                         .unwrap_or(0);
                     Ok(Self::TerminalSelection { line_count })
+                } else if let Some(terminal_id) = path.strip_prefix("/agent/terminal/") {
+                    let title = single_query_param(&url, "name")?.unwrap_or_default();
+                    if terminal_id.is_empty() {
+                        bail!("invalid terminal mention: missing id");
+                    }
+                    Ok(Self::Terminal {
+                        id: terminal_id.to_string(),
+                        title,
+                    })
                 } else if path.starts_with("/agent/git-diff") {
                     let base_ref =
                         single_query_param(&url, "base")?.unwrap_or_else(|| "main".to_string());
@@ -327,6 +343,7 @@ impl MentionUri {
             | MentionUri::Diagnostics { .. }
             | MentionUri::Fetch { .. }
             | MentionUri::TerminalSelection { .. }
+            | MentionUri::Terminal { .. }
             | MentionUri::GitDiff { .. }
             | MentionUri::MergeConflict { .. } => None,
         }
@@ -351,6 +368,7 @@ impl MentionUri {
                     format!("Terminal ({} lines)", line_count)
                 }
             }
+            MentionUri::Terminal { title, .. } => title.clone(),
             MentionUri::GitDiff { base_ref } => format!("Branch Diff ({})", base_ref),
             MentionUri::MergeConflict { file_path } => {
                 let name = Path::new(file_path)
@@ -429,6 +447,7 @@ impl MentionUri {
             MentionUri::Skill {
                 skill_file_path, ..
             } => Some(skill_file_path.to_string_lossy().into_owned().into()),
+            MentionUri::Terminal { title, .. } => Some(title.clone().into()),
             _ => None,
         }
     }
@@ -446,6 +465,7 @@ impl MentionUri {
             MentionUri::Rule { .. } => IconName::Reader.path().into(),
             MentionUri::Diagnostics { .. } => IconName::Warning.path().into(),
             MentionUri::TerminalSelection { .. } => IconName::Terminal.path().into(),
+            MentionUri::Terminal { .. } => IconName::Terminal.path().into(),
             MentionUri::Selection { .. } => IconName::Reader.path().into(),
             MentionUri::Fetch { .. } => IconName::ToolWeb.path().into(),
             MentionUri::GitDiff { .. } => IconName::GitBranch.path().into(),
@@ -557,6 +577,12 @@ impl MentionUri {
                 let mut url = Url::parse("zed:///agent/terminal-selection").unwrap();
                 url.query_pairs_mut()
                     .append_pair("lines", &line_count.to_string());
+                url
+            }
+            MentionUri::Terminal { id, title } => {
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path(&format!("/agent/terminal/{id}"));
+                url.query_pairs_mut().append_pair("name", title);
                 url
             }
             MentionUri::GitDiff { base_ref } => {
@@ -888,6 +914,27 @@ mod tests {
             _ => panic!("Expected Directory variant"),
         }
         assert_eq!(parsed.to_uri().to_string(), file_uri);
+    }
+
+    #[test]
+    fn test_parse_terminal_uri() {
+        let terminal_uri = "zed:///agent/terminal/abc-123?name=my%20terminal";
+        let parsed = MentionUri::parse(terminal_uri, PathStyle::local()).unwrap();
+        match &parsed {
+            MentionUri::Terminal { id, title } => {
+                assert_eq!(id, "abc-123");
+                assert_eq!(title, "my terminal");
+            }
+            other => panic!("Expected Terminal variant, got {other:?}"),
+        }
+        let reparsed = MentionUri::parse(&parsed.to_uri().to_string(), PathStyle::local()).unwrap();
+        match &reparsed {
+            MentionUri::Terminal { id, title } => {
+                assert_eq!(id, "abc-123");
+                assert_eq!(title, "my terminal");
+            }
+            other => panic!("Expected Terminal variant on reparse, got {other:?}"),
+        }
     }
 
     #[test]
