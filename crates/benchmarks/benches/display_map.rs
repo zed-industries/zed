@@ -1,3 +1,4 @@
+use benchmarks::bench_utils::RandomCharIter;
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use editor::{EditorStyle, MultiBuffer, display_map::*};
 use gpui::{AppContext as _, HighlightStyle, Hsla, TestDispatcher, font, px};
@@ -8,7 +9,6 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use settings::SettingsStore;
 use std::{num::NonZeroU32, time::Duration};
 use text::Bias;
-use util::RandomCharIter;
 
 fn to_tab_point_benchmark(c: &mut Criterion) {
     let dispatcher = TestDispatcher::new(1);

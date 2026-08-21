@@ -49,3 +49,50 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     fi
   done
 fi
+
+# `crates/benchmarks/Cargo.toml` also directly requests `test-support` from
+# several application crates, to build fixtures and harnesses its benchmarks
+# exercise. `theme` and `util` are the two of those whose benchmark usage
+# turned out to need no test-only API at all (`theme::LoadThemes`,
+# `theme_settings::init`) or one narrow enough to vendor into
+# `benchmarks::bench_utils` instead (`util::RandomCharIter`, a
+# synthetic-text generator with no production analogue), so `benchmarks` no
+# longer needs a direct `test-support` edge to either.
+#
+# `editor` and `project` remain out of scope: their own `test-support`
+# features are load-bearing for other benchmarks (e.g. `edit_file_tool`, via
+# `TestAppContext`/`FakeFs`/`FakeLspAdapter`/`Project::test`) and both
+# require `theme`/`util`'s `test-support` internally regardless of what
+# `benchmarks` itself requests. So this checks only for a *direct* edge from
+# `benchmarks` to each crate's `test-support` feature (the one path this
+# change controls), not for the feature's absence from the whole resolved
+# graph, which `editor`/`project` will keep populating until they get the
+# same treatment. `agent`, `language`, `language_model`, `lsp`, and
+# `settings` remain direct edges too: `edit_file_tool.rs` relies on
+# genuinely test-only APIs from them (`SettingsStore::update_user_settings`,
+# `FakeLspAdapter`, `FakeLanguageModel`, agent's own test-support surface)
+# with no production equivalent, deeply coupled to the same
+# `agent`/`editor`/`project` harness.
+for foundational_crate in theme util; do
+  output=$(cargo tree \
+    --offline \
+    --package benchmarks \
+    --edges features \
+    --charset ascii \
+    --invert "${foundational_crate}")
+
+  # Cargo tree fully expands a given (package, feature-set) node only the
+  # first time it appears, printing every later re-visit as a bare `(*)`
+  # back-reference instead of repeating its dependents. So the crate's
+  # un-suffixed "test-support" feature line is where its direct dependents
+  # are actually listed; checking the couple of lines after it for a
+  # "benchmarks" edge is enough to catch a direct request without also
+  # matching the expected indirect one from `editor`/`project`.
+  if echo "${output}" \
+    | grep -A2 "[|\`]-- ${foundational_crate} feature \"test-support\"\$" \
+    | grep --quiet 'benchmarks v'; then
+    echo "benchmarks directly requests \"${foundational_crate}\"'s \"test-support\" feature:"
+    echo "${output}"
+    exit 1
+  fi
+done

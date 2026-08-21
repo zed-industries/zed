@@ -1,4 +1,5 @@
 use rand::Rng;
+use rand::seq::IndexedRandom as _;
 
 pub const RUST_MODULE_HEADER_LINES: usize = 10;
 pub const RUST_FUNCTION_LINES: usize = 12;
@@ -86,4 +87,43 @@ pub fn rust_identifier(rng: &mut impl Rng, salt: usize) -> String {
         salt,
         rng.random_range(0..10_000)
     )
+}
+
+/// Generates random text mixing whitespace, ASCII letters, and multi-byte
+/// characters (Greek letters, symbols, emoji), so buffer/display-map
+/// benchmarks exercise the same multi-byte-aware code paths real documents
+/// do.
+///
+/// This mirrors `util::RandomCharIter`, which is test-support-only, so that
+/// benchmarks generating input data don't need to enable `util`'s
+/// `test-support` feature and everything else it pulls in.
+pub struct RandomCharIter<T: Rng> {
+    rng: T,
+}
+
+impl<T: Rng> RandomCharIter<T> {
+    pub fn new(rng: T) -> Self {
+        Self { rng }
+    }
+}
+
+impl<T: Rng> Iterator for RandomCharIter<T> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.rng.random_range(0..100) {
+            // whitespace
+            0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
+            // two-byte greek letters
+            20..=32 => char::from_u32(self.rng.random_range(('α' as u32)..('ω' as u32 + 1))),
+            // three-byte characters
+            33..=45 => ['✋', '✅', '❌', '❎', '⭐']
+                .choose(&mut self.rng)
+                .copied(),
+            // four-byte characters
+            46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
+            // ascii letters
+            _ => Some(self.rng.random_range(b'a'..b'z' + 1).into()),
+        }
+    }
 }

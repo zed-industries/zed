@@ -1,3 +1,4 @@
+use benchmarks::bench_utils::RandomCharIter;
 use editor::{
     Editor, EditorMode, MultiBuffer,
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
@@ -5,7 +6,6 @@ use editor::{
 use gpui::{AppContext as _, BenchAppContext, Focusable as _};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::SettingsStore;
-use util::RandomCharIter;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 #[gpui::bench(
