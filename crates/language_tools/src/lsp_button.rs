@@ -1305,6 +1305,18 @@ impl LspButton {
             });
         }
     }
+
+    fn is_empty(&self, cx: &App) -> bool {
+        let lsp_state = self.server_state.read(cx);
+
+        (lsp_state.lsp_store.upgrade().is_some_and(|lsp_store| {
+            lsp_store
+                .read(cx)
+                .stopped_language_servers()
+                .is_some_and(|s| s.is_empty())
+        }) && lsp_state.language_servers.is_empty())
+            || self.lsp_menu.is_none()
+    }
 }
 
 impl StatusItemView for LspButton {
@@ -1415,9 +1427,7 @@ impl Render for LspButton {
             })
             .unwrap_or(false);
 
-        if !is_restricted
-            && (self.server_state.read(cx).language_servers.is_empty() || self.lsp_menu.is_none())
-        {
+        if !is_restricted && self.is_empty(cx) {
             return div().hidden();
         }
 
