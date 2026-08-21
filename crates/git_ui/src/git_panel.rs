@@ -6860,13 +6860,14 @@ impl GitPanel {
                                 .icon_size(IconSize::Small)
                                 .tooltip(|_window, cx| {
                                     Tooltip::for_action(
-                                        "Open Git Graph",
-                                        &crate::git_graph::Open,
+                                        "Toggle Git Graph",
+                                        &crate::git_graph::Toggle,
                                         cx,
                                     )
                                 })
                                 .on_click(|_, window, cx| {
-                                    window.dispatch_action(crate::git_graph::Open.boxed_clone(), cx)
+                                    window
+                                        .dispatch_action(crate::git_graph::Toggle.boxed_clone(), cx)
                                 }),
                         ),
                 ),
