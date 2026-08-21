@@ -943,10 +943,6 @@ impl Item for Editor {
         }
     }
 
-    fn is_read_only(&self, cx: &App) -> bool {
-        self.read_only(cx)
-    }
-
     fn save(
         &mut self,
         options: SaveOptions,
@@ -980,7 +976,7 @@ impl Item for Editor {
                 // `save_as`. Trying to save it here errors and aborts the whole save.
                 .filter(|buffer| {
                     let buffer = buffer.read(cx);
-                    buffer.is_dirty() && buffer.file().is_some()
+                    buffer.is_dirty() && !buffer.read_only() && buffer.file().is_some()
                 })
                 .collect()
         };
@@ -1190,7 +1186,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::DirtyChanged => {
+            EditorEvent::DirtyChanged | EditorEvent::CapabilityChanged => {
                 f(ItemEvent::UpdateTab);
             }
 

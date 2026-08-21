@@ -5789,6 +5789,7 @@ impl Workspace {
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(false, window, cx);
+                    cx.notify();
                 }
                 serialize_workspace = false;
             }
@@ -7595,7 +7596,7 @@ impl Workspace {
     pub fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let active_item_is_read_only = self
             .active_item(cx)
-            .is_some_and(|item| item.is_read_only(cx));
+            .is_some_and(|item| !item.capability(cx).editable());
 
         self.add_workspace_actions_listeners(div, window, cx)
             .on_action(cx.listener(
