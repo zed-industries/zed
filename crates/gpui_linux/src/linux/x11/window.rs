@@ -1521,14 +1521,6 @@ impl PlatformWindow for X11Window {
                 message,
             )
             .log_err();
-        self.0
-            .xcb
-            .set_input_focus(
-                xproto::InputFocus::POINTER_ROOT,
-                self.0.x_window,
-                xproto::Time::CURRENT_TIME,
-            )
-            .log_err();
         xcb_flush(&self.0.xcb);
     }
 
