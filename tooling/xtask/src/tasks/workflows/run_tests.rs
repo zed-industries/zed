@@ -450,12 +450,12 @@ fn check_style() -> NamedJob {
 }
 
 fn check_dependencies() -> NamedJob {
-    fn install_cargo_shear() -> Step<Use> {
-        steps::taiki_install_action("cargo-shear@1.13.4")
-    }
-
     fn run_cargo_shear() -> Step<Run> {
         named::bash("cargo shear --locked --deny-warnings")
+    }
+
+    fn run_cargo_sort() -> Step<Run> {
+        named::bash("cargo sort --check --workspace .")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -482,8 +482,10 @@ fn check_dependencies() -> NamedJob {
             .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(install_cargo_shear())
+            .add_step(steps::install_cargo_shear())
             .add_step(run_cargo_shear())
+            .add_step(steps::install_cargo_sort())
+            .add_step(run_cargo_sort())
             .add_step(check_cargo_lock())
             .add_step(check_crate_graph())
             .add_step(check_vulnerable_dependencies()),
