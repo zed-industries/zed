@@ -3326,7 +3326,6 @@ impl GitGraph {
 
                                     current_row = dest_point.y;
                                     builder.line_to(dest_point);
-                                    builder.move_to(dest_point);
                                 }
                                 CommitLineSegment::Curve {
                                     to_column,
@@ -3375,11 +3374,8 @@ impl GitGraph {
                                                 point(current_column + signed_curve_width, to_row);
                                             let curve_control = point(current_column, to_row);
 
-                                            builder.move_to(point(current_column, current_row));
                                             builder.line_to(curve_start);
-                                            builder.move_to(curve_start);
                                             builder.curve_to(curve_end, curve_control);
-                                            builder.move_to(curve_end);
                                             builder.line_to(point(to_column, to_row));
                                         }
                                         CurveKind::Merge => {
@@ -3412,22 +3408,21 @@ impl GitGraph {
                                                 point(to_column, merge_start.y + curve_height);
                                             let curve_control = point(to_column, merge_start.y);
 
+                                            // A merge line starts clear of the child's commit
+                                            // circle rather than at the pen position, so this
+                                            // must remain a separate subpath.
                                             builder.move_to(merge_start);
                                             builder.line_to(curve_start);
-                                            builder.move_to(curve_start);
                                             builder.curve_to(curve_end, curve_control);
-                                            builder.move_to(curve_end);
                                             builder.line_to(point(to_column, to_row));
                                         }
                                     }
                                     current_row = to_row;
                                     current_column = to_column;
-                                    builder.move_to(point(current_column, current_row));
                                 }
                             }
                         }
 
-                        builder.close();
                         lines.entry(line.color_idx).or_default().push(builder);
                     }
 
