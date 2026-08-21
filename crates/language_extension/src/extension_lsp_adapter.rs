@@ -132,7 +132,9 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
-        let worktree_id = WorktreeId::from_proto(worktree_id.expect("worktree_id is set before calling update_language_server_status"));
+        let worktree_id = WorktreeId::from_proto(
+            worktree_id.expect("worktree_id is set before calling update_language_server_status"),
+        );
         self.language_registry
             .update_lsp_binary_status(BinaryStatusUpdate {
                 name: language_server_id,

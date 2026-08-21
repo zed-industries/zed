@@ -1088,22 +1088,22 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         [
             (
                 LanguageServerName::new_static("gleam"),
-                Some(worktree_id),
+                worktree_id,
                 BinaryStatus::Starting
             ),
             (
                 LanguageServerName::new_static("gleam"),
-                Some(worktree_id),
+                worktree_id,
                 BinaryStatus::CheckingForUpdate
             ),
             (
                 LanguageServerName::new_static("gleam"),
-                Some(worktree_id),
+                worktree_id,
                 BinaryStatus::Downloading
             ),
             (
                 LanguageServerName::new_static("gleam"),
-                Some(worktree_id),
+                worktree_id,
                 BinaryStatus::None
             )
         ]
