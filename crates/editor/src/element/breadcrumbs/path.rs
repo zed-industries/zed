@@ -82,8 +82,8 @@ pub(super) fn breadcrumb_file_icon(path: Option<&RelPath>, cx: &App) -> Option<S
     file_icons::FileIcons::get_icon(path?.as_std_path(), cx)
 }
 
-/// Takes `limit` children at most: callers only ever ask whether there is exactly one, and the
-/// auto-fold walk asks that once per level.
+/// Callers only ever ask whether there is exactly one child, and the auto-fold walk asks that
+/// once per level, so the traversal stops early instead of listing the whole directory.
 pub(super) fn directory_child_paths(
     worktree: &Entity<project::Worktree>,
     path: &RelPath,

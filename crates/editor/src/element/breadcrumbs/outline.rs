@@ -54,7 +54,8 @@ pub(super) fn top_level_outline_indices(depths: &[usize]) -> Vec<usize> {
 
 /// Identity for outline items across the bar and the open listing. Anchors already pin an item
 /// to its position, and the two resolve items from separate snapshots, so the range is what
-/// stays comparable between them.
+/// stays comparable between them. Callers pass the two items in whichever order is local to
+/// them, so any clause added here has to stay symmetric.
 pub(super) fn same_symbol_item(a: &OutlineItem<Anchor>, b: &OutlineItem<Anchor>) -> bool {
     a.range == b.range
 }
