@@ -3049,6 +3049,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_python_autoindent_multi_cursor_colon(cx: &mut TestAppContext) {
+        cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
+        let language = crate::language("python", tree_sitter_python::LANGUAGE.into());
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
+                });
+            });
+        });
+
+        cx.new(|cx| {
+            let mut buffer = Buffer::local("a\nb\nc", cx).with_language(language, cx);
+
+            // A cursor at the end of every line types `:` at once. Each `:` opens
+            // a block, but the line below is a sibling being edited in the same
+            // batch, so it should not be pulled into the block above it.
+            buffer.edit(
+                [(1..1, ":"), (3..3, ":"), (5..5, ":")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(buffer.text(), "a:\nb:\nc:");
+
+            // The guard only ignores edited siblings, not real parents: both lines
+            // keep their existing indent under `def f():`, and still don't cascade
+            // into each other.
+            buffer.edit([(0..buffer.len(), "def f():\n  a\n  b")], None, cx);
+            buffer.edit(
+                [(12..12, ":"), (16..16, ":")],
+                Some(AutoindentMode::EachLine),
+                cx,
+            );
+            assert_eq!(buffer.text(), "def f():\n  a:\n  b:");
+
+            buffer
+        });
+    }
+
+    #[gpui::test]
     async fn test_python_autoindent(cx: &mut TestAppContext) {
         cx.executor().set_block_on_ticks(usize::MAX..=usize::MAX);
         let language = crate::language("python", tree_sitter_python::LANGUAGE.into());
