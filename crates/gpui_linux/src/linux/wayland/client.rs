@@ -188,10 +188,6 @@ fn set_ime_cursor_rectangle_after_done(
     }
 }
 
-/// Pacing for retry ticks: a fixed 60Hz interval. Retries only occur for throttled or
-/// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
-const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
-
 fn take_startup_activation_token_from_environment() -> Option<String> {
     let startup_activation_token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
         .ok()
@@ -462,26 +458,29 @@ impl WaylandClientStatePtr {
         }
     }
 
-    /// Queue a retry tick for `surface_id` one refresh interval from now. An immediate
-    /// retry would spin against the frame-rate throttle that deferred the draw in the
-    /// first place.
-    pub fn schedule_frame_retry(&self, surface_id: &ObjectId) {
+    /// Queue a retry tick for `surface_id` after `interval`. An immediate
+    /// retry would spin against the frame-rate throttle that deferred the
+    /// draw in the first place.
+    pub fn schedule_frame_retry(
+        &self,
+        surface_id: &ObjectId,
+        interval: Duration,
+    ) -> anyhow::Result<()> {
         let client = self.get_client();
         let state = client.borrow();
         let surface_id = surface_id.clone();
-        if let Err(err) = state.loop_handle.insert_source(
-            Timer::from_duration(FRAME_RETRY_INTERVAL),
-            move |_, _, this| {
+        state
+            .loop_handle
+            .insert_source(Timer::from_duration(interval), move |_, _, this| {
                 let client = this.get_client();
                 let window = get_window(&mut client.borrow_mut(), &surface_id);
                 if let Some(window) = window {
                     window.retry_timer_fired();
                 }
                 TimeoutAction::Drop
-            },
-        ) {
-            log::error!("Failed to schedule frame retry: {err}");
-        }
+            })
+            .map_err(|error| anyhow::anyhow!("inserting the frame retry timer: {error}"))?;
+        Ok(())
     }
 
     pub fn get_serial(&self, kind: SerialKind) -> Serial {

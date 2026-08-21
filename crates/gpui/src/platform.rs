@@ -861,6 +861,14 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
+    /// Requests a future `on_request_frame` callback for platforms whose
+    /// render loop is demand-driven and parks when idle (currently Wayland).
+    ///
+    /// Contract for implementers: this must be sticky and idempotent. Callers
+    /// may invoke it at any time — including reentrantly while a frame is
+    /// being drawn — and repeated calls while a wake is already armed must
+    /// coalesce into a single frame request. Platforms whose frame loop ticks
+    /// continuously while visible can leave this as a no-op.
     fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;

@@ -4,6 +4,7 @@ use std::{
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
+    time::Duration,
 };
 
 use calloop::ping::Ping;
@@ -122,8 +123,6 @@ pub struct WaylandWindowState {
     handle: AnyWindowHandle,
     active: bool,
     hovered: bool,
-    redraw_requested: bool,
-    presentation: PresentationState,
     pending_frame_callback: Option<wl_callback::WlCallback>,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
@@ -622,8 +621,6 @@ impl WaylandWindowState {
             handle,
             active: false,
             hovered: false,
-            redraw_requested: false,
-            presentation: PresentationState::Unpresented,
             pending_frame_callback: None,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
@@ -668,6 +665,16 @@ impl WaylandWindowState {
         match self.decorations {
             WindowDecorations::Server => px(0.0),
             WindowDecorations::Client => self.client_inset.unwrap_or(px(0.0)),
+        }
+    }
+
+    /// At most one `wl_callback` may be outstanding per surface; the
+    /// compositor destroys it when it fires, and an uncommitted one is
+    /// carried by whichever commit eventually happens.
+    fn ensure_frame_callback(&mut self) {
+        if self.pending_frame_callback.is_none() {
+            self.pending_frame_callback =
+                Some(self.surface.frame(&self.globals.qh, self.surface.id()));
         }
     }
 }
@@ -729,17 +736,503 @@ mod presentation_state_tests {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum FrameLoop {
-    Unconfigured,
-    Ticking,
-    RescheduleRequested,
-    PresentationFailed,
-    AwaitingCallback,
-    Scheduled,
-    RetryScheduled,
-    Parked,
+/// The demand-driven render loop, as a single state machine.
+///
+/// The machine only has persistent states *between* ticks: which wake source
+/// (if any) will deliver the next tick. Facts local to a running tick live in
+/// [`frame_loop::Tick`], which cannot exist between ticks. Transitions are
+/// pure and return the side effect the caller must perform, so a wake state
+/// cannot be entered without arming the wake that justifies it.
+mod frame_loop {
+    use super::PresentationState;
+    use gpui::RequestFrameOptions;
+
+    /// Who will deliver the next render-loop tick.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Wake {
+        /// The surface has not received its initial configure.
+        Unconfigured,
+        /// The compositor owes a `wl_callback::done` for a committed buffer.
+        Callback,
+        /// A calloop ping is in flight.
+        Ping,
+        /// A retry timer is armed.
+        Timer,
+        /// No wake armed; new demand must schedule one.
+        Parked,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum PresentOutcome {
+        Presented,
+        Failed,
+    }
+
+    /// Facts accumulated while a tick is running. Scoped to [`Phase::Ticking`]
+    /// so they are unrepresentable between ticks.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+    pub(super) struct Tick {
+        /// `schedule_frame` arrived reentrantly while this tick was running.
+        rescheduled: bool,
+        /// A draw reached the renderer; `None` means GPUI throttled or had
+        /// nothing to draw.
+        outcome: Option<PresentOutcome>,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Phase {
+        Between(Wake),
+        Ticking(Tick),
+    }
+
+    /// The side effect a transition asks its caller to perform. The machine
+    /// is pure; the caller owns the surface, ping, and timer.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[must_use]
+    pub(super) enum WakeEffect {
+        None,
+        ArmPing,
+        ArmTimer,
+        /// Bare-commit the pending frame callback so the compositor paces the
+        /// retry (an occluded window stops polling).
+        CommitPendingCallback,
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) struct FrameLoop {
+        phase: Phase,
+        presentation: PresentationState,
+        /// Latched until a draw actually reaches the renderer; survives
+        /// throttled ticks and feeds `RequestFrameOptions::force_render`.
+        redraw_requested: bool,
+    }
+
+    impl FrameLoop {
+        pub(super) fn new() -> Self {
+            Self {
+                phase: Phase::Between(Wake::Unconfigured),
+                presentation: PresentationState::Unpresented,
+                redraw_requested: false,
+            }
+        }
+
+        pub(super) fn is_configured(self) -> bool {
+            self.phase != Phase::Between(Wake::Unconfigured)
+        }
+
+        /// Whether the given wake source currently owns the next tick.
+        pub(super) fn awaits(self, wake: Wake) -> bool {
+            self.phase == Phase::Between(wake)
+        }
+
+        /// New frame demand arrived.
+        pub(super) fn schedule(self) -> (Self, WakeEffect) {
+            match self.phase {
+                Phase::Between(Wake::Parked) => (
+                    Self {
+                        phase: Phase::Between(Wake::Ping),
+                        ..self
+                    },
+                    WakeEffect::ArmPing,
+                ),
+                Phase::Ticking(tick) => (
+                    Self {
+                        phase: Phase::Ticking(Tick {
+                            rescheduled: true,
+                            ..tick
+                        }),
+                        ..self
+                    },
+                    WakeEffect::None,
+                ),
+                // Unconfigured: the initial configure starts the loop.
+                // Callback/Ping/Timer: a wake is already armed.
+                Phase::Between(_) => (self, WakeEffect::None),
+            }
+        }
+
+        /// The window's surface changed: the next draw must force-render.
+        pub(super) fn request_redraw(self) -> (Self, WakeEffect) {
+            Self {
+                redraw_requested: true,
+                ..self
+            }
+            .schedule()
+        }
+
+        /// A wake fired; the tick is starting.
+        pub(super) fn begin_tick(self) -> (Self, RequestFrameOptions) {
+            (
+                Self {
+                    phase: Phase::Ticking(Tick::default()),
+                    ..self
+                },
+                RequestFrameOptions {
+                    force_render: self.redraw_requested,
+                    require_presentation: self.presentation.requires_presentation(),
+                },
+            )
+        }
+
+        /// A draw reached the renderer during this tick: demand was consumed,
+        /// the outcome is recorded, and the renderer may have latched new
+        /// demand (e.g. after GPU recovery).
+        pub(super) fn drew(self, outcome: PresentOutcome, renderer_needs_redraw: bool) -> Self {
+            let tick = match self.phase {
+                Phase::Ticking(tick) => tick,
+                // Draw is only reachable from within a tick.
+                Phase::Between(_) => {
+                    debug_assert!(false, "drew() called outside a tick");
+                    Tick::default()
+                }
+            };
+            Self {
+                phase: Phase::Ticking(Tick {
+                    outcome: Some(outcome),
+                    ..tick
+                }),
+                presentation: match outcome {
+                    PresentOutcome::Presented => PresentationState::Presented,
+                    PresentOutcome::Failed => self.presentation.failed(),
+                },
+                redraw_requested: renderer_needs_redraw,
+            }
+        }
+
+        /// The tick ended; decide who wakes us next.
+        pub(super) fn complete_tick(self) -> (Self, WakeEffect) {
+            let Phase::Ticking(tick) = self.phase else {
+                debug_assert!(false, "complete_tick() called outside a tick");
+                return (self, WakeEffect::None);
+            };
+            let wake = |wake, effect| {
+                (
+                    Self {
+                        phase: Phase::Between(wake),
+                        ..self
+                    },
+                    effect,
+                )
+            };
+            match (tick.outcome, self.presentation) {
+                // A committed buffer already carried the frame callback.
+                (Some(PresentOutcome::Presented), _) => wake(Wake::Callback, WakeEffect::None),
+                // After a first successful present the compositor paces
+                // retries; before it, a callback may never arrive, so wake
+                // ourselves on a timer.
+                (Some(PresentOutcome::Failed), PresentationState::RetryAfterPresent) => {
+                    wake(Wake::Callback, WakeEffect::CommitPendingCallback)
+                }
+                (Some(PresentOutcome::Failed), _) => wake(Wake::Timer, WakeEffect::ArmTimer),
+                (None, presentation) if presentation.requires_presentation() => {
+                    wake(Wake::Timer, WakeEffect::ArmTimer)
+                }
+                (None, _) if tick.rescheduled || self.redraw_requested => {
+                    wake(Wake::Timer, WakeEffect::ArmTimer)
+                }
+                (None, _) => wake(Wake::Parked, WakeEffect::None),
+            }
+        }
+
+        /// Disarm the loop (window dropped, or no frame callback registered).
+        pub(super) fn park(self) -> Self {
+            Self {
+                phase: Phase::Between(Wake::Parked),
+                ..self
+            }
+        }
+
+        /// Arming the retry timer failed; fall back to an immediate wake so
+        /// the loop cannot strand in a wake state nobody will deliver.
+        pub(super) fn timer_failed(self) -> (Self, WakeEffect) {
+            (
+                Self {
+                    phase: Phase::Between(Wake::Ping),
+                    ..self
+                },
+                WakeEffect::ArmPing,
+            )
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::PresentationState;
+        use super::{FrameLoop, Phase, PresentOutcome, Tick, Wake, WakeEffect};
+
+        fn between(wake: Wake) -> FrameLoop {
+            FrameLoop {
+                phase: Phase::Between(wake),
+                presentation: PresentationState::Presented,
+                redraw_requested: false,
+            }
+        }
+
+        fn ticking(
+            tick: Tick,
+            presentation: PresentationState,
+            redraw_requested: bool,
+        ) -> FrameLoop {
+            FrameLoop {
+                phase: Phase::Ticking(tick),
+                presentation,
+                redraw_requested,
+            }
+        }
+
+        fn tick_with(rescheduled: bool, outcome: Option<PresentOutcome>) -> Tick {
+            Tick {
+                rescheduled,
+                outcome,
+            }
+        }
+
+        #[test]
+        fn a_new_loop_is_unconfigured_and_ignores_scheduling() {
+            let machine = FrameLoop::new();
+            assert!(!machine.is_configured());
+
+            let (scheduled, effect) = machine.schedule();
+            assert_eq!(scheduled, machine, "the initial configure starts the loop");
+            assert_eq!(effect, WakeEffect::None);
+        }
+
+        #[test]
+        fn the_initial_tick_configures_the_loop() {
+            let (machine, _options) = FrameLoop::new().begin_tick();
+            assert!(machine.is_configured());
+        }
+
+        #[test]
+        fn schedule_from_parked_arms_a_ping() {
+            let (machine, effect) = between(Wake::Parked).schedule();
+            assert!(machine.awaits(Wake::Ping));
+            assert_eq!(effect, WakeEffect::ArmPing);
+        }
+
+        #[test]
+        fn schedule_is_absorbed_while_a_wake_is_armed() {
+            for wake in [Wake::Callback, Wake::Ping, Wake::Timer] {
+                let armed = between(wake);
+                let (machine, effect) = armed.schedule();
+                assert_eq!(machine, armed);
+                assert_eq!(effect, WakeEffect::None);
+            }
+        }
+
+        #[test]
+        fn schedule_mid_tick_records_a_reschedule() {
+            let mid_tick = ticking(Tick::default(), PresentationState::Presented, false);
+            let (machine, effect) = mid_tick.schedule();
+            assert_eq!(machine.phase, Phase::Ticking(tick_with(true, None)));
+            assert_eq!(effect, WakeEffect::None);
+        }
+
+        #[test]
+        fn request_redraw_latches_demand_and_wakes() {
+            let (machine, effect) = between(Wake::Parked).request_redraw();
+            assert!(machine.redraw_requested);
+            assert_eq!(effect, WakeEffect::ArmPing);
+        }
+
+        #[test]
+        fn begin_tick_latches_redraw_demand_into_force_render() {
+            let parked = FrameLoop {
+                redraw_requested: true,
+                ..between(Wake::Parked)
+            };
+            let (_machine, options) = parked.begin_tick();
+            assert!(options.force_render);
+            assert!(!options.require_presentation);
+        }
+
+        #[test]
+        fn begin_tick_requires_presentation_while_retrying() {
+            for retry in [
+                PresentationState::RetryBeforeFirstPresent,
+                PresentationState::RetryAfterPresent,
+            ] {
+                let machine = FrameLoop {
+                    presentation: retry,
+                    ..between(Wake::Timer)
+                };
+                let (_machine, options) = machine.begin_tick();
+                assert!(options.require_presentation);
+            }
+        }
+
+        #[test]
+        fn drew_records_the_outcome_and_consumes_redraw_demand() {
+            let mid_tick = ticking(Tick::default(), PresentationState::Unpresented, true);
+            let machine = mid_tick.drew(PresentOutcome::Presented, false);
+            assert_eq!(
+                machine.phase,
+                Phase::Ticking(tick_with(false, Some(PresentOutcome::Presented)))
+            );
+            assert_eq!(machine.presentation, PresentationState::Presented);
+            assert!(!machine.redraw_requested);
+        }
+
+        #[test]
+        fn drew_relatches_demand_when_the_renderer_needs_a_redraw() {
+            let mid_tick = ticking(Tick::default(), PresentationState::Presented, false);
+            let machine = mid_tick.drew(PresentOutcome::Presented, true);
+            assert!(machine.redraw_requested);
+        }
+
+        #[test]
+        fn a_failed_present_updates_presentation_history() {
+            let before = ticking(Tick::default(), PresentationState::Unpresented, false);
+            assert_eq!(
+                before.drew(PresentOutcome::Failed, false).presentation,
+                PresentationState::RetryBeforeFirstPresent
+            );
+
+            let after = ticking(Tick::default(), PresentationState::Presented, false);
+            assert_eq!(
+                after.drew(PresentOutcome::Failed, false).presentation,
+                PresentationState::RetryAfterPresent
+            );
+        }
+
+        #[test]
+        fn a_presented_tick_waits_for_the_compositor() {
+            let machine = ticking(
+                tick_with(false, Some(PresentOutcome::Presented)),
+                PresentationState::Presented,
+                false,
+            );
+            let (machine, effect) = machine.complete_tick();
+            assert!(machine.awaits(Wake::Callback));
+            assert_eq!(effect, WakeEffect::None);
+        }
+
+        #[test]
+        fn a_reschedule_during_a_presented_tick_is_absorbed_by_the_callback() {
+            let machine = ticking(
+                tick_with(true, Some(PresentOutcome::Presented)),
+                PresentationState::Presented,
+                false,
+            );
+            let (machine, effect) = machine.complete_tick();
+            assert!(machine.awaits(Wake::Callback));
+            assert_eq!(effect, WakeEffect::None);
+        }
+
+        #[test]
+        fn a_failed_present_before_first_present_retries_on_a_timer() {
+            let machine = ticking(
+                tick_with(false, Some(PresentOutcome::Failed)),
+                PresentationState::RetryBeforeFirstPresent,
+                false,
+            );
+            let (machine, effect) = machine.complete_tick();
+            assert!(machine.awaits(Wake::Timer));
+            assert_eq!(effect, WakeEffect::ArmTimer);
+        }
+
+        #[test]
+        fn a_failed_present_after_a_present_lets_the_compositor_pace_the_retry() {
+            let machine = ticking(
+                tick_with(false, Some(PresentOutcome::Failed)),
+                PresentationState::RetryAfterPresent,
+                false,
+            );
+            let (machine, effect) = machine.complete_tick();
+            assert!(machine.awaits(Wake::Callback));
+            assert_eq!(effect, WakeEffect::CommitPendingCallback);
+        }
+
+        #[test]
+        fn a_throttled_tick_that_still_owes_a_presentation_retries_on_a_timer() {
+            // GPUI disables throttling when require_presentation is set, so
+            // this row is a safety net rather than a hot path.
+            for retry in [
+                PresentationState::RetryBeforeFirstPresent,
+                PresentationState::RetryAfterPresent,
+            ] {
+                let machine = ticking(tick_with(false, None), retry, false);
+                let (machine, effect) = machine.complete_tick();
+                assert!(machine.awaits(Wake::Timer));
+                assert_eq!(effect, WakeEffect::ArmTimer);
+            }
+        }
+
+        #[test]
+        fn a_throttled_tick_with_pending_demand_retries_on_a_timer() {
+            let rescheduled = ticking(tick_with(true, None), PresentationState::Presented, false);
+            let (machine, effect) = rescheduled.complete_tick();
+            assert!(machine.awaits(Wake::Timer));
+            assert_eq!(effect, WakeEffect::ArmTimer);
+
+            let redraw = ticking(tick_with(false, None), PresentationState::Presented, true);
+            let (machine, effect) = redraw.complete_tick();
+            assert!(machine.awaits(Wake::Timer));
+            assert_eq!(effect, WakeEffect::ArmTimer);
+        }
+
+        #[test]
+        fn an_idle_tick_parks() {
+            let machine = ticking(tick_with(false, None), PresentationState::Presented, false);
+            let (machine, effect) = machine.complete_tick();
+            assert!(machine.awaits(Wake::Parked));
+            assert_eq!(effect, WakeEffect::None);
+        }
+
+        #[test]
+        fn redraw_demand_survives_a_throttled_tick() {
+            let parked = FrameLoop {
+                redraw_requested: true,
+                ..between(Wake::Parked)
+            };
+            let (machine, options) = parked.begin_tick();
+            assert!(options.force_render);
+
+            // GPUI throttled: no draw reached the renderer.
+            let (machine, effect) = machine.complete_tick();
+            assert_eq!(effect, WakeEffect::ArmTimer);
+
+            let (_machine, options) = machine.begin_tick();
+            assert!(
+                options.force_render,
+                "demand must survive until a draw consumes it"
+            );
+        }
+
+        #[test]
+        fn park_disarms_the_wake() {
+            let machine = between(Wake::Callback).park();
+            assert!(machine.awaits(Wake::Parked));
+
+            let mid_tick = ticking(Tick::default(), PresentationState::Presented, false).park();
+            assert!(mid_tick.awaits(Wake::Parked));
+        }
+
+        #[test]
+        fn timer_failure_falls_back_to_a_ping() {
+            let (machine, effect) = between(Wake::Timer).timer_failed();
+            assert!(machine.awaits(Wake::Ping));
+            assert_eq!(effect, WakeEffect::ArmPing);
+        }
+
+        #[test]
+        fn awaits_matches_only_the_armed_wake() {
+            let machine = between(Wake::Ping);
+            assert!(machine.awaits(Wake::Ping));
+            assert!(!machine.awaits(Wake::Timer));
+            assert!(!machine.awaits(Wake::Parked));
+        }
+    }
 }
+
+use frame_loop::{FrameLoop, PresentOutcome, Wake, WakeEffect};
+
+/// Pacing for self-driven retry ticks while the window is active: one 60Hz
+/// refresh interval.
+const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
+/// GPUI throttles inactive windows to ~30fps, so retrying faster than that
+/// only produces wakeups the throttle will defer again.
+const INACTIVE_FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(33_333);
 
 pub(crate) struct WaylandWindow(pub WaylandWindowStatePtr);
 pub enum ImeInput {
@@ -751,7 +1244,7 @@ pub enum ImeInput {
 
 impl Drop for WaylandWindow {
     fn drop(&mut self) {
-        self.0.frame_loop.set(FrameLoop::Parked);
+        self.0.frame_loop.set(self.0.frame_loop.get().park());
 
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
@@ -857,7 +1350,7 @@ impl WaylandWindow {
                 parent,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
-            frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),
+            frame_loop: Rc::new(Cell::new(FrameLoop::new())),
             frame_ping,
         });
 
@@ -917,24 +1410,16 @@ impl WaylandWindowStatePtr {
     }
 
     pub fn frame(&self) {
-        self.frame_loop.set(FrameLoop::Ticking);
-        let mut state = self.state.borrow_mut();
-        state.resize_throttle = false;
-        // GPUI may throttle this tick without calling draw, so leave the request
-        // latched until a draw actually reaches the renderer.
-        let force_render = state.redraw_requested;
-        let require_presentation = state.presentation.requires_presentation();
-        drop(state);
+        let (machine, options) = self.frame_loop.get().begin_tick();
+        self.frame_loop.set(machine);
+        self.state.borrow_mut().resize_throttle = false;
 
         let mut callbacks = self.callbacks.borrow_mut();
         let Some(request_frame_callback) = callbacks.request_frame.as_mut() else {
-            self.frame_loop.set(FrameLoop::Parked);
+            self.frame_loop.set(self.frame_loop.get().park());
             return;
         };
-        request_frame_callback(RequestFrameOptions {
-            force_render,
-            require_presentation,
-        });
+        request_frame_callback(options);
         self.update_ime_enabled();
         drop(callbacks);
 
@@ -942,92 +1427,82 @@ impl WaylandWindowStatePtr {
     }
 
     fn complete_frame(&self) {
-        let mut state = self.state.borrow_mut();
+        let (machine, effect) = self.frame_loop.get().complete_tick();
+        self.frame_loop.set(machine);
+        self.apply_wake_effect(effect);
+    }
 
-        let frame_loop = self.frame_loop.get();
-        if frame_loop == FrameLoop::AwaitingCallback {
-            return;
-        }
-
-        if state.presentation.requires_presentation() {
-            // Before the first present, or when throttling skipped draw, a
-            // callback may never arrive. Otherwise let the compositor pace
-            // retries so an occluded window does not keep polling.
-            if frame_loop == FrameLoop::PresentationFailed
-                && state.presentation == PresentationState::RetryAfterPresent
-            {
-                if state.pending_frame_callback.is_none() {
-                    let callback = state.surface.frame(&state.globals.qh, state.surface.id());
-                    state.pending_frame_callback = Some(callback);
+    /// Executes the side effect a machine transition requested. This is the
+    /// only place wake sources are armed, so a wake state cannot be entered
+    /// without the wake that justifies it.
+    fn apply_wake_effect(&self, effect: WakeEffect) {
+        match effect {
+            WakeEffect::None => {}
+            WakeEffect::ArmPing => self.frame_ping.ping(),
+            WakeEffect::ArmTimer => {
+                let (surface_id, client, interval) = {
+                    let state = self.state.borrow();
+                    let interval = if state.active {
+                        FRAME_RETRY_INTERVAL
+                    } else {
+                        INACTIVE_FRAME_RETRY_INTERVAL
+                    };
+                    (state.surface.id(), state.client.clone(), interval)
+                };
+                if let Err(error) = client.schedule_frame_retry(&surface_id, interval) {
+                    log::error!(
+                        "Failed to arm the frame retry timer, waking immediately instead: {error}"
+                    );
+                    let (machine, fallback) = self.frame_loop.get().timer_failed();
+                    self.frame_loop.set(machine);
+                    if fallback == WakeEffect::ArmPing {
+                        self.frame_ping.ping();
+                    }
                 }
-                state.surface.commit();
-                self.frame_loop.set(FrameLoop::AwaitingCallback);
-                return;
             }
-
-            self.frame_loop.set(FrameLoop::RetryScheduled);
-            let surface_id = state.surface.id();
-            let client = state.client.clone();
-            drop(state);
-            client.schedule_frame_retry(&surface_id);
-            return;
+            WakeEffect::CommitPendingCallback => {
+                let mut state = self.state.borrow_mut();
+                state.ensure_frame_callback();
+                state.surface.commit();
+            }
         }
-
-        if frame_loop == FrameLoop::RescheduleRequested || state.redraw_requested {
-            self.frame_loop.set(FrameLoop::RetryScheduled);
-            let surface_id = state.surface.id();
-            let client = state.client.clone();
-            drop(state);
-            client.schedule_frame_retry(&surface_id);
-            return;
-        }
-
-        self.frame_loop.set(FrameLoop::Parked);
     }
 
     pub fn frame_callback_fired(&self) {
         // Another wl_surface commit may have carried this callback while a retry
         // timer owned the render-loop wakeup.
         self.state.borrow_mut().pending_frame_callback = None;
-        if self.frame_loop.get() == FrameLoop::AwaitingCallback {
+        if self.frame_loop.get().awaits(Wake::Callback) {
             self.frame();
         }
     }
 
     pub fn scheduled_frame_fired(&self) {
-        if self.frame_loop.get() == FrameLoop::Scheduled {
+        if self.frame_loop.get().awaits(Wake::Ping) {
             self.frame();
         }
     }
 
     pub fn retry_timer_fired(&self) {
-        if self.frame_loop.get() == FrameLoop::RetryScheduled {
+        if self.frame_loop.get().awaits(Wake::Timer) {
             self.frame();
         }
     }
 
     pub fn is_configured(&self) -> bool {
-        self.frame_loop.get() != FrameLoop::Unconfigured
+        self.frame_loop.get().is_configured()
     }
 
     pub fn schedule_frame(&self) {
-        match self.frame_loop.get() {
-            FrameLoop::Parked => {
-                self.frame_loop.set(FrameLoop::Scheduled);
-                self.frame_ping.ping();
-            }
-            FrameLoop::Ticking => {
-                self.frame_loop.set(FrameLoop::RescheduleRequested);
-            }
-            // A wake is already armed: a ping or retry timer is in flight, or a
-            // presented buffer guarantees a compositor frame callback.
-            _ => {}
-        }
+        let (machine, effect) = self.frame_loop.get().schedule();
+        self.frame_loop.set(machine);
+        self.apply_wake_effect(effect);
     }
 
     fn request_redraw(&self) {
-        self.state.borrow_mut().redraw_requested = true;
-        self.schedule_frame();
+        let (machine, effect) = self.frame_loop.get().request_redraw();
+        self.frame_loop.set(machine);
+        self.apply_wake_effect(effect);
     }
 
     fn update_ime_enabled(&self) {
@@ -1122,7 +1597,7 @@ impl WaylandWindowStatePtr {
                 window_geometry.size.height,
             );
 
-            let initial_configure = self.frame_loop.get() == FrameLoop::Unconfigured;
+            let initial_configure = !self.frame_loop.get().is_configured();
             drop(state);
             if initial_configure {
                 self.frame();
@@ -1919,27 +2394,29 @@ impl PlatformWindow for WaylandWindow {
                 }
             }
 
-            state.redraw_requested = true;
+            drop(state);
+            // The recovered device must force-render; the retry is decided at
+            // tick completion.
+            let (machine, effect) = self.0.frame_loop.get().request_redraw();
+            self.0.frame_loop.set(machine);
+            self.0.apply_wake_effect(effect);
             return;
         }
 
-        // Surface state changed during this GPUI tick is included in this presentation.
-        state.redraw_requested = false;
-        if state.pending_frame_callback.is_none() {
-            let callback = state.surface.frame(&state.globals.qh, state.surface.id());
-            state.pending_frame_callback = Some(callback);
-        }
-        if state.renderer.draw(scene) {
-            state.presentation = PresentationState::Presented;
-            self.0.frame_loop.set(FrameLoop::AwaitingCallback);
+        state.ensure_frame_callback();
+        let outcome = if state.renderer.draw(scene) {
+            PresentOutcome::Presented
         } else {
-            state.presentation = state.presentation.failed();
-            self.0.frame_loop.set(FrameLoop::PresentationFailed);
-        }
+            PresentOutcome::Failed
+        };
+        let renderer_needs_redraw = state.renderer.needs_redraw();
+        drop(state);
 
-        if state.renderer.needs_redraw() {
-            state.redraw_requested = true;
-        }
+        // Surface state changed during this GPUI tick is included in this
+        // presentation; the outcome decides the next wake at tick completion.
+        self.0
+            .frame_loop
+            .set(self.0.frame_loop.get().drew(outcome, renderer_needs_redraw));
     }
 
     fn schedule_frame(&self) {
