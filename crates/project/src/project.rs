@@ -110,7 +110,9 @@ pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 #[cfg(target_os = "windows")]
 use remote::wsl_path_to_windows_path;
-use remote::{RemoteClient, RemoteConnectionOptions, same_remote_connection_identity};
+use remote::{
+    OnRemoteClientCreated, RemoteClient, RemoteConnectionOptions, same_remote_connection_identity,
+};
 use rpc::{
     AnyProtoClient, ErrorCode,
     proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
@@ -1684,6 +1686,13 @@ impl Project {
             BreakpointStore::init(&remote_proto);
             GitStore::init(&remote_proto);
             AgentServerStore::init_remote(&remote_proto);
+
+            if let Some(on_remote_client_created) = cx
+                .try_global::<OnRemoteClientCreated>()
+                .map(|on_remote_client_created| on_remote_client_created.0.clone())
+            {
+                (on_remote_client_created)(remote.clone(), cx);
+            }
 
             this
         })
