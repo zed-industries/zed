@@ -22,3 +22,30 @@ if echo "${output}" | grep --quiet 'gpui feature "test-support"'; then
   echo "${output}"
   exit 1
 fi
+
+# The real `crates/benchmarks` package requests `current_headless_renderer()`
+# through `gpui_platform`, which on macOS delegates to `gpui_macos` and
+# `gpui_apple` for the real Metal-backed headless renderer. Each of those
+# crates gates that renderer behind its own `test-support` feature as well as
+# a narrower `bench` feature, so `benchmarks` must resolve only `bench` on
+# them: otherwise `#[gpui::bench]` consumers in `benchmarks` would compile
+# whichever crate's interactive-only test doubles alongside their production
+# code, same as the `gpui`-level problem this script already guards against.
+# `gpui_macos`/`gpui_apple` only exist in the dependency graph on macOS, since
+# their crate roots are `#![cfg(target_os = "macos")]`, so this half of the
+# check only runs there.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  for platform_crate in gpui_platform gpui_macos gpui_apple; do
+    output=$(cargo tree \
+      --offline \
+      --package benchmarks \
+      --edges features \
+      --invert "${platform_crate}")
+
+    if echo "${output}" | grep --quiet "${platform_crate} feature \"test-support\""; then
+      echo "benchmarks pulls \"test-support\" into \"${platform_crate}\":"
+      echo "${output}"
+      exit 1
+    fi
+  done
+fi
