@@ -915,8 +915,27 @@ impl Worktree {
     }
 
     pub fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+        self.load_file_impl(path, false, cx)
+    }
+
+    /// Like [`Worktree::load_file`], but decodes content that looks like binary
+    /// data as text instead of refusing to load it.
+    pub fn load_file_forcing_text(
+        &self,
+        path: &RelPath,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
+        self.load_file_impl(path, true, cx)
+    }
+
+    fn load_file_impl(
+        &self,
+        path: &RelPath,
+        force_text: bool,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         match self {
-            Worktree::Local(this) => this.load_file(path, cx),
+            Worktree::Local(this) => this.load_file(path, force_text, cx),
             Worktree::Remote(_) => {
                 Task::ready(Err(anyhow!("remote worktrees can't yet load files")))
             }
@@ -1697,7 +1716,12 @@ impl LocalWorktree {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn load_file(&self, path: &RelPath, cx: &Context<Worktree>) -> Task<Result<LoadedFile>> {
+    fn load_file(
+        &self,
+        path: &RelPath,
+        force_text: bool,
+        cx: &Context<Worktree>,
+    ) -> Task<Result<LoadedFile>> {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
@@ -1720,7 +1744,7 @@ impl LocalWorktree {
                 anyhow::bail!("File is too large to load");
             }
             let (text, line_ending, encoding, has_bom) =
-                decode_file_text_to_rope(fs.as_ref(), &abs_path).await?;
+                decode_file_text_to_rope(fs.as_ref(), &abs_path, force_text).await?;
             let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
 
             let worktree = this.upgrade().context("worktree was dropped")?;
@@ -7239,6 +7263,7 @@ async fn read_file_to_end(
 pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
+    force_text: bool,
 ) -> Result<(String, &'static Encoding, bool)> {
     let mut file = fs
         .open_sync(&abs_path)
@@ -7247,7 +7272,7 @@ pub async fn decode_file_text(
 
     let (file_first_bytes, reached_eof) = read_file_header(&mut *file, abs_path)?;
     let (_, byte_content) = decode_byte_header(&file_first_bytes);
-    if byte_content == ByteContent::Binary {
+    if !force_text && byte_content == ByteContent::Binary {
         return Err(binary_file_error());
     }
 
@@ -7256,16 +7281,21 @@ pub async fn decode_file_text(
     if !reached_eof {
         read_file_to_end(&mut *file, &mut content, abs_path).await?;
     }
-    let decoded = decode_text(content)?;
+    let decoded = decode_text(content, force_text)?;
     Ok((decoded.text, decoded.encoding, decoded.has_bom))
 }
 
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the
 /// [`LineEnding`] detected before normalizing is returned alongside it.
+///
+/// When `force_text` is set, content that looks like binary data is decoded
+/// anyway, and line endings are left exactly as they are in the file so that
+/// the text reflects the file's bytes.
 pub async fn decode_file_text_to_rope(
     fs: &dyn Fs,
     abs_path: &Path,
+    force_text: bool,
 ) -> Result<(Rope, LineEnding, &'static Encoding, bool)> {
     let mut file = fs
         .open_sync(abs_path)
@@ -7274,24 +7304,33 @@ pub async fn decode_file_text_to_rope(
 
     let (prefix, reached_eof) = read_file_header(&mut *file, abs_path)?;
     let (bom_encoding, byte_content) = decode_byte_header(&prefix);
-    if byte_content == ByteContent::Binary {
+    if !force_text && byte_content == ByteContent::Binary {
         return Err(binary_file_error());
     }
 
     // Only BOM-less, non-UTF-16 files are candidates for streaming: everything
     // else needs the whole byte buffer in hand to decode or to detect encoding.
     if bom_encoding.is_none()
-        && byte_content == ByteContent::Unknown
+        && (byte_content == ByteContent::Unknown
+            || (force_text && byte_content == ByteContent::Binary))
         && let Some((rope, line_ending)) =
-            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path).await?
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, force_text, abs_path).await?
     {
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
 
     // Not plain UTF-8 after all. Re-read the file and decode it all at once.
-    let (mut text, encoding, has_bom) = decode_file_text(fs, abs_path).await?;
-    let line_ending = LineEnding::detect(&text);
-    LineEnding::normalize(&mut text);
+    let (mut text, encoding, has_bom) = decode_file_text(fs, abs_path, force_text).await?;
+    let line_ending = if force_text {
+        // Forced-text content must reflect the file's exact bytes, so carriage
+        // returns are kept in the text rather than normalized away. Raw line
+        // endings keep writes byte-transparent in turn.
+        LineEnding::Raw
+    } else {
+        let line_ending = LineEnding::detect(&text);
+        LineEnding::normalize(&mut text);
+        line_ending
+    };
     Ok((Rope::from(text), line_ending, encoding, has_bom))
 }
 
@@ -7301,10 +7340,16 @@ pub async fn decode_file_text_to_rope(
 /// Returns `None` if the file turns out not to be plain UTF-8, in which case the
 /// caller re-reads it and decodes it the slow way. `prefix` is the portion of
 /// the file already consumed from `file` for encoding detection.
+///
+/// With `force_text` the stream never gives up: invalid UTF-8 sequences become
+/// replacement characters, the bytes are otherwise kept exactly as they are,
+/// and the returned [`LineEnding`] is [`LineEnding::Raw`] so that writing the
+/// rope back does not transform them either.
 async fn stream_utf8_into_rope(
     file: &mut (dyn Read + Send),
     prefix: Vec<u8>,
     reached_eof: bool,
+    force_text: bool,
     abs_path: &Path,
 ) -> Result<Option<(Rope, LineEnding)>> {
     let mut rope = Rope::new();
@@ -7313,6 +7358,8 @@ async fn stream_utf8_into_rope(
     let mut pending = prefix;
     let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
     let mut eof = reached_eof;
+    let mut lossy_decoder =
+        force_text.then(|| encoding_rs::UTF_8.new_decoder_without_bom_handling());
 
     loop {
         // Fill a whole block before decoding, so that each `Rope::push` gets a
@@ -7326,6 +7373,38 @@ async fn stream_utf8_into_rope(
             } else {
                 pending.extend_from_slice(&buf[..n]);
             }
+        }
+
+        if let Some(decoder) = lossy_decoder.as_mut() {
+            // Decode the block lossily, so that the whole-file fallback (which
+            // buffers several copies of the file in memory) is never needed.
+            // The decoder holds multi-byte characters straddling the block
+            // boundary back until the next block, and the scratch string
+            // batches the decoded fragments so that each block still becomes
+            // a single `Rope::push`.
+            let mut input: &[u8] = &pending;
+            loop {
+                scratch.clear();
+                // A zero reservation would make `decode_to_string` return
+                // `OutputFull` without progress, so always reserve something.
+                let worst_case_len = decoder
+                    .max_utf8_buffer_length(input.len())
+                    .unwrap_or(STREAM_BLOCK_BYTES);
+                scratch.reserve(worst_case_len.max(16));
+                let (result, bytes_read, _had_replacements) =
+                    decoder.decode_to_string(input, &mut scratch, eof);
+                rope.push(&scratch);
+                input = &input[bytes_read..];
+                if matches!(result, encoding_rs::CoderResult::InputEmpty) {
+                    break;
+                }
+            }
+            pending.clear();
+            if eof {
+                break;
+            }
+            yield_now().await;
+            continue;
         }
 
         // Decode as much of `pending` as forms complete UTF-8.
@@ -7359,7 +7438,6 @@ async fn stream_utf8_into_rope(
         if line_ending.is_none() && !text.is_empty() {
             line_ending = Some(LineEnding::detect(text));
         }
-
         push_normalized(&mut rope, text, &mut scratch);
         pending.drain(..emit_len);
 
@@ -7376,7 +7454,12 @@ async fn stream_utf8_into_rope(
         return Ok(None);
     }
 
-    Ok(Some((rope, line_ending.unwrap_or_default())))
+    let line_ending = if force_text {
+        LineEnding::Raw
+    } else {
+        line_ending.unwrap_or_default()
+    };
+    Ok(Some((rope, line_ending)))
 }
 
 /// Appends `text` to `rope`, rewriting CRLF and lone CR as LF, matching
@@ -7425,10 +7508,50 @@ mod tests {
     /// decoded text and detected line ending, or `None` if the fast path bailed.
     async fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
         let mut reader = std::io::Cursor::new(bytes.to_vec());
-        stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, false, Path::new("test"))
             .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
+    }
+
+    /// Streams `bytes` in forced-text mode.
+    async fn stream_forced(bytes: &[u8]) -> (String, LineEnding) {
+        let mut reader = std::io::Cursor::new(bytes.to_vec());
+        stream_utf8_into_rope(&mut reader, Vec::new(), false, true, Path::new("test"))
+            .await
+            .unwrap()
+            .map(|(rope, line_ending)| (rope.to_string(), line_ending))
+            .expect("forced-text streaming never falls back")
+    }
+
+    #[gpui::test]
+    async fn test_stream_utf8_without_normalization() {
+        let crlf = "one\r\ntwo\rthree\n".repeat(40);
+        let (text, line_ending) = stream_forced(crlf.as_bytes()).await;
+        assert_eq!(text, crlf);
+        assert_eq!(line_ending, LineEnding::Raw);
+    }
+
+    #[gpui::test]
+    async fn test_stream_utf8_lossily_when_forced() {
+        let (text, line_ending) = stream_forced(b"boot\r\n\0\0\0\xff\xfeok\x1b[0m\n\xe4").await;
+        assert_eq!(
+            text, "boot\r\n\0\0\0\u{FFFD}\u{FFFD}ok\x1b[0m\n\u{FFFD}",
+            "invalid bytes become replacement characters, everything else stays"
+        );
+        assert_eq!(line_ending, LineEnding::Raw);
+
+        // A multi-byte character straddling the one-megabyte block boundary is
+        // held back until its remaining bytes arrive with the next block.
+        let mut big = "x".repeat(STREAM_BLOCK_BYTES - 1).into_bytes();
+        big.extend_from_slice("é".as_bytes());
+        big.extend_from_slice(b"\xfftail");
+        let (text, _) = stream_forced(&big).await;
+        assert_eq!(
+            text.len(),
+            STREAM_BLOCK_BYTES - 1 + "é".len() + "\u{FFFD}tail".len()
+        );
+        assert!(text.ends_with("é\u{FFFD}tail"));
     }
 
     #[test]
@@ -7436,7 +7559,7 @@ mod tests {
         let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
 
         assert!(
-            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, false, Path::new("test"))
                 .now_or_never()
                 .is_none()
         );

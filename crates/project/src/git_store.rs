@@ -209,7 +209,7 @@ fn pending_hunks(
 }
 
 fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
-    Ok(decode_text(bytes)?.text)
+    Ok(decode_text(bytes, false)?.text)
 }
 
 #[derive(Debug)]

@@ -5671,6 +5671,12 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         );
         let err_msg = loaded.unwrap_err().to_string();
         println!("Got expected error for {}: {}", case.name, err_msg);
+
+        tree.update(cx, |tree, cx| {
+            tree.load_file_forcing_text(&rel_path(case.name), cx)
+        })
+        .await
+        .unwrap_or_else(|e| panic!("Failed to force '{}' to load as text: {:?}", case.name, e));
     }
 }
 

@@ -20,13 +20,22 @@ pub fn is_binary_file_error(error: &anyhow::Error) -> bool {
     error.error_code() == ErrorCode::BinaryFile
 }
 
+pub fn from_utf8_lossy_owned(bytes: Vec<u8>) -> String {
+    match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+    }
+}
+
 pub struct DecodedText {
     pub text: String,
     pub encoding: &'static Encoding,
     pub has_bom: bool,
 }
 
-pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
+/// When `force_text` is set, content that looks like binary data is decoded
+/// as UTF-8 (lossily if it is invalid) instead of being rejected.
+pub fn decode_text(bytes: Vec<u8>, force_text: bool) -> Result<DecodedText> {
     if let Some((encoding, _bom_len)) = Encoding::for_bom(&bytes) {
         let (text, _) = encoding.decode_with_bom_removal(&bytes);
         return Ok(DecodedText {
@@ -39,6 +48,16 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
     let encoding = match analyze_byte_content(&bytes) {
         ByteContent::Utf16Le => UTF_16LE,
         ByteContent::Utf16Be => UTF_16BE,
+        // Encoding detection is meaningless for content that only looks like
+        // text and would remap its bytes, so forced text is decoded as UTF-8,
+        // lossily if need be, to stay as close to the file's bytes as possible.
+        ByteContent::Binary | ByteContent::Unknown if force_text => {
+            return Ok(DecodedText {
+                text: from_utf8_lossy_owned(bytes),
+                encoding: UTF_8,
+                has_bom: false,
+            });
+        }
         ByteContent::Binary => return Err(binary_file_error()),
         ByteContent::Unknown => {
             return match String::from_utf8(bytes) {
@@ -294,7 +313,7 @@ mod tests {
         let expected = "строка один\nстрока два\n";
         let (bytes, _, _) = encoding_rs::WINDOWS_1251.encode(expected);
 
-        let decoded = decode_text(bytes.clone().into_owned()).unwrap();
+        let decoded = decode_text(bytes.clone().into_owned(), false).unwrap();
 
         assert_eq!(decoded.text, expected);
         assert_eq!(decoded.encoding, encoding_rs::WINDOWS_1251);
@@ -310,7 +329,7 @@ mod tests {
         let expected = "Hello, мир\n";
         for encoding in [UTF_8, UTF_16LE, UTF_16BE] {
             let bytes = encode_text(expected.to_owned(), encoding, true);
-            let decoded = decode_text(bytes.clone()).unwrap();
+            let decoded = decode_text(bytes.clone(), false).unwrap();
 
             assert_eq!(decoded.text, expected);
             assert_eq!(decoded.encoding, encoding);
@@ -320,5 +339,24 @@ mod tests {
                 bytes
             );
         }
+    }
+
+    #[test]
+    fn decodes_binary_content_when_forced() {
+        let bytes = b"boot ok\n\0\0\0\x01ready\n".to_vec();
+        assert_eq!(analyze_byte_content(&bytes), ByteContent::Binary);
+        let error = decode_text(bytes.clone(), false).err().unwrap();
+        assert!(is_binary_file_error(&error));
+
+        let decoded = decode_text(bytes.clone(), true).unwrap();
+        assert_eq!(decoded.text.as_bytes(), bytes.as_slice());
+        assert_eq!(decoded.encoding, UTF_8);
+        assert!(!decoded.has_bom);
+
+        let invalid_utf8 = b"boot ok\n\0\0\0\xffready\n".to_vec();
+        assert_eq!(analyze_byte_content(&invalid_utf8), ByteContent::Binary);
+        let decoded = decode_text(invalid_utf8, true).unwrap();
+        assert_eq!(decoded.text, "boot ok\n\0\0\0\u{FFFD}ready\n");
+        assert_eq!(decoded.encoding, UTF_8);
     }
 }

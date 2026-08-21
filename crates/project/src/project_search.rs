@@ -834,7 +834,7 @@ impl RequestHandler<'_> {
         fs: &dyn Fs,
         abs_path: &Path,
     ) -> anyhow::Result<Option<MatchPositionHint>> {
-        let (text, _encoding, _has_bom) = decode_file_text(fs, abs_path).await?;
+        let (text, _encoding, _has_bom) = decode_file_text(fs, abs_path, false).await?;
         let reader: Box<dyn Read + Send + Sync> = Box::new(Cursor::new(text.into_bytes()));
         self.query.detect(BufReader::new(reader)).await
     }
