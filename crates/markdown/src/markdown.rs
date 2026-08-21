@@ -5,7 +5,6 @@ mod path_range;
 mod selection;
 
 use base64::Engine as _;
-
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
@@ -40,7 +39,7 @@ use gpui::{
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
     TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad, relative,
 };
-use language::{CharClassifier, Language, LanguageRegistry, Rope};
+use language::{CapturedRange, CharClassifier, HighlightMap, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
 use parser::{
     MarkdownEvent, MarkdownTag, MarkdownTagEnd, ParsedMetadataBlock, parse_links_only,
@@ -1228,6 +1227,7 @@ impl Markdown {
                         footnote_definitions: HashMap::default(),
                         link_definition_spans: Arc::default(),
                         fallback_code_block_language: None,
+                        code_block_highlights: Arc::default(),
                     },
                     Default::default(),
                 );
@@ -1288,6 +1288,15 @@ impl Markdown {
                 }
             }
 
+            let code_block_highlights = compute_code_block_highlights(
+                &source,
+                &events,
+                &mermaid_diagrams,
+                &languages_by_name,
+                &languages_by_path,
+                fallback_code_block_language.as_ref(),
+            );
+
             for (range, event) in &events {
                 if let MarkdownEvent::Start(MarkdownTag::Image { dest_url, .. }) = event
                     && let Some(data_url) = dest_url.strip_prefix("data:")
@@ -1327,6 +1336,7 @@ impl Markdown {
                     footnote_definitions,
                     link_definition_spans: Arc::from(link_definition_spans),
                     fallback_code_block_language,
+                    code_block_highlights: Arc::new(code_block_highlights),
                 },
                 images_by_source_offset,
             )
@@ -1475,7 +1485,10 @@ pub struct ParsedMarkdown {
     pub footnote_definitions: HashMap<SharedString, usize>,
     pub(crate) link_definition_spans: Arc<[Range<usize>]>,
     pub(crate) fallback_code_block_language: Option<Arc<Language>>,
+    pub(crate) code_block_highlights: Arc<CodeBlockHighlights>,
 }
+
+pub(crate) type CodeBlockHighlights = HashMap<usize, Arc<[CapturedRange]>>;
 
 impl ParsedMarkdown {
     pub fn source(&self) -> &SharedString {
@@ -1583,6 +1596,106 @@ impl ParsedMarkdown {
             &self.root_block_starts,
             selection,
         )
+    }
+}
+
+struct PendingCodeBlock<'a> {
+    language: Arc<Language>,
+    texts: Vec<(Range<usize>, &'a str)>,
+}
+
+fn compute_code_block_highlights(
+    source: &str,
+    events: &[(Range<usize>, MarkdownEvent)],
+    mermaid_diagrams: &BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
+    languages_by_name: &TreeMap<SharedString, Arc<Language>>,
+    languages_by_path: &TreeMap<Arc<str>, Arc<Language>>,
+    fallback_code_block_language: Option<&Arc<Language>>,
+) -> CodeBlockHighlights {
+    let mut code_block_highlights = CodeBlockHighlights::default();
+    let mut pending_block: Option<PendingCodeBlock> = None;
+    for (range, event) in events {
+        match event {
+            MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) => {
+                if mermaid_diagrams.contains_key(&range.start) {
+                    pending_block = None;
+                    continue;
+                }
+                let language = match kind {
+                    CodeBlockKind::FencedLang(name) => languages_by_name.get(name).cloned(),
+                    CodeBlockKind::FencedSrc(path_range) => {
+                        languages_by_path.get(&path_range.path).cloned()
+                    }
+                    CodeBlockKind::Fenced => fallback_code_block_language.cloned(),
+                    _ => None,
+                };
+                pending_block = language.map(|language| PendingCodeBlock {
+                    language,
+                    texts: Vec::new(),
+                });
+            }
+            MarkdownEvent::End(MarkdownTagEnd::CodeBlock) => {
+                if let Some(block) = pending_block.take() {
+                    highlight_code_block(block, &mut code_block_highlights);
+                }
+            }
+            MarkdownEvent::Text => {
+                if let Some(block) = &mut pending_block {
+                    block.texts.push((range.clone(), &source[range.clone()]));
+                }
+            }
+            MarkdownEvent::SubstitutedText(text) => {
+                if let Some(block) = &mut pending_block {
+                    block.texts.push((range.clone(), text.as_str()));
+                }
+            }
+            _ => {}
+        }
+    }
+    code_block_highlights
+}
+
+fn highlight_code_block(block: PendingCodeBlock, code_block_highlights: &mut CodeBlockHighlights) {
+    let mut combined = String::new();
+    let mut text_offsets = Vec::with_capacity(block.texts.len());
+    for (_, text) in &block.texts {
+        text_offsets.push(combined.len());
+        combined.push_str(text);
+    }
+    let captures = block
+        .language
+        .highlight_text_captures(&Rope::from(combined.as_str()), 0..combined.len());
+    if captures.is_empty() {
+        return;
+    }
+    if let [(source_range, _)] = block.texts.as_slice() {
+        code_block_highlights.insert(source_range.start, captures);
+        return;
+    }
+    let mut highlights = captures.iter().peekable();
+    for ((source_range, text), text_offset) in block.texts.iter().zip(text_offsets) {
+        let text_end = text_offset + text.len();
+        let mut text_highlights = Vec::new();
+        while let Some(captured) = highlights.peek() {
+            if captured.range.start >= text_end {
+                break;
+            }
+            let start = captured.range.start.max(text_offset);
+            let end = captured.range.end.min(text_end);
+            if end > start {
+                text_highlights.push(CapturedRange {
+                    range: start - text_offset..end - text_offset,
+                    capture_ids: captured.capture_ids.clone(),
+                });
+            }
+            if captured.range.end > text_end {
+                break;
+            }
+            highlights.next();
+        }
+        if !text_highlights.is_empty() {
+            code_block_highlights.insert(source_range.start, Arc::from(text_highlights));
+        }
     }
 }
 
@@ -2454,12 +2567,6 @@ impl Element for MarkdownElement {
                 next_search_highlight_ix: 0,
             }
         };
-        let mut builder = MarkdownElementBuilder::new(
-            &self.style.container_style,
-            self.style.base_text_style.clone(),
-            self.style.syntax.clone(),
-            highlights,
-        );
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
             (
@@ -2470,6 +2577,13 @@ impl Element for MarkdownElement {
                 markdown.mermaid_state.clone(),
             )
         };
+        let mut builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
+            self.style.base_text_style.clone(),
+            self.style.syntax.clone(),
+            highlights,
+            parsed_markdown.code_block_highlights.clone(),
+        );
         let markdown_end = if let Some(last) = parsed_markdown.events.last() {
             last.0.end
         } else {
@@ -3537,7 +3651,8 @@ struct MarkdownElementBuilder {
     rendered_footnote_separator: bool,
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
-    code_block_stack: Vec<Option<Arc<Language>>>,
+    code_block_stack: Vec<Option<(Arc<Language>, HighlightMap)>>,
+    code_block_highlights: Arc<CodeBlockHighlights>,
     link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
@@ -3636,6 +3751,7 @@ impl MarkdownElementBuilder {
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
         highlights: MarkdownHighlights,
+        code_block_highlights: Arc<CodeBlockHighlights>,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3654,6 +3770,7 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
+            code_block_highlights,
             link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
@@ -3824,7 +3941,14 @@ impl MarkdownElementBuilder {
     }
 
     fn push_code_block(&mut self, language: Option<Arc<Language>>) {
-        self.code_block_stack.push(language);
+        let entry = language.map(|language| {
+            let highlight_map = language
+                .grammar()
+                .map(|grammar| grammar.highlight_map())
+                .unwrap_or_default();
+            (language, highlight_map)
+        });
+        self.code_block_stack.push(entry);
     }
 
     fn pop_code_block(&mut self) {
@@ -3867,24 +3991,29 @@ impl MarkdownElementBuilder {
         // Compute the base text style once
         let text_style = self.text_style();
 
-        if let Some(Some(language)) = self.code_block_stack.last() {
+        if let Some((_, highlight_map)) = self.code_block_stack.last().and_then(Option::as_ref)
+            && let Some(highlights) = self.code_block_highlights.get(&source_range.start)
+        {
             let mut offset = 0;
-            for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
-                if range.start > offset {
+            for captured in highlights.iter() {
+                if captured.range.start > offset {
                     self.pending_line
                         .runs
-                        .push(text_style.to_run(range.start - offset));
+                        .push(text_style.to_run(captured.range.start - offset));
                 }
 
-                let run_len = range.len();
-                if let Some(highlight) = self.syntax_theme.get(highlight_id).cloned() {
+                let run_len = captured.range.len();
+                let highlight = highlight_map
+                    .get_innermost(&captured.capture_ids)
+                    .and_then(|highlight_id| self.syntax_theme.get(highlight_id).cloned());
+                if let Some(highlight) = highlight {
                     self.pending_line
                         .runs
                         .push(text_style.clone().highlight(highlight).to_run(run_len));
                 } else {
                     self.pending_line.runs.push(text_style.to_run(run_len));
                 }
-                offset = range.end;
+                offset = captured.range.end;
             }
 
             if offset < text.len() {
@@ -4009,7 +4138,11 @@ impl MarkdownElementBuilder {
             layout: text.layout().clone(),
             source_mappings: line.source_mappings,
             source_end: self.current_source_index,
-            language: self.code_block_stack.last().cloned().flatten(),
+            language: self
+                .code_block_stack
+                .last()
+                .and_then(|entry| entry.as_ref())
+                .map(|(language, _)| language.clone()),
             text_align,
             highlights,
         });
@@ -5029,6 +5162,165 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_block_highlights_cached_at_parse_time(cx: &mut TestAppContext) {
+        let language = language::rust_lang();
+        let theme = SyntaxTheme::new(
+            [
+                ("keyword", gpui::red()),
+                ("function", gpui::blue()),
+                ("type", gpui::green()),
+            ]
+            .into_iter()
+            .map(|(name, color)| {
+                (
+                    name.to_owned(),
+                    gpui::HighlightStyle {
+                        color: Some(color),
+                        ..Default::default()
+                    },
+                )
+            }),
+        );
+        language.set_theme(&theme);
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+
+        let source = "```rust\nfn main() {}\n```";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), Some(language_registry), None, cx));
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            let parsed = markdown.parsed_markdown();
+            let code_text = "fn main() {}\n";
+            let code_start = source.find(code_text).unwrap();
+            let cached = parsed
+                .code_block_highlights
+                .get(&code_start)
+                .expect("code block highlights must be computed during parse");
+
+            let highlight_map = language.grammar().unwrap().highlight_map();
+            let resolved = cached
+                .iter()
+                .filter_map(|captured| {
+                    let highlight_id = highlight_map.get_innermost(&captured.capture_ids)?;
+                    Some((captured.range.clone(), highlight_id))
+                })
+                .collect::<Vec<_>>();
+            let expected =
+                language.highlight_text(&Rope::from(code_text), 0..code_text.len());
+            assert_eq!(
+                resolved, expected,
+                "cached capture id stacks resolved through the highlight map must match direct highlighting"
+            );
+            assert!(!expected.is_empty(), "rust code must produce highlights");
+        });
+    }
+
+    #[gpui::test]
+    fn test_code_block_highlights_reused_when_streaming(cx: &mut TestAppContext) {
+        let language = language::rust_lang();
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+
+        let source = "```rust\nfn main() {}\n```\n\nSome trailing text";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), Some(language_registry), None, cx));
+        cx.run_until_parked();
+
+        let code_start = source.find("fn main").unwrap();
+        let cached_highlights = |cx: &mut TestAppContext| {
+            markdown.read_with(cx, |markdown, _| {
+                markdown
+                    .parsed_markdown()
+                    .code_block_highlights
+                    .get(&code_start)
+                    .expect("code block highlights must be computed during parse")
+                    .clone()
+            })
+        };
+        let first_parse_highlights = cached_highlights(cx);
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.append(" that keeps streaming in\n\n```rust\nlet x = 1;\n```", cx)
+        });
+        cx.run_until_parked();
+
+        let second_parse_highlights = cached_highlights(cx);
+        assert!(
+            Arc::ptr_eq(&first_parse_highlights, &second_parse_highlights),
+            "highlights of an unchanged code block must be reused across parses"
+        );
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.replace("```rust\nfn main() { panic!() }\n```", cx)
+        });
+        cx.run_until_parked();
+
+        let changed_highlights = markdown.read_with(cx, |markdown, _| {
+            markdown
+                .parsed_markdown()
+                .code_block_highlights
+                .get(&code_start)
+                .expect("changed code block must be rehighlighted")
+                .clone()
+        });
+        let changed_code = "fn main() { panic!() }\n";
+        assert_eq!(
+            changed_highlights.as_ref(),
+            language
+                .highlight_text_captures(&Rope::from(changed_code), 0..changed_code.len())
+                .as_ref(),
+            "highlights of a changed code block must be recomputed"
+        );
+    }
+
+    #[gpui::test]
+    fn test_mermaid_blocks_are_not_highlighted(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let mermaid_language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "mermaid".into(),
+                    ..LanguageConfig::default()
+                },
+                Some(language::rust_lang().grammar().unwrap().ts_language.clone()),
+            )
+            .with_highlights_query("(identifier) @variable")
+            .unwrap(),
+        );
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(mermaid_language);
+
+        let source = "```mermaid\ngraph TD;\n```";
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                source.into(),
+                Some(language_registry),
+                None,
+                MarkdownOptions {
+                    render_mermaid_diagrams: true,
+                    ..MarkdownOptions::default()
+                },
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            let parsed = markdown.parsed_markdown();
+            assert_eq!(
+                parsed.mermaid_diagrams.len(),
+                1,
+                "the block must be recognized as a mermaid diagram"
+            );
+            assert_eq!(
+                parsed.code_block_highlights.len(),
+                0,
+                "mermaid blocks must not be highlighted"
+            );
+        });
+    }
+
+    #[gpui::test]
     fn test_fallback_language_highlights_untagged_code_blocks(cx: &mut TestAppContext) {
         let language = language::rust_lang();
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
@@ -5046,19 +5338,19 @@ mod tests {
         cx.run_until_parked();
 
         markdown.read_with(cx, |markdown, _| {
-            let fallback = markdown
-                .parsed_markdown()
+            let parsed = markdown.parsed_markdown();
+            let fallback = parsed
                 .fallback_code_block_language
                 .as_ref()
                 .expect("the fallback language must be resolved for untagged code blocks");
             assert_eq!(fallback.name(), language.name());
-            assert_eq!(
-                markdown
-                    .first_code_block_language()
-                    .map(|language| language.name()),
-                Some(language.name()),
-                "untagged code blocks must resolve to the fallback language"
-            );
+
+            let code_start = source.find("fn main").unwrap();
+            let cached = parsed
+                .code_block_highlights
+                .get(&code_start)
+                .expect("untagged code blocks must be highlighted with the fallback language");
+            assert!(!cached.is_empty());
         });
     }
 

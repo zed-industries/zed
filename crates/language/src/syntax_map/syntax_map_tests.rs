@@ -1221,6 +1221,48 @@ fn test_random_syntax_map_edits_with_heex(rng: StdRng, cx: &mut App) {
     test_random_edits(text, registry, language, rng);
 }
 
+#[test]
+fn test_flatten_capture_regions_with_nested_captures() {
+    let outer = capture_ref(1);
+    let inner = capture_ref(2);
+    assert_eq!(
+        flattened(0..12, &[(0..10, outer), (2..5, inner)]),
+        vec![
+            (0..2, vec![outer]),
+            (2..5, vec![outer, inner]),
+            (5..10, vec![outer]),
+        ],
+    );
+}
+
+#[test]
+fn test_flatten_capture_regions_with_overlapping_captures() {
+    let first = capture_ref(1);
+    let second = capture_ref(2);
+    assert_eq!(
+        flattened(0..25, &[(0..10, first), (2..20, second)]),
+        vec![
+            (0..2, vec![first]),
+            (2..10, vec![first, second]),
+            (10..20, vec![second]),
+        ],
+        "a capture must not extend past its own end when overlapping another capture"
+    );
+}
+
+#[test]
+fn test_flatten_capture_regions_clips_to_the_requested_range() {
+    let capture = capture_ref(1);
+    assert_eq!(
+        flattened(5..8, &[(0..10, capture)]),
+        vec![(5..8, vec![capture])],
+    );
+    assert_eq!(
+        flattened(0..6, &[(4..10, capture)]),
+        vec![(4..6, vec![capture])],
+    );
+}
+
 fn test_random_edits(
     text: String,
     registry: Arc<LanguageRegistry>,
@@ -1628,6 +1670,23 @@ fn comment_lang() -> Language {
         },
         Some(tree_sitter_json::LANGUAGE.into()),
     )
+}
+
+fn capture_ref(capture_id: u32) -> HighlightCaptureRef {
+    HighlightCaptureRef {
+        grammar_index: 0,
+        capture_id: CaptureId(capture_id),
+    }
+}
+
+fn flattened(
+    range: Range<usize>,
+    captures: &[(Range<usize>, HighlightCaptureRef)],
+) -> Vec<(Range<usize>, Vec<HighlightCaptureRef>)> {
+    flatten_capture_regions(range, captures.iter().cloned())
+        .into_iter()
+        .map(|region| (region.range, region.stack.to_vec()))
+        .collect()
 }
 
 fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {

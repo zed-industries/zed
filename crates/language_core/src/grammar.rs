@@ -1,6 +1,6 @@
 use crate::{
-    HighlightId, HighlightMap, LanguageConfig, LanguageConfigOverride, LanguageName,
-    LanguageQueries, language_config::BracketPairConfig,
+    CaptureId, HighlightId, HighlightMap, LanguageConfig, LanguageConfigOverride, LanguageName,
+    LanguageQueries, highlight_cache::TextHighlightCache, language_config::BracketPairConfig,
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
@@ -103,6 +103,7 @@ pub struct Grammar {
 pub struct HighlightsConfig {
     pub query: Query,
     pub identifier_capture_indices: Vec<u32>,
+    pub text_captures_cache: TextHighlightCache,
 }
 
 pub struct IndentConfig {
@@ -371,7 +372,7 @@ impl Grammar {
             .as_ref()?
             .query
             .capture_index_for_name(name)
-            .and_then(|capture_id| self.highlight_map.lock().get(capture_id))
+            .and_then(|capture_id| self.highlight_map.lock().get(CaptureId(capture_id)))
     }
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
@@ -468,6 +469,7 @@ impl Grammar {
         self.highlights_config = Some(HighlightsConfig {
             query,
             identifier_capture_indices,
+            text_captures_cache: TextHighlightCache::default(),
         });
 
         Ok(self)
