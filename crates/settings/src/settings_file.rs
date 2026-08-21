@@ -123,48 +123,70 @@ pub fn visual_test_settings() -> String {
     serde_json::to_string(&value).unwrap()
 }
 
+/// Builds the default settings overridden with a deterministic monospace
+/// font and no real theme, shared by `test_settings` and `benchmark_settings`
+/// so the two stay identical: production-rendering benchmarks measure the
+/// same font/theme inputs that unit tests do, rather than drifting apart as
+/// each is edited independently.
+#[cfg(any(test, feature = "test-support", feature = "benchmarks"))]
+fn deterministic_font_and_theme_settings() -> String {
+    let mut value =
+        crate::parse_json_with_comments::<serde_json::Value>(crate::default_settings().as_ref())
+            .unwrap();
+    #[cfg(not(target_os = "windows"))]
+    util::merge_non_null_json_value_into(
+        serde_json::json!({
+            "format_on_save": "on",
+            "ui_font_family": "Courier",
+            "ui_font_features": {},
+            "ui_font_size": 14,
+            "ui_font_fallback": [],
+            "buffer_font_family": "Courier",
+            "buffer_font_features": {},
+            "buffer_font_size": 14,
+            "buffer_font_fallbacks": [],
+            "theme": EMPTY_THEME_NAME,
+        }),
+        &mut value,
+    );
+    #[cfg(target_os = "windows")]
+    util::merge_non_null_json_value_into(
+        serde_json::json!({
+            "format_on_save": "on",
+            "ui_font_family": "Courier New",
+            "ui_font_features": {},
+            "ui_font_size": 14,
+            "ui_font_fallback": [],
+            "buffer_font_family": "Courier New",
+            "buffer_font_features": {},
+            "buffer_font_size": 14,
+            "buffer_font_fallbacks": [],
+            "theme": EMPTY_THEME_NAME,
+        }),
+        &mut value,
+    );
+    value.as_object_mut().unwrap().remove("languages");
+    serde_json::to_string(&value).unwrap()
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub fn test_settings() -> &'static str {
-    static CACHED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        let mut value = crate::parse_json_with_comments::<serde_json::Value>(
-            crate::default_settings().as_ref(),
-        )
-        .unwrap();
-        #[cfg(not(target_os = "windows"))]
-        util::merge_non_null_json_value_into(
-            serde_json::json!({
-                "format_on_save": "on",
-                "ui_font_family": "Courier",
-                "ui_font_features": {},
-                "ui_font_size": 14,
-                "ui_font_fallback": [],
-                "buffer_font_family": "Courier",
-                "buffer_font_features": {},
-                "buffer_font_size": 14,
-                "buffer_font_fallbacks": [],
-                "theme": EMPTY_THEME_NAME,
-            }),
-            &mut value,
-        );
-        #[cfg(target_os = "windows")]
-        util::merge_non_null_json_value_into(
-            serde_json::json!({
-                "format_on_save": "on",
-                "ui_font_family": "Courier New",
-                "ui_font_features": {},
-                "ui_font_size": 14,
-                "ui_font_fallback": [],
-                "buffer_font_family": "Courier New",
-                "buffer_font_features": {},
-                "buffer_font_size": 14,
-                "buffer_font_fallbacks": [],
-                "theme": EMPTY_THEME_NAME,
-            }),
-            &mut value,
-        );
-        value.as_object_mut().unwrap().remove("languages");
-        serde_json::to_string(&value).unwrap()
-    });
+    static CACHED: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(deterministic_font_and_theme_settings);
+    &CACHED
+}
+
+/// Settings content for production-rendering benchmarks (`display_map`,
+/// `editor_render`, `markdown_renderer`): identical to `test_settings`, so a
+/// benchmark measures the same font/theme inputs regardless of which one
+/// initializes its `SettingsStore`. Gated on the narrow `benchmarks` feature
+/// rather than `test-support`, since it needs none of `test-support`'s wider
+/// surface (settings-file mutation, `gpui`/`fs` test doubles) and enables
+/// neither.
+#[cfg(feature = "benchmarks")]
+pub fn benchmark_settings() -> &'static str {
+    static CACHED: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(deterministic_font_and_theme_settings);
     &CACHED
 }
 

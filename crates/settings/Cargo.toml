@@ -14,6 +14,11 @@ doctest = false
 
 [features]
 test-support = ["gpui/test-support", "fs/test-support"]
+# For production-rendering benchmarks that need `SettingsStore::benchmarks`'s
+# deterministic font/theme settings without pulling in `test-support`'s wider
+# surface (settings-file mutation, `gpui`/`fs` test doubles). Enables nothing
+# else, so it cannot re-enable any crate's `test-support` transitively.
+benchmarks = []
 
 [dependencies]
 anyhow.workspace = true

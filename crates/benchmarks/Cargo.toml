@@ -26,7 +26,7 @@ language = { workspace = true, features = ["test-support"] }
 markdown.workspace = true
 multi_buffer = { workspace = true, features = ["test-support"] }
 project.workspace = true
-settings = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["benchmarks"] }
 text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true

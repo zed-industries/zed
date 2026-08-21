@@ -519,6 +519,21 @@ impl SettingsStore {
         Self::from_settings_content(cx, CACHED_SETTINGS_CONTENT.clone())
     }
 
+    /// Initializes a `SettingsStore` for production-rendering benchmarks,
+    /// with the same settings content as `SettingsStore::test` (see
+    /// `benchmark_settings`), without requiring any crate's `test-support`
+    /// feature. This intentionally exposes no further test-only surface
+    /// (e.g. no settings-file mutation API): benchmarks that need one belong
+    /// in a package that depends on `test-support` directly instead.
+    #[cfg(feature = "benchmarks")]
+    pub fn benchmarks(cx: &mut App) -> Self {
+        static CACHED_SETTINGS_CONTENT: std::sync::LazyLock<SettingsContent> =
+            std::sync::LazyLock::new(|| {
+                SettingsContent::parse_json_with_comments(crate::benchmark_settings()).unwrap()
+            });
+        Self::from_settings_content(cx, CACHED_SETTINGS_CONTENT.clone())
+    }
+
     /// Updates the value of a setting in the user's global configuration.
     ///
     /// This is only for tests. Normally, settings are only loaded from
@@ -3265,5 +3280,49 @@ mod tests {
 
         assert!(user_schema_str.contains("\"auto_update\""));
         assert!(!project_schema_str.contains("\"auto_update\""));
+    }
+
+    /// `cargo test -p settings --features benchmarks --lib`: the `benchmarks`
+    /// feature isn't implied by `cfg(test)`, so this only compiles when that
+    /// feature is explicitly requested.
+    #[cfg(feature = "benchmarks")]
+    #[gpui::test]
+    fn test_benchmark_settings_match_test_settings(cx: &mut App) {
+        use settings_content::{FontSize, ThemeName, ThemeSelection};
+
+        assert_eq!(
+            crate::benchmark_settings(),
+            crate::test_settings(),
+            "benchmark_settings must stay identical to test_settings, so a benchmark measures \
+             the same font/theme inputs regardless of which one initializes its SettingsStore"
+        );
+
+        let store = SettingsStore::benchmarks(cx);
+        let theme_settings = &store.merged_settings().theme;
+
+        #[cfg(not(target_os = "windows"))]
+        let expected_font_family = "Courier";
+        #[cfg(target_os = "windows")]
+        let expected_font_family = "Courier New";
+
+        assert_eq!(
+            theme_settings
+                .buffer_font_family
+                .as_ref()
+                .map(|f| f.0.as_ref()),
+            Some(expected_font_family),
+        );
+        assert_eq!(
+            theme_settings.ui_font_family.as_ref().map(|f| f.0.as_ref()),
+            Some(expected_font_family),
+        );
+        assert_eq!(theme_settings.buffer_font_size, Some(FontSize(14.0)));
+        assert_eq!(theme_settings.ui_font_size, Some(FontSize(14.0)));
+        assert_eq!(
+            theme_settings.theme,
+            Some(ThemeSelection::Static(ThemeName(
+                crate::EMPTY_THEME_NAME.into()
+            ))),
+        );
     }
 }

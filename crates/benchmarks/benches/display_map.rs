@@ -111,7 +111,7 @@ fn create_highlight_endpoints_benchmark(c: &mut Criterion) {
     let dispatcher = TestDispatcher::new(1);
     let mut cx = gpui::TestAppContext::build(dispatcher, None);
     cx.update(|cx| {
-        let store = SettingsStore::test(cx);
+        let store = SettingsStore::benchmarks(cx);
         cx.set_global(store);
         editor::init(cx);
     });
@@ -211,7 +211,7 @@ fn highlighted_chunks_benchmark(c: &mut Criterion) {
     let dispatcher = TestDispatcher::new(1);
     let mut cx = gpui::TestAppContext::build(dispatcher, None);
     cx.update(|cx| {
-        let store = SettingsStore::test(cx);
+        let store = SettingsStore::benchmarks(cx);
         cx.set_global(store);
         editor::init(cx);
     });

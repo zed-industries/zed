@@ -329,7 +329,7 @@ fn markdown_language_registry(cx: &BenchAppContext) -> Arc<LanguageRegistry> {
 
 fn init_context(cx: &mut BenchAppContext) {
     cx.update(|cx| {
-        let store = SettingsStore::test(cx);
+        let store = SettingsStore::benchmarks(cx);
         cx.set_global(store);
         assets::Assets.load_test_fonts(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
