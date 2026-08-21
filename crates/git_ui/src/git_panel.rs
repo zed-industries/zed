@@ -39,7 +39,8 @@ use git::repository::{
 use git::stash::GitStash;
 use git::status::{DiffStat, StageStatus};
 use git::{
-    Amend, Commit, Signoff, SkipHooks, ToggleStaged, repository::RepoPath, status::FileStatus,
+    AddToGitInfoExclude, AddToGitignore, Amend, Commit, RestoreFile, Signoff, SkipHooks,
+    ToggleStaged, repository::RepoPath, status::FileStatus,
 };
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
@@ -2108,19 +2109,7 @@ impl GitPanel {
             .and_then(|i| self.entries.get(i))
             .cloned()
         {
-            let first_entry = self
-                .view_mode
-                .tree_state()
-                .and_then(|s| s.directory_descendants.get(&dir_entry.key))
-                .and_then(|entries| entries.first().cloned());
-            if let Some(entry) = first_entry {
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        ProjectDiff::deploy_at(workspace, Some(entry), window, cx);
-                    })
-                    .ok();
-                self.focus_handle.focus(window, cx);
-            }
+            self.toggle_directory(&dir_entry.key, window, cx);
             return;
         }
         maybe!({
@@ -2171,19 +2160,11 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         maybe!({
-            let entry = if let Some(GitListEntry::Directory(dir_entry)) =
-                self.entries.get(self.selected_entry?)
-            {
-                self.view_mode
-                    .tree_state()
-                    .and_then(|s| s.directory_descendants.get(&dir_entry.key))
-                    .and_then(|entries| entries.iter().find(|e| !e.status.is_created()).cloned())?
-            } else {
-                self.entries
-                    .get(self.selected_entry?)?
-                    .status_entry()?
-                    .clone()
-            };
+            let entry = self
+                .entries
+                .get(self.selected_entry?)?
+                .status_entry()?
+                .clone();
             let repository = self.active_repository.clone()?;
 
             SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
@@ -2272,7 +2253,7 @@ impl GitPanel {
 
     fn revert_selected(
         &mut self,
-        action: &git::RestoreFile,
+        action: &RestoreFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -7813,7 +7794,7 @@ impl GitPanel {
             context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action(restore_title, RestoreFile::default().boxed_clone())
                 .separator()
                 .action("Unstaged Changes", ViewUnstagedChanges.boxed_clone())
                 .action("Staged Changes", ViewStagedChanges.boxed_clone())
@@ -7927,7 +7908,7 @@ impl GitPanel {
             context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action(restore_title, RestoreFile::default().boxed_clone())
                 .separator()
                 .action("Copy Path", CopyPath.boxed_clone())
                 .action("Copy Relative Path", CopyRelativePath.boxed_clone())
@@ -7935,12 +7916,12 @@ impl GitPanel {
                 .action_disabled_when(
                     !all_created,
                     "Add to .gitignore",
-                    git::AddToGitignore.boxed_clone(),
+                    AddToGitignore.boxed_clone(),
                 )
                 .action_disabled_when(
                     !all_created,
                     "Add to .git/info/exclude",
-                    git::AddToGitInfoExclude.boxed_clone(),
+                    AddToGitInfoExclude.boxed_clone(),
                 )
                 .separator()
                 .action("Open Diff", menu::Confirm.boxed_clone())
@@ -10366,7 +10347,7 @@ mod tests {
 
         panel.update_in(cx, |panel, window, cx| {
             panel.selected_entry = Some(1);
-            panel.revert_selected(&git::RestoreFile::default(), window, cx);
+            panel.revert_selected(&RestoreFile::default(), window, cx);
         });
 
         let (message, _detail) = cx
