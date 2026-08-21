@@ -45,7 +45,7 @@ impl DiagnosticRenderer {
                 for (ix, entry) in diagnostic_group.iter().enumerate() {
                     if entry.range.start.row.abs_diff(primary.range.start.row) >= 5 {
                         markdown.push_str("\n- hint: [");
-                        markdown.push_str(&Markdown::escape(&entry.diagnostic.message));
+                        markdown.push_str(&Self::markdown(&entry.diagnostic));
                         markdown.push_str(&format!(
                             "](file://#diagnostic-{buffer_id}-{group_id}-{ix})\n",
                         ))
