@@ -5098,21 +5098,6 @@ impl BufferSnapshot {
             .map(|entry| entry.resolve(self))
     }
 
-    /// Returns all the diagnostics intersecting the given range along with the
-    /// language server that produced each diagnostic.
-    pub fn diagnostics_in_range_with_server_id<'a, T, O>(
-        &'a self,
-        search_range: Range<T>,
-        reversed: bool,
-    ) -> impl 'a + Iterator<Item = (LanguageServerId, DiagnosticEntryRef<'a, O>)>
-    where
-        T: 'a + Clone + ToOffset,
-        O: 'a + FromAnchor,
-    {
-        self.diagnostic_entries_in_range_with_server_id(search_range, reversed)
-            .map(|(server_id, entry)| (server_id, entry.resolve(self)))
-    }
-
     /// Returns the stored entries that intersect the given range, with their ranges
     /// and related information left in the buffer's own coordinates.
     pub fn diagnostic_entries_in_range<'a, T>(
