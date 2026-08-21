@@ -10586,7 +10586,6 @@ dependencies = [
  "text",
  "theme_settings",
  "ui",
- "util",
  "workspace",
 ]
 

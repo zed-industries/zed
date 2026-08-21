@@ -29902,17 +29902,10 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
             .unindent(),
     );
     set_up_lsp_handlers(false, &mut cx);
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        })
-        .await
-        .expect("Failed to navigate to definition");
-    assert_eq!(
-        navigated,
-        Navigated::Yes,
-        "Should have navigated to definition from the GetDefinition response"
-    );
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
+    cx.run_until_parked();
     cx.assert_editor_state(
         &r#"fn one() {
             let mut a = two();
@@ -29938,17 +29931,10 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     });
 
     set_up_lsp_handlers(true, &mut cx);
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        })
-        .await
-        .expect("Failed to navigate to lookup references");
-    assert_eq!(
-        navigated,
-        Navigated::Yes,
-        "Should have navigated to references as a fallback after empty GoToDefinition response"
-    );
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
+    cx.run_until_parked();
     // We should not change the selections in the existing file,
     // if opening another milti buffer with the references
     cx.assert_editor_state(
@@ -30017,22 +30003,14 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
             panic!("Should not call for references with no go to definition fallback")
         });
 
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        })
-        .await
-        .expect("Failed to navigate to lookup references");
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
     go_to_definition
         .next()
         .await
         .expect("Should have called the go_to_definition handler");
-
-    assert_eq!(
-        navigated,
-        Navigated::No,
-        "Should have navigated to references as a fallback after empty GoToDefinition response"
-    );
+    cx.run_until_parked();
     cx.assert_editor_state(&original_state);
     let editors = cx.update_workspace(|workspace, _, cx| {
         workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
@@ -30088,13 +30066,10 @@ async fn test_goto_definition_close_ranges_open_singleton(cx: &mut TestAppContex
         ])))
     });
 
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        })
-        .await
-        .expect("Failed to navigate to definitions");
-    assert_eq!(navigated, Navigated::Yes);
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
+    cx.run_until_parked();
 
     let editors = cx.update_workspace(|workspace, _, cx| {
         workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
@@ -30174,13 +30149,10 @@ async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContex
         ])))
     });
 
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        })
-        .await
-        .expect("Failed to navigate to definitions");
-    assert_eq!(navigated, Navigated::Yes);
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
+    cx.run_until_parked();
 
     let editors = cx.update_workspace(|workspace, _, cx| {
         workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
@@ -30249,13 +30221,18 @@ async fn test_goto_definition_contained_ranges(cx: &mut TestAppContext) {
         ])))
     });
 
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.go_to_definition(&GoToDefinition::default(), window, cx)
-        })
-        .await
-        .expect("Failed to navigate to definitions");
-    assert_eq!(navigated, Navigated::Yes);
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(
+        &r#"fn caller() {
+            let _ = target();
+        }
+        «fn target_outer() { fn target_inner() {} }ˇ»
+        "#
+        .unindent(),
+    );
 }
 
 #[gpui::test]
@@ -30350,10 +30327,8 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
         editor.set_scroll_position(gpui::Point::new(0.0, caller_row - offset), window, cx);
     });
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_definition(&GoToDefinition::default(), window, cx)
-    })
-    .await
-    .expect("Failed to navigate to definition");
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
@@ -30385,10 +30360,8 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
     });
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_definition(&GoToDefinition::default(), window, cx)
-    })
-    .await
-    .expect("Failed to navigate to definition");
+        editor.go_to_definition(&GoToDefinition::default(), window, cx);
+    });
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
@@ -30432,18 +30405,10 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
                 },
             ]))
         });
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences::default(), window, cx)
-        })
-        .unwrap()
-        .await
-        .expect("Failed to navigate to references");
-    assert_eq!(
-        navigated,
-        Navigated::Yes,
-        "Should have navigated to references from the FindAllReferences response"
-    );
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx);
+    });
+    cx.run_until_parked();
     cx.assert_editor_state(
         &r#"fn one() {
             let mut a = two();
@@ -30453,11 +30418,17 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
             .unindent(),
     );
 
-    let editors = cx.update_workspace(|workspace, _, cx| {
-        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    let (editors, references_editor) = cx.update_workspace(|workspace, _, cx| {
+        (
+            workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>(),
+            workspace
+                .active_item_as::<Editor>(cx)
+                .expect("references editor"),
+        )
     });
-    cx.update_editor(|_, _, _| {
+    cx.update_editor(|_, _, cx| {
         assert_eq!(editors.len(), 2, "We should have opened a new multibuffer");
+        assert_ne!(references_editor, cx.entity());
     });
 
     cx.set_state(
@@ -30468,18 +30439,10 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
         fn two() {}"#
             .unindent(),
     );
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences::default(), window, cx)
-        })
-        .unwrap()
-        .await
-        .expect("Failed to navigate to references");
-    assert_eq!(
-        navigated,
-        Navigated::Yes,
-        "Should have navigated to references from the FindAllReferences response"
-    );
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx);
+    });
+    cx.run_until_parked();
     cx.assert_editor_state(
         &r#"fn one() {
             let mut a = ˇtwo();
@@ -30496,6 +30459,12 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
             editors.len(),
             2,
             "should have re-used the previous multibuffer"
+        );
+    });
+    cx.update_workspace(|workspace, _, cx| {
+        assert_eq!(
+            workspace.active_item_as::<Editor>(cx),
+            Some(references_editor)
         );
     });
 
@@ -30520,18 +30489,10 @@ async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
                 },
             ]))
         });
-    let navigated = cx
-        .update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences::default(), window, cx)
-        })
-        .unwrap()
-        .await
-        .expect("Failed to navigate to references");
-    assert_eq!(
-        navigated,
-        Navigated::Yes,
-        "Should have navigated to references from the FindAllReferences response"
-    );
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx);
+    });
+    cx.run_until_parked();
     cx.assert_editor_state(
         &r#"fn one() {
                 let mut a = ˇtwo();
@@ -30612,18 +30573,16 @@ async fn test_find_all_references_preserves_preview_tab(cx: &mut TestAppContext)
     // We also need to run until the executor is parked because the
     // `ItemEvent::Edit` is delivered later, after the item has been registered
     // with the pane.
-    assert_eq!(
-        cx.update_editor(|editor, window, cx| {
-            editor.find_all_references(&FindAllReferences::default(), window, cx)
-        })
-        .expect("Editor::find_all_references should return a task")
-        .await
-        .expect("Should be able to find all references"),
-        Navigated::Yes
-    );
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&FindAllReferences::default(), window, cx);
+    });
     cx.executor().run_until_parked();
 
     cx.update_workspace(|workspace, _window, cx| {
+        let references = workspace
+            .active_item_as::<Editor>(cx)
+            .expect("references editor");
+        assert!(!references.read(cx).buffer().read(cx).is_singleton());
         let active_pane = workspace.active_pane().read(cx);
 
         assert_eq!(
@@ -39154,45 +39113,43 @@ async fn test_next_prev_reference(cx: &mut TestAppContext) {
             ))
         });
 
-    let _move = async |direction, count, cx: &mut EditorLspTestContext| {
+    let _move = |direction, count, cx: &mut EditorLspTestContext| {
         cx.update_editor(|editor, window, cx| {
-            editor.go_to_reference_before_or_after_position(direction, count, window, cx)
-        })
-        .unwrap()
-        .await
-        .unwrap()
+            editor.go_to_reference_before_or_after_position(direction, count, window, cx);
+        });
+        cx.run_until_parked();
     };
 
-    _move(Direction::Next, 1, &mut cx).await;
+    _move(Direction::Next, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
 
-    _move(Direction::Next, 1, &mut cx).await;
+    _move(Direction::Next, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[2]);
 
-    _move(Direction::Next, 1, &mut cx).await;
+    _move(Direction::Next, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[3]);
 
     // loops back to the start
-    _move(Direction::Next, 1, &mut cx).await;
+    _move(Direction::Next, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[0]);
 
     // loops back to the end
-    _move(Direction::Prev, 1, &mut cx).await;
+    _move(Direction::Prev, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[3]);
 
-    _move(Direction::Prev, 1, &mut cx).await;
+    _move(Direction::Prev, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[2]);
 
-    _move(Direction::Prev, 1, &mut cx).await;
+    _move(Direction::Prev, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
 
-    _move(Direction::Prev, 1, &mut cx).await;
+    _move(Direction::Prev, 1, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[0]);
 
-    _move(Direction::Next, 3, &mut cx).await;
+    _move(Direction::Next, 3, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[3]);
 
-    _move(Direction::Prev, 2, &mut cx).await;
+    _move(Direction::Prev, 2, &mut cx);
     cx.assert_editor_state(CYCLE_POSITIONS[1]);
 }
 
@@ -39544,14 +39501,9 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
         open_results_in: None,
     };
 
-    let navigated = cx
-        .update_editor(|editor, window, cx| editor.find_all_references(&action, window, cx))
-        .expect("should have spawned a task")
-        .await
-        .unwrap();
-
-    assert_eq!(navigated, Navigated::No);
-
+    cx.update_editor(|editor, window, cx| {
+        editor.find_all_references(&action, window, cx);
+    });
     cx.run_until_parked();
 
     cx.assert_editor_state(after);
@@ -39620,7 +39572,8 @@ async fn test_definition_locations_of_kind_excludes_self_link(cx: &mut TestAppCo
 
     let locations = cx
         .update_editor(|editor, _window, cx| {
-            editor.definition_locations_of_kind(GotoDefinitionKind::Symbol, cx)
+            let position = editor.selections.newest_anchor().head();
+            editor.definition_locations_of_kind_at(GotoDefinitionKind::Symbol, position, cx)
         })
         .expect("definition query should spawn a task")
         .await

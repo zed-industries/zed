@@ -126,6 +126,10 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
+pub use navigation::{
+    FindAllReferencesAt, LspNavigation, LspNavigationTarget, NavigationRequest, NavigationSource,
+    OpenLspLocations,
+};
 pub use split::{DiffStyleControls, SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
@@ -364,6 +368,40 @@ pub fn init(cx: &mut App) {
             workspace.register_action(Editor::cancel_language_server_work);
             workspace.register_action(Editor::toggle_focus);
             workspace.register_action(Editor::view_bookmarks);
+            workspace.register_action(|workspace, action: &FindAllReferencesAt, window, cx| {
+                let Some(editor) = action.0.editor.upgrade() else {
+                    cx.propagate();
+                    return;
+                };
+                if editor.read(cx).workspace().as_ref() != Some(&cx.entity()) {
+                    cx.propagate();
+                    return;
+                }
+                if Editor::containing_item(workspace, editor.entity_id(), cx).is_none() {
+                    return;
+                }
+                editor.update(cx, |editor, cx| {
+                    if let Some(task) = editor.find_all_references_at(&action.0, window, cx) {
+                        editor.run_navigation_task(task, cx);
+                    }
+                });
+            });
+            workspace.register_action(|workspace, action: &OpenLspLocations, window, cx| {
+                let Some(editor) = action.0.source.editor.upgrade() else {
+                    cx.propagate();
+                    return;
+                };
+                if editor.read(cx).workspace().as_ref() != Some(&cx.entity()) {
+                    cx.propagate();
+                    return;
+                }
+                if Editor::containing_item(workspace, editor.entity_id(), cx).is_none() {
+                    return;
+                }
+                editor.update(cx, |editor, cx| {
+                    editor.open_lsp_locations(action, window, cx);
+                });
+            });
         },
     )
     .detach();
@@ -1008,7 +1046,6 @@ pub struct Editor {
     inline_blame_popover_show_task: Option<Task<()>>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
-    find_all_references_task_sources: Vec<Anchor>,
     next_completion_id: CompletionId,
     code_actions_for_selection: CodeActionsForSelection,
     runnables_for_selection_toggle: Task<()>,
@@ -1043,6 +1080,7 @@ pub struct Editor {
     prev_pressure_stage: Option<PressureStage>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
+    navigation: navigation::NavigationState,
     edit_prediction_provider: Option<RegisteredEditPredictionDelegate>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
     active_edit_prediction: Option<EditPredictionState>,
@@ -2332,7 +2370,6 @@ impl Editor {
             inline_blame_popover_show_task: None,
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
-            find_all_references_task_sources: Vec::new(),
             next_completion_id: 0,
             next_inlay_id: 0,
             code_action_providers,
@@ -2369,6 +2406,7 @@ impl Editor {
             pending_mouse_down: None,
             prev_pressure_stage: None,
             hovered_link_state: None,
+            navigation: navigation::NavigationState::default(),
             edit_prediction_provider: None,
             active_edit_prediction: None,
             stale_edit_prediction_in_menu: None,
@@ -10937,7 +10975,7 @@ impl Editor {
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
 
-    pub(crate) fn lsp_data_enabled(&self) -> bool {
+    pub fn lsp_data_enabled(&self) -> bool {
         self.enable_lsp_data && self.mode().is_full()
     }
 
@@ -11089,7 +11127,7 @@ impl Editor {
         }
     }
 
-    fn disable_lsp_data(&mut self) {
+    pub fn disable_lsp_data(&mut self) {
         self.enable_lsp_data = false;
     }
 

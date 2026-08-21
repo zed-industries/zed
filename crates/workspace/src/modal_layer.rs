@@ -157,12 +157,25 @@ impl ModalLayer {
         // Opening a modal explicitly supersedes any reveal that was waiting for the
         // layer to become free.
         self.reveal_stash_when_free = false;
-        if let Some(active_modal) = &self.active_modal {
-            let should_close = active_modal.modal.view().downcast::<V>().is_ok();
-            let did_close = self.hide_modal(window, cx);
-            if should_close || !did_close {
-                return;
-            }
+        if self.active_modal::<V>().is_some() {
+            self.hide_modal(window, cx);
+        } else {
+            self.replace_modal(window, cx, build_view);
+        }
+    }
+
+    pub fn replace_modal<V, B>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        build_view: B,
+    ) where
+        V: ModalView,
+        B: FnOnce(&mut Window, &mut Context<V>) -> V,
+    {
+        self.reveal_stash_when_free = false;
+        if self.active_modal.is_some() && !self.hide_modal(window, cx) {
+            return;
         }
         let new_modal = cx.new(|cx| build_view(window, cx));
         self.show_modal(Box::new(new_modal), window, cx);
@@ -323,5 +336,65 @@ impl Render for ModalLayer {
                     ),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Focusable, TestAppContext};
+
+    #[gpui::test]
+    fn test_replace_modal_preserves_dismissal_refusal(cx: &mut TestAppContext) {
+        for pending in [false, true] {
+            let (layer, cx) = cx.add_window_view(|_, _| ModalLayer::new());
+            layer.update_in(cx, |layer, window, cx| {
+                layer.replace_modal(window, cx, |_, cx| BlockingModal {
+                    focus_handle: cx.focus_handle(),
+                    pending,
+                });
+            });
+            cx.run_until_parked();
+            layer.update_in(cx, |layer, window, cx| {
+                let original = layer.active_modal::<BlockingModal>().expect("active modal");
+                layer.replace_modal::<BlockingModal, _>(window, cx, |_, _| {
+                    panic!("replacement built despite dismissal refusal");
+                });
+                assert_eq!(
+                    window.focused(cx),
+                    Some(original.read(cx).focus_handle.clone())
+                );
+                assert_eq!(layer.active_modal::<BlockingModal>(), Some(original));
+            });
+        }
+    }
+
+    struct BlockingModal {
+        focus_handle: FocusHandle,
+        pending: bool,
+    }
+
+    impl ModalView for BlockingModal {
+        fn on_before_dismiss(&mut self, _: &mut Window, _: &mut Context<Self>) -> DismissDecision {
+            if self.pending {
+                DismissDecision::Pending
+            } else {
+                DismissDecision::Dismiss(false)
+            }
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for BlockingModal {}
+
+    impl Focusable for BlockingModal {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for BlockingModal {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().track_focus(&self.focus_handle)
+        }
     }
 }

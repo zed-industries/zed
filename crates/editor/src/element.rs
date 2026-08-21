@@ -11,10 +11,12 @@ use crate::{
     ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker,
     ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk, DisplayPoint, DisplayRow,
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
-    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
-    HandleInput, HoveredCursor, InlayHintRefreshReason, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, PageDown, PageUp, Point, RowExt, RowRangeExt, Selection,
-    SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
+    EditorStyle, FILE_HEADER_HEIGHT, FindAllReferences, FocusedBlock, GoToDeclaration,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, GotoDefinitionKind, GutterDimensions,
+    HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlayHintRefreshReason, LineDown,
+    LineHighlight, LineUp, LspNavigationTarget, MAX_LINE_LEN, MINIMAP_FONT_SIZE, OpenResultsIn,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, Selection, SelectionDragState, SizingBehavior,
+    SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
     display_map::{
@@ -47,9 +49,9 @@ use gpui::{
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad,
-    relative, size, solid_background, transparent_black,
+    StatefulInteractiveElement, Style, Styled, StyledText, TextAlign, TextRun, TextStyleRefinement,
+    WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad, relative, size,
+    solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -406,46 +408,66 @@ impl EditorElement {
         register_action(editor, window, Editor::go_to_prev_hunk);
         register_action(editor, window, Editor::go_to_next_document_highlight);
         register_action(editor, window, Editor::go_to_prev_document_highlight);
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_definition(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_definition_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_declaration(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_declaration_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_implementation(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_implementation_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_type_definition(action, window, cx)
-                .detach_and_log_err(cx);
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            editor
-                .go_to_type_definition_split(action, window, cx)
-                .detach_and_log_err(cx);
-        });
+        if editor.read(cx).lsp_data_enabled() {
+            register_definition_action(
+                editor,
+                window,
+                GotoDefinitionKind::Symbol,
+                |action: &GoToDefinition| action.open_results_in,
+                Editor::go_to_definition,
+            );
+            register_action(editor, window, Editor::go_to_definition_split);
+            register_definition_action(
+                editor,
+                window,
+                GotoDefinitionKind::Declaration,
+                |action: &GoToDeclaration| action.open_results_in,
+                Editor::go_to_declaration,
+            );
+            register_action(editor, window, Editor::go_to_declaration_split);
+            register_definition_action(
+                editor,
+                window,
+                GotoDefinitionKind::Implementation,
+                |action: &GoToImplementation| action.open_results_in,
+                Editor::go_to_implementation,
+            );
+            register_action(editor, window, Editor::go_to_implementation_split);
+            register_definition_action(
+                editor,
+                window,
+                GotoDefinitionKind::Type,
+                |action: &GoToTypeDefinition| action.open_results_in,
+                Editor::go_to_type_definition,
+            );
+            register_action(editor, window, Editor::go_to_type_definition_split);
+            register_action(editor, window, Editor::go_to_prev_reference);
+            register_action(editor, window, Editor::go_to_next_reference);
+            register_action(
+                editor,
+                window,
+                |editor, action: &FindAllReferences, window, cx| {
+                    if !editor.lsp_data_enabled() {
+                        cx.propagate();
+                        return;
+                    }
+                    if action
+                        .open_results_in
+                        .unwrap_or(EditorSettings::get_global(cx).lsp_results_location)
+                        == OpenResultsIn::Picker
+                        && editor.dispatch_lsp_navigation(
+                            LspNavigationTarget::References,
+                            None,
+                            window,
+                            cx,
+                        )
+                    {
+                        return;
+                    }
+                    editor.find_all_references(action, window, cx);
+                },
+            );
+        }
         register_action(editor, window, Editor::open_url);
         register_action(editor, window, Editor::open_selected_filename);
         register_action(editor, window, Editor::fold);
@@ -529,8 +551,6 @@ impl EditorElement {
         register_action(editor, window, Editor::cancel_edit_review_comment_action);
         register_action(editor, window, Editor::go_to_previous_change);
         register_action(editor, window, Editor::go_to_next_change);
-        register_action(editor, window, Editor::go_to_prev_reference);
-        register_action(editor, window, Editor::go_to_next_reference);
         register_action(editor, window, Editor::go_to_previous_symbol);
         register_action(editor, window, Editor::go_to_next_symbol);
         register_action(editor, window, Editor::restart_language_server);
@@ -539,13 +559,6 @@ impl EditorElement {
         register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.compose_completion(action, window, cx) {
                 editor.detach_and_notify_err(task, window, cx);
-            } else {
-                cx.propagate();
-            }
-        });
-        register_action(editor, window, |editor, action, window, cx| {
-            if let Some(task) = editor.find_all_references(action, window, cx) {
-                task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
@@ -10655,6 +10668,32 @@ pub fn register_action<T: Action>(
             })
         }
     })
+}
+
+fn register_definition_action<T: Action>(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    kind: GotoDefinitionKind,
+    open_results_in: fn(&T) -> Option<OpenResultsIn>,
+    listener: impl Fn(&mut Editor, &T, &mut Window, &mut Context<Editor>) + 'static,
+) {
+    register_action(editor, window, move |editor, action, window, cx| {
+        if !editor.lsp_data_enabled() {
+            return;
+        }
+        if open_results_in(action).unwrap_or(EditorSettings::get_global(cx).lsp_results_location)
+            == OpenResultsIn::Picker
+            && editor.dispatch_lsp_navigation(
+                LspNavigationTarget::Definition(kind),
+                None,
+                window,
+                cx,
+            )
+        {
+            return;
+        }
+        listener(editor, action, window, cx);
+    });
 }
 
 /// Shared between `prepaint` and `compute_auto_height_layout` to ensure

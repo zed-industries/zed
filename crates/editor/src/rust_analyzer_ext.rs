@@ -129,9 +129,9 @@ pub fn go_to_parent_module(
                     false,
                     window,
                     cx,
-                )
-            })?
-            .await?;
+                );
+            })
+            .ok();
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);

@@ -524,9 +524,7 @@ impl Item for SoloDiffView {
         cx: &mut Context<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
-            editor.rhs_editor().update(cx, |editor, cx| {
-                editor.added_to_workspace(workspace, window, cx)
-            })
+            editor.added_to_workspace(workspace, window, cx)
         });
     }
 
@@ -713,8 +711,14 @@ struct SoloDiffButtonStates {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use editor::hover_links::{HoverLink, ResolvedFileTarget};
     use gpui::TestAppContext;
     use multi_buffer::MultiBufferRow;
+    use project::{FakeFs, ResolvedPath};
+    use serde_json::json;
+    use settings::DiffViewStyle;
+    use util::{path, rel_path::rel_path};
+    use workspace::MultiWorkspace;
 
     #[gpui::test]
     fn test_changes_only_multibuffer_has_one_buffer_and_expand_controls(cx: &mut TestAppContext) {
@@ -748,6 +752,174 @@ mod tests {
         assert!(!is_singleton);
         assert_eq!(buffer_count, 1);
         assert!(has_expand_controls);
+    }
+
+    #[gpui::test]
+    async fn test_reparented_solo_diff_navigation(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Split);
+                });
+            });
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "source.txt": "https://example.com/new\n",
+                "target.txt": "first\nsecond\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/project/source.txt"), cx)
+            })
+            .await
+            .expect("source buffer");
+        let repository = cx
+            .read(|cx| project.read(cx).active_repository(cx))
+            .expect("repository");
+        let diff = cx.new(|cx| {
+            buffer_diff::BufferDiff::new_with_base_text(
+                "https://example.com/old\n",
+                &buffer.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        let source_window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let app_state = source_window
+            .read_with(cx, |workspace, cx| {
+                workspace.workspace().read(cx).app_state().clone()
+            })
+            .expect("source app state");
+        let destination_window = cx.add_window(|window, cx| {
+            let workspace =
+                cx.new(|cx| Workspace::new(None, project.clone(), app_state, window, cx));
+            MultiWorkspace::new(workspace, window, cx)
+        });
+        let destination = destination_window
+            .read_with(cx, |workspace, _| workspace.workspace().clone())
+            .expect("destination workspace");
+        let (view, source_pane) = source_window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                let view = cx.new(|cx| {
+                    SoloDiffView::new(
+                        project.clone(),
+                        repository,
+                        RepoPath::from_rel_path(rel_path("source.txt")),
+                        buffer,
+                        diff,
+                        workspace.clone(),
+                        window,
+                        cx,
+                    )
+                });
+                let pane = workspace.read(cx).active_pane().clone();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(view.clone()), true, true, None, window, cx);
+                    let placeholder = cx.new(|cx| Editor::single_line(window, cx));
+                    pane.add_item(Box::new(placeholder), true, true, None, window, cx);
+                });
+                (view, pane)
+            })
+            .expect("source view");
+        cx.run_until_parked();
+        let editors = cx.read(|cx| {
+            let editor = view.read(cx).editor.read(cx);
+            [
+                editor.lhs_editor().expect("left editor").clone(),
+                editor.rhs_editor().clone(),
+            ]
+        });
+        destination_window
+            .update(cx, |_, window, cx| {
+                let destination_pane = destination.read(cx).active_pane().clone();
+                workspace::move_item(
+                    &source_pane,
+                    &destination_pane,
+                    view.entity_id(),
+                    0,
+                    true,
+                    window,
+                    cx,
+                );
+            })
+            .expect("move diff");
+        cx.run_until_parked();
+        let source_focus = source_window
+            .update(cx, |_, window, cx| window.focused(cx))
+            .expect("source focus");
+        for (editor, (row, column, expected)) in editors
+            .into_iter()
+            .zip([(2, 3, Point::new(1, 2)), (1, 2, Point::new(0, 1))])
+        {
+            cx.read(|cx| {
+                assert_eq!(editor.read(cx).workspace(), Some(destination.clone()));
+                assert_eq!(
+                    Editor::containing_item(destination.read(cx), editor.entity_id(), cx)
+                        .map(|item| item.item_id()),
+                    Some(view.entity_id())
+                );
+            });
+            destination_window
+                .update(cx, |_, window, cx| {
+                    editor.update(cx, |editor, cx| {
+                        editor.navigate_to_hover_links(
+                            None,
+                            vec![HoverLink::File(ResolvedFileTarget {
+                                resolved_path: ResolvedPath::AbsPath {
+                                    path: String::from(path!("/project/target.txt")),
+                                    is_dir: false,
+                                },
+                                row: Some(row),
+                                column: Some(column),
+                            })],
+                            None,
+                            false,
+                            window,
+                            cx,
+                        );
+                    });
+                })
+                .expect("file navigation");
+            cx.run_until_parked();
+            destination_window
+                .update(cx, |_, window, cx| {
+                    let target = destination
+                        .read(cx)
+                        .active_item_as::<Editor>(cx)
+                        .expect("target editor");
+                    let snapshot = target.update(cx, |target, cx| target.snapshot(window, cx));
+                    assert_eq!(snapshot.buffer_snapshot().text(), "first\nsecond\n");
+                    assert_eq!(
+                        target
+                            .read(cx)
+                            .selections
+                            .newest::<Point>(&snapshot.display_snapshot)
+                            .head(),
+                        expected
+                    );
+                    assert_eq!(destination.read(cx).items(cx).count(), 2);
+                })
+                .expect("file target");
+        }
+        source_window
+            .update(cx, |_, window, cx| {
+                assert_eq!(source_pane.read(cx).items_len(), 1);
+                assert_eq!(window.focused(cx), source_focus);
+            })
+            .expect("source unchanged");
     }
 }
 

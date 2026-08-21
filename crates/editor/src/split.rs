@@ -801,6 +801,12 @@ impl SplittableEditor {
             editor
         });
 
+        workspace.update(cx, |workspace, cx| {
+            lhs_editor.update(cx, |editor, cx| {
+                editor.added_to_workspace(workspace, window, cx);
+            });
+        });
+
         let mut subscriptions = vec![cx.subscribe_in(
             &lhs_editor,
             window,

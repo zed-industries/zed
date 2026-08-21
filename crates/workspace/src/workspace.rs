@@ -3747,19 +3747,43 @@ impl Workspace {
     #[allow(clippy::type_complexity)]
     pub fn open_paths(
         &mut self,
-        mut abs_paths: Vec<PathBuf>,
+        abs_paths: Vec<PathBuf>,
         options: OpenOptions,
         pane: Option<WeakEntity<Pane>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Option<anyhow::Result<Box<dyn ItemHandle>>>>> {
+        let open = self.open_paths_with_guard(abs_paths, options, pane, window, cx, |_| true);
+        window.spawn(cx, async move |_| {
+            open.await
+                .into_iter()
+                .map(|result| result.and_then(Result::transpose))
+                .collect()
+        })
+    }
+
+    fn open_paths_with_guard<G>(
+        &mut self,
+        mut abs_paths: Vec<PathBuf>,
+        options: OpenOptions,
+        pane: Option<WeakEntity<Pane>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        can_open: G,
+    ) -> impl Future<Output = Vec<Option<Result<Option<Box<dyn ItemHandle>>>>>> + use<G>
+    where
+        G: Fn(&App) -> bool + Clone + 'static,
+    {
         let fs = self.app_state.fs.clone();
+        let workspace = self.weak_handle();
+        let mut cx = window.to_async(cx);
 
         let caller_ordered_abs_paths = abs_paths.clone();
 
         // Sort the paths to ensure we add worktrees for parents before their children.
         abs_paths.sort_unstable();
-        cx.spawn_in(window, async move |this, cx| {
+        async move {
+            let cx = &mut cx;
             let mut tasks = Vec::with_capacity(abs_paths.len());
 
             for abs_path in &abs_paths {
@@ -3778,27 +3802,28 @@ impl Workspace {
                     },
                 };
                 let project_path = match visible {
-                    Some(visible) => match this
-                        .update(cx, |this, cx| {
+                    Some(visible) => {
+                        let Ok(project_path) = workspace.update(cx, |workspace, cx| {
                             Workspace::project_path_for_path(
-                                this.project.clone(),
+                                workspace.project.clone(),
                                 abs_path,
                                 visible,
                                 cx,
                             )
-                        })
-                        .log_err()
-                    {
-                        Some(project_path) => project_path.await.log_err(),
-                        None => None,
-                    },
+                        }) else {
+                            tasks.push(Task::ready(Some(Ok(None))));
+                            continue;
+                        };
+                        project_path.await.log_err()
+                    }
                     None => None,
                 };
 
-                let this = this.clone();
+                let workspace = workspace.clone();
                 let abs_path: Arc<Path> = SanitizedPath::new(&abs_path).as_path().into();
                 let fs = fs.clone();
                 let pane = pane.clone();
+                let can_open = can_open.clone();
                 let task = cx.spawn(async move |cx| {
                     let (worktree, project_path) = project_path?;
                     let (entry_is_directory, worktree_is_local) =
@@ -3821,25 +3846,27 @@ impl Workspace {
                         // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
                     } else {
-                        Some(
-                            this.update_in(cx, |this, window, cx| {
-                                this.open_path(
-                                    project_path,
-                                    pane,
-                                    options.focus.unwrap_or(true),
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .ok()?
-                            .await,
-                        )
+                        let Ok(open) = workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.open_path_preview_with_guard(
+                                project_path,
+                                pane,
+                                options.focus.unwrap_or(true),
+                                false,
+                                true,
+                                window,
+                                cx,
+                                can_open,
+                            )
+                        }) else {
+                            return Some(Ok(None));
+                        };
+                        Some(open.await)
                     }
                 });
                 tasks.push(task);
             }
 
-            let results = futures::future::join_all(tasks).await;
+            let mut results = futures::future::join_all(tasks).await;
 
             // Determine the winner using the fake/abstract FS metadata, not `Path::is_dir`.
             let mut winner: Option<(PathBuf, bool)> = None;
@@ -3862,7 +3889,7 @@ impl Workspace {
             // (directories in particular) and makes the resulting project panel selection
             // deterministic.
             if let Some((winner_abs_path, winner_is_dir)) = winner {
-                'emit_winner: {
+                let cancelled = 'emit_winner: {
                     let winner_abs_path: Arc<Path> =
                         SanitizedPath::new(&winner_abs_path).as_path().into();
 
@@ -3873,26 +3900,19 @@ impl Workspace {
                         OpenVisible::OnlyDirectories => winner_is_dir,
                     };
 
-                    let Some(worktree_task) = this
-                        .update(cx, |workspace, cx| {
-                            workspace.project.update(cx, |project, cx| {
-                                project.find_or_create_worktree(
-                                    winner_abs_path.as_ref(),
-                                    visible,
-                                    cx,
-                                )
-                            })
+                    let Ok(worktree_task) = workspace.update(cx, |workspace, cx| {
+                        workspace.project.update(cx, |project, cx| {
+                            project.find_or_create_worktree(winner_abs_path.as_ref(), visible, cx)
                         })
-                        .ok()
-                    else {
-                        break 'emit_winner;
+                    }) else {
+                        break 'emit_winner true;
                     };
 
                     let Ok((worktree, _)) = worktree_task.await else {
-                        break 'emit_winner;
+                        break 'emit_winner false;
                     };
 
-                    let Ok(Some(entry_id)) = this.update(cx, |_, cx| {
+                    let Ok(entry_id) = workspace.update(cx, |_, cx| {
                         let worktree = worktree.read(cx);
                         let worktree_abs_path = worktree.abs_path();
                         let entry = if winner_abs_path.as_ref() == worktree_abs_path.as_ref() {
@@ -3910,20 +3930,35 @@ impl Workspace {
                         }?;
                         Some(entry.id)
                     }) else {
-                        break 'emit_winner;
+                        break 'emit_winner true;
+                    };
+                    let Some(entry_id) = entry_id else {
+                        break 'emit_winner false;
                     };
 
-                    this.update(cx, |workspace, cx| {
-                        workspace.project.update(cx, |_, cx| {
-                            cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
-                        });
-                    })
-                    .ok();
+                    if cx.update(|_, cx| can_open(cx)).unwrap_or(false) {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.project.update(cx, |_, cx| {
+                                    cx.emit(project::Event::ActiveEntryChanged(Some(entry_id)));
+                                });
+                            })
+                            .is_err()
+                    } else {
+                        true
+                    }
+                };
+                if cancelled {
+                    for result in &mut results {
+                        if result.is_none() {
+                            *result = Some(Ok(None));
+                        }
+                    }
                 }
             }
 
             results
-        })
+        }
     }
 
     pub fn open_resolved_path(
@@ -3945,6 +3980,56 @@ impl Workspace {
                 window,
                 cx,
             ),
+        }
+    }
+
+    pub fn open_resolved_path_with_guard(
+        &mut self,
+        path: ResolvedPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        can_open: impl Fn(&Workspace, &App) -> bool + Clone + 'static,
+    ) -> Task<Result<Option<Box<dyn ItemHandle>>>> {
+        let workspace = self.weak_handle();
+        let can_open = move |cx: &App| {
+            workspace
+                .upgrade()
+                .is_some_and(|workspace| can_open(workspace.read(cx), cx))
+        };
+        match path {
+            ResolvedPath::ProjectPath { project_path, .. } => {
+                let open = self.open_path_preview_with_guard(
+                    project_path,
+                    None,
+                    true,
+                    false,
+                    true,
+                    window,
+                    cx,
+                    can_open,
+                );
+                window.spawn(cx, async move |_| open.await)
+            }
+            ResolvedPath::AbsPath { path, .. } => {
+                let task = self.open_paths_with_guard(
+                    vec![PathBuf::from(&path)],
+                    OpenOptions {
+                        visible: Some(OpenVisible::None),
+                        ..OpenOptions::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                    can_open,
+                );
+                window.spawn(cx, async move |_| {
+                    task.await
+                        .into_iter()
+                        .next()
+                        .flatten()
+                        .with_context(|| format!("open abs path {path:?} task returned None"))?
+                })
+            }
         }
     }
 
@@ -4787,6 +4872,35 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        let task = self.open_path_preview_with_guard(
+            path.into(),
+            pane,
+            focus_item,
+            allow_preview,
+            activate,
+            window,
+            cx,
+            |_| true,
+        );
+        window.spawn(cx, async move |_| {
+            task.await?.context("opening path cancelled")
+        })
+    }
+
+    fn open_path_preview_with_guard<G>(
+        &mut self,
+        project_path: ProjectPath,
+        pane: Option<WeakEntity<Pane>>,
+        focus_item: bool,
+        allow_preview: bool,
+        activate: bool,
+        window: &mut Window,
+        cx: &mut App,
+        can_open: G,
+    ) -> impl Future<Output = Result<Option<Box<dyn ItemHandle>>>> + use<G>
+    where
+        G: FnOnce(&App) -> bool + 'static,
+    {
         let pane = pane.unwrap_or_else(|| {
             self.last_active_center_pane.clone().unwrap_or_else(|| {
                 self.panes
@@ -4796,25 +4910,32 @@ impl Workspace {
             })
         });
 
-        let project_path = path.into();
         let task = self.load_path(project_path.clone(), window, cx);
-        window.spawn(cx, async move |cx| {
-            let (project_entry_id, build_item) = task.await?;
+        let mut cx = window.to_async(cx);
+        async move {
+            let cx = &mut cx;
+            let loaded = task.await;
+            if !cx.update(|_, cx| can_open(cx)).unwrap_or(false) {
+                return Ok(None);
+            }
+            let (project_entry_id, build_item) = loaded?;
 
-            pane.update_in(cx, |pane, window, cx| {
-                pane.open_item(
-                    project_entry_id,
-                    project_path,
-                    focus_item,
-                    allow_preview,
-                    activate,
-                    None,
-                    window,
-                    cx,
-                    build_item,
-                )
-            })
-        })
+            Ok(pane
+                .update_in(cx, |pane, window, cx| {
+                    pane.open_item(
+                        project_entry_id,
+                        project_path,
+                        focus_item,
+                        allow_preview,
+                        activate,
+                        None,
+                        window,
+                        cx,
+                        build_item,
+                    )
+                })
+                .ok())
+        }
     }
 
     /// Opens a URL or file path, intelligently routing to the appropriate handler:
@@ -8065,6 +8186,15 @@ impl Workspace {
     {
         self.modal_layer.update(cx, |modal_layer, cx| {
             modal_layer.toggle_modal(window, cx, build)
+        })
+    }
+
+    pub fn replace_modal<V: ModalView, B>(&mut self, window: &mut Window, cx: &mut App, build: B)
+    where
+        B: FnOnce(&mut Window, &mut Context<V>) -> V,
+    {
+        self.modal_layer.update(cx, |modal_layer, cx| {
+            modal_layer.replace_modal(window, cx, build)
         })
     }
 

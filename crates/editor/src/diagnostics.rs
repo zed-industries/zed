@@ -600,8 +600,13 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use crate::{
+        EditorMode,
         actions::{
-            ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
+            FindAllReferences, GoToDeclaration, GoToDeclarationSplit, GoToDefinition,
+            GoToDefinitionSplit, GoToHunk, GoToImplementation, GoToImplementationSplit,
+            GoToNextReference, GoToNextSymbol, GoToPreviousHunk, GoToPreviousReference,
+            GoToPreviousSymbol, GoToTypeDefinition, GoToTypeDefinitionSplit, OpenSelectedFilename,
+            OpenUrl, ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
             ToggleSemanticHighlights,
         },
         editor_tests::init_test,
@@ -758,40 +763,85 @@ mod tests {
     async fn test_actions_gated_by_lsp_data(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
         let mut cx = EditorTestContext::new(cx).await;
-        let lsp_data_actions: [&dyn Action; 4] = [
+        let lsp_data_actions: [&dyn Action; 15] = [
             &ToggleDiagnostics,
             &ToggleInlayHints,
             &ToggleCodeLens,
             &ToggleSemanticHighlights,
+            &GoToDefinition::default(),
+            &GoToDefinitionSplit,
+            &GoToDeclaration::default(),
+            &GoToDeclarationSplit,
+            &GoToImplementation::default(),
+            &GoToImplementationSplit,
+            &GoToTypeDefinition::default(),
+            &GoToTypeDefinitionSplit,
+            &FindAllReferences::default(),
+            &GoToPreviousReference,
+            &GoToNextReference,
+        ];
+        let non_lsp_actions: [&dyn Action; 6] = [
+            &OpenUrl,
+            &OpenSelectedFilename,
+            &GoToHunk,
+            &GoToPreviousHunk,
+            &GoToNextSymbol,
+            &GoToPreviousSymbol,
         ];
 
-        cx.update_editor(|editor, _, cx| {
-            editor.enable_lsp_data = false;
-            cx.notify();
-        });
-        cx.update(|window, cx| {
-            for action in lsp_data_actions {
-                assert!(
-                    !window.is_action_available(action, cx),
-                    "{} should not be available when LSP data is disabled",
-                    action.name()
-                );
+        for (mode, enabled_actions) in [
+            (EditorMode::full(), lsp_data_actions.as_slice()),
+            (EditorMode::SingleLine, [].as_slice()),
+            (
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(1),
+                },
+                [].as_slice(),
+            ),
+            (
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: None,
+                },
+                [].as_slice(),
+            ),
+            (EditorMode::full(), lsp_data_actions.as_slice()),
+        ] {
+            for enable_lsp_data in [false, true] {
+                cx.update_editor(|editor, _, cx| {
+                    editor.set_mode(mode.clone());
+                    editor.enable_lsp_data = enable_lsp_data;
+                    cx.notify();
+                });
+                cx.update(|window, cx| {
+                    let available_actions = lsp_data_actions
+                        .iter()
+                        .filter(|action| window.is_action_available(**action, cx))
+                        .map(|action| action.name())
+                        .collect::<Vec<_>>();
+                    let expected_actions = if enable_lsp_data {
+                        enabled_actions
+                    } else {
+                        &[]
+                    };
+                    assert_eq!(
+                        available_actions,
+                        expected_actions.iter().map(|action| action.name()).collect::<Vec<_>>(),
+                        "LSP action availability for {mode:?}, enable_lsp_data={enable_lsp_data}"
+                    );
+                    assert_eq!(
+                        non_lsp_actions
+                            .iter()
+                            .filter(|action| window.is_action_available(**action, cx))
+                            .map(|action| action.name())
+                            .collect::<Vec<_>>(),
+                        non_lsp_actions.iter().map(|action| action.name()).collect::<Vec<_>>(),
+                        "non-LSP action availability for {mode:?}, enable_lsp_data={enable_lsp_data}"
+                    );
+                });
             }
-        });
-
-        cx.update_editor(|editor, _, cx| {
-            editor.enable_lsp_data = true;
-            cx.notify();
-        });
-        cx.update(|window, cx| {
-            for action in lsp_data_actions {
-                assert!(
-                    window.is_action_available(action, cx),
-                    "{} should be available again after re-enabling LSP data",
-                    action.name()
-                );
-            }
-        });
+        }
     }
 
     #[gpui::test]

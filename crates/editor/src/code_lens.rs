@@ -182,6 +182,9 @@ fn try_show_references(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> bool {
+    if !editor.lsp_data_enabled() {
+        return true;
+    }
     if arguments.len() < 3 {
         return false;
     }
@@ -198,9 +201,7 @@ fn try_show_references(
         .into_iter()
         .map(|location| HoverLink::LspLocation(location, server_id))
         .collect();
-    editor
-        .navigate_to_hover_links(None, links, nav_entry, false, window, cx)
-        .detach_and_log_err(cx);
+    editor.navigate_to_hover_links(None, links, nav_entry, false, window, cx);
 
     true
 }
@@ -653,6 +654,9 @@ fn build_code_lens_renderer(line: CodeLensLine, editor: WeakEntity<Editor>) -> R
                                 move |_event, window, cx| {
                                     if let Some(editor) = editor_handle.upgrade() {
                                         editor.update(cx, |editor, cx| {
+                                            if !editor.lsp_data_enabled() {
+                                                return;
+                                            }
                                             editor.change_selections(
                                                 SelectionEffects::default(),
                                                 window,
@@ -717,13 +721,14 @@ mod tests {
     use futures::StreamExt;
     use gpui::TestAppContext;
     use indoc::indoc;
+    use project::{CodeAction, LspAction};
     use settings::CodeLens;
     use util::path;
 
     use multi_buffer::{MultiBufferRow, ToPoint as _};
     use text::Point;
 
-    use super::{CODE_LENS_SEPARATOR, displayed_title};
+    use super::{CODE_LENS_SEPARATOR, displayed_title, try_handle_client_command};
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
         editor_tests::{init_test, update_test_editor_settings},
@@ -1828,6 +1833,69 @@ mod tests {
             HashSet::from_iter([70, 80, 90]),
             "Only newly visible lenses at the bottom should be resolved, not middle ones"
         );
+    }
+
+    #[gpui::test]
+    async fn test_code_lens_client_navigation_commands(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx =
+            EditorLspTestContext::new_typescript(lsp::ServerCapabilities::default(), cx).await;
+        let source = "ˇfunction hello() {}\nfunction world() {}";
+        cx.set_state(source);
+        let workspace = cx.workspace.clone();
+        let anchor = cx.buffer(|buffer, _| buffer.anchor_before(0));
+        let arguments = vec![
+            serde_json::json!(cx.buffer_lsp_url),
+            serde_json::json!(lsp::Position::new(0, 0)),
+            serde_json::json!([lsp::Location {
+                uri: cx.buffer_lsp_url.clone(),
+                range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 14)),
+            }]),
+        ];
+        for command in [
+            "editor.action.showReferences",
+            "editor.action.goToLocations",
+            "editor.action.peekLocations",
+        ] {
+            for (arguments, enable_lsp_data, handled) in [
+                (arguments.clone(), true, true),
+                (arguments.clone(), false, true),
+                (Vec::new(), true, false),
+                (vec![serde_json::Value::Null; 3], true, false),
+                (
+                    vec![
+                        serde_json::Value::Null,
+                        serde_json::Value::Null,
+                        serde_json::json!([]),
+                    ],
+                    true,
+                    false,
+                ),
+            ] {
+                cx.set_selections_state(source);
+                let action = CodeAction {
+                    server_id: cx.lsp.server.server_id(),
+                    range: anchor..anchor,
+                    lsp_action: LspAction::Command(lsp::Command {
+                        title: "1 reference".to_owned(),
+                        command: command.to_owned(),
+                        arguments: Some(arguments),
+                    }),
+                    resolved: true,
+                };
+                let actual = cx.update_editor(|editor, window, cx| {
+                    editor.enable_lsp_data = enable_lsp_data;
+                    try_handle_client_command(&action, editor, &workspace, window, cx)
+                });
+                assert_eq!(actual, handled, "{command}");
+                cx.run_until_parked();
+                cx.assert_editor_state(if enable_lsp_data && handled {
+                    "function hello() {}\nfunction «worldˇ»() {}"
+                } else {
+                    source
+                });
+            }
+        }
     }
 
     fn code_lens_assertion_text(editor: &Editor, cx: &ui::App) -> String {

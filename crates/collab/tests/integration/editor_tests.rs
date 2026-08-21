@@ -3290,21 +3290,17 @@ async fn test_lsp_document_links(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .as_deref()
         .expect("link should be resolved")
         .to_owned();
-    let navigated = editor_b
-        .update_in(cx_b, |editor, window, cx| {
-            let hover_link = editor::hover_links::document_link_target_to_hover_link(
-                &click_target,
-                click_server_id,
-            );
-            editor.navigate_to_hover_links(None, vec![hover_link], None, false, window, cx)
-        })
-        .await
-        .expect("navigation task should complete");
-    assert_eq!(
-        navigated,
-        editor::Navigated::Yes,
-        "Clicking a resolved file:// document link should navigate",
-    );
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        let hover_link =
+            editor::hover_links::document_link_target_to_hover_link(&click_target, click_server_id);
+        editor.navigate_to_hover_links(None, vec![hover_link], None, false, window, cx);
+    });
+    cx_b.condition(&workspace_b, |workspace, cx| {
+        workspace
+            .active_item_as::<Editor>(cx)
+            .is_some_and(|editor| editor.read(cx).text(cx) == other_contents)
+    })
+    .await;
     executor.run_until_parked();
 
     let other_editor = workspace_b.update(cx_b, |workspace, cx| {

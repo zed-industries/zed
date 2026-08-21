@@ -28,7 +28,7 @@ use editor::Editor;
 use editor::{Anchor, SelectionEffects};
 use editor::{Bias, ToPoint};
 use editor::{display_map::ToDisplayPoint, movement};
-use gpui::{Context, TaskExt, Window, actions};
+use gpui::{Context, Window, actions};
 use language::{AutoIndentMode, Point, SelectionGoal};
 use log::error;
 use multi_buffer::MultiBufferRow;
@@ -225,30 +225,24 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &GoToPreviousReference, window, cx| {
         let count = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
-            let task = editor.go_to_reference_before_or_after_position(
+            editor.go_to_reference_before_or_after_position(
                 editor::Direction::Prev,
                 count.unwrap_or(1),
                 window,
                 cx,
             );
-            if let Some(task) = task {
-                task.detach_and_log_err(cx);
-            };
         });
     });
 
     Vim::action(editor, cx, |vim, _: &GoToNextReference, window, cx| {
         let count = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
-            let task = editor.go_to_reference_before_or_after_position(
+            editor.go_to_reference_before_or_after_position(
                 editor::Direction::Next,
                 count.unwrap_or(1),
                 window,
                 cx,
             );
-            if let Some(task) = task {
-                task.detach_and_log_err(cx);
-            };
         });
     });
 
@@ -1176,6 +1170,7 @@ impl Vim {
 
 #[cfg(test)]
 mod test {
+    use editor::test::editor_lsp_test_context::EditorLspTestContext;
     use gpui::{KeyBinding, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use settings::SettingsStore;
@@ -1186,6 +1181,75 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use language;
+
+    #[gpui::test]
+    async fn test_next_previous_reference_with_count(cx: &mut TestAppContext) {
+        VimTestContext::init(cx);
+        let editor_cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let mut cx = VimTestContext::new_with_lsp(editor_cx, true);
+        cx.set_state(
+            indoc! {"
+                fn main() {
+                    let aˇbc = 0;
+                    abc;
+                    abc;
+                    abc;
+                }
+            "},
+            Mode::Normal,
+        );
+        cx.set_request_handler::<lsp::request::References, _, _>(move |url, _, _| async move {
+            Ok(Some(
+                [(1, 8), (2, 4), (3, 4), (4, 4)]
+                    .into_iter()
+                    .map(|(row, column)| {
+                        lsp::Location::new(
+                            url.clone(),
+                            lsp::Range::new(
+                                lsp::Position::new(row, column),
+                                lsp::Position::new(row, column + 3),
+                            ),
+                        )
+                    })
+                    .collect(),
+            ))
+        });
+
+        for (keystrokes, expected) in [
+            ("] r", language::Point::new(2, 4)),
+            ("3 ] r", language::Point::new(1, 8)),
+            ("] r", language::Point::new(2, 4)),
+            ("[ r", language::Point::new(1, 8)),
+            ("[ r", language::Point::new(4, 4)),
+            ("2 [ r", language::Point::new(2, 4)),
+            ("5 ] r", language::Point::new(3, 4)),
+            ("6 [ r", language::Point::new(1, 8)),
+            ("4 ] r", language::Point::new(1, 8)),
+            ("4 [ r", language::Point::new(1, 8)),
+        ] {
+            cx.simulate_keystrokes(keystrokes);
+            cx.run_until_parked();
+            cx.update_editor(|editor, _, cx| {
+                assert_eq!(editor.selections.count(), 1);
+                assert_eq!(
+                    editor
+                        .selections
+                        .newest::<language::Point>(&editor.display_snapshot(cx))
+                        .head(),
+                    expected,
+                    "{keystrokes}"
+                );
+            });
+            assert_eq!(cx.mode(), Mode::Normal);
+        }
+    }
 
     #[gpui::test]
     async fn test_h(cx: &mut gpui::TestAppContext) {

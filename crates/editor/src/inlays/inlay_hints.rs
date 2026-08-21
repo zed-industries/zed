@@ -582,6 +582,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.lsp_data_enabled() {
+            self.hide_hovered_link(cx);
+            hover_popover::hide_hover(self, cx);
+            return;
+        }
         let Some(lsp_store) = self.project().map(|project| project.read(cx).lsp_store()) else {
             return;
         };
@@ -765,6 +770,9 @@ impl Editor {
         known_chunks: Option<(Global, HashSet<Range<BufferRow>>)>,
         cx: &mut Context<Self>,
     ) -> Option<Vec<Task<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>>> {
+        if !self.lsp_data_enabled() {
+            return None;
+        }
         let semantics_provider = self.semantics_provider()?;
 
         let new_hint_tasks = semantics_provider
@@ -794,6 +802,18 @@ impl Editor {
         new_hints: Vec<(Range<BufferRow>, anyhow::Result<CacheInlayHints>)>,
         cx: &mut Context<Self>,
     ) {
+        if !self.lsp_data_enabled() {
+            if let Some((_, fetched_chunks)) = self
+                .inlay_hints
+                .as_mut()
+                .and_then(|hints| hints.hint_chunk_fetching.get_mut(&buffer_id))
+            {
+                for (range, _) in new_hints {
+                    fetched_chunks.remove(&range);
+                }
+            }
+            return;
+        }
         let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let visible_inlay_hint_ids = Self::visible_inlay_hints(self.display_map.read(cx))
             .filter(|inlay| {

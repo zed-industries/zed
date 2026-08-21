@@ -62,6 +62,12 @@ impl Editor {
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
 
+            if !editor
+                .read_with(cx, |editor, _| editor.lsp_data_enabled())
+                .unwrap_or(false)
+            {
+                return;
+            }
             let Some(tasks_for_buffers) = project
                 .update(cx, |project, cx| {
                     project.lsp_store().update(cx, |lsp_store, cx| {
@@ -83,6 +89,9 @@ impl Editor {
             let new_links_for_buffers = join_all(tasks_for_buffers).await;
             editor
                 .update(cx, |editor, _| {
+                    if !editor.lsp_data_enabled() {
+                        return;
+                    }
                     for (buffer_id, links) in new_links_for_buffers {
                         let Some(links) = links else {
                             continue;
@@ -116,6 +125,9 @@ impl Editor {
         position: text::Anchor,
         cx: &mut Context<Self>,
     ) -> Option<Task<Vec<(LanguageServerId, LspDocumentLink)>>> {
+        if !self.lsp_data_enabled() {
+            return None;
+        }
         let buffer_id = buffer.read(cx).remote_id();
         let snapshot = buffer.read(cx).snapshot();
         let matches = self
@@ -172,6 +184,12 @@ impl Editor {
                     task.await.map(|(link_id, link)| (server_id, link_id, link))
                 }))
                 .await;
+            if !editor
+                .read_with(cx, |editor, _| editor.lsp_data_enabled())
+                .unwrap_or(false)
+            {
+                return Vec::new();
+            }
             resolved_links.extend(pending_results.into_iter().flatten());
             editor
                 .update(cx, |editor, cx| {
