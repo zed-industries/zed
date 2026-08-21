@@ -1857,7 +1857,15 @@ impl Editor {
             .text_highlights(HighlightKey::PendingInput, cx)
             .is_none()
         {
-            self.ime_transaction.take();
+            let ime_tx = self.ime_transaction.take();
+            self.buffer().update(cx, |buffer, cx| {
+                if let Some(transaction) = ime_tx {
+                    buffer.forget_transaction(transaction, cx);
+                }
+                if let Some(tx) = transaction {
+                    buffer.forget_transaction(tx, cx);
+                }
+            });
         }
     }
 
