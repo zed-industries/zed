@@ -75,6 +75,7 @@ use util::{
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
     ToolbarItemLocation, ViewId,
+    invalid_item_view::InvalidItemView,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -37491,6 +37492,91 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
     // Previously, this fell back to `InvalidItemView` because it wasn't valid UTF-8.
     // With auto-detection enabled, this is now recognized as UTF-16 and opens in the Editor.
     assert_eq!(handle.to_any_view().entity_type(), TypeId::of::<Editor>());
+}
+
+#[gpui::test]
+async fn test_open_binary_file_as_text(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    cx.update(|cx| {
+        register_project_item::<Editor>(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root1", json!({})).await;
+    // The NUL bytes make this look like binary data rather than text.
+    let content = b"boot ok\n\0\0\0\x01ready\n".to_vec();
+    fs.insert_file("/root1/device.log", content.clone()).await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let handle = workspace
+        .update_in(cx, |workspace, window, cx| {
+            let project_path = (worktree_id, rel_path("device.log"));
+            workspace.open_path(project_path, None, true, window, cx)
+        })
+        .await
+        .unwrap();
+    let invalid_item = handle
+        .downcast::<InvalidItemView>()
+        .expect("binary content should not open in an editor");
+    // The "Open as Text" button is only rendered when the error is recognized
+    // as the binary content check.
+    invalid_item.read_with(cx, |invalid_item, _| assert!(invalid_item.is_binary));
+
+    invalid_item.update_in(cx, |invalid_item, window, cx| {
+        invalid_item.open_as_text(window, cx)
+    });
+    cx.run_until_parked();
+
+    let editor = workspace
+        .read_with(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<Editor>())
+        })
+        .expect("the file should be open as text");
+    editor.update(cx, |editor, cx| {
+        assert_eq!(editor.text(cx), String::from_utf8(content.clone()).unwrap());
+        assert!(!editor.read_only(cx));
+    });
+    // The view reporting the failure is replaced by the editor.
+    assert_eq!(
+        workspace.read_with(cx, |workspace, cx| workspace.items(cx).count()),
+        1
+    );
+
+    // An accidental save of the unedited buffer must not touch the file.
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(SaveOptions::default(), project.clone(), window, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load("/root1/device.log".as_ref()).await.unwrap(),
+        String::from_utf8(content.clone()).unwrap()
+    );
+
+    // An actual edit saves normally.
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.insert("fixed ", window, cx);
+            editor.save(SaveOptions::default(), project.clone(), window, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load("/root1/device.log".as_ref()).await.unwrap(),
+        format!("fixed {}", String::from_utf8(content).unwrap())
+    );
 }
 
 #[gpui::test]

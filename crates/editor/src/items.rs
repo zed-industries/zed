@@ -971,6 +971,15 @@ impl Item for Editor {
 
         let buffers_to_save = if self.buffer.read(cx).is_singleton() && !options.autosave {
             buffers
+                .into_iter()
+                // Forced-text buffers are only saved when actually edited, so
+                // that an accidental save (and its format-on-save pass) cannot
+                // rewrite the file with re-encoded content.
+                .filter(|buffer| {
+                    let buffer = buffer.read(cx);
+                    !buffer.force_text() || buffer.is_dirty()
+                })
+                .collect()
         } else {
             buffers
                 .into_iter()
