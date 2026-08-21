@@ -5412,11 +5412,16 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             // Don't handle messages that were sent before the response to us joining the project
             if envelope.message_id > this.join_project_response_message_id {
+                let known_worktree_ids = this
+                    .worktrees(cx)
+                    .map(|worktree| worktree.read(cx).id())
+                    .collect::<HashSet<_>>();
                 cx.update_global::<SettingsStore, _>(|store, cx| {
                     for worktree_metadata in &envelope.payload.worktrees {
-                        store
-                            .clear_local_settings(WorktreeId::from_proto(worktree_metadata.id), cx)
-                            .log_err();
+                        let worktree_id = WorktreeId::from_proto(worktree_metadata.id);
+                        if !known_worktree_ids.contains(&worktree_id) {
+                            store.clear_local_settings(worktree_id, cx).log_err();
+                        }
                     }
                 });
 

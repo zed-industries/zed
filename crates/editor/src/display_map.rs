@@ -100,7 +100,7 @@ use gpui::{
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
-    language_settings::{AllLanguageSettings, LanguageSettings},
+    language_settings::AllLanguageSettings,
 };
 
 use multi_buffer::{
@@ -1364,11 +1364,7 @@ impl DisplayMap {
 
     #[instrument(skip_all)]
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
-        if let Some(buffer) = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx)) {
-            LanguageSettings::for_buffer(buffer, cx).tab_size
-        } else {
-            AllLanguageSettings::get_global(cx).defaults.tab_size
-        }
+        buffer.read(cx).language_settings(cx).tab_size
     }
 
     #[cfg(test)]
@@ -2702,14 +2698,14 @@ pub mod tests {
         App, AppContext as _, BorrowAppContext, Element, Hsla, Rgba, div, font, observe, px,
     };
     use language::{
-        Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
+        Buffer, Capability, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
     };
     use lsp::LanguageServerId;
 
     use futures::stream::StreamExt;
     use rand::{Rng, prelude::*};
-    use settings::{SettingsContent, SettingsStore};
+    use settings::{LanguageSettingsContent, SettingsContent, SettingsStore};
     use std::{env, sync::Arc};
     use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};
@@ -3234,6 +3230,58 @@ pub mod tests {
             );
         });
         map.update(cx, |m, cx| assert_eq!(m.snapshot(cx).text(), "\n\n\nab"));
+    }
+
+    #[gpui::test]
+    fn test_non_singleton_display_map_uses_buffer_language_tab_size(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            init_test(cx, &|settings| {
+                settings.project.all_languages.defaults.tab_size = Some(4.try_into().unwrap());
+                settings.languages.0.insert(
+                    "Test".into(),
+                    LanguageSettingsContent {
+                        tab_size: Some(2.try_into().unwrap()),
+                        ..Default::default()
+                    },
+                );
+            })
+        });
+
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Test".into(),
+                ..Default::default()
+            },
+            None,
+        ));
+        let buffer = cx.new(|cx| Buffer::local("\tfoo\n", cx).with_language(language, cx));
+        let buffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(Capability::ReadOnly);
+            multibuffer.set_excerpts_for_path(
+                multi_buffer::PathKey::sorted(0),
+                buffer,
+                [Point::new(0, 0)..Point::new(1, 0)],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(snapshot.tab_snapshot().text(), "  foo\n");
     }
 
     #[gpui::test]

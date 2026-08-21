@@ -474,6 +474,69 @@ async fn test_internal_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
 }
 
 #[gpui::test]
+async fn test_editorconfig_survives_transient_invisible_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/worktree"),
+        json!({
+            ".editorconfig": "root = true\n[*]\nindent_size = 2\n",
+            "file.rs": "fn main() {}",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        path!("/outside"),
+        json!({
+            "dep.rs": "pub fn dep() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/worktree").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree.read(cx).id(), rel_path("file.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.update(|cx| {
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx).into_owned();
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
+    });
+
+    let outside_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/outside/dep.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx).into_owned();
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
+    });
+
+    drop(outside_buffer);
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx).into_owned();
+        assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
+    });
+}
+
+#[gpui::test]
 async fn test_external_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
