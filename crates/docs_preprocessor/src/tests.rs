@@ -59,3 +59,77 @@ fn test_find_binding_later_section_overrides_earlier() {
     let binding = find_binding_in_keymap(&keymap, "some::Action");
     assert_eq!(binding.as_deref(), Some("ctrl-b"));
 }
+
+#[test]
+fn test_settings_reference_placeholder_is_expanded() {
+    let mut book = Book::new();
+    book.push_item(BookItem::Chapter(Chapter::new(
+        "All Settings",
+        String::from("# All Settings\n\n{#SETTINGS_REFERENCE#}\n"),
+        "reference/all-settings.md",
+        Vec::new(),
+    )));
+    template_settings_reference(&mut book);
+    let BookItem::Chapter(chapter) = &book.sections[0] else {
+        panic!("expected a chapter");
+    };
+    assert_eq!(chapter.content.contains("{#SETTINGS_REFERENCE#}"), false);
+    assert_eq!(chapter.content.contains("- Setting: `hard_tabs`"), true);
+}
+
+#[test]
+fn test_settings_reference_contains_sections_for_known_settings() {
+    let reference = settings_reference::generate_settings_reference();
+    assert_eq!(reference.contains("## Hard Tabs {#hard-tabs}"), true);
+    assert_eq!(reference.contains("- Setting: `hard_tabs`"), true);
+    assert_eq!(
+        reference.contains("## Network Proxy {#network-proxy}"),
+        true
+    );
+    assert_eq!(reference.contains("- Setting: `proxy`"), true);
+    assert_eq!(
+        reference.contains("### Border Size {#active-pane-modifiers-border-size}"),
+        true
+    );
+    assert_eq!(reference.contains("- `\"contained\"`:"), true);
+}
+
+#[test]
+fn test_settings_reference_keeps_externally_linked_anchors() {
+    let externally_linked_anchors = [
+        "auto-indent",
+        "auto-install-extensions",
+        "calls",
+        "colorize-brackets",
+        "edit-predictions",
+        "enable-language-server",
+        "ensure-final-newline-on-save",
+        "file-scan-depth",
+        "file-scan-exclusions",
+        "file-types",
+        "format-on-save",
+        "formatter",
+        "git-worktree-directory",
+        "hard-tabs",
+        "lsp",
+        "modeline-lines",
+        "network-proxy",
+        "preferred-line-length",
+        "remove-trailing-whitespace-on-save",
+        "show-completion-documentation",
+        "show-completions-on-input",
+        "show-whitespaces",
+        "soft-wrap",
+        "tab-size",
+        "terminal",
+        "terminal-detect",
+    ];
+    let reference = settings_reference::generate_settings_reference();
+    let mut missing = Vec::new();
+    for anchor in externally_linked_anchors {
+        if !reference.contains(&format!("{{#{anchor}}}")) {
+            missing.push(anchor);
+        }
+    }
+    assert_eq!(missing, Vec::<&str>::new());
+}

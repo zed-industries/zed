@@ -33,6 +33,7 @@ pub struct ModifiersContent {
     pub function: bool,
 }
 
+/// The settings for all languages.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
@@ -84,17 +85,25 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
+    /// Turn off edit predictions across all providers.
     None,
+    /// Use GitHub Copilot as the edit prediction provider.
     #[default]
     Copilot,
+    /// Use Zeta as the edit prediction provider.
     Zed,
+    /// Use Codestral as the edit prediction provider.
     Codestral,
+    /// Use Ollama as the edit prediction provider.
     Ollama,
+    /// Use a custom OpenAI-compatible API as the edit prediction provider.
     OpenAiCompatibleApi,
+    /// Use Mercury as the edit prediction provider.
     Mercury,
 }
 
 impl EditPredictionProvider {
+    /// Whether this is the Zed edit prediction provider.
     pub fn is_zed(&self) -> bool {
         match self {
             EditPredictionProvider::Zed => true,
@@ -107,6 +116,7 @@ impl EditPredictionProvider {
         }
     }
 
+    /// The display name of the provider, if any.
     pub fn display_name(&self) -> Option<&'static str> {
         match self {
             EditPredictionProvider::Zed => Some("Zed AI"),
@@ -155,6 +165,7 @@ pub struct EditPredictionSettingsContent {
     pub allow_data_collection: Option<EditPredictionDataCollectionChoice>,
 }
 
+/// Settings specific to using custom OpenAI-compatible servers for edit prediction.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CustomEditPredictionProviderSettingsContent {
@@ -181,6 +192,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     pub prediction_debounce: Option<DelayMs>,
 }
 
+/// The prompt format to use when requesting edit predictions from a model.
 #[derive(
     Copy,
     Clone,
@@ -197,21 +209,34 @@ pub struct CustomEditPredictionProviderSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionPromptFormatContent {
+    /// Derive the prompt format from the model name.
     #[default]
     Infer,
+    /// The Zeta prompt format.
     Zeta,
+    /// The Zeta2 prompt format.
     Zeta2,
+    /// The Zeta2.1 prompt format.
     Zeta2_1,
+    /// The CodeLlama prompt format.
     CodeLlama,
+    /// The StarCoder prompt format.
     StarCoder,
+    /// The DeepSeek Coder prompt format.
     DeepseekCoder,
+    /// The Qwen prompt format.
     Qwen,
+    /// The CodeGemma prompt format.
     CodeGemma,
+    /// The Codestral prompt format.
     Codestral,
+    /// The GLM prompt format.
     Glm,
+    /// The Sweep prompt format.
     Sweep,
 }
 
+/// Settings specific to GitHub Copilot.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CopilotSettingsContent {
@@ -238,6 +263,7 @@ pub struct CopilotSettingsContent {
     pub prediction_debounce: Option<DelayMs>,
 }
 
+/// Settings specific to Codestral.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CodestralSettingsContent {
@@ -306,6 +332,7 @@ impl From<OllamaModelName> for String {
     }
 }
 
+/// Settings specific to Ollama.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct OllamaEditPredictionSettingsContent {
@@ -441,18 +468,23 @@ pub enum SoftWrap {
     Bounded,
 }
 
+/// A placeholder to refer to the **rest** of the registered language servers for a language.
 pub const REST_OF_LANGUAGE_SERVERS: &str = "...";
 
+/// A language server entry in the `language_servers` list.
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[schemars(with = "String")]
 pub struct ConfiguredLanguageServer {
+    /// The language server ID.
     pub name: Arc<str>,
+    /// Whether the language server is disabled, expressed by a `!` prefix on the ID.
     pub disabled: bool,
 }
 
 impl ConfiguredLanguageServer {
     const DISABLED_CHAR: char = '!';
 
+    /// Creates an enabled language server entry with the given name.
     pub fn new(name: impl Into<Arc<str>>) -> Self {
         Self {
             name: name.into(),
@@ -460,6 +492,7 @@ impl ConfiguredLanguageServer {
         }
     }
 
+    /// Creates a disabled language server entry with the given name.
     pub fn new_disabled(name: impl Into<Arc<str>>) -> Self {
         Self {
             name: name.into(),
@@ -768,10 +801,17 @@ pub enum ShowWhitespaceSetting {
     Trailing,
 }
 
+/// Visible characters used to render whitespace when show_whitespaces is enabled.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct WhitespaceMapContent {
+    /// The character to render in place of a space.
+    ///
+    /// Default: "•"
     pub space: Option<char>,
+    /// The character to render in place of a tab.
+    ///
+    /// Default: "→"
     pub tab: Option<char>,
 }
 
@@ -800,6 +840,7 @@ pub enum RewrapBehavior {
     Anywhere,
 }
 
+/// Settings for auto-closing of JSX tags.
 #[with_fallible_options]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct JsxTagAutoCloseSettingsContent {
@@ -919,6 +960,7 @@ pub struct CompletionSettingsContent {
     pub lsp_insert_mode: Option<LspInsertMode>,
 }
 
+/// Controls how the completion text is inserted when accepting an LSP completion.
 #[derive(
     Copy,
     Clone,
@@ -1067,7 +1109,9 @@ pub enum LineEndingSetting {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum FormatterList {
+    /// A single formatter.
     Single(Formatter),
+    /// A list of formatters, executed in the order of declaration.
     Vec(Vec<Formatter>),
 }
 
@@ -1112,6 +1156,7 @@ pub enum Formatter {
     LanguageServer(LanguageServerFormatterSpecifier),
 }
 
+/// Specifies which language server to format with.
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(
     rename_all = "snake_case",
@@ -1120,9 +1165,12 @@ pub enum Formatter {
     into = "LanguageServerVariantContent"
 )]
 pub enum LanguageServerFormatterSpecifier {
+    /// Format code using a specific language server.
     Specific {
+        /// The name of the language server to format with.
         name: String,
     },
+    /// Format code using the current language server.
     #[default]
     Current,
 }
@@ -1208,6 +1256,9 @@ pub struct IndentGuideSettingsContent {
 pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
     pub variables: Option<HashMap<String, String>>,
+    /// Whether tasks are enabled for this language.
+    ///
+    /// Default: true
     pub enabled: Option<bool>,
     /// Use LSP tasks over Zed language extension ones.
     /// If no LSP tasks are returned due to error/timeout or regular execution,
@@ -1286,6 +1337,673 @@ pub enum IndentGuideBackgroundColoring {
     Disabled,
     /// Use a different color for each indentation level.
     IndentAware,
+}
+
+impl AllLanguageSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            edit_predictions: Some(EditPredictionSettingsContent::defaults()),
+            defaults: LanguageSettingsContent::defaults(),
+            languages: default_languages(),
+            file_types: Some(default_file_types()),
+        }
+    }
+
+    /// The overrides applied on top of the Zed defaults on Windows.
+    pub fn windows_defaults_override() -> Self {
+        let mut languages = HashMap::default();
+        languages.insert(
+            String::from("PHP"),
+            LanguageSettingsContent {
+                language_servers: language_servers(&[
+                    "intelephense",
+                    "!phpactor",
+                    "!phptools",
+                    "!phpantom",
+                    "...",
+                ]),
+                ..Default::default()
+            },
+        );
+        Self {
+            languages: LanguageToSettingsMap(languages),
+            ..Default::default()
+        }
+    }
+}
+
+impl EditPredictionSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            provider: Some(EditPredictionProvider::Zed),
+            disabled_globs: Some(string_vec(&[
+                "**/.env*",
+                "**/*.pem",
+                "**/*.key",
+                "**/*.cert",
+                "**/*.crt",
+                "**/.dev.vars",
+                "**/secrets.yml",
+                "**/.zed/settings.json",
+                "/**/zed/settings.json",
+                "/**/zed/keymap.json",
+            ])),
+            mode: Some(EditPredictionsMode::Eager),
+            copilot: Some(CopilotSettingsContent {
+                proxy: None,
+                proxy_no_verify: None,
+                enterprise_uri: None,
+                enable_next_edit_suggestions: Some(true),
+                prediction_debounce: Some(DelayMs(75)),
+            }),
+            codestral: Some(CodestralSettingsContent {
+                model: Some(String::from("codestral-latest")),
+                max_tokens: Some(150),
+                api_url: Some(String::from("https://codestral.mistral.ai")),
+                prediction_debounce: Some(DelayMs(150)),
+            }),
+            ollama: Some(OllamaEditPredictionSettingsContent {
+                model: Some(OllamaModelName(String::from("qwen2.5-coder:7b-base"))),
+                max_output_tokens: Some(64),
+                api_url: Some(String::from("http://localhost:11434")),
+                prompt_format: Some(EditPredictionPromptFormatContent::Infer),
+                prediction_debounce: Some(DelayMs(0)),
+            }),
+            open_ai_compatible_api: Some(CustomEditPredictionProviderSettingsContent {
+                api_url: Some(String::new()),
+                prompt_format: Some(EditPredictionPromptFormatContent::Infer),
+                model: Some(String::new()),
+                max_output_tokens: Some(64),
+                prediction_debounce: Some(DelayMs(0)),
+            }),
+            zed: Some(ZedEditPredictionSettingsContent {
+                prediction_debounce: Some(DelayMs(0)),
+            }),
+            mercury: Some(MercuryEditPredictionSettingsContent {
+                prediction_debounce: Some(DelayMs(0)),
+            }),
+            allow_data_collection: Some(EditPredictionDataCollectionChoice::Default),
+        }
+    }
+}
+
+impl LanguageSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            tab_size: NonZeroU32::new(4),
+            hard_tabs: Some(false),
+            soft_wrap: Some(SoftWrap::None),
+            preferred_line_length: Some(80),
+            show_wrap_guides: Some(true),
+            wrap_guides: Some(Vec::new()),
+            indent_guides: Some(IndentGuideSettingsContent {
+                enabled: Some(true),
+                line_width: Some(1),
+                active_line_width: Some(1),
+                coloring: Some(IndentGuideColoring::Fixed),
+                background_coloring: Some(IndentGuideBackgroundColoring::Disabled),
+            }),
+            format_on_save: Some(FormatOnSave::Off),
+            remove_trailing_whitespace_on_save: Some(true),
+            ensure_final_newline_on_save: Some(true),
+            line_ending: Some(LineEndingSetting::Detect),
+            formatter: Some(FormatterList::Single(Formatter::Auto)),
+            prettier: Some(PrettierSettingsContent {
+                allowed: Some(false),
+                parser: Some(String::new()),
+                plugins: Some(HashSet::default()),
+                options: Some(HashMap::default()),
+            }),
+            jsx_tag_auto_close: Some(JsxTagAutoCloseSettingsContent {
+                enabled: Some(true),
+            }),
+            enable_language_server: Some(true),
+            language_servers: language_servers(&["..."]),
+            semantic_tokens: Some(SemanticTokens::Off),
+            document_folding_ranges: Some(DocumentFoldingRanges::Off),
+            document_symbols: Some(DocumentSymbols::Off),
+            allow_rewrap: Some(RewrapBehavior::InComments),
+            show_edit_predictions: Some(true),
+            edit_predictions_disabled_in: Some(Vec::new()),
+            show_whitespaces: Some(ShowWhitespaceSetting::Selection),
+            whitespace_map: Some(WhitespaceMapContent {
+                space: Some('•'),
+                tab: Some('→'),
+            }),
+            extend_comment_on_newline: Some(true),
+            extend_list_on_newline: Some(true),
+            indent_list_on_tab: Some(true),
+            inlay_hints: Some(InlayHintSettingsContent {
+                enabled: Some(false),
+                show_value_hints: Some(true),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                edit_debounce_ms: Some(700),
+                scroll_debounce_ms: Some(50),
+                toggle_on_modifiers_press: Some(ModifiersContent {
+                    control: false,
+                    alt: false,
+                    shift: false,
+                    platform: false,
+                    function: false,
+                }),
+            }),
+            use_autoclose: Some(true),
+            use_auto_surround: Some(true),
+            always_treat_brackets_as_autoclosed: Some(false),
+            use_on_type_format: Some(true),
+            code_actions_on_format: Some(HashMap::default()),
+            linked_edits: Some(true),
+            auto_indent: Some(AutoIndentMode::SyntaxAware),
+            auto_indent_on_paste: Some(true),
+            tasks: Some(LanguageTaskSettingsContent {
+                variables: Some(HashMap::default()),
+                enabled: Some(true),
+                prefer_lsp: Some(true),
+            }),
+            show_completions_on_input: Some(true),
+            show_completion_documentation: Some(true),
+            completions: Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Fallback),
+                words_min_length: Some(3),
+                lsp: Some(true),
+                lsp_fetch_timeout_ms: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::ReplaceSuffix),
+            }),
+            debuggers: Some(Vec::new()),
+            word_diff_enabled: Some(true),
+            colorize_brackets: Some(false),
+        }
+    }
+}
+
+fn string_vec(items: &[&str]) -> Vec<String> {
+    items.iter().copied().map(String::from).collect()
+}
+
+fn language_servers(names: &[&str]) -> Option<Vec<ConfiguredLanguageServer>> {
+    Some(
+        names
+            .iter()
+            .copied()
+            .map(ConfiguredLanguageServer::from)
+            .collect(),
+    )
+}
+
+fn prettier(allowed: bool) -> Option<PrettierSettingsContent> {
+    Some(PrettierSettingsContent {
+        allowed: Some(allowed),
+        options: Some(HashMap::default()),
+        ..Default::default()
+    })
+}
+
+fn prettier_with_plugins(plugins: &[&str]) -> Option<PrettierSettingsContent> {
+    Some(PrettierSettingsContent {
+        allowed: Some(true),
+        plugins: Some(plugins.iter().copied().map(String::from).collect()),
+        options: Some(HashMap::default()),
+        ..Default::default()
+    })
+}
+
+fn default_file_types() -> FileTypeMap {
+    let mut map = HashMap::default();
+    map.insert(
+        Arc::from("JSONC"),
+        ExtendingSet::from(string_vec(&[
+            "**/.zed/*.json",
+            "**/.vscode/**/*.json",
+            "**/{zed,Zed}/{settings,keymap,tasks,debug}.json",
+            "tsconfig*.json",
+        ])),
+    );
+    map.insert(
+        Arc::from("Markdown"),
+        ExtendingSet::from(string_vec(&[
+            ".rules",
+            ".cursorrules",
+            ".windsurfrules",
+            ".clinerules",
+        ])),
+    );
+    map.insert(
+        Arc::from("Shell Script"),
+        ExtendingSet::from(string_vec(&[".env.*"])),
+    );
+    FileTypeMap(map)
+}
+
+fn default_languages() -> LanguageToSettingsMap {
+    let mut map = HashMap::default();
+    map.insert(
+        String::from("Astro"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&["astro-language-server", "..."]),
+            prettier: prettier_with_plugins(&["prettier-plugin-astro"]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Blade"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("C"),
+        LanguageSettingsContent {
+            use_on_type_format: Some(false),
+            prettier: prettier(false),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("C++"),
+        LanguageSettingsContent {
+            use_on_type_format: Some(false),
+            prettier: prettier(false),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("CSharp"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["roslyn", "!csharp-ls", "!omnisharp", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("CSS"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Dart"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            tab_size: NonZeroU32::new(2),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Diff"),
+        LanguageSettingsContent {
+            show_edit_predictions: Some(false),
+            remove_trailing_whitespace_on_save: Some(false),
+            ensure_final_newline_on_save: Some(false),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("EEx"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&[
+                "elixir-ls",
+                "!expert",
+                "!dexter",
+                "!next-ls",
+                "!lexical",
+                "...",
+            ]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Elixir"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&[
+                "elixir-ls",
+                "!expert",
+                "!dexter",
+                "!next-ls",
+                "!lexical",
+                "!emmet-language-server",
+                "...",
+            ]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Elm"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            tab_size: NonZeroU32::new(4),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Erlang"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["erlang-ls", "!elp", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Git Commit"),
+        LanguageSettingsContent {
+            allow_rewrap: Some(RewrapBehavior::Anywhere),
+            soft_wrap: Some(SoftWrap::EditorWidth),
+            preferred_line_length: Some(72),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Go"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            hard_tabs: Some(true),
+            code_actions_on_format: Some(HashMap::from_iter([(
+                String::from("source.organizeImports"),
+                true,
+            )])),
+            debuggers: Some(string_vec(&["Delve"])),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("GraphQL"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("HEEx"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&[
+                "elixir-ls",
+                "!expert",
+                "!dexter",
+                "!next-ls",
+                "!lexical",
+                "...",
+            ]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("HTML"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("HTML+ERB"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["herb", "!ruby-lsp", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Java"),
+        LanguageSettingsContent {
+            prettier: prettier_with_plugins(&["prettier-plugin-java"]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("JavaScript"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["!typescript-language-server", "vtsls", "..."]),
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("JSON"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("JSONC"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("JS+ERB"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["!ruby-lsp", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Kotlin"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&["!kotlin-language-server", "kotlin-lsp", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("LaTeX"),
+        LanguageSettingsContent {
+            formatter: Some(FormatterList::Single(Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Current,
+            ))),
+            language_servers: language_servers(&["texlab", "..."]),
+            prettier: prettier_with_plugins(&["prettier-plugin-latex"]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Markdown"),
+        LanguageSettingsContent {
+            use_on_type_format: Some(false),
+            remove_trailing_whitespace_on_save: Some(false),
+            allow_rewrap: Some(RewrapBehavior::Anywhere),
+            soft_wrap: Some(SoftWrap::EditorWidth),
+            completions: Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                ..Default::default()
+            }),
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("PHP"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&[
+                "phpactor",
+                "!intelephense",
+                "!phptools",
+                "!phpantom",
+                "...",
+            ]),
+            prettier: Some(PrettierSettingsContent {
+                allowed: Some(true),
+                plugins: Some(HashSet::from_iter([String::from("@prettier/plugin-php")])),
+                parser: Some(String::from("php")),
+                options: Some(HashMap::default()),
+            }),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Plain Text"),
+        LanguageSettingsContent {
+            allow_rewrap: Some(RewrapBehavior::Anywhere),
+            soft_wrap: Some(SoftWrap::EditorWidth),
+            completions: Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Proto"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&[
+                "buf",
+                "!protols",
+                "!protobuf-language-server",
+                "...",
+            ]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Python"),
+        LanguageSettingsContent {
+            code_actions_on_format: Some(HashMap::from_iter([(
+                String::from("source.organizeImports.ruff"),
+                true,
+            )])),
+            formatter: Some(FormatterList::Single(Formatter::LanguageServer(
+                LanguageServerFormatterSpecifier::Specific {
+                    name: String::from("ruff"),
+                },
+            ))),
+            debuggers: Some(string_vec(&["Debugpy"])),
+            language_servers: language_servers(&[
+                "basedpyright",
+                "ruff",
+                "!ty",
+                "!pyrefly",
+                "!pyright",
+                "!pylsp",
+                "...",
+            ]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Ruby"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&[
+                "solargraph",
+                "!ruby-lsp",
+                "!rubocop",
+                "!sorbet",
+                "!steep",
+                "!kanayago",
+                "!fuzzy-ruby-server",
+                "...",
+            ]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Rust"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            debuggers: Some(string_vec(&["CodeLLDB"])),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("SCSS"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Starlark"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&["starpls", "!buck2-lsp", "!tilt", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Svelte"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["svelte-language-server", "..."]),
+            prettier: prettier_with_plugins(&["prettier-plugin-svelte"]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("TSX"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["!typescript-language-server", "vtsls", "..."]),
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Twig"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("TypeScript"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["!typescript-language-server", "vtsls", "..."]),
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("SystemVerilog"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["!slang", "..."]),
+            use_on_type_format: Some(false),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Vue.js"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["vue-language-server", "vtsls", "..."]),
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("XML"),
+        LanguageSettingsContent {
+            prettier: prettier_with_plugins(&["@prettier/plugin-xml"]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("YAML"),
+        LanguageSettingsContent {
+            prettier: prettier(true),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("YAML+ERB"),
+        LanguageSettingsContent {
+            language_servers: language_servers(&["!ruby-lsp", "..."]),
+            ..Default::default()
+        },
+    );
+    map.insert(
+        String::from("Zig"),
+        LanguageSettingsContent {
+            format_on_save: Some(FormatOnSave::On),
+            language_servers: language_servers(&["zls", "..."]),
+            ..Default::default()
+        },
+    );
+    LanguageToSettingsMap(map)
 }
 
 #[cfg(test)]

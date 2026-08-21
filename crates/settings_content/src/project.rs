@@ -17,6 +17,7 @@ use crate::{
     RootUserSettings, SaturatingBool, SplicingVec, fallible_options,
 };
 
+/// A map from language server name to its settings.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LspSettingsMap(pub HashMap<Arc<str>, LspSettings>);
@@ -39,12 +40,15 @@ impl RootUserSettings for ProjectSettingsContent {
     }
 }
 
+/// Settings that can be configured per project.
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
+    /// Settings for languages, applied to all languages or per-language.
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
 
+    /// Settings that control how Zed scans and shares worktrees.
     #[serde(flatten)]
     pub worktree: WorktreeSettingsContent,
 
@@ -59,6 +63,7 @@ pub struct ProjectSettingsContent {
     #[serde(default)]
     pub lsp: LspSettingsMap,
 
+    /// Settings specific to the terminal.
     pub terminal: Option<ProjectTerminalSettingsContent>,
 
     /// Configuration for Debugger-related features
@@ -111,6 +116,7 @@ pub enum ScanSymlinksSetting {
     Expanded,
 }
 
+/// Settings that control how Zed scans and shares worktrees.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
@@ -179,10 +185,12 @@ pub struct WorktreeSettingsContent {
     pub read_only_files: Option<Vec<String>>,
 }
 
+/// Settings for a specific language server.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
+    /// Settings for the language server binary.
     pub binary: Option<BinarySettings>,
     /// Options passed to the language server at startup.
     ///
@@ -201,6 +209,7 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    /// Settings for fetching the language server binary.
     pub fetch: Option<FetchSettings>,
 }
 
@@ -220,10 +229,15 @@ impl Default for LspSettings {
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
+/// Settings for a language server binary.
 pub struct BinarySettings {
+    /// The path to the binary.
     pub path: Option<String>,
+    /// The arguments to pass to the binary.
     pub arguments: Option<Vec<String>>,
+    /// The environment variables to set when launching the binary.
     pub env: Option<BTreeMap<String, String>>,
+    /// Whether to fetch the binary from the internet, or attempt to find locally.
     pub ignore_system_version: Option<bool>,
 }
 
@@ -231,8 +245,9 @@ pub struct BinarySettings {
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
+/// Settings for fetching a language server binary.
 pub struct FetchSettings {
-    // Whether to consider pre-releases for fetching
+    /// Whether to consider pre-releases for fetching
     pub pre_release: Option<bool>,
 }
 
@@ -260,6 +275,7 @@ pub struct GlobalLspSettingsContent {
     pub semantic_token_rules: Option<SemanticTokenRules>,
 }
 
+/// Settings for language server notifications.
 #[with_fallible_options]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LspNotificationSettingsContent {
@@ -274,12 +290,16 @@ pub struct LspNotificationSettingsContent {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(transparent)]
 pub struct SemanticTokenRules {
+    /// The list of semantic token rules.
+    /// The first matching rule for a token is applied.
     pub rules: Vec<SemanticTokenRule>,
 }
 
 impl SemanticTokenRules {
+    /// The name of the file that semantic token rules are loaded from.
     pub const FILE_NAME: &'static str = "semantic_token_rules.json";
 
+    /// Loads semantic token rules from the given file path.
     pub fn load(file_path: &Path) -> anyhow::Result<Self> {
         let rules_content = std::fs::read(file_path).with_context(|| {
             anyhow::anyhow!(
@@ -303,23 +323,36 @@ impl crate::merge_from::MergeFrom for SemanticTokenRules {
     }
 }
 
+/// A rule for highlighting semantic tokens.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SemanticTokenRule {
+    /// The LSP semantic token type to customize. If omitted, the rule matches all token types.
     pub token_type: Option<String>,
+    /// A list of LSP semantic token modifiers to match. All modifiers must be present
+    /// to match.
     #[serde(default)]
     pub token_modifiers: Vec<String>,
+    /// A list of styles from the current syntax theme to use. The first style found is used.
+    /// The other style settings in this rule override that style.
     #[serde(default)]
     pub style: Vec<String>,
+    /// The foreground color to use for the token type, in hex format (e.g., "#ff0000").
     pub foreground_color: Option<Rgba>,
+    /// The background color to use for the token type, in hex format.
     pub background_color: Option<Rgba>,
+    /// A boolean or color to underline with, in hex format. If `true`, then the token will be underlined with the text color.
     pub underline: Option<SemanticTokenColorOverride>,
+    /// A boolean or color to strikethrough with, in hex format. If `true`, then the token have a strikethrough with the text color.
     pub strikethrough: Option<SemanticTokenColorOverride>,
+    /// One of "normal", "bold".
     pub font_weight: Option<SemanticTokenFontWeight>,
+    /// One of "normal", "italic".
     pub font_style: Option<SemanticTokenFontStyle>,
 }
 
 impl SemanticTokenRule {
+    /// Returns whether the rule defines no styling.
     pub fn no_style_defined(&self) -> bool {
         self.style.is_empty()
             && self.foreground_color.is_none()
@@ -331,10 +364,13 @@ impl SemanticTokenRule {
     }
 }
 
+/// A color override for a semantic token decoration, such as underline or strikethrough.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum SemanticTokenColorOverride {
+    /// Enable or disable the decoration, using the text color when enabled.
     InheritForeground(bool),
+    /// Use the given color for the decoration.
     Replace(Rgba),
 }
 
@@ -353,9 +389,12 @@ pub enum SemanticTokenColorOverride {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// The font weight to render a semantic token with.
 pub enum SemanticTokenFontWeight {
+    /// Normal font weight.
     #[default]
     Normal,
+    /// Bold font weight.
     Bold,
 }
 
@@ -374,18 +413,25 @@ pub enum SemanticTokenFontWeight {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// The font style to render a semantic token with.
 pub enum SemanticTokenFontStyle {
+    /// Normal font style.
     #[default]
     Normal,
+    /// Italic font style.
     Italic,
 }
 
+/// Settings for a specific debug adapter.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct DapSettingsContent {
+    /// The path to the debug adapter binary.
     pub binary: Option<String>,
+    /// The arguments to pass to the debug adapter binary.
     pub args: Option<Vec<String>>,
+    /// The environment variables to set when launching the debug adapter.
     pub env: Option<HashMap<String, String>>,
 }
 
@@ -393,6 +439,7 @@ pub struct DapSettingsContent {
 #[derive(
     Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom,
 )]
+/// Configuration for session-related features.
 pub struct SessionSettingsContent {
     /// Whether or not to restore unsaved buffers on restart.
     ///
@@ -409,9 +456,11 @@ pub struct SessionSettingsContent {
     pub trust_all_worktrees: Option<bool>,
 }
 
+/// Settings for a context server used for AI-related features.
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
 #[serde(untagged, rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
+    /// A context server that is launched with a custom command and communicates over stdio.
     Stdio {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
@@ -423,9 +472,11 @@ pub enum ContextServerSettingsContent {
         /// Default: false
         #[serde(default)]
         remote: bool,
+        /// The command used to launch the context server.
         #[serde(flatten)]
         command: ContextServerCommand,
     },
+    /// A context server that is reachable over HTTP.
     Http {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
@@ -442,6 +493,7 @@ pub enum ContextServerSettingsContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         oauth: Option<OAuthClientSettings>,
     },
+    /// A context server that is provided by an extension.
     Extension {
         /// Whether the context server is enabled.
         #[serde(default = "default_true")]
@@ -462,6 +514,7 @@ pub enum ContextServerSettingsContent {
 }
 
 impl ContextServerSettingsContent {
+    /// Sets whether the context server is enabled.
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettingsContent::Stdio {
@@ -496,13 +549,17 @@ pub struct OAuthClientSettings {
     pub client_secret: Option<String>,
 }
 
+/// The command used to launch a stdio context server.
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct ContextServerCommand {
+    /// The path of the executable to run.
     #[serde(rename = "command")]
     pub path: PathBuf,
+    /// The arguments to pass to the executable.
     #[serde(default)]
     pub args: Vec<String>,
+    /// The environment variables to set when launching the executable.
     pub env: Option<HashMap<String, String>>,
     /// Timeout for tool calls in seconds. Defaults to 60 if not specified.
     pub timeout: Option<u64>,
@@ -533,6 +590,7 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
+/// Configuration for git-related features.
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
@@ -604,17 +662,30 @@ pub struct GitSettings {
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
+/// Whether or not to enable git integration features.
 pub struct GitEnabledSettings {
+    /// If set to true, disables all git integration features.
+    /// If set to false, individual git integration features below will be independently enabled or disabled.
+    ///
+    /// Default: false
     pub disable_git: Option<bool>,
+    /// Whether to enable git status tracking.
+    ///
+    /// Default: true
     pub enable_status: Option<bool>,
+    /// Whether to enable git diff display.
+    ///
+    /// Default: true
     pub enable_diff: Option<bool>,
 }
 
 impl GitEnabledSettings {
+    /// Returns whether git status tracking is enabled.
     pub fn is_git_status_enabled(&self) -> bool {
         !self.disable_git.unwrap_or(false) && self.enable_status.unwrap_or(true)
     }
 
+    /// Returns whether git diff display is enabled.
     pub fn is_git_diff_enabled(&self) -> bool {
         !self.disable_git.unwrap_or(false) && self.enable_diff.unwrap_or(true)
     }
@@ -634,6 +705,7 @@ impl GitEnabledSettings {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Whether or not to show the git gutter.
 pub enum GitGutterSetting {
     /// Show git gutter in tracked files.
     #[default]
@@ -656,6 +728,7 @@ pub enum GitGutterSetting {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Where to render inline git blame information.
 pub enum InlineBlameLocation {
     /// Show git blame inline at the current line.
     #[default]
@@ -667,6 +740,7 @@ pub enum InlineBlameLocation {
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
+/// Settings for inline git blame.
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
@@ -700,6 +774,7 @@ pub struct InlineBlameSettings {
 #[with_fallible_options]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
+/// Git blame settings.
 pub struct BlameSettings {
     /// Whether to show the avatar of the author of the commit.
     ///
@@ -710,6 +785,7 @@ pub struct BlameSettings {
 #[with_fallible_options]
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
+/// Settings for the branch picker.
 pub struct BranchPickerSettingsContent {
     /// Whether to show author name as part of the commit information.
     ///
@@ -720,6 +796,7 @@ pub struct BranchPickerSettingsContent {
 #[with_fallible_options]
 #[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
+/// File diff settings.
 pub struct FileDiffSettingsContent {
     /// Whether newly opened file diffs show the full file instead of changes only.
     ///
@@ -741,6 +818,7 @@ pub struct FileDiffSettingsContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// How hunks are displayed visually in the editor.
 pub enum GitHunkStyleSetting {
     /// Show unstaged hunks with a filled background and staged hunks hollow.
     #[default]
@@ -763,6 +841,7 @@ pub enum GitHunkStyleSetting {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Which base git features (gutter, file colors, git::Diff) diff against.
 pub enum GitDiffBaseSetting {
     /// Diff against HEAD: show working (uncommitted) changes.
     #[default]
@@ -790,6 +869,7 @@ pub enum GitDiffBaseSetting {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// How file paths are displayed in git-related UI.
 pub enum GitPathStyle {
     /// Show file name first, then path
     #[default]
@@ -798,6 +878,7 @@ pub enum GitPathStyle {
     FilePathFirst,
 }
 
+/// Diagnostics-related settings.
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DiagnosticsSettingsContent {
@@ -820,6 +901,7 @@ pub struct DiagnosticsSettingsContent {
 #[derive(
     Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
+/// Settings for using LSP pull diagnostics mechanism in Zed.
 pub struct LspPullDiagnosticsSettingsContent {
     /// Whether to pull for diagnostics or not.
     ///
@@ -836,6 +918,7 @@ pub struct LspPullDiagnosticsSettingsContent {
 #[derive(
     Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Eq,
 )]
+/// Settings for showing inline diagnostics.
 pub struct InlineDiagnosticsSettingsContent {
     /// Whether or not to show inline diagnostics
     ///
@@ -858,9 +941,14 @@ pub struct InlineDiagnosticsSettingsContent {
     /// Default: 0
     pub min_column: Option<u32>,
 
+    /// The minimum severity of the diagnostics to show inline.
+    /// Inherits editor's diagnostics' max severity settings when `null`.
+    ///
+    /// Default: null
     pub max_severity: Option<DiagnosticSeverityContent>,
 }
 
+/// Configuration for Node.js integration.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct NodeBinarySettings {
@@ -872,6 +960,7 @@ pub struct NodeBinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
+/// Configuration for how direnv configuration should be loaded.
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum DirenvSettings {
@@ -900,13 +989,19 @@ pub enum DirenvSettings {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Which level to use to filter out diagnostics displayed in the editor.
 pub enum DiagnosticSeverityContent {
-    // No diagnostics are shown.
+    /// No diagnostics are shown.
     Off,
+    /// Show only errors.
     Error,
+    /// Show errors and warnings.
     Warning,
+    /// Show errors, warnings, and information.
     Info,
+    /// Show all including hints.
     Hint,
+    /// Allow all diagnostics.
     All,
 }
 
@@ -926,14 +1021,21 @@ pub struct GitHostingProviderConfig {
     pub name: String,
 }
 
+/// The kind of a Git hosting provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHostingProviderKind {
+    /// A GitHub-compatible provider.
     Github,
+    /// A GitLab-compatible provider.
     Gitlab,
+    /// A Bitbucket-compatible provider.
     Bitbucket,
+    /// A Gitea-compatible provider.
     Gitea,
+    /// A Forgejo-compatible provider.
     Forgejo,
+    /// A SourceHut-compatible provider.
     SourceHut,
 }
 
@@ -1048,5 +1150,218 @@ mod tests {
             panic!("expected Stdio variant, got {settings:?}");
         };
         assert_eq!(command.args, vec!["hello".to_string()]);
+    }
+}
+
+impl ProjectSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            all_languages: AllLanguageSettingsContent::defaults(),
+            worktree: WorktreeSettingsContent::defaults(),
+            lsp: LspSettingsMap(HashMap::default()),
+            terminal: None,
+            dap: HashMap::from_iter([(
+                Arc::from("CodeLLDB"),
+                DapSettingsContent {
+                    binary: None,
+                    args: None,
+                    env: Some(HashMap::from_iter([(
+                        String::from("RUST_LOG"),
+                        String::from("info"),
+                    )])),
+                },
+            )]),
+            context_servers: HashMap::default(),
+            context_server_timeout: Some(60),
+            load_direnv: Some(DirenvSettings::Direct),
+            git_hosting_providers: Some(ExtendingVec(Vec::new())),
+            disable_ai: Some(SaturatingBool(false)),
+        }
+    }
+}
+
+impl WorktreeSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            prevent_sharing_in_public_channels: false,
+            file_scan_exclusions: Some(SplicingVec(vec![
+                String::from("**/.git"),
+                String::from("**/.svn"),
+                String::from("**/.hg"),
+                String::from("**/.jj"),
+                String::from("**/.sl"),
+                String::from("**/.repo"),
+                String::from("**/CVS"),
+                String::from("**/.DS_Store"),
+                String::from("**/Thumbs.db"),
+                String::from("**/.classpath"),
+                String::from("**/.settings"),
+            ])),
+            file_scan_inclusions: Some(vec![String::from(".env*")]),
+            scan_symlinks: Some(ScanSymlinksSetting::Expanded),
+            file_scan_depth: Some(5),
+            private_files: Some(ExtendingVec(vec![
+                String::from("**/.env*"),
+                String::from("**/*.pem"),
+                String::from("**/*.key"),
+                String::from("**/*.cert"),
+                String::from("**/*.crt"),
+                String::from("**/secrets.yml"),
+            ])),
+            hidden_files: Some(vec![String::from("**/.*")]),
+            read_only_files: Some(Vec::new()),
+        }
+    }
+}
+
+impl DiagnosticsSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            include_warnings: Some(true),
+            lsp_pull_diagnostics: Some(LspPullDiagnosticsSettingsContent::defaults()),
+            inline: Some(InlineDiagnosticsSettingsContent::defaults()),
+        }
+    }
+}
+
+impl LspPullDiagnosticsSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            debounce_ms: Some(DelayMs(50)),
+        }
+    }
+}
+
+impl InlineDiagnosticsSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(false),
+            update_debounce_ms: Some(DelayMs(150)),
+            padding: Some(4),
+            min_column: Some(0),
+            max_severity: None,
+        }
+    }
+}
+
+impl GitSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(GitEnabledSettings::defaults()),
+            git_gutter: Some(GitGutterSetting::TrackedFiles),
+            gutter_debounce: Some(0),
+            inline_blame: Some(InlineBlameSettings::defaults()),
+            blame: Some(BlameSettings::defaults()),
+            branch_picker: Some(BranchPickerSettingsContent::defaults()),
+            file_diff: Some(FileDiffSettingsContent::defaults()),
+            hunk_style: Some(GitHunkStyleSetting::StagedHollow),
+            diff_base: Some(GitDiffBaseSetting::Head),
+            path_style: Some(GitPathStyle::FileNameFirst),
+            show_stage_restore_buttons: Some(true),
+            worktree_directory: Some(String::from("../worktrees")),
+        }
+    }
+}
+
+impl GitEnabledSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            disable_git: Some(false),
+            enable_status: Some(true),
+            enable_diff: Some(true),
+        }
+    }
+}
+
+impl InlineBlameSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            delay_ms: Some(DelayMs(0)),
+            location: Some(InlineBlameLocation::Inline),
+            padding: Some(7),
+            min_column: Some(0),
+            show_commit_summary: Some(false),
+        }
+    }
+}
+
+impl BlameSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show_avatar: Some(true),
+        }
+    }
+}
+
+impl BranchPickerSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show_author_name: Some(true),
+        }
+    }
+}
+
+impl FileDiffSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show_full_file: Some(true),
+        }
+    }
+}
+
+impl GlobalLspSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            request_timeout: Some(120),
+            max_buffer_line_length: Some(20000),
+            notifications: Some(LspNotificationSettingsContent::defaults()),
+            semantic_token_rules: Some(SemanticTokenRules { rules: Vec::new() }),
+        }
+    }
+}
+
+impl LspNotificationSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            dismiss_timeout_ms: Some(5000),
+        }
+    }
+}
+
+impl NodeBinarySettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            path: None,
+            npm_path: None,
+            ignore_system_version: Some(false),
+        }
+    }
+}
+
+impl SessionSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            restore_unsaved_buffers: Some(true),
+            trust_all_worktrees: Some(false),
+        }
     }
 }

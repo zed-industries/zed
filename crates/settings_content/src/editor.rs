@@ -10,6 +10,7 @@ use crate::{
     DelayMs, DiagnosticSeverityContent, ShowScrollbar, serialize_f32_with_two_decimal_places,
 };
 
+/// Settings related to the editor.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct EditorSettingsContent {
@@ -122,6 +123,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
+    /// When enabled, automatically adjusts search case sensitivity based on your query.
+    /// If your search query contains any uppercase letters, the search becomes case-sensitive;
+    /// if it contains only lowercase letters, the search becomes case-insensitive.
+    ///
+    /// Default: false
     pub use_smartcase_search: Option<bool>,
     /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
@@ -281,6 +287,7 @@ pub struct EditorSettingsContent {
     pub minimum_split_diff_width: Option<f32>,
 }
 
+/// Whether to show relative line numbers in the gutter.
 #[derive(
     Debug,
     Clone,
@@ -296,11 +303,15 @@ pub struct EditorSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum RelativeLineNumbers {
+    /// Do not use relative line numbers.
     Disabled,
+    /// Show relative line numbers in the gutter whilst counting wrapped lines as one line.
     Enabled,
+    /// Show relative line numbers in the gutter, including wrapped lines in the counting.
     Wrapped,
 }
 
+/// Whether to align detail text in code completions context menus left or right.
 #[derive(
     Debug,
     Default,
@@ -317,11 +328,15 @@ pub enum RelativeLineNumbers {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionDetailAlignment {
+    /// Align detail text to the left.
     #[default]
     Left,
+    /// Align detail text to the right.
     Right,
 }
 
+/// How to display the LSP item kind (function, method, variable, etc.)
+/// of each entry in the completions menu.
 #[derive(
     Debug,
     Default,
@@ -338,18 +353,22 @@ pub enum CompletionDetailAlignment {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionMenuItemKind {
+    /// Do not display item kinds.
     #[default]
     Off,
+    /// Display a single-letter badge, colorized based on the active syntax theme.
     Symbol,
 }
 
 impl RelativeLineNumbers {
+    /// Returns true if relative line numbers are shown.
     pub fn enabled(&self) -> bool {
         match self {
             RelativeLineNumbers::Enabled | RelativeLineNumbers::Wrapped => true,
             RelativeLineNumbers::Disabled => false,
         }
     }
+    /// Returns true if relative line numbers count display (wrapped) lines.
     pub fn wrapped(&self) -> bool {
         match self {
             RelativeLineNumbers::Enabled | RelativeLineNumbers::Disabled => false,
@@ -358,7 +377,7 @@ impl RelativeLineNumbers {
     }
 }
 
-// Toolbar related settings
+/// Toolbar related settings
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ToolbarContent {
@@ -495,6 +514,7 @@ pub struct ScrollbarAxesContent {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of a git gutter width setting.")]
 #[serde(rename_all = "snake_case")]
 pub enum GitGutterWidth {
     /// Width scales automatically with the buffer font size.
@@ -566,14 +586,17 @@ pub enum CodeLens {
 }
 
 impl CodeLens {
+    /// Returns true if code lenses should be queried and displayed.
     pub fn enabled(&self) -> bool {
         self != &Self::Off
     }
 
+    /// Returns true if code lenses should be displayed above code elements.
     pub fn inline(&self) -> bool {
         *self == Self::On
     }
 
+    /// Returns true if code lenses should be displayed in the code action menu.
     pub fn show_in_menu(&self) -> bool {
         *self == Self::Menu
     }
@@ -607,6 +630,7 @@ pub enum DocumentColorsRenderMode {
     Background,
 }
 
+/// How to highlight the current line in the editor.
 #[derive(
     Copy,
     Clone,
@@ -622,13 +646,13 @@ pub enum DocumentColorsRenderMode {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentLineHighlight {
-    // Don't highlight the current line.
+    /// Don't highlight the current line.
     None,
-    // Highlight the gutter area.
+    /// Highlight the gutter area.
     Gutter,
-    // Highlight the editor area.
+    /// Highlight the editor area.
     Line,
-    // Highlight the full line.
+    /// Highlight the full line.
     All,
 }
 
@@ -787,7 +811,9 @@ pub enum ScrollbarDiagnostics {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
+    /// Maps to `Alt` on Linux and Windows and to `Option` on macOS.
     Alt,
+    /// Maps to `Control` on Linux and Windows and to `Command` on macOS.
     #[serde(alias = "cmd", alias = "ctrl")]
     CmdOrCtrl,
 }
@@ -1003,6 +1029,7 @@ pub struct SearchSettingsContent {
     pub center_on_match: Option<bool>,
 }
 
+/// Jupyter REPL settings.
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -1174,9 +1201,13 @@ pub struct CenteredPaddingSettings(
 );
 
 impl CenteredPaddingSettings {
+    /// The minimum allowed padding value.
     pub const MIN_PADDING: f32 = 0.0;
-    // This is an f64 so serde_json can give a type hint without random numbers in the back
+    /// The default padding value.
+    ///
+    /// This is an f64 so serde_json can give a type hint without random numbers in the back
     pub const DEFAULT_PADDING: f64 = 0.2;
+    /// The maximum allowed padding value.
     pub const MAX_PADDING: f32 = 0.4;
 }
 
@@ -1212,5 +1243,169 @@ impl schemars::JsonSchema for CenteredPaddingSettings {
             "default": Self::DEFAULT_PADDING,
             "description": "Centered layout related setting (left/right)."
         })
+    }
+}
+
+impl EditorSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            cursor_blink: Some(true),
+            cursor_shape: Some(CursorShape::Bar),
+            snippet_sort_order: Some(SnippetSortOrder::Inline),
+            current_line_highlight: Some(CurrentLineHighlight::All),
+            selection_highlight: Some(true),
+            rounded_selection: Some(true),
+            lsp_highlight_debounce: Some(DelayMs(75)),
+            hover_popover_enabled: Some(true),
+            hover_popover_delay: Some(DelayMs(300)),
+            hover_popover_sticky: Some(true),
+            hover_popover_hiding_delay: Some(DelayMs(300)),
+            toolbar: Some(ToolbarContent::defaults()),
+            scrollbar: Some(ScrollbarContent::defaults()),
+            minimap: Some(MinimapContent::defaults()),
+            gutter: Some(GutterContent::defaults()),
+            scroll_beyond_last_line: Some(ScrollBeyondLastLine::OnePage),
+            vertical_scroll_margin: Some(3.0),
+            autoscroll_on_clicks: Some(false),
+            horizontal_scroll_margin: Some(5.0),
+            scroll_sensitivity: Some(1.0),
+            mouse_wheel_zoom: Some(false),
+            fast_scroll_sensitivity: Some(4.0),
+            sticky_scroll: Some(StickyScrollContent::defaults()),
+            relative_line_numbers: Some(RelativeLineNumbers::Disabled),
+            seed_search_query_from_cursor: Some(SeedQuerySetting::Always),
+            use_smartcase_search: Some(false),
+            multi_cursor_modifier: Some(MultiCursorModifier::Alt),
+            redact_private_values: Some(false),
+            expand_excerpt_lines: Some(5),
+            excerpt_context_lines: Some(2),
+            middle_click_paste: Some(true),
+            double_click_in_multibuffer: Some(DoubleClickInMultibuffer::Select),
+            search_wrap: Some(true),
+            search: Some(SearchSettingsContent::defaults()),
+            auto_signature_help: Some(false),
+            show_signature_help_after_edits: Some(false),
+            minimum_contrast_for_highlights: Some(MinimumContrast(45.0)),
+            go_to_definition_fallback: Some(GoToDefinitionFallback::FindAllReferences),
+            lsp_results_location: Some(OpenResultsIn::MultiBuffer),
+            go_to_definition_scroll_strategy: Some(GoToDefinitionScrollStrategy::Center),
+            jupyter: Some(JupyterContent::defaults()),
+            diagnostics_max_severity: Some(DiagnosticSeverityContent::All),
+            inline_code_actions: Some(true),
+            drag_and_drop_selection: Some(DragAndDropSelectionContent::defaults()),
+            code_lens: Some(CodeLens::Off),
+            lsp_document_colors: Some(DocumentColorsRenderMode::Inlay),
+            lsp_document_links: Some(true),
+            completion_menu_scrollbar: Some(ShowScrollbar::Never),
+            completion_detail_alignment: Some(CompletionDetailAlignment::Left),
+            completion_menu_item_kind: Some(CompletionMenuItemKind::Off),
+            diff_view_style: Some(DiffViewStyle::Split),
+            minimum_split_diff_width: Some(100.0),
+        }
+    }
+}
+
+impl ToolbarContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            breadcrumbs: Some(true),
+            quick_actions: Some(true),
+            selections_menu: Some(true),
+            agent_review: Some(true),
+            code_actions: Some(false),
+        }
+    }
+}
+
+impl ScrollbarContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show: Some(ShowScrollbar::Auto),
+            git_diff: Some(true),
+            search_results: Some(true),
+            selected_text: Some(true),
+            selected_symbol: Some(true),
+            diagnostics: Some(ScrollbarDiagnostics::All),
+            cursors: Some(true),
+            axes: Some(ScrollbarAxesContent {
+                horizontal: Some(true),
+                vertical: Some(true),
+            }),
+        }
+    }
+}
+
+impl MinimapContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show: Some(ShowMinimap::Never),
+            display_in: Some(DisplayIn::ActiveEditor),
+            thumb: Some(MinimapThumb::Always),
+            thumb_border: Some(MinimapThumbBorder::LeftOpen),
+            current_line_highlight: None,
+            max_width_columns: num::NonZeroU32::new(80),
+        }
+    }
+}
+
+impl GutterContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            line_numbers: Some(true),
+            min_line_number_digits: Some(4),
+            runnables: Some(true),
+            breakpoints: Some(true),
+            bookmarks: Some(true),
+            folds: Some(true),
+            git_gutter_width: Some(GitGutterWidth::Default),
+        }
+    }
+}
+
+impl StickyScrollContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(false),
+        }
+    }
+}
+
+impl SearchSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            whole_word: Some(false),
+            case_sensitive: Some(false),
+            include_ignored: Some(false),
+            regex: Some(false),
+            center_on_match: Some(false),
+        }
+    }
+}
+
+impl JupyterContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            kernel_selections: Some(HashMap::default()),
+        }
+    }
+}
+
+impl DragAndDropSelectionContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            delay: Some(DelayMs(300)),
+        }
     }
 }

@@ -36,10 +36,13 @@ pub enum SidebarDockPosition {
     Right,
 }
 
+/// The resolved side of the threads sidebar.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum SidebarSide {
+    /// The left side.
     #[default]
     Left,
+    /// The right side.
     Right,
 }
 
@@ -166,6 +169,9 @@ impl JsonSchema for AutoCompactThreshold {
     }
 }
 
+/// Settings for automatic agent context compaction, which summarizes earlier
+/// messages to free up room in the model's context window once it grows too
+/// large.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AutoCompactSettingsContent {
@@ -191,6 +197,7 @@ pub struct AutoCompactSettingsContent {
     pub threshold: Option<AutoCompactThreshold>,
 }
 
+/// Settings for the agent panel and agent behavior.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -360,22 +367,27 @@ pub struct AgentSettingsContent {
 }
 
 impl AgentSettingsContent {
+    /// Sets where to dock the agent panel.
     pub fn set_dock(&mut self, dock: DockPosition) {
         self.dock = Some(dock);
     }
 
+    /// Sets where to position the threads sidebar.
     pub fn set_sidebar_side(&mut self, position: SidebarDockPosition) {
         self.sidebar_side = Some(position);
     }
 
+    /// Sets whether the agent panel uses flexible (proportional) sizing.
     pub fn set_flexible_size(&mut self, flexible: bool) {
         self.flexible = Some(flexible);
     }
 
+    /// Sets the default model to use when creating new threads.
     pub fn set_model(&mut self, language_model: LanguageModelSelection) {
         self.default_model = Some(language_model)
     }
 
+    /// Sets the model to use for the inline assistant.
     pub fn set_inline_assistant_model(&mut self, provider: String, model: String) {
         self.inline_assistant_model = Some(LanguageModelSelection {
             provider: provider.into(),
@@ -386,10 +398,12 @@ impl AgentSettingsContent {
         });
     }
 
+    /// Sets the default profile to use in the Agent.
     pub fn set_profile(&mut self, profile_id: Arc<str>) {
         self.default_profile = Some(profile_id);
     }
 
+    /// Adds a model to the favorites list if it is not already present.
     pub fn add_favorite_model(&mut self, model: LanguageModelSelection) {
         // Note: this is intentional to not compare using `PartialEq`here.
         // Full equality would treat entries that differ just in thinking/effort/speed
@@ -403,11 +417,13 @@ impl AgentSettingsContent {
         }
     }
 
+    /// Removes a model from the favorites list.
     pub fn remove_favorite_model(&mut self, model: &LanguageModelSelection) {
         self.favorite_models
             .retain(|m| !(m.provider == model.provider && m.model == model.model));
     }
 
+    /// Updates the matching favorite model in place, if present.
     pub fn update_favorite_model<F>(&mut self, provider: &str, model: &str, f: F)
     where
         F: FnOnce(&mut LanguageModelSelection),
@@ -421,6 +437,7 @@ impl AgentSettingsContent {
         }
     }
 
+    /// Sets the default permission mode for a tool.
     pub fn set_tool_default_permission(&mut self, tool_id: &str, mode: ToolPermissionMode) {
         let tool_permissions = self.tool_permissions.get_or_insert_default();
         let tool_rules = tool_permissions
@@ -430,6 +447,7 @@ impl AgentSettingsContent {
         tool_rules.default = Some(mode);
     }
 
+    /// Adds an always-allow regex pattern for a tool if it is not already present.
     pub fn add_tool_allow_pattern(&mut self, tool_name: &str, pattern: String) {
         let tool_permissions = self.tool_permissions.get_or_insert_default();
         let tool_rules = tool_permissions
@@ -445,6 +463,7 @@ impl AgentSettingsContent {
         }
     }
 
+    /// Adds an always-deny regex pattern for a tool if it is not already present.
     pub fn add_tool_deny_pattern(&mut self, tool_name: &str, pattern: String) {
         let tool_permissions = self.tool_permissions.get_or_insert_default();
         let tool_rules = tool_permissions
@@ -460,6 +479,7 @@ impl AgentSettingsContent {
         }
     }
 
+    /// Persistently allows sandboxed terminal commands to reach any host over the network.
     pub fn allow_sandbox_all_hosts(&mut self) {
         self.sandbox_permissions
             .get_or_insert_default()
@@ -485,18 +505,21 @@ impl AgentSettingsContent {
             .network_hosts = Some(ExtendingVec(hosts));
     }
 
+    /// Persistently allows sandboxed terminal commands to write anywhere on the filesystem.
     pub fn allow_sandbox_fs_write_all(&mut self) {
         self.sandbox_permissions
             .get_or_insert_default()
             .allow_fs_write_all = Some(true);
     }
 
+    /// Persistently allows agent terminal commands to run outside the OS sandbox.
     pub fn allow_sandbox_unsandboxed(&mut self) {
         self.sandbox_permissions
             .get_or_insert_default()
             .allow_unsandboxed = Some(true);
     }
 
+    /// Adds a persistent writable-path grant, keeping the grant set minimal.
     pub fn add_sandbox_write_path(&mut self, granted: GrantedWritePathContent) {
         let write_paths = &mut self
             .sandbox_permissions
@@ -519,23 +542,29 @@ impl AgentSettingsContent {
     }
 }
 
+/// Settings for an agent profile, which controls the tools available to the agent.
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AgentProfileContent {
+    /// The display name of this profile.
     pub name: Arc<str>,
+    /// The tools enabled in this profile, by tool name.
     #[serde(default)]
     pub tools: IndexMap<Arc<str>, bool>,
     /// Whether all context servers are enabled by default.
     pub enable_all_context_servers: Option<bool>,
+    /// Per-context-server tool settings for this profile, by context server ID.
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
     /// The default language model selected when using this profile.
     pub default_model: Option<LanguageModelSelection>,
 }
 
+/// Per-context-server tool settings for an agent profile.
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
+    /// The context server's tools enabled in this profile, by tool name.
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
@@ -553,10 +582,16 @@ pub struct ContextServerPresetContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Where to show notifications when the agent has either completed
+/// its response, or else needs confirmation before it can run a
+/// tool action.
 pub enum NotifyWhenAgentWaiting {
+    /// Show the notification only on your primary screen.
     #[default]
     PrimaryScreen,
+    /// Show these notifications on all screens.
     AllScreens,
+    /// Never show these notifications.
     Never,
 }
 
@@ -574,14 +609,20 @@ pub enum NotifyWhenAgentWaiting {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// When to play a sound when the agent has either completed
+/// its response, or needs user input.
 pub enum PlaySoundWhenAgentDone {
+    /// Never play the sound.
     #[default]
     Never,
+    /// Only play the sound when the agent panel is not visible.
     WhenHidden,
+    /// Always play the sound.
     Always,
 }
 
 impl PlaySoundWhenAgentDone {
+    /// Returns whether the sound should play, given whether the agent panel is visible.
     pub fn should_play(&self, visible: bool) -> bool {
         match self {
             PlaySoundWhenAgentDone::Never => false,
@@ -591,26 +632,37 @@ impl PlaySoundWhenAgentDone {
     }
 }
 
+/// A selection of a language model by provider and model name.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelSelection {
+    /// The provider to use.
     pub provider: LanguageModelProviderSetting,
+    /// The model to use.
     pub model: String,
+    /// Whether thinking is enabled.
     #[serde(default)]
     pub enable_thinking: bool,
+    /// The reasoning effort level to use, for models that support it.
     pub effort: Option<String>,
+    /// The generation speed to use, for models that support it.
     pub speed: Option<language_model_core::Speed>,
 }
 
+/// Additional parameters to apply to language model requests matching a provider and/or model.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
+    /// The provider to match. When unset, the entry applies to all providers.
     pub provider: Option<LanguageModelProviderSetting>,
+    /// The model name to match. When unset, the entry applies to all models.
     pub model: Option<String>,
+    /// The sampling temperature to use for matching requests.
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub temperature: Option<f32>,
 }
 
+/// The name of a language model provider.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, MergeFrom)]
 pub struct LanguageModelProviderSetting(pub String);
 
@@ -662,6 +714,7 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
+/// Configures agent servers available in the agent panel.
 #[with_fallible_options]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
 #[serde(transparent)]
@@ -681,14 +734,18 @@ impl std::ops::DerefMut for AllAgentServersSettings {
     }
 }
 
+/// A value for an agent session config option.
 #[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum AgentConfigOptionValue {
+    /// The ID of a selectable option value.
     ValueId(String),
+    /// A boolean value.
     Boolean(bool),
 }
 
 impl AgentConfigOptionValue {
+    /// Returns the value ID, if this is a `ValueId`.
     pub fn as_value_id(&self) -> Option<&str> {
         match self {
             Self::ValueId(value) => Some(value),
@@ -696,6 +753,7 @@ impl AgentConfigOptionValue {
         }
     }
 
+    /// Returns the boolean value, if this is a `Boolean`.
     pub fn as_bool(&self) -> Option<bool> {
         match self {
             Self::Boolean(value) => Some(*value),
@@ -731,13 +789,17 @@ impl From<bool> for AgentConfigOptionValue {
     }
 }
 
+/// Settings for an external agent server available in the agent panel.
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum CustomAgentServerSettings {
+    /// An agent server launched from a user-specified command.
     Custom {
+        /// The command to run to start the agent server.
         #[serde(rename = "command")]
         path: PathBuf,
+        /// The arguments to pass to the command.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         args: Vec<String>,
         /// Default: {}
@@ -764,7 +826,9 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
-    // Used for the ACP extension migration
+    /// An agent server installed from the Zed extension registry.
+    ///
+    /// The `extension` alias is used for the ACP extension migration.
     #[serde(alias = "extension")]
     Registry {
         /// Additional environment variables to pass to the agent.
@@ -902,6 +966,7 @@ impl JsonSchema for GrantedWritePathContent {
     }
 }
 
+/// Persistent sandbox permission grants for agent-run terminal commands.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SandboxPermissionsContent {
@@ -956,6 +1021,7 @@ pub struct SandboxPermissionsContent {
     pub warn_ntfs_grants: Option<bool>,
 }
 
+/// Permission rules for tool actions.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolPermissionsContent {
@@ -973,6 +1039,7 @@ pub struct ToolPermissionsContent {
     pub tools: HashMap<Arc<str>, ToolRulesContent>,
 }
 
+/// Permission rules for a single tool.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolRulesContent {
@@ -1009,6 +1076,7 @@ pub struct ToolRulesContent {
     pub always_confirm: Option<ExtendingVec<ToolRegexRule>>,
 }
 
+/// A regex rule matched against a tool's text input.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ToolRegexRule {
@@ -1021,6 +1089,7 @@ pub struct ToolRegexRule {
     pub case_sensitive: Option<bool>,
 }
 
+/// The permission mode applied to a tool action.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
 )]
@@ -1413,5 +1482,164 @@ mod tests {
             serde_json::to_value(&resolved).unwrap(),
             serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" })
         );
+    }
+}
+
+fn default_profile_tools(tool_names: &[&str]) -> IndexMap<Arc<str>, bool> {
+    tool_names
+        .iter()
+        .map(|name| (Arc::from(*name), true))
+        .collect()
+}
+
+impl AutoCompactSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            threshold: Some(AutoCompactThreshold(String::from("90%"))),
+        }
+    }
+}
+
+impl ToolPermissionsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            default: Some(ToolPermissionMode::Confirm),
+            tools: HashMap::default(),
+        }
+    }
+}
+
+impl AgentSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            button: Some(true),
+            dock: Some(DockPosition::Left),
+            flexible: Some(true),
+            sidebar_side: Some(SidebarDockPosition::Left),
+            default_width: Some(crate::PixelSetting(640.0)),
+            default_height: Some(crate::PixelSetting(320.0)),
+            limit_content_width: Some(true),
+            max_content_width: Some(crate::PixelSetting(850.0)),
+            default_model: Some(LanguageModelSelection {
+                provider: LanguageModelProviderSetting(String::from("zed.dev")),
+                model: String::from("claude-sonnet-4"),
+                enable_thinking: false,
+                effort: None,
+                speed: None,
+            }),
+            subagent_model: None,
+            favorite_models: Vec::new(),
+            inline_assistant_model: None,
+            inline_assistant_use_streaming_tools: Some(true),
+            commit_message_model: None,
+            commit_message_include_project_rules: Some(true),
+            commit_message_instructions: None,
+            thread_summary_model: None,
+            compaction_model: None,
+            inline_alternatives: None,
+            default_profile: Some(Arc::from("write")),
+            profiles: Some(IndexMap::from_iter([
+                (
+                    Arc::from("write"),
+                    AgentProfileContent {
+                        name: Arc::from("Write"),
+                        tools: default_profile_tools(&[
+                            "copy_path",
+                            "create_directory",
+                            "create_thread",
+                            "delete_path",
+                            "diagnostics",
+                            "apply_code_action",
+                            "ask_user",
+                            "edit_file",
+                            "write_file",
+                            "fetch",
+                            "find_path",
+                            "find_references",
+                            "get_code_actions",
+                            "go_to_definition",
+                            "list_agents_and_models",
+                            "list_directory",
+                            "move_path",
+                            "rename_symbol",
+                            "read_file",
+                            "grep",
+                            "skill",
+                            "spawn_agent",
+                            "terminal",
+                            "search_web",
+                        ]),
+                        enable_all_context_servers: Some(true),
+                        context_servers: IndexMap::default(),
+                        default_model: None,
+                    },
+                ),
+                (
+                    Arc::from("ask"),
+                    AgentProfileContent {
+                        name: Arc::from("Ask"),
+                        tools: default_profile_tools(&[
+                            "create_thread",
+                            "diagnostics",
+                            "ask_user",
+                            "fetch",
+                            "list_agents_and_models",
+                            "list_directory",
+                            "find_path",
+                            "find_references",
+                            "get_code_actions",
+                            "go_to_definition",
+                            "read_file",
+                            "grep",
+                            "skill",
+                            "spawn_agent",
+                            "search_web",
+                        ]),
+                        enable_all_context_servers: None,
+                        context_servers: IndexMap::default(),
+                        default_model: None,
+                    },
+                ),
+                (
+                    Arc::from("minimal"),
+                    AgentProfileContent {
+                        name: Arc::from("Minimal"),
+                        tools: IndexMap::default(),
+                        enable_all_context_servers: Some(false),
+                        context_servers: IndexMap::default(),
+                        default_model: None,
+                    },
+                ),
+            ])),
+            notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),
+            play_sound_when_agent_done: Some(PlaySoundWhenAgentDone::Never),
+            single_file_review: Some(false),
+            model_parameters: Vec::new(),
+            auto_compact: Some(AutoCompactSettingsContent::defaults()),
+            enable_feedback: Some(true),
+            expand_edit_card: Some(true),
+            expand_terminal_card: Some(true),
+            terminal_init_command: Some(String::new()),
+            thinking_display: Some(ThinkingBlockDisplay::Auto),
+            cancel_generation_on_terminal_stop: Some(true),
+            use_modifier_to_send: Some(false),
+            message_editor_min_lines: Some(4),
+            show_turn_stats: Some(false),
+            show_merge_conflict_indicator: Some(true),
+            tool_permissions: Some(ToolPermissionsContent::defaults()),
+            sandbox_permissions: None,
+        }
+    }
+}
+
+impl AllAgentServersSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self(HashMap::default())
     }
 }

@@ -10,6 +10,7 @@ use crate::{
     ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
 };
 
+/// Settings related to the workspace.
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
@@ -146,6 +147,7 @@ pub struct WorkspaceSettingsContent {
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
 }
 
+/// Configuration for the editor tabs.
 #[with_fallible_options]
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ItemSettingsContent {
@@ -176,6 +178,7 @@ pub struct ItemSettingsContent {
     pub show_close_button: Option<ShowCloseButton>,
 }
 
+/// Settings related to preview tabs.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PreviewTabsSettingsContent {
@@ -211,6 +214,7 @@ pub struct PreviewTabsSettingsContent {
     pub enable_keep_preview_on_code_navigation: Option<bool>,
 }
 
+/// Where to display close button within a tab.
 #[derive(
     Copy,
     Clone,
@@ -226,11 +230,14 @@ pub struct PreviewTabsSettingsContent {
 )]
 #[serde(rename_all = "lowercase")]
 pub enum ClosePosition {
+    /// Display the close button on the left.
     Left,
+    /// Display the close button on the right.
     #[default]
     Right,
 }
 
+/// Controls the appearance behavior of the tab's close button.
 #[derive(
     Copy,
     Clone,
@@ -246,12 +253,17 @@ pub enum ClosePosition {
 )]
 #[serde(rename_all = "lowercase")]
 pub enum ShowCloseButton {
+    /// Show it persistently.
     Always,
+    /// Show it just upon hovering the tab.
     #[default]
     Hover,
+    /// Never show it, even if hovering it.
     Hidden,
 }
 
+/// Whether to show diagnostics indicators in tabs. This setting only works
+/// when file icons are active and controls which files with diagnostic issues to mark.
 #[derive(
     Copy,
     Clone,
@@ -268,12 +280,16 @@ pub enum ShowCloseButton {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ShowDiagnostics {
+    /// Do not mark any files.
     #[default]
     Off,
+    /// Only mark files with errors.
     Errors,
+    /// Mark files with errors and warnings.
     All,
 }
 
+/// What to do after closing the current tab.
 #[derive(
     Copy,
     Clone,
@@ -289,12 +305,16 @@ pub enum ShowDiagnostics {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
+    /// Activate the tab that was open previously.
     #[default]
     History,
+    /// Activate the right neighbour tab if present.
     Neighbour,
+    /// Activate the left neighbour tab if present.
     LeftNeighbour,
 }
 
+/// Styling settings applied to the active pane.
 #[with_fallible_options]
 #[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
@@ -315,6 +335,7 @@ pub struct ActivePaneModifiers {
     pub inactive_opacity: Option<InactiveOpacity>,
 }
 
+/// Control the layout of the bottom dock, relative to the left and right docks.
 #[derive(
     Copy,
     Clone,
@@ -341,6 +362,7 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
+/// Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
 #[derive(
     Copy,
     Clone,
@@ -390,6 +412,7 @@ pub enum WindowDecorations {
     Server,
 }
 
+/// Whether to close the window when using 'close active item' on a workspace with no tabs.
 #[derive(
     Copy,
     Clone,
@@ -415,6 +438,7 @@ pub enum CloseWindowWhenNoItems {
 }
 
 impl CloseWindowWhenNoItems {
+    /// Returns true if the window should close when it contains no tabs.
     pub fn should_close(&self) -> bool {
         match self {
             CloseWindowWhenNoItems::PlatformDefault => cfg!(target_os = "macos"),
@@ -424,6 +448,7 @@ impl CloseWindowWhenNoItems {
     }
 }
 
+/// The default behavior when opening paths from the CLI without an explicit `-e` or `-n` flag.
 #[derive(
     Copy,
     Clone,
@@ -449,6 +474,7 @@ pub enum CliDefaultOpenBehavior {
     NewWindow,
 }
 
+/// The default behavior when opening projects from the UI.
 #[derive(
     Copy,
     Clone,
@@ -474,6 +500,7 @@ pub enum DefaultOpenBehavior {
     NewWindow,
 }
 
+/// Controls session restoration on startup.
 #[derive(
     Copy,
     Clone,
@@ -502,6 +529,7 @@ pub enum RestoreOnStartupBehavior {
     Launchpad,
 }
 
+/// Settings related to the editor's tab bar.
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
@@ -524,6 +552,8 @@ pub struct TabBarSettingsContent {
     pub show_pinned_tabs_in_separate_row: Option<bool>,
 }
 
+/// Control various elements in the status bar.
+/// Note that some items in the status bar have their own settings set elsewhere.
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
 pub struct StatusBarSettingsContent {
@@ -554,6 +584,7 @@ pub struct StatusBarSettingsContent {
     pub active_encoding_button: Option<EncodingDisplayOptions>,
 }
 
+/// Control when to show the active encoding in the status bar.
 #[derive(
     Copy,
     Clone,
@@ -570,12 +601,16 @@ pub struct StatusBarSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum EncodingDisplayOptions {
+    /// Always show the active encoding.
     Enabled,
+    /// Never show the active encoding.
     Disabled,
+    /// Show the active encoding only when it is not UTF-8 without a BOM.
     #[default]
     NonUtf8,
 }
 impl EncodingDisplayOptions {
+    /// Returns true if the encoding button should be shown for a file with the given encoding properties.
     pub fn should_show(&self, is_utf8: bool, has_bom: bool) -> bool {
         match self {
             Self::Disabled => false,
@@ -588,6 +623,7 @@ impl EncodingDisplayOptions {
     }
 }
 
+/// When to automatically save edited buffers.
 #[derive(
     Copy,
     Clone,
@@ -601,12 +637,16 @@ impl EncodingDisplayOptions {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of an autosave setting.")]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
     Off,
     /// Save after inactivity period of `milliseconds`.
-    AfterDelay { milliseconds: DelayMs },
+    AfterDelay {
+        /// The inactivity period in milliseconds.
+        milliseconds: DelayMs,
+    },
     /// Autosave when focus changes.
     OnFocusChange,
     /// Autosave when the active window changes.
@@ -614,6 +654,7 @@ pub enum AutosaveSetting {
 }
 
 impl AutosaveSetting {
+    /// Returns true if the buffer should be saved when it is closed.
     pub fn should_save_on_close(&self) -> bool {
         matches!(
             &self,
@@ -624,6 +665,7 @@ impl AutosaveSetting {
     }
 }
 
+/// The direction that you want to split panes horizontally.
 #[derive(
     Copy,
     Clone,
@@ -639,10 +681,13 @@ impl AutosaveSetting {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {
+    /// Split up.
     Up,
+    /// Split down.
     Down,
 }
 
+/// The direction that you want to split panes vertically.
 #[derive(
     Copy,
     Clone,
@@ -658,10 +703,13 @@ pub enum PaneSplitDirectionHorizontal {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionVertical {
+    /// Split left.
     Left,
+    /// Split right.
     Right,
 }
 
+/// Configuration for the centered layout mode.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 #[with_fallible_options]
@@ -671,13 +719,14 @@ pub struct CenteredLayoutSettings {
     ///
     /// Default: 0.2
     pub left_padding: Option<CenteredPaddingSettings>,
-    // The relative width of the right padding of the central pane from the
-    // workspace when the centered layout is used.
+    /// The relative width of the right padding of the central pane from the
+    /// workspace when the centered layout is used.
     ///
     /// Default: 0.2
     pub right_padding: Option<CenteredPaddingSettings>,
 }
 
+/// What to do when the last window is closed.
 #[derive(
     Copy,
     Clone,
@@ -700,6 +749,7 @@ pub enum OnLastWindowClosed {
     QuitApp,
 }
 
+/// The text rendering mode to use.
 #[derive(
     Copy,
     Clone,
@@ -726,6 +776,7 @@ pub enum TextRenderingMode {
 }
 
 impl OnLastWindowClosed {
+    /// Returns true if the application should quit when the last window is closed.
     pub fn is_quit_app(&self) -> bool {
         match self {
             OnLastWindowClosed::PlatformDefault => false,
@@ -734,6 +785,7 @@ impl OnLastWindowClosed {
     }
 }
 
+/// Settings for automatically opening files from the project panel.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelAutoOpenSettings {
@@ -751,6 +803,7 @@ pub struct ProjectPanelAutoOpenSettings {
     pub on_drop: Option<bool>,
 }
 
+/// Settings related to the project panel.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelSettingsContent {
@@ -855,6 +908,7 @@ pub struct ProjectPanelSettingsContent {
     pub git_status_indicator: Option<bool>,
 }
 
+/// Spacing between worktree entries in the project panel.
 #[derive(
     Copy,
     Clone,
@@ -878,6 +932,7 @@ pub enum ProjectPanelEntrySpacing {
     Standard,
 }
 
+/// How to order sibling entries in the project panel.
 #[derive(
     Copy,
     Clone,
@@ -903,6 +958,7 @@ pub enum ProjectPanelSortMode {
     FilesFirst,
 }
 
+/// Whether to sort file and folder names case-sensitively in the project panel.
 #[derive(
     Copy,
     Clone,
@@ -955,6 +1011,7 @@ impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
     }
 }
 
+/// Scrollbar-related settings for the project panel.
 #[with_fallible_options]
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
@@ -972,11 +1029,15 @@ pub struct ProjectPanelScrollbarSettingsContent {
     pub horizontal_scroll: Option<bool>,
 }
 
+/// Settings related to indent guides in the project panel.
 #[with_fallible_options]
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
 pub struct ProjectPanelIndentGuidesSettings {
+    /// When to show indent guides in the project panel.
+    ///
+    /// Default: always
     pub show: Option<ShowIndentGuides>,
 }
 
@@ -1020,6 +1081,8 @@ impl SemanticTokens {
     }
 }
 
+/// Controls whether folding ranges from language servers are used instead of
+/// tree-sitter and indent-based folding.
 #[derive(
     Debug,
     PartialEq,
@@ -1050,6 +1113,7 @@ impl DocumentFoldingRanges {
     }
 }
 
+/// Controls the source of document symbols used for outlines and breadcrumbs.
 #[derive(
     Debug,
     PartialEq,
@@ -1083,9 +1147,201 @@ impl DocumentSymbols {
     }
 }
 
+/// Determines whether the focused panel follows the mouse location.
 #[with_fallible_options]
 #[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct FocusFollowsMouse {
+    /// Whether the focused panel follows the mouse location.
+    ///
+    /// Default: false
     pub enabled: Option<bool>,
+    /// How long the mouse must stay over a panel before it is focused, in milliseconds.
+    ///
+    /// Default: 250
     pub debounce_ms: Option<u64>,
+}
+
+impl WorkspaceSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            active_pane_modifiers: Some(ActivePaneModifiers::defaults()),
+            text_rendering_mode: Some(TextRenderingMode::PlatformDefault),
+            bottom_dock_layout: Some(BottomDockLayout::Contained),
+            pane_split_direction_horizontal: Some(PaneSplitDirectionHorizontal::Down),
+            pane_split_direction_vertical: Some(PaneSplitDirectionVertical::Right),
+            centered_layout: Some(CenteredLayoutSettings::defaults()),
+            confirm_quit: Some(false),
+            show_call_status_icon: Some(true),
+            autosave: Some(AutosaveSetting::Off),
+            restore_on_startup: Some(RestoreOnStartupBehavior::LastSession),
+            cli_default_open_behavior: Some(CliDefaultOpenBehavior::ExistingWindow),
+            default_open_behavior: Some(DefaultOpenBehavior::ExistingWindow),
+            restore_on_file_reopen: Some(true),
+            drop_target_size: Some(0.2),
+            when_closing_with_no_tabs: Some(CloseWindowWhenNoItems::PlatformDefault),
+            accessible_mode: Some(false),
+            use_system_path_prompts: Some(true),
+            use_system_prompts: Some(true),
+            command_aliases: HashMap::default(),
+            max_tabs: None,
+            on_last_window_closed: Some(OnLastWindowClosed::PlatformDefault),
+            resize_all_panels_in_dock: Some(vec![DockPosition::Left]),
+            close_on_file_delete: Some(false),
+            use_system_window_tabs: Some(false),
+            fullscreen_mode: Some(FullscreenMode::Native),
+            zoomed_padding: Some(true),
+            close_panel_on_toggle: Some(false),
+            window_decorations: Some(WindowDecorations::Client),
+            focus_follows_mouse: Some(FocusFollowsMouse::defaults()),
+        }
+    }
+}
+
+impl ActivePaneModifiers {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            border_size: Some(crate::PixelSetting(0.0)),
+            inactive_opacity: Some(InactiveOpacity(1.0)),
+        }
+    }
+}
+
+impl CenteredLayoutSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            left_padding: Some(CenteredPaddingSettings(0.2)),
+            right_padding: Some(CenteredPaddingSettings(0.2)),
+        }
+    }
+}
+
+impl FocusFollowsMouse {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(false),
+            debounce_ms: Some(250),
+        }
+    }
+}
+
+impl ItemSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            git_status: Some(false),
+            close_position: Some(ClosePosition::Right),
+            file_icons: Some(false),
+            activate_on_close: Some(ActivateOnClose::History),
+            show_diagnostics: Some(ShowDiagnostics::Off),
+            show_close_button: Some(ShowCloseButton::Hover),
+        }
+    }
+}
+
+impl TabBarSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show: Some(true),
+            show_nav_history_buttons: Some(true),
+            show_tab_bar_buttons: Some(true),
+            show_pinned_tabs_in_separate_row: Some(false),
+        }
+    }
+}
+
+impl StatusBarSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show: Some(true),
+            show_active_file: Some(false),
+            active_language_button: Some(true),
+            cursor_position_button: Some(true),
+            line_endings_button: Some(false),
+            active_encoding_button: Some(EncodingDisplayOptions::NonUtf8),
+        }
+    }
+}
+
+impl PreviewTabsSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(true),
+            enable_preview_from_project_panel: Some(true),
+            enable_preview_from_file_finder: Some(false),
+            enable_preview_from_multibuffer: Some(true),
+            enable_preview_multibuffer_from_code_navigation: Some(false),
+            enable_preview_file_from_code_navigation: Some(true),
+            enable_keep_preview_on_code_navigation: Some(false),
+        }
+    }
+}
+
+impl ProjectPanelSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            hide_gitignore: Some(false),
+            default_width: Some(crate::PixelSetting(240.0)),
+            dock: Some(DockSide::Right),
+            entry_spacing: Some(ProjectPanelEntrySpacing::Comfortable),
+            file_icons: Some(true),
+            folder_icons: Some(true),
+            git_status: Some(true),
+            indent_size: Some(crate::PixelSetting(20.0)),
+            auto_reveal_entries: Some(true),
+            auto_fold_dirs: Some(true),
+            bold_folder_labels: Some(false),
+            starts_open: Some(true),
+            scrollbar: Some(ProjectPanelScrollbarSettingsContent::defaults()),
+            show_diagnostics: Some(ShowDiagnostics::All),
+            indent_guides: Some(ProjectPanelIndentGuidesSettings::defaults()),
+            hide_root: Some(false),
+            hide_hidden: Some(false),
+            sticky_scroll: Some(true),
+            drag_and_drop: Some(true),
+            auto_open: Some(ProjectPanelAutoOpenSettings::defaults()),
+            sort_mode: Some(ProjectPanelSortMode::DirectoriesFirst),
+            sort_order: Some(ProjectPanelSortOrder::Default),
+            diagnostic_badges: Some(false),
+            git_status_indicator: Some(false),
+        }
+    }
+}
+
+impl ProjectPanelScrollbarSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show: None,
+            horizontal_scroll: Some(true),
+        }
+    }
+}
+
+impl ProjectPanelIndentGuidesSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show: Some(ShowIndentGuides::Always),
+        }
+    }
+}
+
+impl ProjectPanelAutoOpenSettings {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            on_create: Some(true),
+            on_paste: Some(true),
+            on_drop: Some(true),
+        }
+    }
 }

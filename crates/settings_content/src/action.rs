@@ -18,6 +18,7 @@ use settings_macros::MergeFrom;
 pub struct CommandAliasTarget(String);
 
 impl CommandAliasTarget {
+    /// Creates an alias target from an action name or arbitrary command string.
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }
@@ -118,6 +119,7 @@ fn add_description(schema: &mut Schema, description: &str) {
 }
 
 impl ActionName {
+    /// Creates an action name from the given string.
     pub fn new(name: impl Into<String>) -> Self {
         Self(name.into())
     }

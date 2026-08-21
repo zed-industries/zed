@@ -15,6 +15,7 @@ use crate::serialize_f32_with_two_decimal_places;
 pub struct FontFeaturesContent(pub IndexMap<String, u32>);
 
 impl FontFeaturesContent {
+    /// Creates an empty set of font features.
     pub fn new() -> Self {
         Self(IndexMap::default())
     }
@@ -111,6 +112,7 @@ impl JsonSchema for FontFeaturesContent {
     }
 }
 
+/// A color from a theme, as a hex color string (e.g., "#ff0000").
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
 #[serde(transparent)]
 pub struct ThemeColor(String);
@@ -213,6 +215,7 @@ pub struct ThemeSettingsContent {
     pub agent_buffer_font_family: Option<FontFamilyName>,
     /// The font size for user messages in the agent panel.
     pub agent_buffer_font_size: Option<FontSize>,
+    /// The font size for the git commit message editor. Falls back to the buffer font size if unset.
     pub git_commit_buffer_font_size: Option<FontSize>,
     /// The name of a font to use for rendering in the markdown preview.
     /// Falls back to the UI font if unset.
@@ -233,7 +236,7 @@ pub struct ThemeSettingsContent {
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
-    // Controls the density of the UI.
+    /// Controls the density of the UI.
     #[serde(rename = "unstable.ui_density")]
     pub ui_density: Option<UiDensity>,
 
@@ -294,6 +297,7 @@ impl From<f32> for FontSize {
     PartialOrd,
     derive_more::FromStr,
 )]
+/// A code fade amount, wrapping around `f32` for custom settings UI rendering.
 #[serde(transparent)]
 pub struct CodeFade(#[serde(serialize_with = "serialize_f32_with_two_decimal_places")] pub f32);
 
@@ -334,6 +338,7 @@ fn default_buffer_font_weight() -> Option<FontWeightContent> {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of a theme selection.")]
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
@@ -350,7 +355,9 @@ pub enum ThemeSelection {
     },
 }
 
+/// The name of the default light theme.
 pub const DEFAULT_LIGHT_THEME: &'static str = "One Light";
+/// The name of the default dark theme.
 pub const DEFAULT_DARK_THEME: &'static str = "One Dark";
 
 impl Default for ThemeSelection {
@@ -376,6 +383,7 @@ impl Default for ThemeSelection {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of an icon theme selection.")]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
@@ -505,6 +513,7 @@ impl From<FontFamilyName> for String {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of a buffer line height.")]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -535,18 +544,25 @@ where
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
+    /// The background appearance of the window.
     #[serde(rename = "background.appearance")]
     pub window_background_appearance: Option<WindowBackgroundContent>,
 
+    /// An array of colors used for theme elements that iterate through a series of colors.
+    ///
+    /// Example: Player colors, rainbow brackets and indent guides, etc.
     #[serde(default)]
     pub accents: Vec<AccentContent>,
 
+    /// The colors of the theme.
     #[serde(flatten, default)]
     pub colors: ThemeColorsContent,
 
+    /// The status colors of the theme.
     #[serde(flatten, default)]
     pub status: StatusColorsContent,
 
+    /// The player colors of the theme.
     #[serde(default)]
     pub players: Vec<PlayerColorContent>,
 
@@ -555,13 +571,18 @@ pub struct ThemeStyleContent {
     pub syntax: IndexMap<String, HighlightStyleContent>,
 }
 
+/// An accent color in a theme.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct AccentContent(pub Option<ThemeColor>);
 
+/// The colors used to represent a player in the editor.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct PlayerColorContent {
+    /// The color of the player's cursor.
     pub cursor: Option<ThemeColor>,
+    /// The background color of the player.
     pub background: Option<ThemeColor>,
+    /// The color of the player's text selections.
     pub selection: Option<ThemeColor>,
 }
 
@@ -577,6 +598,7 @@ pub struct ThemeName(pub Arc<str>);
 #[serde(transparent)]
 pub struct IconThemeName(pub Arc<str>);
 
+/// The colors of a theme.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
@@ -750,57 +772,75 @@ pub struct ThemeColorsContent {
     #[serde(rename = "debugger.accent")]
     pub debugger_accent: Option<ThemeColor>,
 
+    /// Background color of the status bar.
     #[serde(rename = "status_bar.background")]
     pub status_bar_background: Option<ThemeColor>,
 
+    /// Background color of the title bar.
     #[serde(rename = "title_bar.background")]
     pub title_bar_background: Option<ThemeColor>,
 
+    /// Background color of the title bar when the window is inactive.
     #[serde(rename = "title_bar.inactive_background")]
     pub title_bar_inactive_background: Option<ThemeColor>,
 
+    /// Background color of the toolbar.
     #[serde(rename = "toolbar.background")]
     pub toolbar_background: Option<ThemeColor>,
 
+    /// Background color of the tab bar.
     #[serde(rename = "tab_bar.background")]
     pub tab_bar_background: Option<ThemeColor>,
 
+    /// Background color of inactive tabs.
     #[serde(rename = "tab.inactive_background")]
     pub tab_inactive_background: Option<ThemeColor>,
 
+    /// Background color of the active tab.
     #[serde(rename = "tab.active_background")]
     pub tab_active_background: Option<ThemeColor>,
 
+    /// Background color of search matches.
     #[serde(rename = "search.match_background")]
     pub search_match_background: Option<ThemeColor>,
 
+    /// Background color of the active search match.
     #[serde(rename = "search.active_match_background")]
     pub search_active_match_background: Option<ThemeColor>,
 
+    /// Background color of panels.
     #[serde(rename = "panel.background")]
     pub panel_background: Option<ThemeColor>,
 
+    /// Border color of the focused panel.
     #[serde(rename = "panel.focused_border")]
     pub panel_focused_border: Option<ThemeColor>,
 
+    /// Color of indent guides in panels.
     #[serde(rename = "panel.indent_guide")]
     pub panel_indent_guide: Option<ThemeColor>,
 
+    /// Color of indent guides in panels when hovered over.
     #[serde(rename = "panel.indent_guide_hover")]
     pub panel_indent_guide_hover: Option<ThemeColor>,
 
+    /// Color of active indent guides in panels.
     #[serde(rename = "panel.indent_guide_active")]
     pub panel_indent_guide_active: Option<ThemeColor>,
 
+    /// The color of the overlay surface on top of panel.
     #[serde(rename = "panel.overlay_background")]
     pub panel_overlay_background: Option<ThemeColor>,
 
+    /// The color of the overlay surface on top of panel when hovered over.
     #[serde(rename = "panel.overlay_hover")]
     pub panel_overlay_hover: Option<ThemeColor>,
 
+    /// Border color of the focused pane.
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<ThemeColor>,
 
+    /// Border color between pane groups.
     #[serde(rename = "pane_group.border")]
     pub pane_group_border: Option<ThemeColor>,
 
@@ -851,21 +891,27 @@ pub struct ThemeColorsContent {
     #[serde(rename = "minimap.thumb.border")]
     pub minimap_thumb_border: Option<ThemeColor>,
 
+    /// Foreground color of the editor text.
     #[serde(rename = "editor.foreground")]
     pub editor_foreground: Option<ThemeColor>,
 
+    /// Background color of the editor.
     #[serde(rename = "editor.background")]
     pub editor_background: Option<ThemeColor>,
 
+    /// Background color of the editor gutter.
     #[serde(rename = "editor.gutter.background")]
     pub editor_gutter_background: Option<ThemeColor>,
 
+    /// Background color of the editor's subheaders.
     #[serde(rename = "editor.subheader.background")]
     pub editor_subheader_background: Option<ThemeColor>,
 
+    /// Background color of the active line in the editor.
     #[serde(rename = "editor.active_line.background")]
     pub editor_active_line_background: Option<ThemeColor>,
 
+    /// Background color of highlighted lines in the editor.
     #[serde(rename = "editor.highlighted_line.background")]
     pub editor_highlighted_line_background: Option<ThemeColor>,
 
@@ -891,15 +937,19 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.invisible")]
     pub editor_invisible: Option<ThemeColor>,
 
+    /// Color of wrap guides in the editor.
     #[serde(rename = "editor.wrap_guide")]
     pub editor_wrap_guide: Option<ThemeColor>,
 
+    /// Color of the active wrap guide in the editor.
     #[serde(rename = "editor.active_wrap_guide")]
     pub editor_active_wrap_guide: Option<ThemeColor>,
 
+    /// Color of indent guides in the editor.
     #[serde(rename = "editor.indent_guide")]
     pub editor_indent_guide: Option<ThemeColor>,
 
+    /// Color of active indent guides in the editor.
     #[serde(rename = "editor.indent_guide_active")]
     pub editor_indent_guide_active: Option<ThemeColor>,
 
@@ -1065,6 +1115,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "terminal.ansi.dim_white")]
     pub terminal_ansi_dim_white: Option<ThemeColor>,
 
+    /// Color of link text when hovered over.
     #[serde(rename = "link_text.hover")]
     pub link_text_hover: Option<ThemeColor>,
 
@@ -1172,23 +1223,28 @@ pub struct ThemeColorsContent {
     pub vim_helix_select_foreground: Option<ThemeColor>,
 }
 
+/// The highlight style of a syntax node.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct HighlightStyleContent {
+    /// The text color.
     pub color: Option<ThemeColor>,
 
+    /// The background color.
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "treat_error_as_none"
     )]
     pub background_color: Option<ThemeColor>,
 
+    /// The font style.
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "treat_error_as_none"
     )]
     pub font_style: Option<FontStyleContent>,
 
+    /// The font weight.
     #[serde(
         skip_serializing_if = "Option::is_none",
         deserialize_with = "treat_error_as_none"
@@ -1197,6 +1253,7 @@ pub struct HighlightStyleContent {
 }
 
 impl HighlightStyleContent {
+    /// Returns whether no style attributes are set.
     pub fn is_empty(&self) -> bool {
         self.color.is_none()
             && self.background_color.is_none()
@@ -1214,6 +1271,7 @@ where
     Ok(T::deserialize(value).ok())
 }
 
+/// The status colors of a theme.
 #[with_fallible_options]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
@@ -1223,9 +1281,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "conflict")]
     pub conflict: Option<ThemeColor>,
 
+    /// Background color for the conflict status.
     #[serde(rename = "conflict.background")]
     pub conflict_background: Option<ThemeColor>,
 
+    /// Border color for the conflict status.
     #[serde(rename = "conflict.border")]
     pub conflict_border: Option<ThemeColor>,
 
@@ -1233,9 +1293,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "created")]
     pub created: Option<ThemeColor>,
 
+    /// Background color for the created status.
     #[serde(rename = "created.background")]
     pub created_background: Option<ThemeColor>,
 
+    /// Border color for the created status.
     #[serde(rename = "created.border")]
     pub created_border: Option<ThemeColor>,
 
@@ -1243,9 +1305,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "deleted")]
     pub deleted: Option<ThemeColor>,
 
+    /// Background color for the deleted status.
     #[serde(rename = "deleted.background")]
     pub deleted_background: Option<ThemeColor>,
 
+    /// Border color for the deleted status.
     #[serde(rename = "deleted.border")]
     pub deleted_border: Option<ThemeColor>,
 
@@ -1253,9 +1317,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "error")]
     pub error: Option<ThemeColor>,
 
+    /// Background color for the error status.
     #[serde(rename = "error.background")]
     pub error_background: Option<ThemeColor>,
 
+    /// Border color for the error status.
     #[serde(rename = "error.border")]
     pub error_border: Option<ThemeColor>,
 
@@ -1263,9 +1329,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "hidden")]
     pub hidden: Option<ThemeColor>,
 
+    /// Background color for the hidden status.
     #[serde(rename = "hidden.background")]
     pub hidden_background: Option<ThemeColor>,
 
+    /// Border color for the hidden status.
     #[serde(rename = "hidden.border")]
     pub hidden_border: Option<ThemeColor>,
 
@@ -1273,9 +1341,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "hint")]
     pub hint: Option<ThemeColor>,
 
+    /// Background color for the hint status.
     #[serde(rename = "hint.background")]
     pub hint_background: Option<ThemeColor>,
 
+    /// Border color for the hint status.
     #[serde(rename = "hint.border")]
     pub hint_border: Option<ThemeColor>,
 
@@ -1283,9 +1353,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "ignored")]
     pub ignored: Option<ThemeColor>,
 
+    /// Background color for the ignored status.
     #[serde(rename = "ignored.background")]
     pub ignored_background: Option<ThemeColor>,
 
+    /// Border color for the ignored status.
     #[serde(rename = "ignored.border")]
     pub ignored_border: Option<ThemeColor>,
 
@@ -1293,9 +1365,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "info")]
     pub info: Option<ThemeColor>,
 
+    /// Background color for the info status.
     #[serde(rename = "info.background")]
     pub info_background: Option<ThemeColor>,
 
+    /// Border color for the info status.
     #[serde(rename = "info.border")]
     pub info_border: Option<ThemeColor>,
 
@@ -1303,9 +1377,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "modified")]
     pub modified: Option<ThemeColor>,
 
+    /// Background color for the modified status.
     #[serde(rename = "modified.background")]
     pub modified_background: Option<ThemeColor>,
 
+    /// Border color for the modified status.
     #[serde(rename = "modified.border")]
     pub modified_border: Option<ThemeColor>,
 
@@ -1313,9 +1389,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "predictive")]
     pub predictive: Option<ThemeColor>,
 
+    /// Background color for the predictive status.
     #[serde(rename = "predictive.background")]
     pub predictive_background: Option<ThemeColor>,
 
+    /// Border color for the predictive status.
     #[serde(rename = "predictive.border")]
     pub predictive_border: Option<ThemeColor>,
 
@@ -1323,9 +1401,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "renamed")]
     pub renamed: Option<ThemeColor>,
 
+    /// Background color for the renamed status.
     #[serde(rename = "renamed.background")]
     pub renamed_background: Option<ThemeColor>,
 
+    /// Border color for the renamed status.
     #[serde(rename = "renamed.border")]
     pub renamed_border: Option<ThemeColor>,
 
@@ -1333,9 +1413,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "success")]
     pub success: Option<ThemeColor>,
 
+    /// Background color for the success status.
     #[serde(rename = "success.background")]
     pub success_background: Option<ThemeColor>,
 
+    /// Border color for the success status.
     #[serde(rename = "success.border")]
     pub success_border: Option<ThemeColor>,
 
@@ -1343,9 +1425,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "unreachable")]
     pub unreachable: Option<ThemeColor>,
 
+    /// Background color for the unreachable status.
     #[serde(rename = "unreachable.background")]
     pub unreachable_background: Option<ThemeColor>,
 
+    /// Border color for the unreachable status.
     #[serde(rename = "unreachable.border")]
     pub unreachable_border: Option<ThemeColor>,
 
@@ -1353,9 +1437,11 @@ pub struct StatusColorsContent {
     #[serde(rename = "warning")]
     pub warning: Option<ThemeColor>,
 
+    /// Background color for the warning status.
     #[serde(rename = "warning.background")]
     pub warning_background: Option<ThemeColor>,
 
+    /// Border color for the warning status.
     #[serde(rename = "warning.border")]
     pub warning_border: Option<ThemeColor>,
 }
@@ -1364,16 +1450,31 @@ pub struct StatusColorsContent {
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowBackgroundContent {
+    /// Opaque.
+    ///
+    /// This lets the window manager know that content behind this
+    /// window does not need to be drawn.
+    ///
+    /// Actual color depends on the system and themes should define a fully
+    /// opaque background color instead.
     Opaque,
+    /// Plain alpha transparency.
     Transparent,
+    /// Transparency, but the contents behind the window are blurred.
+    ///
+    /// Not always supported.
     Blurred,
 }
 
+/// Allows italic or oblique faces to be selected.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyleContent {
+    /// A face that is neither italic not obliqued.
     Normal,
+    /// A form that is generally cursive in nature.
     Italic,
+    /// A typically-sloped version of the regular face.
     Oblique,
 }
 
@@ -1388,6 +1489,7 @@ pub enum FontStyleContent {
     MergeFrom,
     derive_more::FromStr,
 )]
+/// A font weight value between 100 (thin) and 900 (black), wrapping around `f32` for custom settings UI rendering.
 #[serde(transparent)]
 pub struct FontWeightContent(pub f32);
 
@@ -1410,14 +1512,23 @@ impl Default for FontWeightContent {
 }
 
 impl FontWeightContent {
+    /// Thin weight (100), the thinnest value.
     pub const THIN: FontWeightContent = FontWeightContent(100.0);
+    /// Extra light weight (200).
     pub const EXTRA_LIGHT: FontWeightContent = FontWeightContent(200.0);
+    /// Light weight (300).
     pub const LIGHT: FontWeightContent = FontWeightContent(300.0);
+    /// Normal (400).
     pub const NORMAL: FontWeightContent = FontWeightContent(400.0);
+    /// Medium weight (500, higher than normal).
     pub const MEDIUM: FontWeightContent = FontWeightContent(500.0);
+    /// Semibold weight (600).
     pub const SEMIBOLD: FontWeightContent = FontWeightContent(600.0);
+    /// Bold weight (700).
     pub const BOLD: FontWeightContent = FontWeightContent(700.0);
+    /// Extra-bold weight (800).
     pub const EXTRA_BOLD: FontWeightContent = FontWeightContent(800.0);
+    /// Black weight (900), the thickest value.
     pub const BLACK: FontWeightContent = FontWeightContent(900.0);
 }
 
@@ -1528,5 +1639,48 @@ mod tests {
             Some(FontWeightContent::NORMAL.0 as f64),
             "FontWeightContent should have default of 400.0"
         );
+    }
+}
+
+impl ThemeSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            ui_font_size: Some(FontSize(16.0)),
+            ui_font_family: Some(FontFamilyName(Arc::from(".ZedSans"))),
+            ui_font_fallbacks: None,
+            ui_font_features: Some(FontFeaturesContent(IndexMap::from_iter([(
+                String::from("calt"),
+                0,
+            )]))),
+            ui_font_weight: Some(FontWeightContent(400.0)),
+            buffer_font_family: Some(FontFamilyName(Arc::from(".ZedMono"))),
+            buffer_font_fallbacks: None,
+            buffer_font_size: Some(FontSize(15.0)),
+            buffer_font_weight: Some(FontWeightContent(400.0)),
+            buffer_line_height: Some(BufferLineHeight::Comfortable),
+            buffer_font_features: Some(FontFeaturesContent(IndexMap::default())),
+            agent_ui_font_family: None,
+            agent_ui_font_size: None,
+            agent_buffer_font_family: None,
+            agent_buffer_font_size: Some(FontSize(12.0)),
+            git_commit_buffer_font_size: Some(FontSize(12.0)),
+            markdown_preview_font_family: None,
+            markdown_preview_code_font_family: None,
+            markdown_preview_font_size: None,
+            markdown_preview_theme: None,
+            theme: Some(ThemeSelection::Dynamic {
+                mode: ThemeAppearanceMode::System,
+                light: ThemeName(Arc::from(DEFAULT_LIGHT_THEME)),
+                dark: ThemeName(Arc::from(DEFAULT_DARK_THEME)),
+            }),
+            icon_theme: Some(IconThemeSelection::Static(IconThemeName(Arc::from(
+                "Zed (Default)",
+            )))),
+            ui_density: None,
+            unnecessary_code_fade: Some(CodeFade(0.3)),
+            experimental_theme_overrides: None,
+            theme_overrides: HashMap::default(),
+        }
     }
 }

@@ -11,6 +11,10 @@ workspace = true
 [lib]
 path = "src/settings_content.rs"
 
+[[bin]]
+name = "generate_default_settings"
+path = "src/generate_default_settings.rs"
+
 [features]
 default = []
 

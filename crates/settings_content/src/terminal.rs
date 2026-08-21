@@ -7,6 +7,7 @@ use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{FontFamilyName, FontFeaturesContent, FontSize, FontWeightContent};
 
+/// Terminal settings that can be configured per project.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectTerminalSettingsContent {
     /// What shell to use when opening a terminal.
@@ -65,9 +66,11 @@ pub struct ProjectTerminalSettingsContent {
     pub path_hyperlink_timeout_ms: Option<u64>,
 }
 
+/// Configuration for the terminal.
 #[with_fallible_options]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
+    /// Terminal settings that can be configured per project.
     #[serde(flatten)]
     pub project: ProjectTerminalSettingsContent,
     /// Sets the terminal's font size.
@@ -92,6 +95,8 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: comfortable
     pub line_height: Option<TerminalLineHeight>,
+    /// What font features to use for the terminal.
+    /// When not set, defaults to matching the editor's font features.
     pub font_features: Option<FontFeaturesContent>,
     /// Sets the terminal's font weight in CSS weight units 0-900.
     pub font_weight: Option<FontWeightContent>,
@@ -136,6 +141,9 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: true
     pub button: Option<bool>,
+    /// Where to dock terminals panel. Can be `left`, `right`, `bottom`.
+    ///
+    /// Default: bottom
     pub dock: Option<TerminalDockPosition>,
     /// Whether the terminal panel should open on startup.
     ///
@@ -209,6 +217,7 @@ pub struct TerminalSettingsContent {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of a shell configuration.")]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -239,7 +248,9 @@ pub enum Shell {
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kind of a working directory strategy.")]
 #[serde(rename_all = "snake_case")]
+/// What working directory to use when launching the terminal.
 pub enum WorkingDirectory {
     /// Use the current file's directory, falling back to the project directory,
     /// then the first project in the workspace.
@@ -255,13 +266,17 @@ pub enum WorkingDirectory {
     /// Always use a specific directory. This value will be shell expanded.
     /// If this path is not a valid directory the terminal will default to
     /// this platform's home directory  (if it can be found).
-    Always { directory: String },
+    Always {
+        /// The directory to use.
+        directory: String,
+    },
 }
 
 #[with_fallible_options]
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
 )]
+/// Scrollbar-related settings for the terminal.
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///
@@ -269,6 +284,7 @@ pub struct ScrollbarSettingsContent {
     pub show: Option<ShowScrollbar>,
 }
 
+/// The terminal's line height.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalLineHeight {
@@ -283,6 +299,7 @@ pub enum TerminalLineHeight {
 }
 
 impl TerminalLineHeight {
+    /// Returns the line height as a multiplier of the font size.
     pub fn value(&self) -> f32 {
         match self {
             TerminalLineHeight::Comfortable => 1.618,
@@ -339,6 +356,7 @@ pub enum ShowScrollbar {
 )]
 #[serde(rename_all = "snake_case")]
 // todo() -> combine with CursorShape
+/// The shape of the terminal cursor.
 pub enum CursorShapeContent {
     /// Cursor is a block like `█`.
     #[default]
@@ -365,6 +383,7 @@ pub enum CursorShapeContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// The cursor blinking behavior in the terminal.
 pub enum TerminalBlink {
     /// Never blink the cursor, ignoring the terminal mode.
     Off,
@@ -389,12 +408,15 @@ pub enum TerminalBlink {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Whether Alternate Scroll mode (code: ?1007) is active by default.
 pub enum AlternateScroll {
+    /// Default alternate scroll mode to on.
     On,
+    /// Default alternate scroll mode to off.
     Off,
 }
 
-// Toolbar related settings
+/// Toolbar related settings
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
@@ -423,6 +445,7 @@ pub struct TerminalToolbarContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// What to do when the `BEL` character (`\a`) is printed to terminal.
 pub enum TerminalBell {
     /// Play an OS-specific alert sound.
     #[default]
@@ -435,6 +458,7 @@ pub enum TerminalBell {
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
+/// The Conda manager to use when activating Conda environments.
 pub enum CondaManager {
     /// Automatically detect the conda manager
     #[default]
@@ -447,17 +471,26 @@ pub enum CondaManager {
     Micromamba,
 }
 
+/// Whether to detect and activate Python virtual environments in the
+/// terminal's working directory.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum VenvSettings {
+    /// Do not detect virtual environments.
     #[default]
     Off,
+    /// Detect virtual environments and activate them in the terminal.
     On {
+        /// The activation script flavor to use when activating the virtual
+        /// environment. Can also be `csh`, `fish`, `nushell` and `power_shell`.
+        ///
+        /// Default: default
+        activate_script: Option<ActivateScript>,
+        /// The name of the virtual environment.
+        venv_name: Option<String>,
         /// Default directories to search for virtual environments, relative
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
-        activate_script: Option<ActivateScript>,
-        venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
         /// Preferred Conda manager to use when activating Conda environments.
         ///
@@ -465,15 +498,21 @@ pub enum VenvSettings {
         conda_manager: Option<CondaManager>,
     },
 }
+/// Resolved virtual environment detection settings, with defaults applied.
 #[with_fallible_options]
 pub struct VenvSettingsContent<'a> {
+    /// The activation script flavor to use.
     pub activate_script: ActivateScript,
+    /// The name of the virtual environment.
     pub venv_name: &'a str,
+    /// Directories to search for virtual environments.
     pub directories: &'a [PathBuf],
+    /// The Conda manager to use when activating Conda environments.
     pub conda_manager: CondaManager,
 }
 
 impl VenvSettings {
+    /// Returns the resolved settings when detection is enabled, or `None` when off.
     pub fn as_option(&self) -> Option<VenvSettingsContent<'_>> {
         match self {
             VenvSettings::Off => None,
@@ -492,10 +531,16 @@ impl VenvSettings {
     }
 }
 
+/// A regex used to identify path hyperlinks. The regexes can be specified in
+/// two forms - a single regex string, or an array of strings (which will be
+/// collected into a single multi-line regex string).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum PathHyperlinkRegex {
+    /// A single regex string.
     SingleLine(String),
+    /// An array of strings which will be collected into a single multi-line
+    /// regex string.
     MultiLine(Vec<String>),
 }
 
@@ -513,21 +558,32 @@ pub enum PathHyperlinkRegex {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
+/// Where to dock the terminal panel.
 pub enum TerminalDockPosition {
+    /// Dock the terminal panel to the left.
     Left,
+    /// Dock the terminal panel to the bottom.
     Bottom,
+    /// Dock the terminal panel to the right.
     Right,
 }
 
+/// The activation script flavor to use when activating a virtual environment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateScript {
+    /// Use the default activation script.
     #[default]
     Default,
+    /// Use the activation script for the C shell.
     Csh,
+    /// Use the activation script for the Fish shell.
     Fish,
+    /// Use the activation script for Nushell.
     Nushell,
+    /// Use the activation script for PowerShell.
     PowerShell,
+    /// Use the activation script for pyenv.
     Pyenv,
 }
 
@@ -553,5 +609,110 @@ mod test {
             project_settings.terminal.unwrap().shell,
             Some(Shell::Program("/bin/project".to_owned()))
         );
+    }
+}
+
+impl ProjectTerminalSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            shell: Some(Shell::System),
+            working_directory: Some(WorkingDirectory::CurrentProjectDirectory),
+            env: Some(HashMap::default()),
+            detect_venv: Some(VenvSettings::On {
+                activate_script: Some(ActivateScript::Default),
+                venv_name: None,
+                directories: Some(vec![
+                    PathBuf::from(".env"),
+                    PathBuf::from("env"),
+                    PathBuf::from(".venv"),
+                    PathBuf::from("venv"),
+                ]),
+                conda_manager: Some(CondaManager::Auto),
+            }),
+            path_hyperlink_regexes: Some(vec![
+                PathHyperlinkRegex::SingleLine(String::from(
+                    r#"File "(?<path>[^"]+)", line (?<line>[0-9]+)"#,
+                )),
+                PathHyperlinkRegex::MultiLine(vec![
+                    String::from("(?x)"),
+                    String::from("(?<path>"),
+                    String::from("    ("),
+                    String::from(
+                        "        # multi-char path: first char (not opening delimiter, space, or box drawing char)",
+                    ),
+                    String::from(r#"        [^({\[<"'`\ \u2500-\u257F]"#),
+                    String::from(
+                        "        # middle chars: non-space, and colon/paren only if not followed by digit/paren/space",
+                    ),
+                    String::from(r"        ([^\ :(]|[:(][^0-9()\ ])*"),
+                    String::from("        # last char: not closing delimiter or colon"),
+                    String::from(r#"        [^()}\]>"'`.,;:\ ]"#),
+                    String::from("    |"),
+                    String::from(
+                        "        # single-char path: not delimiter, punctuation, space, or box drawing char",
+                    ),
+                    String::from(r#"        [^(){}\[\]<>"'`.,;:\ \u2500-\u257F]"#),
+                    String::from("    )"),
+                    String::from(
+                        "    # optional line/column suffix (included in path for PathWithPosition::parse_str)",
+                    ),
+                    String::from(r"    (:+[0-9]+(:[0-9]+)?|:?\([0-9]+([,:]?[0-9]+)?\))?"),
+                    String::from(")"),
+                ]),
+            ]),
+            path_hyperlink_timeout_ms: Some(1),
+        }
+    }
+}
+
+impl TerminalToolbarContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            breadcrumbs: Some(false),
+        }
+    }
+}
+
+impl ScrollbarSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self { show: None }
+    }
+}
+
+impl TerminalSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            project: ProjectTerminalSettingsContent::defaults(),
+            font_size: None,
+            font_family: None,
+            font_fallbacks: None,
+            line_height: Some(TerminalLineHeight::Standard),
+            font_features: None,
+            font_weight: Some(FontWeightContent(400.0)),
+            cursor_shape: Some(CursorShapeContent::Block),
+            blinking: Some(TerminalBlink::TerminalControlled),
+            alternate_scroll: Some(AlternateScroll::On),
+            option_as_meta: Some(false),
+            copy_on_select: Some(false),
+            keep_selection_on_copy: Some(true),
+            open_links_in_mouse_mode: Some(true),
+            button: Some(true),
+            dock: Some(TerminalDockPosition::Bottom),
+            starts_open: Some(false),
+            flexible: Some(true),
+            default_width: Some(crate::PixelSetting(640.0)),
+            default_height: Some(crate::PixelSetting(320.0)),
+            max_scroll_history_lines: Some(10000),
+            scroll_multiplier: Some(1.0),
+            toolbar: Some(TerminalToolbarContent::defaults()),
+            scrollbar: Some(ScrollbarSettingsContent::defaults()),
+            minimum_contrast: Some(45.0),
+            show_count_badge: Some(false),
+            bell: Some(TerminalBell::Off),
+        }
     }
 }

@@ -19,6 +19,7 @@ use settings_macros::{MergeFrom, with_fallible_options};
     strum::EnumDiscriminants,
 )]
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[strum_discriminants(doc = "The kinds of window control button layouts.")]
 #[schemars(schema_with = "window_button_layout_schema")]
 #[serde(from = "String", into = "String")]
 pub enum WindowButtonLayoutContent {
@@ -32,6 +33,7 @@ pub enum WindowButtonLayoutContent {
 }
 
 impl WindowButtonLayoutContent {
+    /// Converts this setting into a [`WindowButtonLayout`], if it specifies one.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     pub fn into_layout(self) -> Option<WindowButtonLayout> {
         use util::ResultExt;
@@ -43,6 +45,7 @@ impl WindowButtonLayoutContent {
         }
     }
 
+    /// Converts this setting into a [`WindowButtonLayout`], if it specifies one.
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     pub fn into_layout(self) -> Option<WindowButtonLayout> {
         None
@@ -78,6 +81,7 @@ impl From<String> for WindowButtonLayoutContent {
     }
 }
 
+/// Titlebar related settings
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
@@ -127,4 +131,22 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: "platform_default"
     pub button_layout: Option<WindowButtonLayoutContent>,
+}
+
+impl TitleBarSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            show_branch_status_icon: Some(false),
+            show_onboarding_banner: Some(true),
+            show_user_picture: Some(true),
+            show_branch_name: Some(true),
+            show_worktree_name: Some(true),
+            show_project_items: Some(true),
+            show_sign_in: Some(true),
+            show_user_menu: Some(true),
+            show_menus: Some(false),
+            button_layout: Some(WindowButtonLayoutContent::PlatformDefault),
+        }
+    }
 }

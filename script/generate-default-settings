@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "Generating assets/settings/default.json from UserSettingsContent::defaults()..."
+cargo run -p settings_content --bin generate_default_settings

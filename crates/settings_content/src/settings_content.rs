@@ -1,10 +1,21 @@
+//! Data types describing the content of Zed's settings files.
+//!
+//! The rustdocs on these types are the single source of truth for
+//! user-facing settings documentation: field docs become the comments in the
+//! generated `assets/settings/default.json`, and enum variant docs become the
+//! option lists in the generated settings reference docs.
+
+#![warn(missing_docs)]
+
 mod action;
 mod agent;
+pub mod default_settings_json;
 mod editor;
 mod extension;
 mod fallible_options;
 mod language;
 mod language_model;
+/// Recursive merging of settings structures.
 pub mod merge_from;
 mod project;
 mod serde_helper;
@@ -81,7 +92,10 @@ macro_rules! settings_overrides {
     ) => {
         $(#[$attr])*
         pub struct $name {
-            $(pub $field: Option<Box<SettingsContent>>,)*
+            $(
+                #[doc = concat!("Settings overrides applied under the `", stringify!($field), "` key.")]
+                pub $field: Option<Box<SettingsContent>>,
+            )*
         }
 
         impl $name {
@@ -103,6 +117,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
+/// The result of parsing a settings file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParseStatus {
     /// Settings were parsed successfully
@@ -110,7 +125,10 @@ pub enum ParseStatus {
     /// Settings file was not changed, so no parsing was performed
     Unchanged,
     /// Settings failed to parse
-    Failed { error: String },
+    Failed {
+        /// The parse error message.
+        error: String,
+    },
 }
 
 /// Determines when the mouse cursor should be hidden in response to keyboard
@@ -169,39 +187,53 @@ pub enum ReduceMotionMode {
     Off,
 }
 
+/// The content of Zed's settings, with every setting optional.
 #[with_fallible_options]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
+    /// Project-related settings, flattened into the root object.
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
 
+    /// Theme and appearance settings, flattened into the root object.
     #[serde(flatten)]
     pub theme: Box<ThemeSettingsContent>,
 
+    /// Extension settings, flattened into the root object.
     #[serde(flatten)]
     pub extension: ExtensionSettingsContent,
 
+    /// Workspace settings, flattened into the root object.
     #[serde(flatten)]
     pub workspace: WorkspaceSettingsContent,
 
+    /// Editor settings, flattened into the root object.
     #[serde(flatten)]
     pub editor: EditorSettingsContent,
 
+    /// Remote development settings, flattened into the root object.
     #[serde(flatten)]
     pub remote: RemoteSettingsContent,
 
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
 
+    /// Setting to customize the behavior of the git panel.
     pub git_panel: Option<GitPanelSettingsContent>,
 
+    /// Settings related to the editor's tabs.
     pub tabs: Option<ItemSettingsContent>,
+    /// Settings related to the editor's tab bar.
     pub tab_bar: Option<TabBarSettingsContent>,
+    /// Status bar-related settings.
     pub status_bar: Option<StatusBarSettingsContent>,
 
+    /// Settings related to preview tabs.
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
+    /// Settings related to the agent panel.
     pub agent: Option<AgentSettingsContent>,
+    /// Configures agent servers available in the agent panel.
     pub agent_servers: Option<AllAgentServersSettings>,
 
     /// Configuration of audio in Zed.
@@ -222,6 +254,7 @@ pub struct SettingsContent {
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
 
+    /// Configuration for debugger panel and settings.
     pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
@@ -239,6 +272,7 @@ pub struct SettingsContent {
     /// The settings for the markdown preview.
     pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
 
+    /// REPL settings.
     pub repl: Option<ReplSettingsContent>,
 
     /// Whether or not to enable Helix mode.
@@ -253,6 +287,7 @@ pub struct SettingsContent {
     /// Default: on_typing_and_action
     pub hide_mouse: Option<HideMouseMode>,
 
+    /// Settings specific to journaling.
     pub journal: Option<JournalSettingsContent>,
 
     /// A map of log scopes to the desired log level.
@@ -261,17 +296,39 @@ pub struct SettingsContent {
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
 
+    /// Whether to show full labels in line indicator or short ones
+    ///
+    /// Values:
+    ///   - `short`: "2 s, 15 l, 32 c"
+    ///   - `long`: "2 selections, 15 lines, 32 characters"
+    ///
+    /// Default: long
     pub line_indicator_format: Option<LineIndicatorFormat>,
 
+    /// Different settings for specific language models.
     pub language_models: Option<AllLanguageModelSettingsContent>,
 
+    /// Customize outline Panel.
     pub outline_panel: Option<OutlinePanelSettingsContent>,
 
+    /// Customize project panel.
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
+    /// Set a proxy to use. The proxy protocol is specified by the URI scheme.
+    ///
+    /// Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
+    /// `socks5h`. `http` will be used when no scheme is specified.
+    ///
+    /// By default no proxy will be used, or Zed will try get proxy settings from
+    /// environment variables. If certain hosts should not be proxied,
+    /// set the `no_proxy` environment variable and provide a comma-separated list.
+    ///
+    /// Examples:
+    ///   - "proxy": "socks5h://localhost:10808"
+    ///   - "proxy": "http://127.0.0.1:10809"
     pub proxy: Option<String>,
 
     /// Whether to reduce non-essential motion in the UI, such as loading
@@ -298,6 +355,7 @@ pub struct SettingsContent {
     /// Configuration of the terminal in Zed.
     pub terminal: Option<TerminalSettingsContent>,
 
+    /// Titlebar related settings
     pub title_bar: Option<TitleBarSettingsContent>,
 
     /// Whether or not to enable Vim mode.
@@ -305,7 +363,7 @@ pub struct SettingsContent {
     /// Default: false
     pub vim_mode: Option<bool>,
 
-    // Settings related to calls in Zed
+    /// Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
 
     /// Settings for the which-key popup.
@@ -352,6 +410,7 @@ pub struct PerformanceProfilerSettingsContent {
     pub enabled: Option<bool>,
 }
 
+/// Local overrides for feature flags, keyed by flag name.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
 #[serde(transparent)]
 pub struct FeatureFlagsMap(pub HashMap<String, String>);
@@ -389,6 +448,7 @@ impl std::ops::DerefMut for FeatureFlagsMap {
 }
 
 impl SettingsContent {
+    /// Returns a mutable reference to the per-language settings map.
     pub fn languages_mut(&mut self) -> &mut HashMap<String, LanguageSettingsContent> {
         &mut self.project.all_languages.languages.0
     }
@@ -396,8 +456,11 @@ impl SettingsContent {
 
 // These impls are there to optimize builds by avoiding monomorphization downstream. Yes, they're repetitive, but using default impls
 // break the optimization, for whatever reason.
+/// Parsing entry points for types that can be the root of a settings file.
 pub trait RootUserSettings: Sized + DeserializeOwned {
+    /// Parses settings JSON, returning the parsed value (if any) and the parse status.
     fn parse_json(json: &str) -> (Option<Self>, ParseStatus);
+    /// Parses settings JSON that may contain comments and trailing commas.
     fn parse_json_with_comments(json: &str) -> anyhow::Result<Self>;
 }
 
@@ -428,12 +491,14 @@ impl RootUserSettings for UserSettingsContent {
 }
 
 settings_overrides! {
+    /// Per-release-channel settings overrides, applied when running the matching Zed release channel.
     #[with_fallible_options]
     #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
     pub struct ReleaseChannelOverrides { dev, nightly, preview, stable }
 }
 
 settings_overrides! {
+    /// Per-platform settings overrides, applied when running on the matching operating system.
     #[with_fallible_options]
     #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
     pub struct PlatformOverrides { macos, linux, windows }
@@ -468,23 +533,30 @@ pub struct SettingsProfile {
     pub settings: Box<SettingsContent>,
 }
 
+/// The content of the user's settings file.
 #[with_fallible_options]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
+    /// The base settings, flattened into the root object.
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
 
+    /// Per-release-channel settings overrides, flattened into the root object.
     #[serde(flatten)]
     pub release_channel_overrides: ReleaseChannelOverrides,
 
+    /// Per-platform settings overrides, flattened into the root object.
     #[serde(flatten)]
     pub platform_overrides: PlatformOverrides,
 
+    /// Named settings profiles that can temporarily override settings.
     #[serde(default)]
     pub profiles: IndexMap<String, SettingsProfile>,
 }
 
+/// Settings contributed by installed extensions.
 pub struct ExtensionsSettingsContent {
+    /// Default language settings provided by installed extensions.
     pub all_languages: AllLanguageSettingsContent,
 }
 
@@ -505,15 +577,24 @@ pub struct ExtensionsSettingsContent {
     strum::VariantArray,
 )]
 pub enum BaseKeymapContent {
+    /// Zed's default keymap.
     #[default]
     Zed,
+    /// Keymap similar to VS Code.
     VSCode,
+    /// Keymap similar to JetBrains IDEs.
     JetBrains,
+    /// Keymap similar to Sublime Text.
     SublimeText,
+    /// Keymap similar to Atom.
     Atom,
+    /// Keymap similar to TextMate.
     TextMate,
+    /// Keymap similar to Emacs.
     Emacs,
+    /// Keymap similar to Cursor.
     Cursor,
+    /// Disables the base keymap.
     None,
 }
 
@@ -543,6 +624,7 @@ pub struct AudioSettingsContent {
     pub input_audio_device: Option<AudioInputDeviceName>,
 }
 
+/// The name of the output audio device to use.
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct AudioOutputDeviceName(pub Option<String>);
@@ -559,6 +641,7 @@ impl From<Option<String>> for AudioInputDeviceName {
     }
 }
 
+/// The name of the input audio device to use.
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct AudioInputDeviceName(pub Option<String>);
@@ -604,6 +687,7 @@ impl Default for TelemetrySettingsContent {
     }
 }
 
+/// Configuration for debugger panel and settings.
 #[with_fallible_options]
 #[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone, MergeFrom)]
 pub struct DebuggerSettingsContent {
@@ -664,6 +748,7 @@ pub enum SteppingGranularity {
     Instruction,
 }
 
+/// The position at which a panel is docked.
 #[derive(
     Copy,
     Clone,
@@ -679,8 +764,11 @@ pub enum SteppingGranularity {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DockPosition {
+    /// Dock the panel on the left.
     Left,
+    /// Dock the panel at the bottom.
     Bottom,
+    /// Dock the panel on the right.
     Right,
 }
 
@@ -699,6 +787,7 @@ pub struct CallSettingsContent {
     pub share_on_join: Option<bool>,
 }
 
+/// Setting to customize the behavior of the git panel.
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct GitPanelSettingsContent {
@@ -787,6 +876,7 @@ pub struct GitPanelSettingsContent {
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
 }
 
+/// The action performed when clicking a changed file in the Git panel.
 #[derive(
     Default,
     Copy,
@@ -812,6 +902,7 @@ pub enum GitPanelClickBehavior {
     ViewFile,
 }
 
+/// How to sort entries in the git panel.
 #[derive(
     Copy,
     Clone,
@@ -828,11 +919,14 @@ pub enum GitPanelClickBehavior {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GitPanelSortBy {
+    /// Sort entries by file path.
     #[default]
     Path,
+    /// Sort entries by file name.
     Name,
 }
 
+/// How to group entries in the git panel.
 #[derive(
     Copy,
     Clone,
@@ -849,12 +943,16 @@ pub enum GitPanelSortBy {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GitPanelGroupBy {
+    /// Do not group entries.
     None,
+    /// Group entries by git status.
     #[default]
     Status,
+    /// Group entries by whether they are staged.
     Staging,
 }
 
+/// How entry statuses are displayed in the git panel.
 #[derive(
     Default,
     Copy,
@@ -871,19 +969,24 @@ pub enum GitPanelGroupBy {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum StatusStyle {
+    /// Show the git status as an icon.
     #[default]
     Icon,
+    /// Show the git status by coloring the entry label.
     LabelColor,
 }
 
+/// Scrollbar-related settings for the git panel.
 #[with_fallible_options]
 #[derive(
     Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
 )]
 pub struct ScrollbarSettings {
+    /// When to show the scrollbar in the git panel.
     pub show: Option<ShowScrollbar>,
 }
 
+/// Visual settings shared by dockable panels, such as the collaboration panel.
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct PanelSettingsContent {
@@ -901,6 +1004,7 @@ pub struct PanelSettingsContent {
     pub default_width: Option<PixelSetting>,
 }
 
+/// Settings related to the file finder.
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
@@ -927,6 +1031,7 @@ pub struct FileFinderSettingsContent {
     pub include_channels: Option<bool>,
 }
 
+/// Whether to include gitignored files when searching in the file finder.
 #[derive(
     Debug,
     PartialEq,
@@ -952,6 +1057,7 @@ pub enum IncludeIgnoredContent {
     Smart,
 }
 
+/// Max-width of the file finder modal in relation to the available window width.
 #[derive(
     Debug,
     PartialEq,
@@ -968,33 +1074,64 @@ pub enum IncludeIgnoredContent {
 )]
 #[serde(rename_all = "lowercase")]
 pub enum FileFinderWidthContent {
+    /// Small max-width.
     #[default]
     Small,
+    /// Medium max-width.
     Medium,
+    /// Large max-width.
     Large,
+    /// Extra-large max-width.
     XLarge,
+    /// Take up the full window width.
     Full,
 }
 
+/// Settings related to Vim mode in Zed.
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema, MergeFrom)]
 pub struct VimSettingsContent {
+    /// The default mode to start in.
+    ///
+    /// Default: normal
     pub default_mode: Option<ModeContent>,
+    /// If `true`, line numbers are relative in normal mode and absolute in
+    /// insert mode, giving you the best of both options.
+    ///
+    /// Default: false
     pub toggle_relative_line_numbers: Option<bool>,
+    /// Determines how the system clipboard is used.
+    ///
+    /// Default: always
     pub use_system_clipboard: Option<UseSystemClipboard>,
+    /// If `true`, `f` and `t` motions are case-insensitive when the target
+    /// letter is lowercase.
+    ///
+    /// Default: false
     pub use_smartcase_find: Option<bool>,
+    /// If `true`, then vim search will use regex mode.
+    ///
+    /// Default: true
     pub use_regex_search: Option<bool>,
     /// When enabled, the `:substitute` command replaces all matches in a line
     /// by default. The 'g' flag then toggles this behavior.,
     pub gdefault: Option<bool>,
+    /// An object that allows you to add custom digraphs.
+    ///
+    /// Default: {}
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
+    /// The duration of the highlight animation (in ms). Set to `0` to disable.
+    ///
+    /// Default: 200
     pub highlight_on_yank_duration: Option<u64>,
+    /// Cursor shape for each mode.
     pub cursor_shape: Option<CursorShapeSettings>,
     /// When enabled, edit predictions are shown in Vim normal mode.
     /// By default, edit predictions are only shown in insert and replace modes.
     pub show_edit_predictions_in_normal_mode: Option<bool>,
 }
 
+/// The Vim mode to start in.
 #[derive(
     Copy,
     Clone,
@@ -1010,8 +1147,10 @@ pub struct VimSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ModeContent {
+    /// Normal mode.
     #[default]
     Normal,
+    /// Insert mode.
     Insert,
 }
 
@@ -1105,14 +1244,18 @@ pub struct JournalSettingsContent {
     pub hour_format: Option<HourFormat>,
 }
 
+/// The format to use for displaying hours in the journal.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum HourFormat {
+    /// 12-hour format.
     #[default]
     Hour12,
+    /// 24-hour format.
     Hour24,
 }
 
+/// Customize outline Panel.
 #[with_fallible_options]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct OutlinePanelSettingsContent {
@@ -1168,6 +1311,7 @@ pub struct OutlinePanelSettingsContent {
     pub expand_outlines_with_depth: Option<usize>,
 }
 
+/// The side of the workspace a panel is docked to.
 #[derive(
     Clone,
     Copy,
@@ -1183,10 +1327,13 @@ pub struct OutlinePanelSettingsContent {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DockSide {
+    /// Dock the panel on the left.
     Left,
+    /// Dock the panel on the right.
     Right,
 }
 
+/// When to show indent guides in the outline panel.
 #[derive(
     Copy,
     Clone,
@@ -1202,10 +1349,13 @@ pub enum DockSide {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ShowIndentGuides {
+    /// Always show indent guides.
     Always,
+    /// Never show indent guides.
     Never,
 }
 
+/// Settings related to indent guides in the outline panel.
 #[with_fallible_options]
 #[derive(
     Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
@@ -1215,10 +1365,13 @@ pub struct IndentGuidesSettingsContent {
     pub show: Option<ShowIndentGuides>,
 }
 
+/// Whether to show full labels in line indicator or short ones.
 #[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, MergeFrom, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineIndicatorFormat {
+    /// A short format, e.g. "2 s, 15 l, 32 c".
     Short,
+    /// A long format, e.g. "2 selections, 15 lines, 32 characters".
     #[default]
     Long,
 }
@@ -1250,6 +1403,7 @@ pub struct ImageViewerSettingsContent {
     pub unit: Option<ImageFileSizeUnit>,
 }
 
+/// The unit for image file sizes.
 #[with_fallible_options]
 #[derive(
     Clone,
@@ -1273,13 +1427,25 @@ pub enum ImageFileSizeUnit {
     Decimal,
 }
 
+/// Settings for connecting to remote servers.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct RemoteSettingsContent {
+    /// ssh_connections is an array of ssh connections.
+    /// You can configure these from `project: Open Remote` in the command palette.
+    /// Zed's ssh support will pull configuration from your ~/.ssh too.
     pub ssh_connections: Option<Vec<SshConnection>>,
+    /// A list of WSL distributions to connect to.
     pub wsl_connections: Option<Vec<WslConnection>>,
+    /// A list of dev container connections.
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
+    /// Whether to read ~/.ssh/config for ssh connection sources.
+    ///
+    /// Default: true
     pub read_ssh_config: Option<bool>,
+    /// Whether to use Podman instead of Docker for dev containers.
+    ///
+    /// Default: false
     pub use_podman: Option<bool>,
     /// Whether to build dev container images with BuildKit.
     ///
@@ -1293,65 +1459,90 @@ pub struct RemoteSettingsContent {
     pub dev_container_use_buildkit: Option<bool>,
 }
 
+/// A connection to a dev container.
 #[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
 )]
 pub struct DevContainerConnection {
+    /// The name of the dev container.
     pub name: String,
+    /// The user to connect as inside the container.
     pub remote_user: String,
+    /// The identifier of the container.
     pub container_id: String,
+    /// Whether this connection uses Podman instead of Docker.
     pub use_podman: bool,
+    /// The IDs of Zed extensions to install in the dev container.
     pub extension_ids: Vec<String>,
+    /// Environment variables to set in the dev container.
     pub remote_env: BTreeMap<String, String>,
 }
 
+/// A remote server accessed over SSH.
 #[with_fallible_options]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct SshConnection {
+    /// The host name or address to connect to.
     pub host: String,
+    /// The user name to connect as.
     pub username: Option<String>,
+    /// The port to connect to.
     pub port: Option<u16>,
+    /// Additional arguments to pass to the ssh command.
     #[serde(default)]
     pub args: Vec<String>,
+    /// The projects that have been opened on this server.
     #[serde(default)]
     pub projects: collections::BTreeSet<RemoteProject>,
     /// Name to use for this server in UI.
     pub nickname: Option<String>,
-    // By default Zed will download the binary to the host directly.
-    // If this is set to true, Zed will download the binary to your local machine,
-    // and then upload it over the SSH connection. Useful if your SSH server has
-    // limited outbound internet access.
+    /// By default Zed will download the binary to the host directly.
+    /// If this is set to true, Zed will download the binary to your local machine,
+    /// and then upload it over the SSH connection. Useful if your SSH server has
+    /// limited outbound internet access.
     pub upload_binary_over_ssh: Option<bool>,
 
+    /// Port forwards to establish for this connection.
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
     /// Timeout in seconds for SSH connection and downloading the remote server binary.
     /// Defaults to 10 seconds if not specified.
     pub connection_timeout: Option<u16>,
 }
 
+/// A WSL distribution to connect to.
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
 pub struct WslConnection {
+    /// The name of the WSL distribution.
     pub distro_name: String,
+    /// The user to connect as.
     pub user: Option<String>,
+    /// The projects that have been opened in this distribution.
     #[serde(default)]
     pub projects: BTreeSet<RemoteProject>,
 }
 
+/// A project that has been opened on a remote server.
 #[with_fallible_options]
 #[derive(
     Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
 )]
 pub struct RemoteProject {
+    /// The paths to open on the remote server.
     pub paths: Vec<String>,
 }
 
+/// A port forwarding configuration for an SSH connection.
 #[with_fallible_options]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema, MergeFrom)]
 pub struct SshPortForwardOption {
+    /// The local host to bind.
     pub local_host: Option<String>,
+    /// The local port to bind.
     pub local_port: u16,
+    /// The remote host to forward to.
     pub remote_host: Option<String>,
+    /// The remote port to forward to.
     pub remote_port: u16,
 }
 
@@ -1398,14 +1589,14 @@ pub struct WhichKeySettingsContent {
     pub delay_ms: Option<u64>,
 }
 
-// An ExtendingVec in the settings can only accumulate new values.
-//
-// This is useful for things like private files where you only want
-// to allow new values to be added.
-//
-// Consider using a HashMap<String, bool> instead of this type
-// (like auto_install_extensions) so that user settings files can both add
-// and remove values from the set.
+/// An ExtendingVec in the settings can only accumulate new values.
+///
+/// This is useful for things like private files where you only want
+/// to allow new values to be added.
+///
+/// Consider using a HashMap<String, bool> instead of this type
+/// (like auto_install_extensions) so that user settings files can both add
+/// and remove values from the set.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ExtendingVec<T>(pub Vec<T>);
 
@@ -1426,18 +1617,19 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
+/// The placeholder entry that expands to the inherited list when merging a [`SplicingVec`].
 pub const REST_OF_FILE_SCAN_EXCLUSIONS: &str = "...";
 
-// A SplicingVec in the settings replaces the value it merges over, except that
-// a `...` entry expands to that previous value.
-//
-// This lets a settings file add to a list without restating what it inherits,
-// while omitting `...` still replaces the list outright. Unlike ExtendingVec,
-// entries can be dropped by leaving `...` out and listing what to keep.
-//
-// Entries collapse to their first occurrence, so naming a value that `...`
-// already covers keeps it at the position it was written in rather than
-// repeating it.
+/// A SplicingVec in the settings replaces the value it merges over, except that
+/// a `...` entry expands to that previous value.
+///
+/// This lets a settings file add to a list without restating what it inherits,
+/// while omitting `...` still replaces the list outright. Unlike ExtendingVec,
+/// entries can be dropped by leaving `...` out and listing what to keep.
+///
+/// Entries collapse to their first occurrence, so naming a value that `...`
+/// already covers keeps it at the position it was written in rather than
+/// repeating it.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SplicingVec(pub Vec<String>);
 
@@ -1466,12 +1658,12 @@ impl merge_from::MergeFrom for SplicingVec {
     }
 }
 
-// An ExtendingSet in the settings can only accumulate new values, and ignores
-// values that are already present, so merging the same source more than once
-// (e.g. re-importing VS Code settings) is idempotent.
-//
-// Insertion order is preserved, so it round-trips through the user's settings
-// file without reordering their entries.
+/// An ExtendingSet in the settings can only accumulate new values, and ignores
+/// values that are already present, so merging the same source more than once
+/// (e.g. re-importing VS Code settings) is idempotent.
+///
+/// Insertion order is preserved, so it round-trips through the user's settings
+/// file without reordering their entries.
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ExtendingSet<T: std::hash::Hash + Eq>(pub IndexSet<T>);
 
@@ -1487,10 +1679,10 @@ impl<T: Clone + std::hash::Hash + Eq> merge_from::MergeFrom for ExtendingSet<T> 
     }
 }
 
-// A SaturatingBool in the settings can only ever be set to true,
-// later attempts to set it to false will be ignored.
-//
-// Used by `disable_ai`.
+/// A SaturatingBool in the settings can only ever be set to true,
+/// later attempts to set it to false will be ignored.
+///
+/// Used by `disable_ai`.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SaturatingBool(pub bool);
 
@@ -1512,6 +1704,7 @@ impl merge_from::MergeFrom for SaturatingBool {
     }
 }
 
+/// A delay duration in milliseconds.
 #[derive(
     Copy,
     Clone,
@@ -1551,5 +1744,382 @@ impl std::str::FromStr for DelayMs {
             .parse::<u64>()
             .map(DelayMs)
             .with_context(|| format!("failed to parse delay duration: {s}"))
+    }
+}
+
+impl SettingsContent {
+    /// The default values for every Zed setting, as shipped in
+    /// `assets/settings/default.json` (which is generated from this function).
+    ///
+    /// Every field must be assigned explicitly here, so that adding a new
+    /// setting is a compile error until it is given a default value.
+    pub fn defaults() -> Self {
+        Self {
+            project: ProjectSettingsContent::defaults(),
+            theme: Box::new(ThemeSettingsContent::defaults()),
+            extension: ExtensionSettingsContent::defaults(),
+            workspace: WorkspaceSettingsContent::defaults(),
+            editor: EditorSettingsContent::defaults(),
+            remote: RemoteSettingsContent::defaults(),
+            file_finder: Some(FileFinderSettingsContent::defaults()),
+            git_panel: Some(GitPanelSettingsContent::defaults()),
+            tabs: Some(ItemSettingsContent::defaults()),
+            tab_bar: Some(TabBarSettingsContent::defaults()),
+            status_bar: Some(StatusBarSettingsContent::defaults()),
+            preview_tabs: Some(PreviewTabsSettingsContent::defaults()),
+            agent: Some(AgentSettingsContent::defaults()),
+            agent_servers: Some(AllAgentServersSettings::defaults()),
+            audio: Some(AudioSettingsContent::defaults()),
+            auto_update: Some(true),
+            base_keymap: Some(BaseKeymapContent::Zed),
+            collaboration_panel: Some(PanelSettingsContent::defaults()),
+            debugger: Some(DebuggerSettingsContent::defaults()),
+            diagnostics: Some(DiagnosticsSettingsContent::defaults()),
+            git: Some(GitSettings::defaults()),
+            global_lsp_settings: Some(GlobalLspSettingsContent::defaults()),
+            image_viewer: Some(ImageViewerSettingsContent::defaults()),
+            markdown_preview: Some(MarkdownPreviewSettingsContent::defaults()),
+            repl: Some(ReplSettingsContent::defaults()),
+            helix_mode: Some(false),
+            hide_mouse: Some(HideMouseMode::OnTypingAndAction),
+            journal: Some(JournalSettingsContent::defaults()),
+            log: Some(HashMap::default()),
+            line_indicator_format: Some(LineIndicatorFormat::Long),
+            language_models: Some(AllLanguageModelSettingsContent::defaults()),
+            outline_panel: Some(OutlinePanelSettingsContent::defaults()),
+            project_panel: Some(ProjectPanelSettingsContent::defaults()),
+            node: Some(NodeBinarySettings::defaults()),
+            proxy: Some(String::new()),
+            reduce_motion: Some(ReduceMotionMode::Off),
+            server_url: Some(String::from("https://zed.dev")),
+            credentials_url: None,
+            session: Some(SessionSettingsContent::defaults()),
+            telemetry: Some(TelemetrySettingsContent::defaults()),
+            terminal: Some(TerminalSettingsContent::defaults()),
+            title_bar: Some(TitleBarSettingsContent::defaults()),
+            vim_mode: Some(false),
+            calls: Some(CallSettingsContent::defaults()),
+            which_key: Some(WhichKeySettingsContent::defaults()),
+            vim: Some(VimSettingsContent::defaults()),
+            modeline_lines: Some(5),
+            feature_flags: None,
+            instrumentation: Some(InstrumentationSettingsContent::defaults()),
+        }
+    }
+}
+
+fn instrumentation_enabled_override() -> SettingsContent {
+    SettingsContent {
+        instrumentation: Some(InstrumentationSettingsContent {
+            performance_profiler: Some(PerformanceProfilerSettingsContent {
+                enabled: Some(true),
+            }),
+        }),
+        ..Default::default()
+    }
+}
+
+fn windows_platform_override() -> SettingsContent {
+    SettingsContent {
+        project: ProjectSettingsContent {
+            all_languages: AllLanguageSettingsContent::windows_defaults_override(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+impl UserSettingsContent {
+    /// The full contents of the generated `assets/settings/default.json`,
+    /// including the release-channel and platform override sections.
+    pub fn defaults() -> Self {
+        Self {
+            content: Box::new(SettingsContent::defaults()),
+            release_channel_overrides: ReleaseChannelOverrides {
+                dev: Some(Box::new(instrumentation_enabled_override())),
+                nightly: Some(Box::new(instrumentation_enabled_override())),
+                preview: Some(Box::default()),
+                stable: Some(Box::default()),
+            },
+            platform_overrides: PlatformOverrides {
+                macos: Some(Box::default()),
+                linux: Some(Box::default()),
+                windows: Some(Box::new(windows_platform_override())),
+            },
+            profiles: IndexMap::default(),
+        }
+    }
+}
+
+impl InstrumentationSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            performance_profiler: Some(PerformanceProfilerSettingsContent {
+                enabled: Some(false),
+            }),
+        }
+    }
+}
+
+impl AudioSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            output_audio_device: None,
+            input_audio_device: None,
+        }
+    }
+}
+
+impl TelemetrySettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            diagnostics: Some(true),
+            metrics: Some(true),
+            anthropic_retention: Some(false),
+        }
+    }
+}
+
+impl DebuggerSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            stepping_granularity: Some(SteppingGranularity::Line),
+            save_breakpoints: Some(true),
+            button: Some(true),
+            timeout: Some(2000),
+            log_dap_communications: Some(true),
+            format_dap_log_messages: Some(true),
+            dock: Some(DockPosition::Bottom),
+        }
+    }
+}
+
+impl CallSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            mute_on_join: Some(false),
+            share_on_join: Some(false),
+        }
+    }
+}
+
+impl GitPanelSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            dock: Some(DockPosition::Right),
+            default_width: Some(PixelSetting(360.0)),
+            status_style: Some(StatusStyle::Icon),
+            file_icons: Some(false),
+            folder_icons: Some(true),
+            scrollbar: Some(ScrollbarSettings { show: None }),
+            fallback_branch_name: Some(String::from("main")),
+            sort_by: Some(GitPanelSortBy::Path),
+            group_by: Some(GitPanelGroupBy::Status),
+            collapse_untracked_diff: Some(false),
+            tree_view: Some(false),
+            diff_stats: Some(true),
+            show_count_badge: Some(false),
+            starts_open: Some(false),
+            commit_title_max_length: Some(0),
+            entry_primary_click_action: Some(GitPanelClickBehavior::ProjectDiff),
+        }
+    }
+}
+
+impl PanelSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            dock: Some(DockPosition::Right),
+            default_width: Some(PixelSetting(240.0)),
+        }
+    }
+}
+
+impl FileFinderSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            file_icons: Some(true),
+            modal_max_width: Some(FileFinderWidthContent::Small),
+            skip_focus_for_active_in_search: Some(true),
+            include_ignored: Some(IncludeIgnoredContent::Smart),
+            include_channels: Some(false),
+        }
+    }
+}
+
+impl VimSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            default_mode: Some(ModeContent::Normal),
+            toggle_relative_line_numbers: Some(false),
+            use_system_clipboard: Some(UseSystemClipboard::Always),
+            use_smartcase_find: Some(false),
+            use_regex_search: Some(true),
+            gdefault: Some(false),
+            custom_digraphs: Some(HashMap::default()),
+            highlight_on_yank_duration: Some(200),
+            cursor_shape: Some(CursorShapeSettings {
+                normal: Some(CursorShape::Block),
+                replace: Some(CursorShape::Underline),
+                visual: Some(CursorShape::Block),
+                insert: Some(VimInsertModeCursorShape::Inherit),
+            }),
+            show_edit_predictions_in_normal_mode: Some(false),
+        }
+    }
+}
+
+impl JournalSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            path: Some(String::from("~")),
+            hour_format: Some(HourFormat::Hour12),
+        }
+    }
+}
+
+impl OutlinePanelSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            button: Some(true),
+            default_width: Some(PixelSetting(300.0)),
+            dock: Some(DockSide::Right),
+            file_icons: Some(true),
+            folder_icons: Some(true),
+            git_status: Some(true),
+            indent_size: Some(PixelSetting(20.0)),
+            auto_reveal_entries: Some(true),
+            auto_fold_dirs: Some(true),
+            indent_guides: Some(IndentGuidesSettingsContent {
+                show: Some(ShowIndentGuides::Always),
+            }),
+            scrollbar: Some(ScrollbarSettingsContent { show: None }),
+            expand_outlines_with_depth: Some(100),
+        }
+    }
+}
+
+impl MarkdownPreviewSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            limit_content_width: Some(true),
+            max_width: Some(PixelSetting(800.0)),
+        }
+    }
+}
+
+impl ImageViewerSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            unit: Some(ImageFileSizeUnit::Binary),
+        }
+    }
+}
+
+impl RemoteSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            ssh_connections: Some(Vec::new()),
+            wsl_connections: None,
+            dev_container_connections: None,
+            read_ssh_config: Some(true),
+            use_podman: None,
+            dev_container_use_buildkit: None,
+        }
+    }
+}
+
+impl ReplSettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            max_lines: Some(32),
+            max_columns: Some(128),
+            inline_output: None,
+            inline_output_max_length: None,
+            output_max_height_lines: Some(0),
+        }
+    }
+}
+
+impl WhichKeySettingsContent {
+    /// The Zed default values for this type.
+    pub fn defaults() -> Self {
+        Self {
+            enabled: Some(false),
+            delay_ms: Some(1000),
+        }
+    }
+}
+
+#[cfg(test)]
+mod default_settings_tests {
+    use super::*;
+
+    fn diff_values(
+        path: &str,
+        json: &serde_json::Value,
+        rust: &serde_json::Value,
+        out: &mut Vec<String>,
+    ) {
+        use serde_json::Value;
+        match (json, rust) {
+            (Value::Object(json), Value::Object(rust)) => {
+                for (key, json_value) in json {
+                    let sub_path = format!("{path}/{key}");
+                    match rust.get(key) {
+                        Some(rust_value) => diff_values(&sub_path, json_value, rust_value, out),
+                        None => out.push(format!(
+                            "missing from defaults(): {sub_path} = {json_value}"
+                        )),
+                    }
+                }
+                for (key, rust_value) in rust {
+                    if !json.contains_key(key) {
+                        out.push(format!("extra in defaults(): {path}/{key} = {rust_value}"));
+                    }
+                }
+            }
+            _ => {
+                if json != rust {
+                    out.push(format!("differs at {path}: json={json} rust={rust}"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn defaults_match_default_json() {
+        let text = include_str!("../../../assets/settings/default.json");
+        let parsed: UserSettingsContent = parse_json_with_comments(text).unwrap();
+        let constructed = UserSettingsContent::defaults();
+        if parsed == constructed {
+            return;
+        }
+        let parsed = serde_json::to_value(&parsed).unwrap();
+        let constructed = serde_json::to_value(&constructed).unwrap();
+        let mut out = Vec::new();
+        diff_values("", &parsed, &constructed, &mut out);
+        panic!(
+            "UserSettingsContent::defaults() diverges from assets/settings/default.json ({} differences):\n{}",
+            out.len(),
+            out.join("\n")
+        );
     }
 }

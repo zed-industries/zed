@@ -8,6 +8,9 @@ thread_local! {
     static ERRORS: RefCell<Option<Vec<anyhow::Error>>> = const { RefCell::new(None) };
 }
 
+/// Parses JSON leniently: per-field deserialization errors reset the affected
+/// `Option` fields to `None` and are reported in the returned [`ParseStatus`]
+/// instead of failing the whole parse.
 pub fn parse_json<'de, T>(json: &'de str) -> (Option<T>, ParseStatus)
 where
     T: Deserialize<'de>,
@@ -61,6 +64,8 @@ where
     }
 }
 
+/// Marker trait for field types that can be reset to a default value when
+/// their deserialization fails.
 pub trait FallibleOption: Default {}
 impl<T> FallibleOption for Option<T> {}
 

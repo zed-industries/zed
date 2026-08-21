@@ -67,10 +67,15 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
-    /// Read the value from default.json.
+    /// Read the value from the default settings.
     ///
-    /// This function *should* panic if default values are missing,
-    /// and you should add a default to default.json for documentation.
+    /// This function *should* panic if default values are missing;
+    /// add a default to `SettingsContent::defaults()` (or the `defaults()`
+    /// constructor of the relevant sub-struct) in the `settings_content`
+    /// crate, then run `script/generate-default-settings` to regenerate
+    /// `assets/settings/default.json` from it. User-facing documentation
+    /// lives in the rustdocs of the `settings_content` fields; the settings
+    /// reference docs page is generated from them.
     fn from_settings(content: &SettingsContent) -> Self;
 
     #[track_caller]

@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 mod ai_discovery;
+mod settings_reference;
 
 use ai_discovery::{
     add_markdown_alternate_link, docs_pages, rewrite_docs_links, write_ai_discovery_artifacts,
@@ -192,6 +193,7 @@ fn handle_preprocessing() -> Result<()> {
     let mut errors = HashSet::<PreprocessorError>::new();
     handle_frontmatter(&mut book, &mut errors);
     template_big_table_of_actions(&mut book);
+    template_settings_reference(&mut book);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
     template_and_validate_json_snippets(&mut book, &mut errors)?;
@@ -248,6 +250,18 @@ fn template_big_table_of_actions(book: &mut Book) {
             chapter.content.replace_range(
                 start..start + needle.len(),
                 &generate_big_table_of_actions(),
+            );
+        }
+    });
+}
+
+fn template_settings_reference(book: &mut Book) {
+    for_each_chapter_mut(book, |chapter| {
+        let needle = "{#SETTINGS_REFERENCE#}";
+        if let Some(start) = chapter.content.rfind(needle) {
+            chapter.content.replace_range(
+                start..start + needle.len(),
+                &settings_reference::generate_settings_reference(),
             );
         }
     });
