@@ -6,6 +6,7 @@ pub use bracket_ranges::BracketMatch;
 use crate::{
     ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
     PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
+    binary_file_error,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
@@ -1613,10 +1614,9 @@ impl Buffer {
 
             let bytes = load_bytes_task.await?;
 
-            anyhow::ensure!(
-                analyze_byte_content(&bytes) != ByteContent::Binary,
-                "Binary files are not supported"
-            );
+            if analyze_byte_content(&bytes) == ByteContent::Binary {
+                return Err(binary_file_error());
+            }
 
             let is_unicode = target_encoding == encoding_rs::UTF_8
                 || target_encoding == encoding_rs::UTF_16LE

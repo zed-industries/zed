@@ -1,8 +1,24 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use chardetng::EncodingDetector;
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use rpc::proto::{ErrorCode, ErrorCodeExt as _, ErrorExt as _};
 
 pub const FILE_ANALYSIS_BYTES: usize = 1024;
+
+/// The error reported when a file is rejected for looking like binary data.
+/// Carries [`ErrorCode::BinaryFile`] so that the UI can recognize it (also
+/// across RPC) and offer opening the file as text anyway.
+pub fn binary_file_error() -> anyhow::Error {
+    ErrorCode::BinaryFile
+        .message("Binary files are not supported".to_string())
+        .anyhow()
+}
+
+/// Whether a failure to open a file was caused by the binary content check,
+/// which the user can override by opening the file as text.
+pub fn is_binary_file_error(error: &anyhow::Error) -> bool {
+    error.error_code() == ErrorCode::BinaryFile
+}
 
 pub struct DecodedText {
     pub text: String,
@@ -23,7 +39,7 @@ pub fn decode_text(bytes: Vec<u8>) -> Result<DecodedText> {
     let encoding = match analyze_byte_content(&bytes) {
         ByteContent::Utf16Le => UTF_16LE,
         ByteContent::Utf16Be => UTF_16BE,
-        ByteContent::Binary => bail!("Binary files are not supported"),
+        ByteContent::Binary => return Err(binary_file_error()),
         ByteContent::Unknown => {
             return match String::from_utf8(bytes) {
                 Ok(text) if !text.contains('\x1b') => Ok(DecodedText {

@@ -103,7 +103,8 @@ pub use buffer::*;
 pub use diagnostic::{Diagnostic, DiagnosticSourceKind, RelatedInformation, RelatedLocation};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use file_content::{
-    ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
+    ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, binary_file_error,
+    decode_text, encode_text, is_binary_file_error,
 };
 pub use language_registry::{
     BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
