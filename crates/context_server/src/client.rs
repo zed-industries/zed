@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
 use futures_lite::future::yield_now;
@@ -148,10 +148,23 @@ struct AnyNotification<'a> {
     params: Option<Value>,
 }
 
+/// A JSON-RPC error returned by the server. Request futures fail with this
+/// type (wrapped in `anyhow::Error`), so callers can downcast to inspect the
+/// error code — e.g. to recognize the spec-defined negotiation errors.
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct Error {
+pub struct Error {
     pub message: String,
     pub code: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
+}
+
+impl std::error::Error for Error {}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} (JSON-RPC error {})", self.message, self.code)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -199,6 +212,11 @@ impl Client {
         request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
+        // The same transport can outlive a client generation (the store
+        // restarts servers over a retained HTTP transport): discard whatever
+        // the previous generation left behind before this one attaches.
+        transport.reset();
+
         let (outbound_tx, outbound_rx) = async_channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
 
@@ -371,6 +389,11 @@ impl Client {
         )
     }
 
+    /// The timeout applied to requests that don't specify one explicitly.
+    pub(crate) fn default_request_timeout(&self) -> Option<Duration> {
+        self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT))
+    }
+
     /// Sends a JSON-RPC request to the context server and waits for a response.
     /// This function handles serialization, deserialization, timeout, and error handling.
     pub async fn request<T: DeserializeOwned>(
@@ -378,20 +401,15 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
-        self.request_with(
-            method,
-            params,
-            None,
-            self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT)),
-        )
-        .await
+        self.request_with(method, params, None, self.default_request_timeout())
+            .await
     }
 
     pub async fn request_with<T: DeserializeOwned>(
         &self,
         method: &str,
         params: impl Serialize,
-        cancel_rx: Option<oneshot::Receiver<()>>,
+        cancel_rx: Option<&mut oneshot::Receiver<()>>,
         timeout: Option<Duration>,
     ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
@@ -428,6 +446,21 @@ impl Client {
         handle_response?;
         send?;
 
+        // Cancel the request server-side whenever this future exits without
+        // having received a response: explicit cancellation, timeout, or the
+        // caller dropping the future (e.g. a tool call raced against user
+        // cancellation). The notification is the cancellation wire signal on
+        // stdio; the HTTP transport translates it into closing the request's
+        // response stream on modern servers.
+        let mut cancel_guard = CancelOnDrop {
+            client: Some((
+                self.outbound_tx.clone(),
+                self.response_handlers.clone(),
+                self.transport.clone(),
+            )),
+            request_id: RequestId::Int(id),
+        };
+
         let mut timeout_fut = pin!(
             match timeout {
                 Some(timeout) => future::Either::Left(executor.timer(timeout)),
@@ -449,11 +482,12 @@ impl Client {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
                 log::trace!("took {elapsed:?} to receive response to {method:?} id {id}");
+                cancel_guard.disarm();
                 match response {
                     Ok(response) => {
                         let parsed: AnyResponse = serde_json::from_str(&response)?;
                         if let Some(error) = parsed.error {
-                            Err(anyhow!(error.message))
+                            Err(anyhow::Error::new(error))
                         } else if let Some(result) = parsed.result {
                             Ok(serde_json::from_str(result.get())?)
                         } else {
@@ -469,18 +503,13 @@ impl Client {
                 }
             }
             _ = cancel_fut => {
-                self.notify(
-                    Cancelled::METHOD,
-                    ClientNotification::Cancelled(CancelledParams {
-                        request_id: RequestId::Int(id),
-                        reason: None
-                    })
-                ).log_err();
+                drop(cancel_guard);
                 anyhow::bail!(RequestCanceled)
             }
             _ = timeout_fut => {
                 log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
-                anyhow::bail!("Context server request timeout");
+                drop(cancel_guard);
+                anyhow::bail!(RequestTimedOut);
             }
         }
     }
@@ -520,6 +549,55 @@ impl Client {
     }
 }
 
+/// Cancels an in-flight request when its future is abandoned before a
+/// response arrived: sends `notifications/cancelled` for the request and
+/// removes its response handler. Disarmed once a response is received.
+struct CancelOnDrop {
+    #[allow(clippy::type_complexity)]
+    client: Option<(
+        async_channel::Sender<String>,
+        Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
+        Arc<dyn Transport>,
+    )>,
+    request_id: RequestId,
+}
+
+impl CancelOnDrop {
+    fn disarm(&mut self) {
+        self.client.take();
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        let Some((outbound_tx, response_handlers, transport)) = self.client.take() else {
+            return;
+        };
+        if let Some(handlers) = response_handlers.lock().as_mut() {
+            handlers.remove(&self.request_id);
+        }
+        // Abort out-of-band first: the queued notification below cannot be
+        // delivered while an earlier send is still awaiting its response,
+        // and on modern HTTP closing the request's stream — not the
+        // notification — is the cancellation signal.
+        if let Ok(request_id) = serde_json::to_value(&self.request_id) {
+            transport.cancel_request(&request_id);
+        }
+        let notification = serde_json::to_string(&Notification {
+            jsonrpc: JSON_RPC_VERSION,
+            method: Cancelled::METHOD,
+            params: ClientNotification::Cancelled(CancelledParams {
+                request_id: self.request_id.clone(),
+                reason: None,
+            }),
+        })
+        .unwrap();
+        // A closed channel means the transport already shut down; there is
+        // nothing left to cancel.
+        outbound_tx.try_send(notification).ok();
+    }
+}
+
 #[derive(Debug)]
 pub struct RequestCanceled;
 
@@ -528,6 +606,17 @@ impl std::error::Error for RequestCanceled {}
 impl std::fmt::Display for RequestCanceled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Context server request was canceled")
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestTimedOut;
+
+impl std::error::Error for RequestTimedOut {}
+
+impl std::fmt::Display for RequestTimedOut {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Context server request timeout")
     }
 }
 
@@ -613,5 +702,82 @@ impl Drop for NotificationSubscription {
             handler_ids.retain(|id| *id != self.id);
             !handler_ids.is_empty()
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::transport::Transport;
+    use async_trait::async_trait;
+    use futures::Stream;
+    use gpui::TestAppContext;
+    use std::pin::Pin;
+
+    /// Replies to every request with the same canned JSON-RPC error.
+    struct ErrorTransport {
+        tx: async_channel::Sender<String>,
+        rx: async_channel::Receiver<String>,
+    }
+
+    impl ErrorTransport {
+        fn new() -> Self {
+            let (tx, rx) = async_channel::unbounded();
+            Self { tx, rx }
+        }
+    }
+
+    #[async_trait]
+    impl Transport for ErrorTransport {
+        async fn send(&self, message: String) -> Result<()> {
+            let message: Value = serde_json::from_str(&message)?;
+            let id = message.get("id").cloned().unwrap_or(Value::Null);
+            let response = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": -32022,
+                    "message": "Unsupported protocol version",
+                    "data": { "supported": ["2026-07-28"] }
+                }
+            });
+            self.tx.send(response.to_string()).await?;
+            Ok(())
+        }
+
+        fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
+            Box::pin(self.rx.clone())
+        }
+
+        fn receive_err(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    #[gpui::test]
+    async fn test_json_rpc_errors_are_downcastable(cx: &mut TestAppContext) {
+        let client = Client::new(
+            ContextServerId("test-server".into()),
+            "test-server".into(),
+            Arc::new(ErrorTransport::new()),
+            None,
+            cx.to_async(),
+        )
+        .unwrap();
+
+        let err = client
+            .request::<Value>("server/discover", serde_json::json!({}))
+            .await
+            .unwrap_err();
+
+        let error = err
+            .downcast_ref::<Error>()
+            .expect("should be a typed Error");
+        assert_eq!(error.code, -32022);
+        assert_eq!(error.message, "Unsupported protocol version");
+        assert_eq!(
+            error.data.as_ref().and_then(|data| data.get("supported")),
+            Some(&serde_json::json!(["2026-07-28"]))
+        );
     }
 }

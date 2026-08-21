@@ -142,6 +142,10 @@ pub struct ProtectedResourceMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthServerMetadata {
     pub issuer: Url,
+    /// The issuer identifier exactly as reported by validated authorization
+    /// server metadata. RFC 9207 requires comparing this value without URL
+    /// normalization.
+    pub issuer_identifier: String,
     pub authorization_endpoint: Url,
     pub token_endpoint: Url,
     pub registration_endpoint: Option<Url>,
@@ -149,6 +153,11 @@ pub struct AuthServerMetadata {
     pub grant_types_supported: Option<Vec<String>>,
     pub code_challenge_methods_supported: Option<Vec<String>>,
     pub client_id_metadata_document_supported: bool,
+    /// Whether the server includes the RFC 9207 `iss` parameter in
+    /// authorization responses. When advertised, a callback without `iss`
+    /// must be rejected.
+    #[serde(default)]
+    pub authorization_response_iss_parameter_supported: bool,
 }
 
 /// The result of client registration — either CIMD or DCR.
@@ -728,8 +737,55 @@ pub fn dcr_registration_body(
         "redirect_uris": [redirect_uri],
         "grant_types": grant_types,
         "response_types": ["code"],
-        "token_endpoint_auth_method": "none"
+        "token_endpoint_auth_method": "none",
+        // Zed is a native app using a loopback redirect. MCP 2026-07-28
+        // requires clients to declare this to avoid OpenID Connect redirect
+        // URI conflicts (SEP-837).
+        "application_type": "native"
     })
+}
+
+/// Validate the `iss` authorization-response parameter against the recorded
+/// issuer, per RFC 9207 (required by MCP 2026-07-28 to mitigate authorization
+/// server mix-up attacks). A present `iss` must match the issuer whose
+/// authorization endpoint the flow started at; a missing one is accepted
+/// only when the authorization server does not advertise RFC 9207 support.
+pub fn validate_issuer(callback_iss: Option<&str>, metadata: &AuthServerMetadata) -> Result<()> {
+    let issuer = &metadata.issuer_identifier;
+    let Some(callback_iss) = callback_iss else {
+        // RFC 9207: a server that advertises issuer identification must
+        // send `iss` on every authorization response — its absence is how a
+        // mix-up attacker would evade the check.
+        anyhow::ensure!(
+            !metadata.authorization_response_iss_parameter_supported,
+            "OAuth callback is missing the 'iss' parameter, but the authorization server \
+             advertises RFC 9207 support; refusing the authorization response"
+        );
+        return Ok(());
+    };
+    anyhow::ensure!(
+        callback_iss == issuer,
+        "OAuth callback 'iss' parameter ({callback_iss}) does not match the authorization \
+         server ({issuer}); refusing the authorization response"
+    );
+    Ok(())
+}
+
+/// Validate the security parameters retained on an OAuth error response.
+pub fn validate_callback_error(
+    error: &anyhow::Error,
+    expected_state: &str,
+    metadata: &AuthServerMetadata,
+) -> Result<()> {
+    let Some(error) = error.downcast_ref::<oauth_callback_server::OAuthAuthorizationError>() else {
+        return Ok(());
+    };
+
+    anyhow::ensure!(
+        error.state.as_deref() == Some(expected_state),
+        "OAuth state parameter mismatch (possible CSRF)"
+    );
+    validate_issuer(error.iss.as_deref(), metadata)
 }
 
 // -- Discovery (async, hits real endpoints) ----------------------------------
@@ -811,7 +867,11 @@ pub async fn fetch_auth_server_metadata(
     for url in &candidate_urls {
         match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
             Ok(response) => {
-                let reported_issuer = response.issuer.unwrap_or_else(|| issuer.clone());
+                let issuer_identifier = response
+                    .issuer
+                    .unwrap_or_else(|| issuer.as_str().to_string());
+                let reported_issuer = Url::parse(&issuer_identifier)
+                    .context("invalid issuer in authorization server metadata")?;
 
                 if reported_issuer != *issuer {
                     bail!(
@@ -823,6 +883,7 @@ pub async fn fetch_auth_server_metadata(
 
                 return Ok(AuthServerMetadata {
                     issuer: reported_issuer,
+                    issuer_identifier,
                     grant_types_supported: response.grant_types_supported,
                     authorization_endpoint: response
                         .authorization_endpoint
@@ -835,6 +896,9 @@ pub async fn fetch_auth_server_metadata(
                     code_challenge_methods_supported: response.code_challenge_methods_supported,
                     client_id_metadata_document_supported: response
                         .client_id_metadata_document_supported
+                        .unwrap_or(false),
+                    authorization_response_iss_parameter_supported: response
+                        .authorization_response_iss_parameter_supported
                         .unwrap_or(false),
                 });
             }
@@ -1054,6 +1118,8 @@ async fn post_token_request(
 pub struct OAuthCallback {
     pub code: String,
     pub state: String,
+    /// The `iss` authorization-response parameter (RFC 9207), when present.
+    pub iss: Option<String>,
 }
 
 impl std::fmt::Debug for OAuthCallback {
@@ -1073,6 +1139,7 @@ impl OAuthCallback {
         Ok(Self {
             code: params.code,
             state: params.state,
+            iss: params.iss,
         })
     }
 }
@@ -1098,6 +1165,7 @@ pub fn start_callback_server() -> Result<(String, BoxFuture<'static, Result<OAut
             Ok(Ok(params)) => Ok(OAuthCallback {
                 code: params.code,
                 state: params.state,
+                iss: params.iss,
             }),
             Ok(Err(e)) => Err(e),
             Err(_) => Err(anyhow!(
@@ -1149,7 +1217,7 @@ struct ProtectedResourceMetadataResponse {
 #[derive(Debug, Deserialize)]
 struct AuthServerMetadataResponse {
     #[serde(default)]
-    issuer: Option<Url>,
+    issuer: Option<String>,
     #[serde(default)]
     authorization_endpoint: Option<Url>,
     #[serde(default)]
@@ -1162,6 +1230,8 @@ struct AuthServerMetadataResponse {
     grant_types_supported: Option<Vec<String>>,
     #[serde(default)]
     code_challenge_methods_supported: Option<Vec<String>>,
+    #[serde(default)]
+    authorization_response_iss_parameter_supported: Option<bool>,
     #[serde(default)]
     client_id_metadata_document_supported: Option<bool>,
 }
@@ -1658,12 +1728,14 @@ mod tests {
     fn test_registration_strategy_prefers_cimd() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: Some(Url::parse("https://auth.example.com/register").unwrap()),
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: true,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         assert_eq!(
@@ -1679,12 +1751,14 @@ mod tests {
         let reg_endpoint = Url::parse("https://auth.example.com/register").unwrap();
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: Some(reg_endpoint.clone()),
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         assert_eq!(
@@ -1699,12 +1773,14 @@ mod tests {
     fn test_registration_strategy_unavailable() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         assert_eq!(
@@ -1756,12 +1832,14 @@ mod tests {
     fn test_build_authorization_url() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: true,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         let pkce = PkceChallenge {
@@ -1799,12 +1877,14 @@ mod tests {
     fn test_build_authorization_url_omits_empty_scope() {
         let metadata = AuthServerMetadata {
             issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
             authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
             token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
             registration_endpoint: None,
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: false,
             grant_types_supported: None,
         };
         let pkce = PkceChallenge {
@@ -1903,6 +1983,109 @@ mod tests {
         assert_eq!(body["grant_types"][1], "refresh_token");
         assert_eq!(body["response_types"][0], "code");
         assert_eq!(body["token_endpoint_auth_method"], "none");
+        assert_eq!(body["application_type"], "native");
+    }
+
+    #[test]
+    fn test_validate_issuer() {
+        let metadata = |iss_supported| AuthServerMetadata {
+            issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
+            authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+            token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            grant_types_supported: None,
+            code_challenge_methods_supported: None,
+            client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: iss_supported,
+        };
+
+        // A missing iss parameter is accepted only while the authorization
+        // server does not advertise RFC 9207 support; once advertised, its
+        // absence is how a mix-up attacker would evade the check.
+        validate_issuer(None, &metadata(false)).unwrap();
+        validate_issuer(None, &metadata(true)).unwrap_err();
+
+        validate_issuer(Some("https://auth.example.com"), &metadata(true)).unwrap();
+        // RFC 9207 requires simple string comparison without URL
+        // normalization.
+        validate_issuer(Some("https://auth.example.com/"), &metadata(true)).unwrap_err();
+        validate_issuer(Some("HTTPS://auth.example.com"), &metadata(true)).unwrap_err();
+        // A different issuer (mix-up attack) is rejected.
+        validate_issuer(Some("https://attacker.example.com"), &metadata(false)).unwrap_err();
+        validate_issuer(Some("not a url"), &metadata(false)).unwrap_err();
+        validate_issuer(Some(""), &metadata(false)).unwrap_err();
+    }
+
+    #[test]
+    fn test_oauth_callback_parses_iss() {
+        let callback =
+            OAuthCallback::parse_query("code=abc&state=xyz&iss=https%3A%2F%2Fauth.example.com")
+                .unwrap();
+        assert_eq!(callback.code, "abc");
+        assert_eq!(callback.state, "xyz");
+        assert_eq!(callback.iss.as_deref(), Some("https://auth.example.com"));
+
+        let callback = OAuthCallback::parse_query("code=abc&state=xyz").unwrap();
+        assert!(callback.iss.is_none());
+    }
+
+    #[test]
+    fn test_validate_callback_error() {
+        let metadata = AuthServerMetadata {
+            issuer: Url::parse("https://auth.example.com").unwrap(),
+            issuer_identifier: "https://auth.example.com".to_string(),
+            authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
+            token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
+            registration_endpoint: None,
+            scopes_supported: None,
+            grant_types_supported: None,
+            code_challenge_methods_supported: None,
+            client_id_metadata_document_supported: false,
+            authorization_response_iss_parameter_supported: true,
+        };
+
+        let valid_error = OAuthCallback::parse_query(
+            "error=access_denied&state=expected&iss=https%3A%2F%2Fauth.example.com",
+        )
+        .err()
+        .expect("authorization should fail");
+        validate_callback_error(&valid_error, "expected", &metadata).unwrap();
+
+        let wrong_state = OAuthCallback::parse_query(
+            "error=access_denied&state=unexpected&iss=https%3A%2F%2Fauth.example.com",
+        )
+        .err()
+        .expect("authorization should fail");
+        assert!(
+            validate_callback_error(&wrong_state, "expected", &metadata)
+                .unwrap_err()
+                .to_string()
+                .contains("state parameter mismatch")
+        );
+
+        let wrong_issuer = OAuthCallback::parse_query(
+            "error=access_denied&state=expected&iss=https%3A%2F%2Fattacker.example.com",
+        )
+        .err()
+        .expect("authorization should fail");
+        assert!(
+            validate_callback_error(&wrong_issuer, "expected", &metadata)
+                .unwrap_err()
+                .to_string()
+                .contains("does not match")
+        );
+
+        let missing_issuer = OAuthCallback::parse_query("error=access_denied&state=expected")
+            .err()
+            .expect("authorization should fail");
+        assert!(
+            validate_callback_error(&missing_issuer, "expected", &metadata)
+                .unwrap_err()
+                .to_string()
+                .contains("missing the 'iss' parameter")
+        );
     }
 
     #[test]
@@ -2167,6 +2350,7 @@ mod tests {
             let metadata = fetch_auth_server_metadata(&client, &issuer).await.unwrap();
 
             assert_eq!(metadata.issuer.as_str(), "https://auth.example.com/");
+            assert_eq!(metadata.issuer_identifier, "https://auth.example.com");
             assert_eq!(
                 metadata.authorization_endpoint.as_str(),
                 "https://auth.example.com/authorize"
@@ -2444,12 +2628,14 @@ mod tests {
 
             let metadata = AuthServerMetadata {
                 issuer: Url::parse("https://auth.example.com").unwrap(),
+                issuer_identifier: "https://auth.example.com".to_string(),
                 authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
                 token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
                 registration_endpoint: None,
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
                 client_id_metadata_document_supported: true,
+                authorization_response_iss_parameter_supported: false,
                 grant_types_supported: None,
             };
 
@@ -2521,12 +2707,14 @@ mod tests {
 
             let metadata = AuthServerMetadata {
                 issuer: Url::parse("https://auth.example.com").unwrap(),
+                issuer_identifier: "https://auth.example.com".to_string(),
                 authorization_endpoint: Url::parse("https://auth.example.com/authorize").unwrap(),
                 token_endpoint: Url::parse("https://auth.example.com/token").unwrap(),
                 registration_endpoint: None,
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
                 client_id_metadata_document_supported: true,
+                authorization_response_iss_parameter_supported: false,
                 grant_types_supported: None,
             };
 

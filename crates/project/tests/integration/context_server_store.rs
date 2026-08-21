@@ -924,29 +924,15 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
     let server_id = ContextServerId(SERVER_ID.into());
     let server_url = "http://example.com/api";
 
-    let client = FakeHttpClient::create(|_| async move {
-        use http_client::AsyncBody;
-
-        let response = Response::builder()
-            .status(200)
-            .header("Content-Type", "application/json")
-            .body(AsyncBody::from(
-                serde_json::to_string(&json!({
-                    "jsonrpc": "2.0",
-                    "id": 0,
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "serverInfo": {
-                            "name": "test-server",
-                            "version": "1.0.0"
-                        }
-                    }
-                }))
-                .unwrap(),
-            ))
-            .unwrap();
-        Ok(response)
+    let client = FakeHttpClient::create(|request| async move {
+        let mut body = request.into_body();
+        let mut message = String::new();
+        futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+        if message.contains("\"method\":\"server/discover\"") {
+            Ok(method_not_found_response(&message))
+        } else {
+            Ok(initialize_response(&message))
+        }
     });
     cx.update(|cx| cx.set_http_client(client));
 
@@ -991,8 +977,10 @@ async fn test_http_server_authenticates_on_post_init_401(cx: &mut TestAppContext
     let server_id = ContextServerId(SERVER_ID.into());
 
     set_fake_mcp_http_client(cx, |message| {
-        if message.contains("\"method\":\"initialize\"") {
-            Ok(initialize_response())
+        if message.contains("\"method\":\"server/discover\"") {
+            Ok(method_not_found_response(message))
+        } else if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response(message))
         } else if message.contains("notifications/initialized") {
             Ok(notification_accepted_response())
         } else {
@@ -1071,8 +1059,10 @@ async fn test_http_server_authenticates_on_notification_401(cx: &mut TestAppCont
     let server_id = ContextServerId(SERVER_ID.into());
 
     set_fake_mcp_http_client(cx, |message| {
-        if message.contains("\"method\":\"initialize\"") {
-            Ok(initialize_response())
+        if message.contains("\"method\":\"server/discover\"") {
+            Ok(method_not_found_response(message))
+        } else if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response(message))
         } else {
             Ok(unauthorized_response())
         }
@@ -1115,8 +1105,10 @@ async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppCon
     let server_id = ContextServerId(SERVER_ID.into());
 
     set_fake_mcp_http_client(cx, |message| {
-        if message.contains("\"method\":\"initialize\"") {
-            Ok(initialize_response())
+        if message.contains("\"method\":\"server/discover\"") {
+            Ok(method_not_found_response(message))
+        } else if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response(message))
         } else if message.contains("notifications/initialized") {
             Ok(notification_accepted_response())
         } else {
@@ -1218,8 +1210,10 @@ async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppCo
     set_fake_mcp_http_client(cx, {
         let restarted = restarted.clone();
         move |message| {
-            if message.contains("\"method\":\"initialize\"") {
-                Ok(initialize_response())
+            if message.contains("\"method\":\"server/discover\"") {
+                Ok(method_not_found_response(&message))
+            } else if message.contains("\"method\":\"initialize\"") {
+                Ok(initialize_response(&message))
             } else if message.contains("notifications/initialized") {
                 Ok(notification_accepted_response())
             } else if restarted.load(Ordering::SeqCst) {
@@ -1367,15 +1361,31 @@ fn json_response(body: serde_json::Value) -> Response<http_client::AsyncBody> {
         .unwrap()
 }
 
-fn initialize_response() -> Response<http_client::AsyncBody> {
+fn request_id(message: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(message)
+        .ok()
+        .and_then(|message| message.get("id").cloned())
+        .unwrap_or(serde_json::Value::from(0))
+}
+
+fn initialize_response(message: &str) -> Response<http_client::AsyncBody> {
     json_response(json!({
         "jsonrpc": "2.0",
-        "id": 0,
+        "id": request_id(message),
         "result": {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
             "serverInfo": { "name": "test-server", "version": "1.0.0" }
         }
+    }))
+}
+
+/// What a legacy server answers to the `server/discover` probe.
+fn method_not_found_response(message: &str) -> Response<http_client::AsyncBody> {
+    json_response(json!({
+        "jsonrpc": "2.0",
+        "id": request_id(message),
+        "error": { "code": -32601, "message": "Method not found" }
     }))
 }
 

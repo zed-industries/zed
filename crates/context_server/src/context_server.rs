@@ -156,9 +156,11 @@ impl ContextServer {
         let initialized_protocol = protocol.initialize(client_info).await?;
 
         log::debug!(
-            "context server {} initialized: {:?}",
+            "context server {} initialized: version {:?}, server info {:?}, capabilities {:?}",
             self.id,
-            initialized_protocol.initialize,
+            initialized_protocol.protocol_version,
+            initialized_protocol.server_info,
+            initialized_protocol.capabilities,
         );
 
         *self.client.write() = Some(Arc::new(initialized_protocol));
@@ -169,6 +171,13 @@ impl ContextServer {
         let mut client = self.client.write();
         if let Some(protocol) = client.take() {
             drop(protocol);
+        }
+        // Custom transports (HTTP) are retained across restarts; abort the
+        // stopped generation's in-flight streams — e.g. a long-lived
+        // subscriptions/listen reader — so they cannot feed stale messages
+        // to the next generation.
+        if let ContextServerTransport::Custom(transport) = &self.configuration {
+            transport.reset();
         }
         Ok(())
     }

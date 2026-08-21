@@ -8,12 +8,45 @@ use crate::client::RequestId;
 pub const VERSION_2024_11_05: &str = "2024-11-05";
 pub const VERSION_2025_03_26: &str = "2025-03-26";
 pub const VERSION_2025_06_18: &str = "2025-06-18";
-pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const VERSION_2025_11_25: &str = "2025-11-25";
+pub const VERSION_2026_07_28: &str = "2026-07-28";
+pub const LATEST_PROTOCOL_VERSION: &str = VERSION_2026_07_28;
+/// The newest protocol revision that still uses the `initialize` handshake,
+/// offered when falling back to servers that predate 2026-07-28.
+pub const LATEST_LEGACY_PROTOCOL_VERSION: &str = VERSION_2025_11_25;
 
 /// Protocol versions that include the streamable HTTP transport's
 /// `MCP-Protocol-Version` header requirement on post-initialize requests.
 pub fn requires_protocol_version_header(version: &str) -> bool {
-    matches!(version, VERSION_2025_06_18 | LATEST_PROTOCOL_VERSION)
+    matches!(
+        version,
+        VERSION_2025_06_18 | VERSION_2025_11_25 | VERSION_2026_07_28
+    )
+}
+
+/// Protocol revisions from 2026-07-28 onward are "modern": there is no
+/// `initialize` handshake, and every request instead carries its protocol
+/// version, client info, and client capabilities in `_meta`.
+pub fn is_modern_protocol_version(version: &str) -> bool {
+    version >= VERSION_2026_07_28
+}
+
+/// `_meta` keys defined by the MCP specification.
+pub mod meta_keys {
+    pub const PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+    pub const CLIENT_INFO: &str = "io.modelcontextprotocol/clientInfo";
+    pub const CLIENT_CAPABILITIES: &str = "io.modelcontextprotocol/clientCapabilities";
+    pub const SERVER_INFO: &str = "io.modelcontextprotocol/serverInfo";
+    pub const LOG_LEVEL: &str = "io.modelcontextprotocol/logLevel";
+    pub const SUBSCRIPTION_ID: &str = "io.modelcontextprotocol/subscriptionId";
+}
+
+/// Error codes reserved for the MCP specification (`-32020` to `-32099`),
+/// introduced in the 2026-07-28 revision.
+pub mod error_codes {
+    pub const HEADER_MISMATCH: i32 = -32020;
+    pub const MISSING_REQUIRED_CLIENT_CAPABILITY: i32 = -32021;
+    pub const UNSUPPORTED_PROTOCOL_VERSION: i32 = -32022;
 }
 
 pub mod requests {
@@ -85,6 +118,13 @@ pub mod requests {
         ListResourceTemplatesResponse
     );
     request!("roots/list", ListRoots, (), ListRootsResponse);
+    request!("server/discover", ServerDiscover, (), DiscoverResponse);
+    request!(
+        "subscriptions/listen",
+        SubscriptionsListen,
+        SubscriptionsListenParams,
+        SubscriptionsListenResponse
+    );
 }
 
 pub trait Request {
@@ -124,6 +164,11 @@ pub mod notifications {
     notification!("notifications/tools/list_changed", ToolsListChanged, ());
     notification!("notifications/prompts/list_changed", PromptsListChanged, ());
     notification!("notifications/roots/list_changed", RootsListChanged, ());
+    notification!(
+        "notifications/subscriptions/acknowledged",
+        SubscriptionsAcknowledged,
+        SubscriptionsAcknowledgedParams
+    );
 }
 
 pub trait Notification {
@@ -145,7 +190,7 @@ pub struct ResourcesUpdatedParams {
     pub uri: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ProtocolVersion(pub String);
 
@@ -271,6 +316,119 @@ pub struct CompletionArgument {
     pub value: String,
 }
 
+/// Discriminates ordinary results from multi round-trip interim results.
+/// Required on all results from 2026-07-28 onward; results from
+/// earlier-protocol servers that omit it must be treated as `Complete`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultType {
+    Complete,
+    InputRequired,
+}
+
+/// Whether shared intermediaries may cache a response (added in MCP
+/// 2026-07-28 as part of `CacheableResult`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheScope {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverResponse {
+    pub supported_versions: Vec<ProtocolVersion>,
+    pub capabilities: ServerCapabilities,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<CacheScope>,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+impl DiscoverResponse {
+    /// The server identity self-reported in the result's `_meta`, if any.
+    pub fn server_info(&self) -> Option<Implementation> {
+        let value = self.meta.as_ref()?.get(meta_keys::SERVER_INFO)?;
+        serde_json::from_value(value.clone()).ok()
+    }
+}
+
+/// The notification types a client opts into with `subscriptions/listen`.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotificationFilter {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools_list_changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompts_list_changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resources_list_changed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_subscriptions: Option<Vec<Url>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionsListenParams {
+    pub notifications: NotificationFilter,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// The (empty) response to `subscriptions/listen`, sent by the server only
+/// when it gracefully closes the subscription.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionsListenResponse {
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubscriptionsAcknowledgedParams {
+    pub notifications: NotificationFilter,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// An interim result indicating the server needs additional input before it
+/// can complete the request (multi round-trip requests, MCP 2026-07-28).
+/// The client retries the original request with `inputResponses` for each
+/// entry in `input_requests`, echoing `request_state` verbatim.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InputRequiredResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_requests: Option<HashMap<String, InputRequest>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_state: Option<String>,
+}
+
+/// A server-to-client request embedded in an [`InputRequiredResult`]
+/// (e.g. `elicitation/create`, `sampling/createMessage`, or `roots/list`).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InputRequest {
+    pub method: String,
+    #[serde(default)]
+    pub params: serde_json::Value,
+}
+
+/// The `data` payload of an `UnsupportedProtocolVersionError` (code
+/// [`error_codes::UNSUPPORTED_PROTOCOL_VERSION`]).
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnsupportedProtocolVersionData {
+    pub supported: Vec<ProtocolVersion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested: Option<ProtocolVersion>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
@@ -285,6 +443,10 @@ pub struct InitializeResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadResponse {
     pub contents: Vec<ResourceContentsType>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<CacheScope>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
@@ -300,6 +462,10 @@ pub enum ResourceContentsType {
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesListResponse {
     pub resources: Vec<Resource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<CacheScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
@@ -410,6 +576,10 @@ pub struct PromptsGetResponse {
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<Prompt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<CacheScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
@@ -462,7 +632,7 @@ pub struct PromptArgument {
     pub required: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -471,9 +641,13 @@ pub struct ClientCapabilities {
     pub sampling: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub roots: Option<RootsCapabilities>,
+    /// Extensions the client supports, keyed by reverse-DNS extension ID
+    /// (added in MCP 2026-07-28).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Default, Debug, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -488,16 +662,20 @@ pub struct ServerCapabilities {
     pub resources: Option<ResourcesCapabilities>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsCapabilities>,
+    /// Extensions the server supports, keyed by reverse-DNS extension ID
+    /// (added in MCP 2026-07-28).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -506,14 +684,14 @@ pub struct ResourcesCapabilities {
     pub list_changed: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolsCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RootsCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -556,7 +734,7 @@ pub struct ToolAnnotations {
     pub open_world_hint: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Implementation {
     pub name: String,
@@ -778,6 +956,10 @@ impl ToolResponseContent {
 #[serde(rename_all = "camelCase")]
 pub struct ListToolsResponse {
     pub tools: Vec<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<CacheScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
@@ -788,6 +970,10 @@ pub struct ListToolsResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ListResourceTemplatesResponse {
     pub resource_templates: Vec<ResourceTemplate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttl_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_scope: Option<CacheScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
@@ -808,4 +994,145 @@ pub struct Root {
     pub uri: Url,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discover_response_from_spec_example() {
+        let response: DiscoverResponse = serde_json::from_value(serde_json::json!({
+            "resultType": "complete",
+            "supportedVersions": ["2026-07-28"],
+            "capabilities": {
+                "tools": {},
+                "resources": {}
+            },
+            "_meta": {
+                "io.modelcontextprotocol/serverInfo": {
+                    "name": "ExampleServer",
+                    "version": "1.0.0"
+                }
+            },
+            "instructions": "This server provides weather and resource utilities.",
+            "ttlMs": 3600000,
+            "cacheScope": "public"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            response.supported_versions,
+            vec![ProtocolVersion(VERSION_2026_07_28.to_string())]
+        );
+        assert!(response.capabilities.tools.is_some());
+        assert!(response.capabilities.resources.is_some());
+        assert!(response.capabilities.prompts.is_none());
+        assert_eq!(response.ttl_ms, Some(3_600_000));
+        assert_eq!(response.cache_scope, Some(CacheScope::Public));
+        let server_info = response.server_info().unwrap();
+        assert_eq!(server_info.name, "ExampleServer");
+        assert_eq!(server_info.version, "1.0.0");
+    }
+
+    #[test]
+    fn test_input_required_result_from_spec_example() {
+        let result: InputRequiredResult = serde_json::from_value(serde_json::json!({
+            "resultType": "input_required",
+            "inputRequests": {
+                "github_login": {
+                    "method": "elicitation/create",
+                    "params": {
+                        "mode": "form",
+                        "message": "Please provide your GitHub username"
+                    }
+                }
+            },
+            "requestState": "AEAD-protected blob"
+        }))
+        .unwrap();
+
+        let requests = result.input_requests.unwrap();
+        assert_eq!(requests["github_login"].method, "elicitation/create");
+        assert_eq!(result.request_state.as_deref(), Some("AEAD-protected blob"));
+
+        // requestState-only interim results are valid too.
+        let result: InputRequiredResult = serde_json::from_value(serde_json::json!({
+            "resultType": "input_required",
+            "requestState": "opaque"
+        }))
+        .unwrap();
+        assert!(result.input_requests.is_none());
+    }
+
+    #[test]
+    fn test_subscriptions_listen_params_serialization() {
+        let params = SubscriptionsListenParams {
+            notifications: NotificationFilter {
+                tools_list_changed: Some(true),
+                resource_subscriptions: Some(vec![
+                    Url::parse("file:///project/config.json").unwrap(),
+                ]),
+                ..Default::default()
+            },
+            meta: None,
+        };
+
+        assert_eq!(
+            serde_json::to_value(&params).unwrap(),
+            serde_json::json!({
+                "notifications": {
+                    "toolsListChanged": true,
+                    "resourceSubscriptions": ["file:///project/config.json"]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn test_unsupported_protocol_version_error_data() {
+        let data: UnsupportedProtocolVersionData = serde_json::from_value(serde_json::json!({
+            "supported": ["2026-07-28", "2025-11-25"],
+            "requested": "1900-01-01"
+        }))
+        .unwrap();
+
+        assert_eq!(
+            data.supported,
+            vec![
+                ProtocolVersion(VERSION_2026_07_28.to_string()),
+                ProtocolVersion(VERSION_2025_11_25.to_string())
+            ]
+        );
+        assert_eq!(data.requested, Some(ProtocolVersion("1900-01-01".into())));
+    }
+
+    #[test]
+    fn test_modern_protocol_version_predicate() {
+        assert!(is_modern_protocol_version(VERSION_2026_07_28));
+        assert!(is_modern_protocol_version("2027-01-01"));
+        assert!(!is_modern_protocol_version(VERSION_2025_11_25));
+        assert!(!is_modern_protocol_version(VERSION_2024_11_05));
+    }
+
+    #[test]
+    fn test_cacheable_list_tools_response_tolerates_missing_fields() {
+        // Legacy servers omit resultType/ttlMs/cacheScope entirely.
+        let response: ListToolsResponse = serde_json::from_value(serde_json::json!({
+            "tools": []
+        }))
+        .unwrap();
+        assert!(response.ttl_ms.is_none());
+        assert!(response.cache_scope.is_none());
+
+        let response: ListToolsResponse = serde_json::from_value(serde_json::json!({
+            "resultType": "complete",
+            "tools": [],
+            "ttlMs": 60000,
+            "cacheScope": "private"
+        }))
+        .unwrap();
+        assert_eq!(response.ttl_ms, Some(60_000));
+        assert_eq!(response.cache_scope, Some(CacheScope::Private));
+    }
 }

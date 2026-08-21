@@ -136,7 +136,35 @@ mod server {
     pub struct OAuthCallbackParams {
         pub code: String,
         pub state: String,
+        /// The issuer identifier of the authorization server, when it
+        /// supports RFC 9207 authorization server issuer identification.
+        pub iss: Option<String>,
     }
+
+    /// An authorization error response with the parameters callers must
+    /// validate before trusting the response's origin.
+    #[derive(Debug)]
+    pub struct OAuthAuthorizationError {
+        pub error_code: String,
+        pub error_description: Option<String>,
+        pub state: Option<String>,
+        pub iss: Option<String>,
+    }
+
+    impl std::fmt::Display for OAuthAuthorizationError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                formatter,
+                "OAuth authorization failed: {} ({})",
+                self.error_code,
+                self.error_description
+                    .as_deref()
+                    .unwrap_or("no description")
+            )
+        }
+    }
+
+    impl std::error::Error for OAuthAuthorizationError {}
 
     /// Configuration for the loopback OAuth callback server.
     ///
@@ -175,6 +203,7 @@ mod server {
             let mut state: Option<String> = None;
             let mut error: Option<String> = None;
             let mut error_description: Option<String> = None;
+            let mut iss: Option<String> = None;
 
             for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
                 match key.as_ref() {
@@ -198,23 +227,30 @@ mod server {
                             error_description = Some(value.into_owned());
                         }
                     }
+                    // An empty `iss` is preserved (not treated as absent) so
+                    // issuer validation rejects it as malformed.
+                    "iss" => {
+                        iss = Some(value.into_owned());
+                    }
                     _ => {}
                 }
             }
 
-            if let Some(error_code) = error {
-                anyhow::bail!(
-                    "OAuth authorization failed: {} ({})",
-                    error_code,
-                    error_description.as_deref().unwrap_or("no description")
-                );
+            if let Some(error) = error {
+                return Err(OAuthAuthorizationError {
+                    error_code: error,
+                    error_description,
+                    state,
+                    iss,
+                }
+                .into());
             }
 
             let code = code.ok_or_else(|| anyhow!("missing 'code' parameter in OAuth callback"))?;
             let state =
                 state.ok_or_else(|| anyhow!("missing 'state' parameter in OAuth callback"))?;
 
-            Ok(Self { code, state })
+            Ok(Self { code, state, iss })
         }
     }
 
@@ -488,6 +524,6 @@ mod server {
 
 #[cfg(not(target_family = "wasm"))]
 pub use server::{
-    OAuthCallbackParams, OAuthCallbackServerConfig, start_oauth_callback_server,
-    start_oauth_callback_server_with_config,
+    OAuthAuthorizationError, OAuthCallbackParams, OAuthCallbackServerConfig,
+    start_oauth_callback_server, start_oauth_callback_server_with_config,
 };

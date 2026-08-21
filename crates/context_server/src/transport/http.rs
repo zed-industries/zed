@@ -1,11 +1,14 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{Stream, StreamExt};
+use futures::{FutureExt as _, Stream, StreamExt};
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Request, Response, http::Method};
 use parking_lot::Mutex as SyncMutex;
-use std::{pin::Pin, sync::Arc};
+use std::{
+    pin::{Pin, pin},
+    sync::Arc,
+};
 
 use crate::oauth::{self, OAuthTokenProvider, WwwAuthenticate};
 use crate::transport::Transport;
@@ -35,8 +38,14 @@ impl std::error::Error for TransportError {}
 // Constants from MCP spec
 const HEADER_SESSION_ID: &str = "Mcp-Session-Id";
 const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const HEADER_MCP_METHOD: &str = "Mcp-Method";
+const HEADER_MCP_NAME: &str = "Mcp-Name";
 const EVENT_STREAM_MIME_TYPE: &str = "text/event-stream";
 const JSON_MIME_TYPE: &str = "application/json";
+
+/// The methods whose operation name (`params.name` or `params.uri`) must be
+/// mirrored into the `Mcp-Name` header from MCP 2026-07-28 onward.
+const NAMED_METHODS: &[&str] = &["tools/call", "resources/read", "prompts/get"];
 
 /// HTTP Transport with session management and SSE support
 pub struct HttpTransport {
@@ -62,6 +71,425 @@ pub struct HttpTransport {
     /// the start of each send so it always describes the most recent attempt.
     /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
+    /// `x-mcp-header` bookkeeping (MCP 2026-07-28).
+    param_headers: Arc<ParamHeaderState>,
+    /// Abort handles for in-flight requests and SSE response streams, keyed
+    /// by the serialized request id. From MCP 2026-07-28 closing a request's
+    /// response stream is the cancellation signal, replacing the
+    /// `notifications/cancelled` POST. Entries are tagged with a
+    /// monotonically increasing generation so a stale stream's cleanup
+    /// cannot remove a successor entry reusing the same request id.
+    active_streams: Arc<SyncMutex<HashMap<String, ActiveStream>>>,
+    next_stream_generation: std::sync::atomic::AtomicU64,
+}
+
+/// The abort signal covering a modern request for its whole lifetime:
+/// resolves when the request's `active_streams` entry is removed —
+/// cancellation, reset, or transport drop. Shared so the send phase and a
+/// subsequent SSE reader can both observe it.
+type AbortSignal = futures::future::Shared<futures::future::BoxFuture<'static, ()>>;
+
+/// Remove a request's abort entry, but only the entry it registered: a
+/// successor may have reused the request id after a reset.
+fn remove_stream_entry(
+    active_streams: &SyncMutex<HashMap<String, ActiveStream>>,
+    stream_key: &StreamKey,
+) {
+    let mut active_streams = active_streams.lock();
+    if active_streams
+        .get(&stream_key.key)
+        .is_some_and(|entry| entry.generation == stream_key.generation)
+    {
+        active_streams.remove(&stream_key.key);
+    }
+}
+
+#[derive(Clone)]
+struct StreamKey {
+    key: String,
+    generation: u64,
+}
+
+struct ActiveStream {
+    generation: u64,
+    /// Dropping the sender resolves the request's [`AbortSignal`].
+    _abort_tx: futures::channel::oneshot::Sender<()>,
+}
+
+enum SendOutcome {
+    Complete,
+    /// The response is an SSE stream whose detached reader took ownership
+    /// of the request's abort registration.
+    Streaming,
+}
+
+/// The fields of an outgoing JSON-RPC message that the streamable HTTP
+/// transport mirrors into headers (MCP 2026-07-28).
+#[derive(Default)]
+struct OutgoingMessage {
+    id: Option<serde_json::Value>,
+    method: Option<String>,
+    /// `params.name` or `params.uri` for the methods that require the
+    /// `Mcp-Name` header.
+    name: Option<String>,
+    /// The protocol version stamped in the message's own `params._meta`.
+    /// Present exactly when the protocol layer built a modern request.
+    protocol_version: Option<String>,
+    /// `params.arguments` of a `tools/call` request, for `Mcp-Param-*`
+    /// header extraction.
+    arguments: Option<serde_json::Value>,
+    /// `params.requestId` of a `notifications/cancelled` notification.
+    cancelled_request_id: Option<serde_json::Value>,
+}
+
+fn parse_outgoing_message(message: &str) -> OutgoingMessage {
+    let Ok(message) = serde_json::from_str::<serde_json::Value>(message) else {
+        return OutgoingMessage::default();
+    };
+    let id = message.get("id").filter(|id| !id.is_null()).cloned();
+    let method = message
+        .get("method")
+        .and_then(|method| method.as_str())
+        .map(str::to_string);
+    let params = message.get("params");
+    let name = method
+        .as_deref()
+        .filter(|method| NAMED_METHODS.contains(method))
+        .and_then(|_| {
+            let params = params?;
+            params
+                .get("name")
+                .or_else(|| params.get("uri"))?
+                .as_str()
+                .map(str::to_string)
+        });
+    let protocol_version = params
+        .and_then(|params| params.get("_meta")?.get(types::meta_keys::PROTOCOL_VERSION))
+        .and_then(|version| version.as_str())
+        .map(str::to_string);
+    let arguments = (method.as_deref() == Some("tools/call"))
+        .then(|| params?.get("arguments").cloned())
+        .flatten();
+    let cancelled_request_id = (method.as_deref() == Some("notifications/cancelled"))
+        .then(|| params?.get("requestId").cloned())
+        .flatten();
+    OutgoingMessage {
+        id,
+        method,
+        name,
+        protocol_version,
+        arguments,
+        cancelled_request_id,
+    }
+}
+
+/// Encode a value for use in an `Mcp-Name` (or `Mcp-Param-*`) header. Values
+/// that cannot be represented as a plain ASCII header value — or that would
+/// be mistaken for the encoded form — use the spec's Base64 sentinel format.
+fn encode_header_value(value: &str) -> String {
+    let plain_ascii = value
+        .bytes()
+        .all(|byte| (0x20..=0x7e).contains(&byte) || byte == b'\t');
+    let has_outer_whitespace = value != value.trim_matches([' ', '\t']);
+    let matches_sentinel = value.starts_with("=?base64?") && value.ends_with("?=");
+    if plain_ascii && !has_outer_whitespace && !matches_sentinel {
+        value.to_string()
+    } else {
+        use base64::Engine as _;
+        format!(
+            "=?base64?{}?=",
+            base64::engine::general_purpose::STANDARD.encode(value)
+        )
+    }
+}
+
+/// A tool parameter annotated with `x-mcp-header` in the tool's
+/// `inputSchema`: its value is mirrored into an `Mcp-Param-{name}` header on
+/// `tools/call` requests (MCP 2026-07-28).
+#[derive(Debug, Clone, PartialEq)]
+struct ParamHeader {
+    /// The header name portion; the full header is `Mcp-Param-{name}`.
+    name: String,
+    /// The chain of `properties` keys leading to the annotated parameter.
+    path: Vec<String>,
+}
+
+/// Collect the `x-mcp-header` annotations of a tool's `inputSchema`, or the
+/// reason the tool definition is invalid and must be rejected.
+fn collect_param_headers(input_schema: &serde_json::Value) -> Result<Vec<ParamHeader>, String> {
+    fn is_token(value: &str) -> bool {
+        !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte))
+    }
+
+    /// Count `x-mcp-header` keys in schema-keyword position. Keys under a
+    /// `properties` map are property *names* (data, not keywords), and the
+    /// values of data-valued keywords contain instance data where the key
+    /// carries no meaning either.
+    fn count_annotations(value: &serde_json::Value) -> usize {
+        const DATA_VALUED_KEYWORDS: &[&str] = &["default", "examples", "const", "enum"];
+        match value {
+            serde_json::Value::Object(object) => object.iter().fold(0, |count, (key, child)| {
+                if key == "properties" {
+                    if let Some(properties) = child.as_object() {
+                        return count + properties.values().map(count_annotations).sum::<usize>();
+                    }
+                }
+                if DATA_VALUED_KEYWORDS.contains(&key.as_str()) {
+                    return count;
+                }
+                count + usize::from(key == "x-mcp-header") + count_annotations(child)
+            }),
+            serde_json::Value::Array(array) => array.iter().map(count_annotations).sum(),
+            _ => 0,
+        }
+    }
+
+    fn walk(
+        schema: &serde_json::Value,
+        path: &mut Vec<String>,
+        found: &mut Vec<ParamHeader>,
+    ) -> Result<(), String> {
+        let Some(properties) = schema.get("properties").and_then(|value| value.as_object()) else {
+            return Ok(());
+        };
+        for (key, property) in properties {
+            path.push(key.clone());
+            if let Some(annotation) = property.get("x-mcp-header") {
+                let name = annotation
+                    .as_str()
+                    .filter(|name| is_token(name))
+                    .ok_or_else(|| format!("invalid x-mcp-header value for parameter {key:?}"))?;
+                let property_type = property.get("type").and_then(|value| value.as_str());
+                if !matches!(property_type, Some("string" | "integer" | "boolean")) {
+                    return Err(format!(
+                        "x-mcp-header on parameter {key:?} with non-primitive type {property_type:?}"
+                    ));
+                }
+                found.push(ParamHeader {
+                    name: name.to_string(),
+                    path: path.clone(),
+                });
+            }
+            walk(property, path, found)?;
+            path.pop();
+        }
+        Ok(())
+    }
+
+    let mut found = Vec::new();
+    walk(input_schema, &mut Vec::new(), &mut found)?;
+
+    // Annotations reachable only through array, composition, conditional, or
+    // $ref keywords invalidate the tool definition; the walk above visits
+    // pure `properties` chains only, so any surplus occurrence is one of
+    // those.
+    if count_annotations(input_schema) != found.len() {
+        return Err(
+            "x-mcp-header annotation outside a statically reachable properties chain".to_string(),
+        );
+    }
+
+    let mut names = found
+        .iter()
+        .map(|header| header.name.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names.dedup();
+    if names.len() != found.len() {
+        return Err("case-insensitively duplicated x-mcp-header names".to_string());
+    }
+
+    Ok(found)
+}
+
+/// Encode a `tools/call` argument for an `Mcp-Param-*` header. `None` means
+/// the header is omitted (absent or null value, or a value that is not of
+/// the annotated primitive type).
+fn encode_param_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(value) => Some(encode_header_value(value)),
+        // JSON integers out of the JavaScript safe range are not permitted
+        // as header parameters.
+        serde_json::Value::Number(value) => {
+            let value = value.as_i64()?;
+            const MAX_SAFE_INTEGER: i64 = (1 << 53) - 1;
+            (-MAX_SAFE_INTEGER..=MAX_SAFE_INTEGER)
+                .contains(&value)
+                .then(|| value.to_string())
+        }
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+/// Tracks `x-mcp-header` annotations across the transport: outgoing
+/// `tools/list` requests are remembered so their responses can be validated
+/// and filtered, and the surviving annotations drive `Mcp-Param-*` headers
+/// on subsequent `tools/call` requests.
+#[derive(Default)]
+struct ParamHeaderState {
+    inner: SyncMutex<ParamHeaderStateInner>,
+}
+
+#[derive(Default)]
+struct ParamHeaderStateInner {
+    next_sequence: u64,
+    /// In-flight modern `tools/list` requests: serialized request id to the
+    /// sequence number the request was issued with.
+    pending_tools_list: HashMap<String, u64>,
+    /// The sequence of the response `headers_by_tool` was last built from,
+    /// so a late response to a superseded `tools/list` cannot revert the
+    /// annotations to an older list.
+    applied_sequence: Option<u64>,
+    headers_by_tool: HashMap<String, Vec<ParamHeader>>,
+}
+
+impl ParamHeaderState {
+    fn reset(&self) {
+        *self.inner.lock() = ParamHeaderStateInner::default();
+    }
+
+    fn note_outgoing(&self, outgoing: &OutgoingMessage) {
+        if outgoing.method.as_deref() == Some("tools/list")
+            && let Some(id) = &outgoing.id
+        {
+            let mut inner = self.inner.lock();
+            let sequence = inner.next_sequence;
+            inner.next_sequence += 1;
+            inner.pending_tools_list.insert(id.to_string(), sequence);
+        }
+    }
+
+    /// Rewrite a `tools/list` response, excluding tools whose `x-mcp-header`
+    /// annotations are invalid (the spec requires rejecting such tool
+    /// definitions) and recording the annotations of the rest. Other
+    /// messages pass through unchanged.
+    fn process_incoming(&self, message: String) -> String {
+        let Ok(mut parsed) = serde_json::from_str::<serde_json::Value>(&message) else {
+            return message;
+        };
+        let sequence = {
+            let mut inner = self.inner.lock();
+            let Some(id) = parsed.get("id").filter(|id| !id.is_null()) else {
+                return message;
+            };
+            let Some(sequence) = inner.pending_tools_list.remove(&id.to_string()) else {
+                return message;
+            };
+            sequence
+        };
+        let Some(tools) = parsed
+            .get_mut("result")
+            .and_then(|result| result.get_mut("tools"))
+            .and_then(|tools| tools.as_array_mut())
+        else {
+            return message;
+        };
+
+        let mut headers_by_tool = HashMap::default();
+        tools.retain(|tool| {
+            let Some(name) = tool.get("name").and_then(|name| name.as_str()) else {
+                return true;
+            };
+            let Some(input_schema) = tool.get("inputSchema") else {
+                return true;
+            };
+            match collect_param_headers(input_schema) {
+                Ok(headers) => {
+                    if !headers.is_empty() {
+                        headers_by_tool.insert(name.to_string(), headers);
+                    }
+                    true
+                }
+                Err(reason) => {
+                    log::warn!(
+                        "rejecting tool {name:?} with invalid x-mcp-header annotations: {reason}"
+                    );
+                    false
+                }
+            }
+        });
+        let mut inner = self.inner.lock();
+        if inner
+            .applied_sequence
+            .is_none_or(|applied| sequence > applied)
+        {
+            inner.applied_sequence = Some(sequence);
+            inner.headers_by_tool = headers_by_tool;
+        }
+        drop(inner);
+
+        serde_json::to_string(&parsed).unwrap_or(message)
+    }
+
+    /// The `Mcp-Param-*` headers for a `tools/call` request.
+    fn headers_for_call(&self, outgoing: &OutgoingMessage) -> Vec<(String, String)> {
+        let Some(tool_name) = outgoing
+            .name
+            .as_deref()
+            .filter(|_| outgoing.method.as_deref() == Some("tools/call"))
+        else {
+            return Vec::new();
+        };
+        let inner = self.inner.lock();
+        let Some(param_headers) = inner.headers_by_tool.get(tool_name) else {
+            return Vec::new();
+        };
+        param_headers
+            .iter()
+            .filter_map(|header| {
+                let mut value = outgoing.arguments.as_ref()?;
+                for key in &header.path {
+                    value = value.get(key)?;
+                }
+                let encoded = encode_param_value(value)?;
+                Some((format!("Mcp-Param-{}", header.name), encoded))
+            })
+            .collect()
+    }
+}
+
+/// Build the JSON-RPC error response to resolve a request that received an
+/// HTTP error status, so the pending request fails promptly instead of
+/// timing out.
+///
+/// Returns the error body as-is when it is already a JSON-RPC error response
+/// correlated to a request. When the body is an uncorrelated JSON-RPC error
+/// (`id: null`, as some pre-2026 servers send) its code, message, and data
+/// are re-wrapped for the id of the outgoing request; any other body becomes
+/// an internal error carrying the HTTP status. Returns `None` when the
+/// outgoing message was a notification: with no id there is nothing to
+/// resolve.
+fn json_rpc_error_response_for(outgoing: &str, status: u16, error_body: &str) -> Option<String> {
+    let outgoing: serde_json::Value = serde_json::from_str(outgoing).ok()?;
+    let request_id = outgoing.get("id").filter(|id| !id.is_null())?.clone();
+
+    let error = match serde_json::from_str::<serde_json::Value>(error_body) {
+        Ok(body) if body.get("error").is_some_and(|error| error.is_object()) => {
+            if body.get("id") == Some(&request_id) {
+                // Correlated to the request we sent: forward the server's
+                // response wholesale. Any other id (or `id: null`) could
+                // not resolve the pending request, so re-wrap the error
+                // below.
+                return Some(error_body.to_string());
+            }
+            body.get("error").cloned()?
+        }
+        _ => serde_json::json!({
+            "code": -32603,
+            "message": format!("HTTP {}: {}", status, error_body),
+        }),
+    };
+
+    serde_json::to_string(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": error,
+    }))
+    .ok()
 }
 
 impl HttpTransport {
@@ -97,13 +525,33 @@ impl HttpTransport {
             headers,
             token_provider,
             auth_challenge: SyncMutex::new(None),
+            param_headers: Arc::new(ParamHeaderState::default()),
+            active_streams: Arc::new(SyncMutex::new(HashMap::default())),
+            next_stream_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
+    /// The protocol version to speak for an outgoing message when the
+    /// modern (2026-07-28) header rules apply to it: the version stamped in
+    /// the message's own `_meta`, or the negotiated version if it is modern
+    /// (which covers notifications, whose params carry no `_meta`).
+    fn modern_version_for(&self, outgoing: &OutgoingMessage) -> Option<String> {
+        outgoing.protocol_version.clone().or_else(|| {
+            self.protocol_version
+                .lock()
+                .clone()
+                .filter(|version| types::is_modern_protocol_version(version))
+        })
+    }
+
     /// Build a POST request for the given message body, attaching all standard
-    /// headers (content-type, accept, session ID, static headers, and bearer
-    /// token if available).
-    fn build_request(&self, message: &[u8]) -> Result<http_client::Request<AsyncBody>> {
+    /// headers (content-type, accept, session ID or the modern request
+    /// metadata headers, static headers, and bearer token if available).
+    fn build_request(
+        &self,
+        message: &[u8],
+        outgoing: &OutgoingMessage,
+    ) -> Result<http_client::Request<AsyncBody>> {
         let mut request_builder = Request::builder()
             .method(Method::POST)
             .uri(&self.endpoint)
@@ -122,17 +570,34 @@ impl HttpTransport {
             request_builder = request_builder.header("Authorization", format!("Bearer {}", token));
         }
 
-        // Add session ID if we have one (except for initialize).
-        if let Some(ref session_id) = *self.session_id.lock() {
-            request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
-        }
+        if let Some(version) = self.modern_version_for(outgoing) {
+            // MCP 2026-07-28: mirror the method (and operation name, where
+            // required) into headers so intermediaries can route without
+            // parsing the body. There are no sessions in this era.
+            request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version);
+            if let Some(method) = &outgoing.method {
+                request_builder = request_builder.header(HEADER_MCP_METHOD, method.as_str());
+            }
+            if let Some(name) = &outgoing.name {
+                request_builder =
+                    request_builder.header(HEADER_MCP_NAME, encode_header_value(name));
+            }
+            for (header, value) in self.param_headers.headers_for_call(outgoing) {
+                request_builder = request_builder.header(header, value);
+            }
+        } else {
+            // Add session ID if we have one (except for initialize).
+            if let Some(ref session_id) = *self.session_id.lock() {
+                request_builder = request_builder.header(HEADER_SESSION_ID, session_id.as_str());
+            }
 
-        // Echo the negotiated protocol version once initialization has
-        // completed. Required by servers speaking MCP 2025-06-18 or later.
-        if let Some(ref version) = *self.protocol_version.lock()
-            && types::requires_protocol_version_header(version)
-        {
-            request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
+            // Echo the negotiated protocol version once initialization has
+            // completed. Required by servers speaking MCP 2025-06-18 or later.
+            if let Some(ref version) = *self.protocol_version.lock()
+                && types::requires_protocol_version_header(version)
+            {
+                request_builder = request_builder.header(HEADER_PROTOCOL_VERSION, version.as_str());
+            }
         }
 
         Ok(request_builder.body(AsyncBody::from(message.to_vec()))?)
@@ -155,7 +620,95 @@ impl HttpTransport {
 
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
+        let outgoing = parse_outgoing_message(&message);
+        let is_modern = self.modern_version_for(&outgoing).is_some();
+        if is_modern {
+            self.param_headers.note_outgoing(&outgoing);
 
+            // From MCP 2026-07-28 there are no client-to-server
+            // notifications over streamable HTTP: cancellation is signaled
+            // by closing the request's response stream instead.
+            if outgoing.method.as_deref() == Some("notifications/cancelled") {
+                if let Some(request_id) = &outgoing.cancelled_request_id {
+                    self.active_streams.lock().remove(&request_id.to_string());
+                }
+                return Ok(());
+            }
+        }
+
+        // Register an abort handle covering the entire request, so
+        // cancellation takes effect while the request is still awaiting
+        // response headers or reading a JSON body — not only once an SSE
+        // stream exists. Removing the entry (cancellation, reset, or drop)
+        // resolves the signal and aborts whichever phase currently owns the
+        // request.
+        let registration = if is_modern && let Some(id) = &outgoing.id {
+            let key = id.to_string();
+            let generation = self
+                .next_stream_generation
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let (abort_tx, abort_rx) = futures::channel::oneshot::channel::<()>();
+            self.active_streams.lock().insert(
+                key.clone(),
+                ActiveStream {
+                    generation,
+                    _abort_tx: abort_tx,
+                },
+            );
+            let signal: AbortSignal = async move {
+                abort_rx.await.ok();
+            }
+            .boxed()
+            .shared();
+            Some((StreamKey { key, generation }, signal))
+        } else {
+            None
+        };
+
+        let outcome = match &registration {
+            Some((key, signal)) => {
+                let mut send = pin!(
+                    self.perform_send(
+                        &message,
+                        &outgoing,
+                        is_notification,
+                        is_modern,
+                        Some((key.clone(), signal.clone())),
+                    )
+                    .fuse()
+                );
+                let mut abort = pin!(signal.clone().fuse());
+                futures::select! {
+                    outcome = send => outcome,
+                    // Dropping the send future drops the request and any
+                    // partially read response body, closing the connection
+                    // — the cancellation signal.
+                    _ = abort => Ok(SendOutcome::Complete),
+                }
+            }
+            None => {
+                self.perform_send(&message, &outgoing, is_notification, is_modern, None)
+                    .await
+            }
+        };
+
+        if let Some((stream_key, _)) = registration
+            && !matches!(outcome, Ok(SendOutcome::Streaming))
+        {
+            remove_stream_entry(&self.active_streams, &stream_key);
+        }
+        outcome.map(|_| ())
+    }
+
+    /// Issue the HTTP request for a message and handle its response.
+    async fn perform_send(
+        &self,
+        message: &str,
+        outgoing: &OutgoingMessage,
+        is_notification: bool,
+        is_modern: bool,
+        stream_abort: Option<(StreamKey, AbortSignal)>,
+    ) -> Result<SendOutcome> {
         // If we currently have no access token, try refreshing before sending
         // the request so restored but expired sessions do not need an initial
         // 401 round-trip before they can recover.
@@ -165,7 +718,7 @@ impl HttpTransport {
             }
         }
 
-        let request = self.build_request(message.as_bytes())?;
+        let request = self.build_request(message.as_bytes(), &outgoing)?;
         let mut response = self.http_client.send(request).await?;
 
         // On 401, try refreshing the token and retry once.
@@ -187,7 +740,7 @@ impl HttpTransport {
             if let Some(ref provider) = self.token_provider {
                 if provider.try_refresh().await.unwrap_or(false) {
                     // Retry with the refreshed token.
-                    let retry_request = self.build_request(message.as_bytes())?;
+                    let retry_request = self.build_request(message.as_bytes(), &outgoing)?;
                     response = self.http_client.send(retry_request).await?;
 
                     // If still 401 after refresh, give up.
@@ -211,11 +764,14 @@ impl HttpTransport {
                     .get("content-type")
                     .and_then(|v| v.to_str().ok());
 
-                // Extract session ID from response headers if present
-                if let Some(session_id) = response
-                    .headers()
-                    .get(HEADER_SESSION_ID)
-                    .and_then(|v| v.to_str().ok())
+                // Extract session ID from response headers if present. There
+                // are no sessions from MCP 2026-07-28 onward, so ignore any
+                // session ID a dual-era server might still mint.
+                if !is_modern
+                    && let Some(session_id) = response
+                        .headers()
+                        .get(HEADER_SESSION_ID)
+                        .and_then(|v| v.to_str().ok())
                 {
                     *self.session_id.lock() = Some(session_id.to_string());
                     log::debug!("Session ID set: {}", session_id);
@@ -230,6 +786,7 @@ impl HttpTransport {
 
                         // Only send non-empty responses
                         if !body.is_empty() {
+                            let body = self.param_headers.process_incoming(body);
                             self.response_tx
                                 .send(body)
                                 .await
@@ -237,8 +794,14 @@ impl HttpTransport {
                         }
                     }
                     Some(ct) if ct.starts_with(EVENT_STREAM_MIME_TYPE) => {
-                        // SSE stream - set up streaming
-                        self.setup_sse_stream(response).await?;
+                        // SSE stream - set up streaming. The detached reader
+                        // takes over the request's abort registration.
+                        let streaming = stream_abort.is_some();
+                        self.setup_sse_stream(response, outgoing.id.as_ref(), stream_abort)
+                            .await?;
+                        if streaming {
+                            return Ok(SendOutcome::Streaming);
+                        }
                     }
                     _ => {
                         // For notifications, 202 Accepted with no content type is ok
@@ -254,35 +817,98 @@ impl HttpTransport {
                 // Accepted - notification acknowledged, no response needed
                 log::debug!("Notification accepted");
             }
-            _ => {
+            status => {
                 let mut error_body = String::new();
                 futures::AsyncReadExt::read_to_string(response.body_mut(), &mut error_body).await?;
 
-                self.error_tx
-                    .send(format!("HTTP {}: {}", response.status(), error_body))
-                    .await
-                    .map_err(|_| anyhow!("Failed to send error"))?;
+                // Resolve the pending request with a JSON-RPC error instead
+                // of letting it time out. Servers speaking MCP 2026-07-28 or
+                // later reject requests with an HTTP error status whose body
+                // is a JSON-RPC error response (e.g. `400 Bad Request` with
+                // an `UnsupportedProtocolVersionError`); older servers may
+                // send an uncorrelated (`id: null`) error or a non-JSON
+                // body, so fall back to wrapping those in an error response
+                // for the request we just sent.
+                if let Some(error_response) =
+                    json_rpc_error_response_for(message, status.as_u16(), &error_body)
+                {
+                    // Also releases the param-header bookkeeping of a failed
+                    // tools/list request.
+                    let error_response = self.param_headers.process_incoming(error_response);
+                    self.response_tx
+                        .send(error_response)
+                        .await
+                        .map_err(|_| anyhow!("Failed to send JSON-RPC error response"))?;
+                } else {
+                    self.error_tx
+                        .send(format!("HTTP {}: {}", status, error_body))
+                        .await
+                        .map_err(|_| anyhow!("Failed to send error"))?;
+                }
             }
         }
 
-        Ok(())
+        Ok(SendOutcome::Complete)
     }
 
-    /// Set up SSE streaming from the response
-    async fn setup_sse_stream(&self, mut response: Response<AsyncBody>) -> Result<()> {
+    /// Set up SSE streaming from the response. When the request carries an
+    /// abort registration, the detached reader owns it: the stream can be
+    /// closed to cancel the request (MCP 2026-07-28).
+    async fn setup_sse_stream(
+        &self,
+        mut response: Response<AsyncBody>,
+        request_id: Option<&serde_json::Value>,
+        stream_abort: Option<(StreamKey, AbortSignal)>,
+    ) -> Result<()> {
         let response_tx = self.response_tx.clone();
         let error_tx = self.error_tx.clone();
+        let param_headers = self.param_headers.clone();
+
+        let active_streams = self.active_streams.clone();
+        let request_id = request_id.cloned();
+        let (stream_key, abort_signal) = match stream_abort {
+            Some((key, signal)) => (Some(key), Some(signal)),
+            None => (None, None),
+        };
 
         // Spawn a task to handle the SSE stream
         self.executor
             .spawn(async move {
+                let _remove_stream = util::defer({
+                    let active_streams = active_streams.clone();
+                    let stream_key = stream_key.clone();
+                    move || {
+                        if let Some(stream_key) = stream_key {
+                            remove_stream_entry(&active_streams, &stream_key);
+                        }
+                    }
+                });
+                let mut abort_rx = pin!(
+                    match abort_signal {
+                        Some(signal) => futures::future::Either::Left(signal),
+                        None => futures::future::Either::Right(futures::future::pending()),
+                    }
+                    .fuse()
+                );
+
                 let reader = futures::io::BufReader::new(response.body_mut());
                 let mut lines = futures::AsyncBufReadExt::lines(reader);
 
                 let mut data_buffer = Vec::new();
                 let mut in_message = false;
+                let mut received_response = false;
 
-                while let Some(line_result) = lines.next().await {
+                loop {
+                    let line_result = futures::select! {
+                        line = lines.next().fuse() => match line {
+                            Some(line_result) => line_result,
+                            None => break,
+                        },
+                        // The abort sender was dropped: the request was
+                        // cancelled. Dropping the response body closes the
+                        // stream, which is the cancellation signal.
+                        _ = abort_rx => break,
+                    };
                     match line_result {
                         Ok(line) => {
                             if line.is_empty() {
@@ -292,10 +918,20 @@ impl HttpTransport {
 
                                     // Filter out ping messages and empty data
                                     if !message.trim().is_empty() && message != "ping" {
+                                        let matches_request =
+                                            request_id.as_ref().is_some_and(|request_id| {
+                                                serde_json::from_str::<serde_json::Value>(&message)
+                                                    .ok()
+                                                    .is_some_and(|message| {
+                                                        message.get("id") == Some(request_id)
+                                                    })
+                                            });
+                                        let message = param_headers.process_incoming(message);
                                         if let Err(e) = response_tx.send(message).await {
                                             log::error!("Failed to send SSE message: {}", e);
                                             break;
                                         }
+                                        received_response |= matches_request;
                                     }
                                     data_buffer.clear();
                                 }
@@ -329,6 +965,24 @@ impl HttpTransport {
                         }
                     }
                 }
+
+                // SSE resumability was removed in MCP 2026-07-28: a stream
+                // that ends without delivering the response loses the
+                // request, and the client must re-issue it as a new request.
+                // Resolve the request with an error promptly instead of
+                // letting it run into its timeout.
+                if !received_response && let Some(request_id) = request_id {
+                    let error_response = serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {
+                            "code": -32603,
+                            "message": "response stream ended before the response arrived",
+                        },
+                    });
+                    let error_response = param_headers.process_incoming(error_response.to_string());
+                    response_tx.send(error_response).await.ok();
+                }
             })
             .detach();
 
@@ -354,6 +1008,27 @@ impl Transport for HttpTransport {
         *self.protocol_version.lock() = Some(version.to_string());
     }
 
+    fn cancel_request(&self, request_id: &serde_json::Value) {
+        // Dropping the abort sender resolves the request's abort signal,
+        // tearing down whichever phase currently owns it: the request
+        // awaiting its response, or an established SSE reader.
+        self.active_streams.lock().remove(&request_id.to_string());
+    }
+
+    fn reset(&self) {
+        // Abort every in-flight request and stream of the previous client
+        // generation, clear its negotiated protocol state, and drop messages
+        // it never consumed. The transport is reused by the next generation,
+        // whose request ids and protocol negotiation start over.
+        self.active_streams.lock().clear();
+        *self.session_id.lock() = None;
+        *self.protocol_version.lock() = None;
+        *self.auth_challenge.lock() = None;
+        self.param_headers.reset();
+        while self.response_rx.try_recv().is_ok() {}
+        while self.error_rx.try_recv().is_ok() {}
+    }
+
     fn auth_challenge(&self) -> Option<WwwAuthenticate> {
         self.auth_challenge.lock().clone()
     }
@@ -361,6 +1036,11 @@ impl Transport for HttpTransport {
 
 impl Drop for HttpTransport {
     fn drop(&mut self) {
+        // Dropping the abort senders tears down the in-flight SSE reader
+        // tasks (and with them the response bodies), so long-lived streams
+        // like subscriptions/listen do not outlive the transport.
+        self.active_streams.lock().clear();
+
         // Try to cleanup session on drop
         let http_client = self.http_client.clone();
         let endpoint = self.endpoint.clone();
@@ -783,6 +1463,847 @@ mod tests {
             }
         }
         assert_eq!(provider.refresh_count(), 1);
+    }
+
+    #[test]
+    fn test_encode_header_value() {
+        assert_eq!(encode_header_value("us-west1"), "us-west1");
+        assert_eq!(encode_header_value("file:///a/b.json"), "file:///a/b.json");
+        // Non-ASCII, outer whitespace, control characters, and values
+        // matching the sentinel pattern must be Base64-encoded (examples
+        // from the spec).
+        assert_eq!(
+            encode_header_value("Hello, 世界"),
+            "=?base64?SGVsbG8sIOS4lueVjA==?="
+        );
+        assert_eq!(encode_header_value(" padded "), "=?base64?IHBhZGRlZCA=?=");
+        assert_eq!(
+            encode_header_value("line1\nline2"),
+            "=?base64?bGluZTEKbGluZTI=?="
+        );
+        assert_eq!(
+            encode_header_value("=?base64?literal?="),
+            "=?base64?PT9iYXNlNjQ/bGl0ZXJhbD89?="
+        );
+    }
+
+    #[test]
+    fn test_collect_param_headers() {
+        // Valid: primitive types reachable through pure properties chains.
+        let headers = collect_param_headers(&serde_json::json!({
+            "type": "object",
+            "properties": {
+                "region": { "type": "string", "x-mcp-header": "Region" },
+                "options": {
+                    "type": "object",
+                    "properties": {
+                        "retries": { "type": "integer", "x-mcp-header": "Retries" }
+                    }
+                },
+                "query": { "type": "string" }
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            headers,
+            vec![
+                ParamHeader {
+                    name: "Region".into(),
+                    path: vec!["region".into()],
+                },
+                ParamHeader {
+                    name: "Retries".into(),
+                    path: vec!["options".into(), "retries".into()],
+                },
+            ]
+        );
+
+        // The literal key outside annotation position is data, not an
+        // annotation: a parameter named "x-mcp-header", or the key inside
+        // data-valued keywords.
+        assert_eq!(
+            collect_param_headers(&serde_json::json!({
+                "properties": { "x-mcp-header": { "type": "string" } }
+            }))
+            .unwrap(),
+            Vec::new()
+        );
+        assert_eq!(
+            collect_param_headers(&serde_json::json!({
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "default": { "x-mcp-header": "not-an-annotation" },
+                        "examples": [{ "x-mcp-header": "also-data" }]
+                    }
+                }
+            }))
+            .unwrap(),
+            Vec::new()
+        );
+
+        // Invalid: non-primitive type.
+        collect_param_headers(&serde_json::json!({
+            "properties": { "amount": { "type": "number", "x-mcp-header": "Amount" } }
+        }))
+        .unwrap_err();
+        // Invalid: annotation buried in a composition keyword.
+        collect_param_headers(&serde_json::json!({
+            "properties": {
+                "choice": {
+                    "oneOf": [
+                        { "properties": { "a": { "type": "string", "x-mcp-header": "A" } } }
+                    ]
+                }
+            }
+        }))
+        .unwrap_err();
+        // Invalid: case-insensitive duplicate names.
+        collect_param_headers(&serde_json::json!({
+            "properties": {
+                "a": { "type": "string", "x-mcp-header": "Region" },
+                "b": { "type": "string", "x-mcp-header": "region" }
+            }
+        }))
+        .unwrap_err();
+        // Invalid: non-token characters in the name.
+        collect_param_headers(&serde_json::json!({
+            "properties": { "a": { "type": "string", "x-mcp-header": "bad name" } }
+        }))
+        .unwrap_err();
+    }
+
+    #[gpui::test]
+    async fn test_tools_call_mirrors_annotated_params_into_headers(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_headers = captured_headers.clone();
+            move |req| {
+                let is_call = req
+                    .headers()
+                    .get("Mcp-Method")
+                    .is_some_and(|method| method == "tools/call");
+                if is_call {
+                    captured_headers.lock().push((
+                        req.headers()
+                            .get("Mcp-Param-Region")
+                            .map(|value| value.to_str().unwrap().to_string()),
+                        req.headers()
+                            .get("Mcp-Param-Verbose")
+                            .map(|value| value.to_str().unwrap().to_string()),
+                    ));
+                    Box::pin(async {
+                        json_response(
+                            200,
+                            r#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","content":[]}}"#,
+                        )
+                    })
+                } else {
+                    Box::pin(async {
+                        json_response(
+                            200,
+                            &serde_json::json!({
+                                "jsonrpc": "2.0",
+                                "id": 1,
+                                "result": {
+                                    "resultType": "complete",
+                                    "tools": [
+                                        {
+                                            "name": "execute_sql",
+                                            "inputSchema": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "region": { "type": "string", "x-mcp-header": "Region" },
+                                                    "verbose": { "type": "boolean", "x-mcp-header": "Verbose" },
+                                                    "query": { "type": "string" }
+                                                }
+                                            }
+                                        },
+                                        {
+                                            "name": "broken_tool",
+                                            "inputSchema": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "amount": { "type": "number", "x-mcp-header": "Amount" }
+                                                }
+                                            }
+                                        }
+                                    ],
+                                    "ttlMs": 60000,
+                                    "cacheScope": "private"
+                                }
+                            })
+                            .to_string(),
+                        )
+                    })
+                }
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        let meta = serde_json::json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" });
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/list",
+                    "params": { "_meta": meta }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        // The invalid tool is excluded from the response the client sees.
+        let list_response: serde_json::Value =
+            serde_json::from_str(&transport.receive().next().await.unwrap()).unwrap();
+        let tools = list_response["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "execute_sql");
+
+        // Annotated arguments are mirrored into Mcp-Param-* headers; null or
+        // missing values omit the header.
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "execute_sql",
+                        "arguments": { "region": "us-west1", "query": "SELECT 1" },
+                        "_meta": meta
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            captured_headers.lock().clone(),
+            vec![(Some("us-west1".into()), None)]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_modern_request_headers(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_headers = captured_headers.clone();
+            move |req| {
+                let get = |name: &str| {
+                    req.headers()
+                        .get(name)
+                        .map(|value| value.to_str().unwrap().to_string())
+                };
+                captured_headers.lock().push((
+                    get("MCP-Protocol-Version"),
+                    get("Mcp-Method"),
+                    get("Mcp-Name"),
+                    get("Mcp-Session-Id"),
+                ));
+                Box::pin(async {
+                    json_response(
+                        200,
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","content":[]}}"#,
+                    )
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        // A modern request: `_meta` carries the protocol version.
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "get_weather",
+                        "arguments": {},
+                        "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        let headers = captured_headers.lock().clone();
+        assert_eq!(
+            headers[0],
+            (
+                Some("2026-07-28".into()),
+                Some("tools/call".into()),
+                Some("get_weather".into()),
+                None,
+            )
+        );
+    }
+
+    #[gpui::test]
+    async fn test_mcp_name_header_uses_resource_uri(cx: &mut TestAppContext) {
+        let captured_name = Arc::new(SyncMutex::new(None::<String>));
+        let client = make_fake_http_client({
+            let captured_name = captured_name.clone();
+            move |req| {
+                *captured_name.lock() = req
+                    .headers()
+                    .get("Mcp-Name")
+                    .map(|value| value.to_str().unwrap().to_string());
+                Box::pin(async {
+                    json_response(200, r#"{"jsonrpc":"2.0","id":1,"result":{"contents":[]}}"#)
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "resources/read",
+                    "params": {
+                        "uri": "file:///projects/myapp/config.json",
+                        "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+                    }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            captured_name.lock().as_deref(),
+            Some("file:///projects/myapp/config.json")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cancel_request_aborts_request_awaiting_its_response(cx: &mut TestAppContext) {
+        // The server never answers: without an out-of-band abort, send()
+        // would block the serial output loop indefinitely, and cancellation
+        // could never take effect.
+        let client = make_fake_http_client(|_req| Box::pin(std::future::pending()));
+
+        let transport = Arc::new(HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        ));
+
+        let send_task = cx.background_executor.spawn({
+            let transport = transport.clone();
+            async move {
+                transport
+                    .send(
+                        serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": 9,
+                            "method": "tools/call",
+                            "params": {
+                                "name": "slow-tool",
+                                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+                            }
+                        })
+                        .to_string(),
+                    )
+                    .await
+            }
+        });
+        cx.run_until_parked();
+        assert!(transport.active_streams.lock().contains_key("9"));
+
+        transport.cancel_request(&serde_json::json!(9));
+        cx.run_until_parked();
+
+        send_task.await.unwrap();
+        assert!(transport.active_streams.lock().is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_reset_aborts_streams_and_drains_stale_messages(cx: &mut TestAppContext) {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let client = make_fake_http_client({
+            let request_count = request_count.clone();
+            move |_req| {
+                if request_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    // First request: answered, leaving a stale response in
+                    // the channel.
+                    Box::pin(async {
+                        json_response(200, r#"{"jsonrpc":"2.0","id":0,"result":{}}"#)
+                    })
+                } else {
+                    // Second request: never answered.
+                    Box::pin(std::future::pending())
+                }
+            }
+        });
+
+        let transport = Arc::new(HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        ));
+
+        let meta = serde_json::json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28" });
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": 0, "method": "tools/list", "params": { "_meta": meta }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        let pending_task = cx.background_executor.spawn({
+            let transport = transport.clone();
+            let meta = meta.clone();
+            async move {
+                transport
+                    .send(
+                        serde_json::json!({
+                            "jsonrpc": "2.0", "id": 1, "method": "subscriptions/listen",
+                            "params": { "notifications": {}, "_meta": meta }
+                        })
+                        .to_string(),
+                    )
+                    .await
+            }
+        });
+        cx.run_until_parked();
+        assert!(!transport.response_rx.is_empty());
+        assert!(transport.active_streams.lock().contains_key("1"));
+
+        transport.set_protocol_version("2025-11-25");
+        *transport.session_id.lock() = Some("stale-session".to_string());
+        *transport.auth_challenge.lock() = Some(WwwAuthenticate {
+            resource_metadata: None,
+            scope: None,
+            error: None,
+            error_description: None,
+        });
+        {
+            let mut param_headers = transport.param_headers.inner.lock();
+            param_headers.next_sequence = 1;
+            param_headers.applied_sequence = Some(0);
+            param_headers.headers_by_tool.insert(
+                "stale-tool".to_string(),
+                vec![ParamHeader {
+                    name: "Stale".to_string(),
+                    path: vec!["stale".to_string()],
+                }],
+            );
+        }
+
+        // A new client generation must not see the old one's streams or
+        // protocol state, or undelivered messages.
+        transport.reset();
+        cx.run_until_parked();
+
+        pending_task.await.unwrap();
+        assert!(transport.response_rx.is_empty());
+        assert!(transport.active_streams.lock().is_empty());
+        assert!(transport.session_id.lock().is_none());
+        assert!(transport.protocol_version.lock().is_none());
+        assert!(transport.auth_challenge.lock().is_none());
+        let param_headers = transport.param_headers.inner.lock();
+        assert_eq!(param_headers.next_sequence, 0);
+        assert!(param_headers.pending_tools_list.is_empty());
+        assert!(param_headers.applied_sequence.is_none());
+        assert!(param_headers.headers_by_tool.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_modern_cancellation_is_not_posted(cx: &mut TestAppContext) {
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let client = make_fake_http_client({
+            let request_count = request_count.clone();
+            move |_req| {
+                request_count.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { json_response(202, "") })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+        transport.set_protocol_version("2026-07-28");
+
+        // On a modern connection, cancellation is signaled by closing the
+        // request's response stream; the notification must not be sent.
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": { "requestId": 7 }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(request_count.load(Ordering::SeqCst), 0);
+
+        // Legacy connections keep posting it.
+        transport.set_protocol_version("2025-11-25");
+        transport
+            .send(
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "method": "notifications/cancelled",
+                    "params": { "requestId": 7 }
+                })
+                .to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(request_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_broken_sse_stream_resolves_request_with_error(cx: &mut TestAppContext) {
+        // The stream delivers a notification but ends before the response:
+        // the request must fail promptly, not run into its timeout.
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from(
+                        b"data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":1,\"progress\":0.5}}\n\n".to_vec(),
+                    ))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(
+                r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t"}}"#
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+
+        let mut receiver = transport.receive();
+        let first: serde_json::Value =
+            serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
+        assert_eq!(first["method"], "notifications/progress");
+        let second: serde_json::Value =
+            serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
+        assert_eq!(second["id"], 3);
+        assert_eq!(second["error"]["code"], -32603);
+    }
+
+    #[gpui::test]
+    async fn test_completed_sse_stream_does_not_synthesize_error(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body(AsyncBody::from(
+                        b"data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"resultType\":\"complete\"}}\n\n".to_vec(),
+                    ))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(
+                r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"t"}}"#
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+
+        let mut receiver = transport.receive();
+        let response: serde_json::Value =
+            serde_json::from_str(&receiver.next().await.unwrap()).unwrap();
+        assert_eq!(response["id"], 3);
+        assert_eq!(response["result"]["resultType"], "complete");
+
+        cx.background_executor
+            .timer(std::time::Duration::from_millis(10))
+            .await;
+        assert!(
+            receiver.next().now_or_never().is_none(),
+            "completed response was followed by a synthesized stream error"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_modern_requests_ignore_session_ids(cx: &mut TestAppContext) {
+        // A dual-era server minting a session ID on a modern request must
+        // not cause subsequent requests to carry Mcp-Session-Id.
+        let captured_session = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_session = captured_session.clone();
+            move |req| {
+                captured_session.lock().push(
+                    req.headers()
+                        .get("Mcp-Session-Id")
+                        .map(|value| value.to_str().unwrap().to_string()),
+                );
+                Box::pin(async {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header("Mcp-Session-Id", "session-123")
+                        .body(AsyncBody::from(
+                            br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
+                        ))
+                        .unwrap())
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        let modern_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "server/discover",
+            "params": {
+                "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" }
+            }
+        })
+        .to_string();
+
+        transport.send(modern_request.clone()).await.unwrap();
+        transport.send(modern_request).await.unwrap();
+
+        assert_eq!(captured_session.lock().clone(), vec![None, None]);
+    }
+
+    #[gpui::test]
+    async fn test_legacy_requests_keep_session_and_version_headers(cx: &mut TestAppContext) {
+        let captured_headers = Arc::new(SyncMutex::new(Vec::new()));
+        let client = make_fake_http_client({
+            let captured_headers = captured_headers.clone();
+            move |req| {
+                let get = |name: &str| {
+                    req.headers()
+                        .get(name)
+                        .map(|value| value.to_str().unwrap().to_string())
+                };
+                captured_headers.lock().push((
+                    get("Mcp-Session-Id"),
+                    get("MCP-Protocol-Version"),
+                    get("Mcp-Method"),
+                ));
+                Box::pin(async {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "application/json")
+                        .header("Mcp-Session-Id", "session-123")
+                        .body(AsyncBody::from(
+                            br#"{"jsonrpc":"2.0","id":1,"result":{}}"#.to_vec(),
+                        ))
+                        .unwrap())
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+        transport.set_protocol_version("2025-11-25");
+
+        let legacy_request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#.to_string();
+        transport.send(legacy_request.clone()).await.unwrap();
+        transport.send(legacy_request).await.unwrap();
+
+        let headers = captured_headers.lock().clone();
+        // First request has no session yet; the second echoes the minted one.
+        // Legacy requests never carry Mcp-Method.
+        assert_eq!(headers[0], (None, Some("2025-11-25".into()), None));
+        assert_eq!(
+            headers[1],
+            (Some("session-123".into()), Some("2025-11-25".into()), None,)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_json_rpc_error_body_on_http_400_reaches_response_stream(cx: &mut TestAppContext) {
+        let error_body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"Unsupported protocol version","data":{"supported":["2026-07-28"]}}}"#;
+        let client = make_fake_http_client({
+            let error_body = error_body.to_string();
+            move |_req| {
+                let error_body = error_body.clone();
+                Box::pin(async move {
+                    Ok(Response::builder()
+                        .status(400)
+                        .header("Content-Type", "application/json")
+                        .body(AsyncBody::from(error_body.into_bytes()))
+                        .unwrap())
+                })
+            }
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#.to_string())
+            .await
+            .expect("400 with JSON-RPC error body is not a transport failure");
+
+        let received = transport.receive().next().await.unwrap();
+        assert_eq!(received, error_body);
+    }
+
+    #[gpui::test]
+    async fn test_uncorrelated_json_rpc_error_is_rewrapped_for_the_request(
+        cx: &mut TestAppContext,
+    ) {
+        // Pre-2026 servers commonly reject pre-initialize requests with a
+        // 400 whose JSON-RPC error has `id: null`.
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(400)
+                    .header("Content-Type", "application/json")
+                    .body(AsyncBody::from(
+                        br#"{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"Bad Request: Server not initialized"}}"#.to_vec(),
+                    ))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":7,"method":"server/discover"}"#.to_string())
+            .await
+            .unwrap();
+
+        let received: serde_json::Value =
+            serde_json::from_str(&transport.receive().next().await.unwrap()).unwrap();
+        assert_eq!(received["id"], 7);
+        assert_eq!(received["error"]["code"], -32000);
+    }
+
+    #[gpui::test]
+    async fn test_http_400_without_json_rpc_body_resolves_request_with_internal_error(
+        cx: &mut TestAppContext,
+    ) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(400)
+                    .body(AsyncBody::from(b"Bad Request".to_vec()))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#.to_string())
+            .await
+            .unwrap();
+
+        let received: serde_json::Value =
+            serde_json::from_str(&transport.receive().next().await.unwrap()).unwrap();
+        assert_eq!(received["id"], 1);
+        assert_eq!(received["error"]["code"], -32603);
+        assert!(
+            received["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("HTTP 400")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_error_status_on_notification_goes_to_error_stream(cx: &mut TestAppContext) {
+        let client = make_fake_http_client(|_req| {
+            Box::pin(async {
+                Ok(Response::builder()
+                    .status(500)
+                    .body(AsyncBody::from(b"Internal Server Error".to_vec()))
+                    .unwrap())
+            })
+        });
+
+        let transport = HttpTransport::new(
+            client,
+            "http://mcp.example.com/mcp".to_string(),
+            HashMap::default(),
+            cx.background_executor.clone(),
+        );
+
+        transport
+            .send(r#"{"jsonrpc":"2.0","method":"notifications/cancelled"}"#.to_string())
+            .await
+            .unwrap();
+
+        let error = transport.receive_err().next().await.unwrap();
+        assert!(error.contains("HTTP 500"), "unexpected error: {error}");
     }
 
     #[gpui::test]
