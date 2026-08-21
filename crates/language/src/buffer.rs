@@ -19,8 +19,8 @@ use crate::{
     unified_diff_with_offsets,
 };
 pub use crate::{
-    Grammar, HighlightId, HighlightMap, Language, LanguageRegistry, diagnostic_set::DiagnosticSet,
-    proto,
+    CaptureId, Grammar, HighlightId, HighlightMap, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet, proto,
 };
 
 use anyhow::{Context as _, Result};
@@ -5553,8 +5553,8 @@ impl<'a> BufferChunks<'a> {
                 {
                     let next_capture_end = capture.node.end_byte();
                     if range.start < next_capture_end
-                        && let Some(capture_id) =
-                            highlights.highlight_maps[capture.grammar_index].get(capture.index)
+                        && let Some(capture_id) = highlights.highlight_maps[capture.grammar_index]
+                            .get(CaptureId(capture.index))
                     {
                         highlights.stack.push((next_capture_end, capture_id));
                     }
@@ -5689,8 +5689,8 @@ impl<'a> Iterator for BufferChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let highlight_id =
-                        highlights.highlight_maps[capture.grammar_index].get(capture.index);
+                    let highlight_id = highlights.highlight_maps[capture.grammar_index]
+                        .get(CaptureId(capture.index));
                     if let Some(highlight_id) = highlight_id {
                         highlights
                             .stack
