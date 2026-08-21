@@ -348,6 +348,16 @@ impl WindowsPlatform {
                     for hwnd in all_windows.read().iter() {
                         unsafe {
                             let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                            // `WM_PAINT` is synthesized only once the target
+                            // thread's queue is empty, so high-rate input
+                            // starves it. Post a message too, which queues
+                            // behind that input. See `handle_vsync_frame`.
+                            let _ = PostMessageW(
+                                Some(hwnd.as_raw()),
+                                WM_GPUI_VSYNC_FRAME,
+                                WPARAM(0),
+                                LPARAM(0),
+                            );
                         }
                     }
                 }
