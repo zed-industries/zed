@@ -1,6 +1,9 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{CursorShape, Diagnostic, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry};
+use crate::{
+    CursorShape, Diagnostic, DiagnosticMessage, DiagnosticSourceKind,
+    diagnostic_set::DiagnosticEntry,
+};
 use anyhow::{Context as _, Result};
 use clock::ReplicaId;
 use gpui::SharedString;
@@ -219,8 +222,8 @@ pub fn serialize_diagnostics<'a>(
             } as i32,
             start: Some(serialize_anchor(&entry.range.start)),
             end: Some(serialize_anchor(&entry.range.end)),
-            message: entry.diagnostic.message.clone(),
-            markdown: entry.diagnostic.markdown.clone(),
+            message: entry.diagnostic.message.to_string(),
+            markdown: entry.diagnostic.message.markdown().map(ToOwned::to_owned),
             severity: match entry.diagnostic.severity {
                 DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
                 DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
@@ -457,9 +460,10 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
                         proto::diagnostic::Severity::None => return None,
                     },
-                    message: diagnostic.message,
-                    markdown: diagnostic.markdown,
-                    lsp_markup: None,
+                    message: DiagnosticMessage::plain_with_adapter_markdown(
+                        diagnostic.message,
+                        diagnostic.markdown.map(SharedString::from),
+                    ),
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
                     code_description: diagnostic

@@ -2956,7 +2956,7 @@ impl LspCommand for GetCodeActions {
         for (source_server_id, entry) in
             snapshot.diagnostic_entries_in_range_with_server_id(self.range.clone(), false)
         {
-            if source_server_id != target_server_id && entry.diagnostic.lsp_markup.is_some() {
+            if source_server_id != target_server_id && entry.diagnostic.message.has_lsp_markup() {
                 continue;
             }
             let entry = entry.clone().map_coordinates(|range| {

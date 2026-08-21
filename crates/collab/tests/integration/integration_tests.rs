@@ -4399,7 +4399,7 @@ async fn test_collaborating_with_diagnostics(
                     Point::new(0, 4)..Point::new(0, 7),
                     Diagnostic {
                         group_id: 2,
-                        message: "message 1".to_string(),
+                        message: "message 1".into(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
@@ -4411,7 +4411,7 @@ async fn test_collaborating_with_diagnostics(
                     Diagnostic {
                         group_id: 3,
                         severity: lsp::DiagnosticSeverity::WARNING,
-                        message: "message 2".to_string(),
+                        message: "message 2".into(),
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()

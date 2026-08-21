@@ -39,8 +39,8 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticSet,
-    DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageAwareStyling,
+    Buffer, BufferEvent, Diagnostic, DiagnosticEntry, DiagnosticEntryRef, DiagnosticMessage,
+    DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter, Language, LanguageAwareStyling,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata,
@@ -2951,7 +2951,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
                 range: Point::new(0, 9)..Point::new(0, 10),
                 diagnostic: &Diagnostic {
                     severity: lsp::DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'A'".to_string(),
+                    message: "undefined variable 'A'".into(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -3125,7 +3125,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message.to_string())
                 .collect::<Vec<_>>(),
             ["the message".to_string()]
         );
@@ -3156,7 +3156,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
             buffer
                 .snapshot()
                 .diagnostics_in_range::<_, usize>(0..1, false)
-                .map(|entry| entry.diagnostic.message.clone())
+                .map(|entry| entry.diagnostic.message.to_string())
                 .collect::<Vec<_>>(),
             Vec::<String>::new(),
         );
@@ -3671,7 +3671,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                     Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'BB'".to_string(),
+                        message: "undefined variable 'BB'".into(),
                         is_disk_based: true,
                         group_id: 1,
                         is_primary: true,
@@ -3684,7 +3684,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                     Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'CCC'".to_string(),
+                        message: "undefined variable 'CCC'".into(),
                         is_disk_based: true,
                         group_id: 2,
                         is_primary: true,
@@ -3751,7 +3751,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                     Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::WARNING,
-                        message: "unreachable statement".to_string(),
+                        message: "unreachable statement".into(),
                         is_disk_based: true,
                         group_id: 4,
                         is_primary: true,
@@ -3764,7 +3764,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                     Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'A'".to_string(),
+                        message: "undefined variable 'A'".into(),
                         is_disk_based: true,
                         group_id: 3,
                         is_primary: true,
@@ -3845,7 +3845,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                     Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::WARNING,
-                        message: "undefined variable 'A'".to_string(),
+                        message: "undefined variable 'A'".into(),
                         is_disk_based: true,
                         group_id: 6,
                         is_primary: true,
@@ -3858,7 +3858,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                     Diagnostic {
                         source: Some("disk".into()),
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'BB'".to_string(),
+                        message: "undefined variable 'BB'".into(),
                         is_disk_based: true,
                         group_id: 5,
                         is_primary: true,
@@ -3938,9 +3938,7 @@ async fn test_markup_content_diagnostic_messages(cx: &mut gpui::TestAppContext) 
                     range: Point::new(0, 9)..Point::new(0, 10),
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable `A`".to_string(),
-                        markdown: Some("undefined variable `A`".to_string()),
-                        lsp_markup: Some(lsp::MarkupContent {
+                        message: DiagnosticMessage::from_lsp_markup(&lsp::MarkupContent {
                             kind: lsp::MarkupKind::Markdown,
                             value: "undefined variable `A`".to_string(),
                         }),
@@ -3955,9 +3953,7 @@ async fn test_markup_content_diagnostic_messages(cx: &mut gpui::TestAppContext) 
                     range: Point::new(1, 9)..Point::new(1, 11),
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
-                        message: "undefined variable 'BB'".to_string(),
-                        markdown: None,
-                        lsp_markup: Some(lsp::MarkupContent {
+                        message: DiagnosticMessage::from_lsp_markup(&lsp::MarkupContent {
                             kind: lsp::MarkupKind::PlainText,
                             value: "undefined variable 'BB'".to_string(),
                         }),
@@ -4140,7 +4136,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             Unclipped(PointUtf16::new(0, 10))..Unclipped(PointUtf16::new(0, 10)),
                             Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
-                                message: "syntax error 1".to_string(),
+                                message: "syntax error 1".into(),
                                 source_kind: DiagnosticSourceKind::Pushed,
                                 ..Diagnostic::default()
                             },
@@ -4149,7 +4145,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             Unclipped(PointUtf16::new(1, 10))..Unclipped(PointUtf16::new(1, 10)),
                             Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
-                                message: "syntax error 2".to_string(),
+                                message: "syntax error 2".into(),
                                 source_kind: DiagnosticSourceKind::Pushed,
                                 ..Diagnostic::default()
                             },
@@ -4205,7 +4201,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                     Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
-                        message: "syntax error a1".to_string(),
+                        message: "syntax error a1".into(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
@@ -4224,7 +4220,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                     Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
-                        message: "syntax error b1".to_string(),
+                        message: "syntax error b1".into(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
@@ -4268,7 +4264,7 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
                     Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
-                        message: "error in a".to_string(),
+                        message: "error in a".into(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
@@ -4287,7 +4283,7 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
                     Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         is_primary: true,
-                        message: "warning in b".to_string(),
+                        message: "warning in b".into(),
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
@@ -7953,7 +7949,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 related_information: expected_related_information(&error_1_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
-                    message: "error 1".to_string(),
+                    message: "error 1".into(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -7967,7 +7963,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 1 hint 1".to_string(),
+                    message: "error 1 hint 1".into(),
                     group_id: 1,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -7981,7 +7977,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 1".to_string(),
+                    message: "error 2 hint 1".into(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -7995,7 +7991,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 2".to_string(),
+                    message: "error 2 hint 2".into(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -8007,7 +8003,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 related_information: expected_related_information(&error_2_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
-                    message: "error 2".to_string(),
+                    message: "error 2".into(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -8027,7 +8023,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 1".to_string(),
+                    message: "error 2 hint 1".into(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -8041,7 +8037,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 2".to_string(),
+                    message: "error 2 hint 2".into(),
                     group_id: 0,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -8053,7 +8049,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 related_information: expected_related_information(&error_2_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
-                    message: "error 2".to_string(),
+                    message: "error 2".into(),
                     group_id: 0,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -8071,7 +8067,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 related_information: expected_related_information(&error_1_related_information),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
-                    message: "error 1".to_string(),
+                    message: "error 1".into(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: DiagnosticSourceKind::Pushed,
@@ -8085,7 +8081,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 ),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 1 hint 1".to_string(),
+                    message: "error 1 hint 1".into(),
                     group_id: 1,
                     is_primary: false,
                     source_kind: DiagnosticSourceKind::Pushed,
