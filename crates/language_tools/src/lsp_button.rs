@@ -2142,6 +2142,8 @@ mod tests {
             log_view.read_with(cx, |view, cx| view.editor.read(cx).text(cx)),
             "hello from the server\n",
             "the log view follows the restarted server and keeps the retained logs",
+        )
+    }
     #[test]
     fn tooltip_for_server_binary_handles_runtime_and_standalone_servers() {
         let node_server = lsp::LanguageServerBinary {
