@@ -1351,6 +1351,18 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
                             .into(),
                             ..Default::default()
                         },
+                        lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 25),
+                                lsp::Position::new(0, 28),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+                                kind: lsp::MarkupKind::PlainText,
+                                value: "`u32` is **not** a type".to_string(),
+                            }),
+                            ..Default::default()
+                        },
                     ],
                 },
                 None,
@@ -1373,8 +1385,8 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
     cx.update_editor(|editor, window, cx| {
         let snapshot = editor.snapshot(window, cx);
 
-        // A MarkupContent message is rendered as the markdown the server sent,
-        // while a plain string message is escaped before rendering.
+        // Markdown MarkupContent is rendered as the markdown the server sent,
+        // while PlainText MarkupContent and plain string messages are escaped.
         let group = snapshot
             .buffer_snapshot()
             .diagnostic_group(buffer_id, 0)
@@ -1409,6 +1421,18 @@ async fn test_markup_content_diagnostic_messages_render_as_markdown(cx: &mut Tes
         assert_eq!(
             blocks[0].markdown.read(cx).source(),
             "```rust\nlet x = unknown;\n```\n\n(rustc E0425)"
+        );
+
+        let group = snapshot
+            .buffer_snapshot()
+            .diagnostic_group(buffer_id, 3)
+            .collect::<Vec<_>>();
+        let blocks = diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
+            group, buffer_id, None, None, cx,
+        );
+        assert_eq!(
+            blocks[0].markdown.read(cx).source(),
+            markdown::Markdown::escape("`u32` is **not** a type").as_ref(),
         );
     });
 }
