@@ -296,7 +296,13 @@ impl TerminalPanel {
                 .update(cx, |workspace, cx| default_working_directory(workspace, cx))
                 .ok()
                 .flatten();
-            Some(self.add_terminal_shell(working_directory, RevealStrategy::Always, window, cx))
+            Some(self.add_terminal_shell(
+                false,
+                working_directory,
+                RevealStrategy::Always,
+                window,
+                cx,
+            ))
         } else {
             None
         }
@@ -611,16 +617,13 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |panel, cx| {
-                if action.local {
-                    panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
-                } else {
-                    panel.add_terminal_shell(
-                        Some(action.working_directory.clone()),
-                        RevealStrategy::Always,
-                        window,
-                        cx,
-                    )
-                }
+                panel.add_terminal_shell(
+                    action.local,
+                    Some(action.working_directory.clone()),
+                    RevealStrategy::Always,
+                    window,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -762,16 +765,13 @@ impl TerminalPanel {
 
         terminal_panel
             .update(cx, |this, cx| {
-                if action.local {
-                    this.add_local_terminal_shell(RevealStrategy::Always, window, cx)
-                } else {
-                    this.add_terminal_shell(
-                        default_working_directory(workspace, cx),
-                        RevealStrategy::Always,
-                        window,
-                        cx,
-                    )
-                }
+                this.add_terminal_shell(
+                    action.local,
+                    default_working_directory(workspace, cx),
+                    RevealStrategy::Always,
+                    window,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     }
@@ -928,25 +928,6 @@ impl TerminalPanel {
     }
 
     fn add_terminal_shell(
-        &mut self,
-        cwd: Option<PathBuf>,
-        reveal_strategy: RevealStrategy,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<WeakEntity<Terminal>>> {
-        self.add_terminal_shell_internal(false, cwd, reveal_strategy, window, cx)
-    }
-
-    fn add_local_terminal_shell(
-        &mut self,
-        reveal_strategy: RevealStrategy,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<WeakEntity<Terminal>>> {
-        self.add_terminal_shell_internal(true, None, reveal_strategy, window, cx)
-    }
-
-    fn add_terminal_shell_internal(
         &mut self,
         force_local: bool,
         cwd: Option<PathBuf>,
@@ -1772,7 +1753,7 @@ impl Panel for TerminalPanel {
                 return;
             };
 
-            this.add_terminal_shell(kind, RevealStrategy::Always, window, cx)
+            this.add_terminal_shell(false, kind, RevealStrategy::Always, window, cx)
                 .detach_and_log_err(cx)
         })
     }
@@ -1947,7 +1928,7 @@ mod tests {
             let task = window_handle
                 .update(cx, |_, window, cx| {
                     terminal_panel.update(cx, |panel, cx| {
-                        panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                        panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
                     })
                 })
                 .unwrap();
@@ -2030,7 +2011,13 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                    terminal_panel.add_terminal_shell(
+                        false,
+                        None,
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -2119,7 +2106,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
                     let task =
-                        terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx);
+                        terminal_panel.add_terminal_shell(false, None, RevealStrategy::Never, window, cx);
                     assert_eq!(
                         terminal_panel.pending_terminals_to_add, 1,
                         "pending count should be incremented synchronously to avoid double default terminal spawns"
@@ -2159,8 +2146,13 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    let task =
-                        terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx);
+                    let task = terminal_panel.add_terminal_shell(
+                        false,
+                        None,
+                        RevealStrategy::Never,
+                        window,
+                        cx,
+                    );
                     assert_eq!(terminal_panel.pending_terminals_to_add, 1);
                     drop(task);
                 })
@@ -2246,7 +2238,13 @@ mod tests {
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
                     terminal_panel.restoring = true;
-                    terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx)
+                    terminal_panel.add_terminal_shell(
+                        false,
+                        None,
+                        RevealStrategy::Never,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -2309,7 +2307,13 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx)
+                    terminal_panel.add_terminal_shell(
+                        false,
+                        None,
+                        RevealStrategy::Never,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -2376,7 +2380,13 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_terminal_shell(None, RevealStrategy::Never, window, cx)
+                    terminal_panel.add_terminal_shell(
+                        false,
+                        None,
+                        RevealStrategy::Never,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -2456,7 +2466,13 @@ mod tests {
         let result = window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.add_local_terminal_shell(RevealStrategy::Always, window, cx)
+                    terminal_panel.add_terminal_shell(
+                        true,
+                        None,
+                        RevealStrategy::Always,
+                        window,
+                        cx,
+                    )
                 })
             })
             .unwrap()
@@ -2607,7 +2623,7 @@ mod tests {
         terminal_panel.update(cx, |panel, cx| panel.set_assistant_enabled(true, cx));
         terminal_panel
             .update_in(cx, |panel, window, cx| {
-                panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
             })
             .await
             .unwrap();
@@ -2845,7 +2861,7 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |panel, cx| {
-                    panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                    panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
                 })
             })
             .expect("Failed to update workspace")
@@ -3027,7 +3043,7 @@ mod tests {
         window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |panel, cx| {
-                    panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                    panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
                 })
             })
             .expect("Failed to update workspace")
