@@ -38,13 +38,41 @@ pub(crate) struct TestWindowState {
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     frame_wake_count: Rc<Cell<usize>>,
-    frame_scheduled: bool,
-    frame_callback_pending: bool,
+    frame_loop: TestFrameLoop,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
     appearance: WindowAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
+}
+
+/// The demand-driven render loop contract, as a test double. Mirrors the
+/// three wake arrangements a real demand-driven platform (Wayland) moves
+/// through, so illegal combinations are unrepresentable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum TestFrameLoop {
+    /// No wake armed; `schedule_frame` must arm one.
+    #[default]
+    Parked,
+    /// A wake is armed but no frame has been drawn against it.
+    Scheduled,
+    /// A drawn frame guarantees a compositor callback; further
+    /// `schedule_frame` calls are absorbed until it fires.
+    AwaitingCallback,
+}
+
+impl TestFrameLoop {
+    fn schedule(self) -> Self {
+        match self {
+            Self::Parked => Self::Scheduled,
+            // A wake is already guaranteed.
+            armed => armed,
+        }
+    }
+
+    fn is_scheduled(self) -> bool {
+        self != Self::Parked
+    }
 }
 
 #[derive(Clone)]
@@ -100,8 +128,7 @@ impl TestWindow {
             appearance_change_callback: None,
             request_frame_callback: None,
             frame_wake_count: Rc::new(Cell::new(0)),
-            frame_scheduled: false,
-            frame_callback_pending: false,
+            frame_loop: TestFrameLoop::default(),
             input_handler: None,
             is_fullscreen: false,
             appearance: WindowAppearance::Light,
@@ -110,16 +137,16 @@ impl TestWindow {
         })))
     }
     pub fn simulate_scheduled_frame(&self) -> bool {
-        let callback = {
+        let (previous, callback) = {
             let mut state = self.0.lock();
-            if !std::mem::take(&mut state.frame_scheduled) {
+            if !state.frame_loop.is_scheduled() {
                 return false;
             }
-            state.frame_callback_pending = false;
-            state.request_frame_callback.take()
+            let previous = std::mem::take(&mut state.frame_loop);
+            (previous, state.request_frame_callback.take())
         };
         let Some(mut callback) = callback else {
-            self.0.lock().frame_scheduled = true;
+            self.0.lock().frame_loop = previous;
             return false;
         };
 
@@ -129,7 +156,7 @@ impl TestWindow {
     }
 
     pub fn frame_scheduled(&self) -> bool {
-        self.0.lock().frame_scheduled
+        self.0.lock().frame_loop.is_scheduled()
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -352,9 +379,7 @@ impl PlatformWindow for TestWindow {
 
     fn schedule_frame(&self) {
         let mut state = self.0.lock();
-        if !state.frame_callback_pending {
-            state.frame_scheduled = true;
-        }
+        state.frame_loop = state.frame_loop.schedule();
     }
 
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
@@ -394,8 +419,7 @@ impl PlatformWindow for TestWindow {
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
-        state.frame_callback_pending = true;
-        state.frame_scheduled = true;
+        state.frame_loop = TestFrameLoop::AwaitingCallback;
         let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
         if let Some(renderer) = &mut state.renderer {
             renderer.render_scene(scene, device_size).warn_on_err();
