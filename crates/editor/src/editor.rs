@@ -998,6 +998,7 @@ pub struct Editor {
     gutter_highlights: TypeIdHashMap<GutterHighlight>,
     allow_git_diff_scrollbar_markers: bool,
     scrollbar_marker_state: ScrollbarMarkerState,
+    minimap_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
     context_menu: RefCell<Option<CodeContextMenu>>,
@@ -2322,6 +2323,7 @@ impl Editor {
             gutter_highlights: Default::default(),
             allow_git_diff_scrollbar_markers: false,
             scrollbar_marker_state: ScrollbarMarkerState::default(),
+            minimap_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
             context_menu: RefCell::new(None),
@@ -8542,6 +8544,7 @@ impl Editor {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
+        self.minimap_marker_state.dirty = true;
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -8557,6 +8560,7 @@ impl Editor {
     ) {
         self.display_map
             .update(cx, |display_map, cx| display_map.resize_blocks(heights, cx));
+        self.minimap_marker_state.dirty = true;
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -8586,6 +8590,7 @@ impl Editor {
         self.display_map.update(cx, |display_map, cx| {
             display_map.remove_blocks(block_ids, cx)
         });
+        self.minimap_marker_state.dirty = true;
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
@@ -9181,6 +9186,11 @@ impl Editor {
         Some(text_highlights)
     }
 
+    fn dirty_marker_states(&mut self) {
+        self.scrollbar_marker_state.dirty = true;
+        self.minimap_marker_state.dirty = true;
+    }
+
     pub fn highlight_gutter<T: 'static>(
         &mut self,
         ranges: impl Into<Vec<Range<Anchor>>>,
@@ -9684,7 +9694,7 @@ impl Editor {
                 edited_buffer,
                 source,
             } => {
-                self.scrollbar_marker_state.dirty = true;
+                self.dirty_marker_states();
                 self.active_indent_guides_state.dirty = true;
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions_for_selection(window, cx);
@@ -9827,6 +9837,7 @@ impl Editor {
                 cx.notify();
             }
             multi_buffer::Event::Reloaded | multi_buffer::Event::BufferDiffChanged => {
+                self.minimap_marker_state.dirty = true;
                 cx.emit(EditorEvent::TitleChanged)
             }
             multi_buffer::Event::DiagnosticsUpdated => {
@@ -9842,6 +9853,7 @@ impl Editor {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.minimap_marker_state.dirty = true;
         cx.notify();
     }
 
@@ -9993,6 +10005,7 @@ impl Editor {
                     })
                 }
             }
+            self.minimap_marker_state.dirty = true;
 
             if language_settings_changed || accents_changed {
                 self.colorize_brackets(true, cx);
@@ -10070,6 +10083,7 @@ impl Editor {
         self.invalidate_semantic_tokens(None);
         self.refresh_semantic_tokens(None, false, cx);
         self.refresh_outline_symbols_at_cursor(cx);
+        self.minimap_marker_state.dirty = true;
     }
 
     pub fn set_searchable(&mut self, searchable: bool) {
