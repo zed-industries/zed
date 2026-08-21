@@ -1457,6 +1457,7 @@ impl Editor {
 
     pub(super) fn end_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.columnar_selection_state.take();
+        self.pending_selection_drag_update.take();
         if let Some(pending_mode) = self.selections.pending_mode() {
             let selections = self
                 .selections

@@ -938,6 +938,7 @@ pub struct Editor {
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_state: Option<ColumnarSelectionState>,
+    pending_selection_drag_update: Option<SelectPhase>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
@@ -2263,6 +2264,7 @@ impl Editor {
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_state: None,
+            pending_selection_drag_update: None,
             add_selections_state: None,
             select_next_state: None,
             select_prev_state: None,
