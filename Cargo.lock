@@ -10463,6 +10463,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "html5ever 0.27.0",
+ "http_client",
  "image",
  "indoc",
  "language",
@@ -14244,6 +14245,7 @@ checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
 dependencies = [
  "bitflags 2.13.1",
  "memchr",
+ "pulldown-cmark-escape 0.11.0",
  "unicase",
 ]
 
