@@ -1644,3 +1644,189 @@ async fn test_nearest_retained_workspace_skips_disconnected_workspace(cx: &mut T
         );
     });
 }
+
+#[gpui::test]
+async fn test_move_project_group_moving_down_lands_source_after_destination(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree("/root_a", json!({ "file_a.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    fs.insert_tree("/root_b", json!({ "file_b.txt": "" })).await;
+    let project_b = Project::test(fs.clone(), ["/root_b".as_ref()], cx).await;
+    fs.insert_tree("/root_c", json!({ "file_c.txt": "" })).await;
+    let project_c = Project::test(fs, ["/root_c".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_c.clone(), window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx);
+    });
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_a.clone(), window, cx);
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone(), key_c.clone()],
+        );
+        assert!(mw.move_project_group(&key_a, &key_c, cx));
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_b.clone(), key_c.clone(), key_a.clone()],
+        );
+    });
+
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_move_project_group_moving_up_lands_source_before_destination(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree("/root_a", json!({ "file_a.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    fs.insert_tree("/root_b", json!({ "file_b.txt": "" })).await;
+    let project_b = Project::test(fs.clone(), ["/root_b".as_ref()], cx).await;
+    fs.insert_tree("/root_c", json!({ "file_c.txt": "" })).await;
+    let project_c = Project::test(fs, ["/root_c".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_c.clone(), window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx);
+    });
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_a.clone(), window, cx);
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone(), key_c.clone()],
+        );
+        assert!(mw.move_project_group(&key_c, &key_a, cx));
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_c.clone(), key_a.clone(), key_b.clone()],
+        );
+    });
+
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_move_project_group_source_equals_destination_leaves_order_unchanged(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree("/root_a", json!({ "file_a.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    fs.insert_tree("/root_b", json!({ "file_b.txt": "" })).await;
+    let project_b = Project::test(fs.clone(), ["/root_b".as_ref()], cx).await;
+    fs.insert_tree("/root_c", json!({ "file_c.txt": "" })).await;
+    let project_c = Project::test(fs, ["/root_c".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_c.clone(), window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b.clone(), window, cx);
+    });
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_a.clone(), window, cx);
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone(), key_c.clone()],
+        );
+        assert!(!mw.move_project_group(&key_a, &key_a, cx));
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone(), key_c.clone()],
+        );
+    });
+
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_move_project_group_source_or_destination_unknown_leaves_order_unchanged(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree("/root_a", json!({ "file_a.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    fs.insert_tree("/root_b", json!({ "file_b.txt": "" })).await;
+    let project_b = Project::test(fs.clone(), ["/root_b".as_ref()], cx).await;
+    fs.insert_tree("/root_c", json!({ "file_c.txt": "" })).await;
+    let project_c = Project::test(fs, ["/root_c".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_b.clone(), window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_a.clone(), window, cx);
+    });
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+
+    let key_a = project_a.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_b = project_b.read_with(cx, |project, cx| project.project_group_key(cx));
+    let key_c = project_c.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone()],
+        );
+        assert!(!mw.move_project_group(&key_a, &key_c, cx));
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone()],
+        );
+        assert!(!mw.move_project_group(&key_c, &key_a, cx));
+        assert_eq!(
+            mw.project_group_keys(),
+            [key_a.clone(), key_b.clone()],
+        );
+    });
+
+    cx.run_until_parked();
+}
