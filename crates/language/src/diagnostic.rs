@@ -91,8 +91,19 @@ impl DiagnosticMessage {
         }
     }
 
+    pub fn lsp_markup(&self) -> Option<(&MarkupKind, &str)> {
+        match &self.rendering {
+            DiagnosticMessageRendering::LspMarkup { kind, untrimmed } => {
+                Some((kind, untrimmed.as_ref().unwrap_or(&self.text)))
+            }
+            DiagnosticMessageRendering::Plain | DiagnosticMessageRendering::AdapterMarkdown(_) => {
+                None
+            }
+        }
+    }
+
     pub fn has_lsp_markup(&self) -> bool {
-        matches!(self.rendering, DiagnosticMessageRendering::LspMarkup { .. })
+        self.lsp_markup().is_some()
     }
 
     pub fn rendered_eq(&self, other: &Self) -> bool {
@@ -100,16 +111,13 @@ impl DiagnosticMessage {
     }
 
     pub fn to_lsp_message(&self) -> lsp::DiagnosticMessage {
-        match &self.rendering {
-            DiagnosticMessageRendering::LspMarkup { kind, untrimmed } => {
-                lsp::DiagnosticMessage::MarkupContent(MarkupContent {
-                    kind: kind.clone(),
-                    value: untrimmed.as_ref().unwrap_or(&self.text).to_string(),
-                })
-            }
-            DiagnosticMessageRendering::Plain | DiagnosticMessageRendering::AdapterMarkdown(_) => {
-                lsp::DiagnosticMessage::String(self.text.to_string())
-            }
+        if let Some((kind, value)) = self.lsp_markup() {
+            lsp::DiagnosticMessage::MarkupContent(MarkupContent {
+                kind: kind.clone(),
+                value: value.to_string(),
+            })
+        } else {
+            lsp::DiagnosticMessage::String(self.text.to_string())
         }
     }
 }

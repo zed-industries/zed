@@ -224,6 +224,17 @@ pub fn serialize_diagnostics<'a>(
             end: Some(serialize_anchor(&entry.range.end)),
             message: entry.diagnostic.message.to_string(),
             markdown: entry.diagnostic.message.markdown().map(ToOwned::to_owned),
+            lsp_markup: entry.diagnostic.message.lsp_markup().map(|(kind, value)| {
+                proto::diagnostic::LspMarkup {
+                    kind: match kind {
+                        lsp::MarkupKind::PlainText => {
+                            proto::diagnostic::lsp_markup::Kind::PlainText
+                        }
+                        lsp::MarkupKind::Markdown => proto::diagnostic::lsp_markup::Kind::Markdown,
+                    } as i32,
+                    value: value.to_string(),
+                }
+            }),
             severity: match entry.diagnostic.severity {
                 DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
                 DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
@@ -447,6 +458,21 @@ pub fn deserialize_diagnostics(
             } else {
                 None
             };
+            let message = if let Some(markup) = diagnostic.lsp_markup {
+                let kind = match proto::diagnostic::lsp_markup::Kind::from_i32(markup.kind)? {
+                    proto::diagnostic::lsp_markup::Kind::PlainText => lsp::MarkupKind::PlainText,
+                    proto::diagnostic::lsp_markup::Kind::Markdown => lsp::MarkupKind::Markdown,
+                };
+                DiagnosticMessage::from_lsp_markup(&lsp::MarkupContent {
+                    kind,
+                    value: markup.value,
+                })
+            } else {
+                DiagnosticMessage::plain_with_adapter_markdown(
+                    diagnostic.message,
+                    diagnostic.markdown.map(SharedString::from),
+                )
+            };
             Some(DiagnosticEntry::new(
                 deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
                 Diagnostic {
@@ -460,10 +486,7 @@ pub fn deserialize_diagnostics(
                         proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
                         proto::diagnostic::Severity::None => return None,
                     },
-                    message: DiagnosticMessage::plain_with_adapter_markdown(
-                        diagnostic.message,
-                        diagnostic.markdown.map(SharedString::from),
-                    ),
+                    message,
                     group_id: diagnostic.group_id as usize,
                     code: diagnostic.code.map(lsp::NumberOrString::from_string),
                     code_description: diagnostic
