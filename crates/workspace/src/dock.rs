@@ -288,12 +288,30 @@ pub struct Dock {
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
     focus_follows_mouse: FocusFollowsMouse,
-    pub(crate) serialized_dock: Option<DockData>,
-    restoring_state: bool,
-    restoration_finished: bool,
+    restoration: DockRestoreState,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
+}
+
+enum DockRestoreState {
+    Restoring { pending: Option<DockData> },
+    Finished,
+}
+
+impl DockRestoreState {
+    fn pending(&self) -> Option<&DockData> {
+        match self {
+            Self::Restoring { pending } => pending.as_ref(),
+            Self::Finished => None,
+        }
+    }
+
+    fn discard_pending(&mut self) {
+        if let Self::Restoring { pending } = self {
+            *pending = None;
+        }
+    }
 }
 
 impl Focusable for Dock {
@@ -438,9 +456,7 @@ impl Dock {
                 focus_handle: focus_handle.clone(),
                 focus_follows_mouse: WorkspaceSettings::get_global(cx).focus_follows_mouse,
                 _subscriptions: [focus_subscription, zoom_subscription],
-                serialized_dock: None,
-                restoring_state: false,
-                restoration_finished: false,
+                restoration: DockRestoreState::Restoring { pending: None },
                 zoom_layer_open: false,
                 modal_layer,
             }
@@ -556,9 +572,13 @@ impl Dock {
 
     pub fn set_open(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
         if open != self.is_open {
-            if !self.restoring_state {
-                self.serialized_dock = None;
-            }
+            self.restoration.discard_pending();
+        }
+        self.set_open_internal(open, window, cx);
+    }
+
+    fn set_open_internal(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if open != self.is_open {
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, window, cx);
@@ -789,57 +809,82 @@ impl Dock {
             },
         );
 
-        self.restore_state(window, cx);
+        self.replay_pending_serialized_state(window, cx);
 
         if panel.read(cx).starts_open(window, cx) {
-            self.restoring_state = true;
-            self.activate_panel(index, window, cx);
-            self.set_open(true, window, cx);
-            self.restoring_state = false;
+            self.activate_panel_internal(index, window, cx);
+            self.set_open_internal(true, window, cx);
         }
 
         cx.notify();
         index
     }
 
-    pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(serialized) = self.serialized_dock.clone() {
-            let mut waiting_for_active_panel = false;
-            let mut panel_to_activate = None;
-            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
-                match self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
-                    Some(idx) => panel_to_activate = Some(idx),
-                    None if self.restoration_finished => {
-                        self.serialized_dock = None;
-                        return false;
-                    }
-                    None => waiting_for_active_panel = true,
+    pub(crate) fn restore_serialized_state(
+        &mut self,
+        serialized: DockData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match &mut self.restoration {
+            DockRestoreState::Restoring { pending } => {
+                *pending = Some(serialized);
+                self.replay_pending_serialized_state(window, cx);
+            }
+            DockRestoreState::Finished => {
+                let active_panel_missing = serialized
+                    .active_panel
+                    .as_deref()
+                    .filter(|_| serialized.visible)
+                    .is_some_and(|name| self.panel_index_for_persistent_name(name, cx).is_none());
+                if !active_panel_missing {
+                    self.apply_serialized_state(&serialized, window, cx);
                 }
             }
-
-            self.restoring_state = true;
-            if let Some(idx) = panel_to_activate {
-                self.activate_panel(idx, window, cx);
-            }
-            if serialized.zoom
-                && !waiting_for_active_panel
-                && let Some(panel) = self.active_panel()
-            {
-                panel.set_zoomed(true, window, cx)
-            }
-            self.set_open(serialized.visible, window, cx);
-            self.restoring_state = false;
-            if !waiting_for_active_panel {
-                self.serialized_dock = None;
-            }
-            return true;
         }
-        false
+    }
+
+    fn replay_pending_serialized_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(serialized) = self.restoration.pending().cloned() else {
+            return;
+        };
+        let waiting_for_active_panel = serialized
+            .active_panel
+            .as_deref()
+            .filter(|_| serialized.visible)
+            .is_some_and(|name| self.panel_index_for_persistent_name(name, cx).is_none());
+        if waiting_for_active_panel {
+            self.set_open_internal(serialized.visible, window, cx);
+        } else {
+            self.apply_serialized_state(&serialized, window, cx);
+            self.restoration.discard_pending();
+        }
+    }
+
+    fn apply_serialized_state(
+        &mut self,
+        serialized: &DockData,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(active_panel) = serialized
+            .active_panel
+            .as_deref()
+            .filter(|_| serialized.visible)
+            && let Some(idx) = self.panel_index_for_persistent_name(active_panel, cx)
+        {
+            self.activate_panel_internal(idx, window, cx);
+        }
+        if serialized.zoom
+            && let Some(panel) = self.active_panel()
+        {
+            panel.set_zoomed(true, window, cx)
+        }
+        self.set_open_internal(serialized.visible, window, cx);
     }
 
     pub(crate) fn finish_restoration(&mut self) {
-        self.restoration_finished = true;
-        self.serialized_dock = None;
+        self.restoration = DockRestoreState::Finished;
     }
 
     pub fn remove_panel<T: Panel>(
@@ -887,9 +932,18 @@ impl Dock {
 
     pub fn activate_panel(&mut self, panel_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         if Some(panel_ix) != self.active_panel_index {
-            if !self.restoring_state {
-                self.serialized_dock = None;
-            }
+            self.restoration.discard_pending();
+        }
+        self.activate_panel_internal(panel_ix, window, cx);
+    }
+
+    fn activate_panel_internal(
+        &mut self,
+        panel_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if Some(panel_ix) != self.active_panel_index {
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(false, window, cx);
             }

@@ -2132,8 +2132,11 @@ impl Workspace {
                                     (&workspace.bottom_dock, &default_docks.bottom),
                                 ] {
                                     dock.update(cx, |dock, cx| {
-                                        dock.serialized_dock = Some(serialized_dock.clone());
-                                        dock.restore_state(window, cx);
+                                        dock.restore_serialized_state(
+                                            serialized_dock.clone(),
+                                            window,
+                                            cx,
+                                        );
                                     });
                                 }
                                 cx.notify();
@@ -2270,8 +2273,7 @@ impl Workspace {
             (&self.right_dock, docks.right),
         ] {
             dock.update(cx, |dock, cx| {
-                dock.serialized_dock = Some(data);
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(data, window, cx);
             });
         }
     }
@@ -7386,8 +7388,7 @@ impl Workspace {
                 .iter_mut()
                 {
                     dock.update(cx, |dock, cx| {
-                        dock.serialized_dock = Some(serialized_dock.clone());
-                        dock.restore_state(window, cx);
+                        dock.restore_serialized_state(serialized_dock.clone(), window, cx);
                     });
                 }
 
@@ -17455,12 +17456,15 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.serialized_dock = Some(DockData {
-                    visible: true,
-                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
-                    zoom: false,
-                });
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
             });
         });
 
@@ -17524,12 +17528,15 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.serialized_dock = Some(DockData {
-                    visible: true,
-                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
-                    zoom: false,
-                });
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
             });
         });
         workspace.read_with(cx, |workspace, cx| {
@@ -17567,12 +17574,15 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.serialized_dock = Some(DockData {
-                    visible: true,
-                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
-                    zoom: false,
-                });
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
             });
         });
 
@@ -17616,12 +17626,15 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.serialized_dock = Some(DockData {
-                    visible: true,
-                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
-                    zoom: false,
-                });
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
             });
         });
         workspace.read_with(cx, |workspace, cx| {
@@ -17630,7 +17643,6 @@ mod tests {
                 !dock.is_open(),
                 "dock must not open for a panel that can no longer register",
             );
-            assert_eq!(dock.serialized_dock, None);
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
@@ -17667,12 +17679,15 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.bottom_dock().update(cx, |dock, cx| {
-                dock.serialized_dock = Some(DockData {
-                    visible: true,
-                    active_panel: Some(SecondTestPanel::persistent_name().to_string()),
-                    zoom: true,
-                });
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: true,
+                    },
+                    window,
+                    cx,
+                );
             });
         });
         workspace.read_with(cx, |_, cx| {
