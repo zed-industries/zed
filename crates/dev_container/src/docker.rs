@@ -374,16 +374,9 @@ impl DockerClient for Docker {
 
         command.arg(container_id);
 
-        command.arg("sh");
-
-        let mut inner_program_script: Vec<String> =
-            vec![inner_command.get_program().display().to_string()];
-        let mut args: Vec<String> = inner_command
-            .get_args()
-            .map(|arg| arg.display().to_string())
-            .collect();
-        inner_program_script.append(&mut args);
-        command.args(&["-c", &inner_program_script.join(" ")]);
+        // Kept as separate argv entries so a `-c` script containing spaces isn't word-split.
+        command.arg(inner_command.get_program());
+        command.args(inner_command.get_args());
 
         let output = command.output().await.map_err(|e| {
             log::error!("Error running command {e} in container exec");
@@ -910,6 +903,59 @@ mod test {
             result,
             Err(DevContainerError::DevContainerScriptsFailed)
         ));
+    }
+
+    // Regression test: `run_docker_exec` used to re-flatten the command through a second `sh -c` that word-split it on whitespace, e.g. postCreateCommand:
+    // - `"bash .devcontainer/post-create.sh"` silently dropped everything after `bash`
+    // - `"npm install"` silently ran bare `npm` and did nothing
+    // - `"echo hi && echo bye"` let the outer shell reinterpret `&&`, running two unrelated commands instead of one
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn docker_exec_keeps_lifecycle_script_as_one_argument() {
+        use indoc::indoc;
+        use std::os::unix::fs::PermissionsExt;
+
+        // Fake docker: records the argv it received (one per line, next to
+        // itself) instead of asserting on it in shell, so the check below can
+        // be a plain Rust `assert_eq!`.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let fake_docker = temp_dir.path().join("docker.sh");
+        std::fs::write(
+            &fake_docker,
+            indoc! {r#"
+                #!/bin/sh
+                printf '%s\n' "$@" > "$(dirname "$0")/args"
+            "#},
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake_docker, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let docker = Docker {
+            docker_cli: fake_docker.display().to_string(),
+            has_buildx: false,
+        };
+
+        let mut inner_command = Command::new("/bin/sh");
+        inner_command.args(&["-c", "bash .devcontainer/post-create.sh"]);
+
+        let result = gpui::block_on(docker.run_docker_exec(
+            "container",
+            "/workspace",
+            "root",
+            &HashMap::new(),
+            inner_command,
+        ));
+        assert!(result.is_ok(), "docker exec failed: {result:?}");
+
+        let received_args = std::fs::read_to_string(temp_dir.path().join("args")).unwrap();
+        assert_eq!(
+            received_args.lines().collect::<Vec<_>>(),
+            vec![
+                "exec", "-w", "/workspace", "-u", "root", "container", "/bin/sh", "-c",
+                "bash .devcontainer/post-create.sh",
+            ],
+            "the script must arrive as one argv entry, not be word-split"
+        );
     }
 
     #[test]

@@ -5198,6 +5198,7 @@ dependencies = [
  "serde_yaml",
  "settings",
  "shlex",
+ "tempfile",
  "ui",
  "util",
  "walkdir",
