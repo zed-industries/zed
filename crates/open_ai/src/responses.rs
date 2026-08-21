@@ -743,11 +743,13 @@ pub async fn compact_response(
         ))
         .map_err(|error| RequestError::Other(error.into()))?;
 
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_owned(),
+            host,
             error,
         })?;
     let mut body = String::new();
@@ -790,11 +792,13 @@ pub async fn stream_response(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_owned(),
+            host,
             error,
         })?;
     if response.status().is_success() {
@@ -1142,8 +1146,13 @@ mod tests {
         };
 
         match error {
-            language_model_core::LanguageModelCompletionError::HttpSend { provider, error } => {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
                 assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
                 assert_eq!(error.to_string(), "DNS lookup failed");
             }
             error => panic!("expected an HTTP send error, got {error:?}"),
@@ -1169,8 +1178,13 @@ mod tests {
         };
 
         match error {
-            language_model_core::LanguageModelCompletionError::HttpSend { provider, error } => {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
                 assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
                 assert_eq!(error.to_string(), "DNS lookup failed");
             }
             error => panic!("expected an HTTP send error, got {error:?}"),
