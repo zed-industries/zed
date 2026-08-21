@@ -671,55 +671,9 @@ lsp_messages!(
     (InlayHints, InlayHintsResponse, false),
     (SemanticTokens, SemanticTokensResponse, true),
     (PrepareCallHierarchy, PrepareCallHierarchyResponse, true),
+    (GetIncomingCalls, GetIncomingCallsResponse, false),
+    (GetOutgoingCalls, GetOutgoingCallsResponse, false),
 );
-
-impl LspRequestMessage for GetIncomingCalls {
-    type Response = GetIncomingCallsResponse;
-
-    fn to_proto_query(self) -> lsp_query::Request {
-        lsp_query::Request::GetIncomingCalls(self)
-    }
-
-    fn response_to_proto_query(response: Self::Response) -> lsp_response::Response {
-        lsp_response::Response::GetIncomingCallsResponse(response)
-    }
-
-    fn buffer_id(&self) -> u64 {
-        0
-    }
-
-    fn buffer_version(&self) -> &[VectorClockEntry] {
-        &[]
-    }
-
-    fn stop_previous_requests() -> bool {
-        true
-    }
-}
-
-impl LspRequestMessage for GetOutgoingCalls {
-    type Response = GetOutgoingCallsResponse;
-
-    fn to_proto_query(self) -> lsp_query::Request {
-        lsp_query::Request::GetOutgoingCalls(self)
-    }
-
-    fn response_to_proto_query(response: Self::Response) -> lsp_response::Response {
-        lsp_response::Response::GetOutgoingCallsResponse(response)
-    }
-
-    fn buffer_id(&self) -> u64 {
-        0
-    }
-
-    fn buffer_version(&self) -> &[VectorClockEntry] {
-        &[]
-    }
-
-    fn stop_previous_requests() -> bool {
-        true
-    }
-}
 
 entity_messages!(
     {project_id, ShareProject},

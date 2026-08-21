@@ -71,7 +71,6 @@ mod navigation;
 mod rewrap;
 mod selection;
 
-pub use actions::ShowCallHierarchy;
 pub(crate) use actions::*;
 pub use clipboard::ClipboardSelection;
 pub use code_actions::CodeActionProvider;

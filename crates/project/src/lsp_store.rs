@@ -130,7 +130,6 @@ use std::{
     path::{self, Path, PathBuf},
     pin::pin,
     rc::Rc,
-    str::FromStr,
     sync::{
         Arc,
         atomic::{self, AtomicUsize},
@@ -6896,29 +6895,42 @@ impl LspStore {
             if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
             let request_task = upstream_client.request_lsp(
                 project_id,
                 None,
-                DEFAULT_LSP_REQUEST_TIMEOUT,
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
-            cx.background_spawn(async move {
+            let buffer = buffer.clone();
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(None);
+                };
                 let Some(responses) = request_task.await? else {
                     return Ok(None);
                 };
-                let items = responses
-                    .payload
-                    .into_iter()
-                    .flat_map(|response| {
-                        response
-                            .response
-                            .items
-                            .into_iter()
-                            .filter_map(|item| call_hierarchy_item_from_proto(item).ok())
-                    })
-                    .collect();
-                Ok(Some(items))
+                let items = join_all(responses.payload.into_iter().map(|response| {
+                    PrepareCallHierarchy { position }.response_from_proto(
+                        response.response,
+                        lsp_store.clone(),
+                        buffer.clone(),
+                        cx.clone(),
+                    )
+                }))
+                .await;
+                Ok(Some(dedup_call_hierarchy_items(
+                    items
+                        .into_iter()
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten(),
+                )))
             })
         } else {
             let task = self.request_multiple_lsp_locally(
@@ -6928,119 +6940,130 @@ impl LspStore {
                 cx,
             );
             cx.background_spawn(async move {
-                Ok(Some(
-                    task.await
-                        .into_iter()
-                        .flat_map(|(_, items)| items)
-                        .collect(),
-                ))
+                Ok(Some(dedup_call_hierarchy_items(
+                    task.await.into_iter().flat_map(|(_, items)| items),
+                )))
             })
         }
     }
 
     pub fn incoming_calls(
         &mut self,
-        buffer: &Entity<Buffer>,
         item: CallHierarchyItem,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<IncomingCall>>>> {
+        let buffer = item.buffer.clone();
+        let server_id = item.server_id;
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetIncomingCalls { item };
-            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
             let request_task = upstream_client.request_lsp(
                 project_id,
-                None,
-                DEFAULT_LSP_REQUEST_TIMEOUT,
+                Some(server_id.to_proto()),
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
-            cx.background_spawn(async move {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(None);
+                };
                 let Some(responses) = request_task.await? else {
                     return Ok(None);
                 };
-                let calls = responses
-                    .payload
-                    .into_iter()
-                    .flat_map(|response| {
-                        response
-                            .response
-                            .calls
-                            .into_iter()
-                            .filter_map(|call| incoming_call_from_proto(call).ok())
-                    })
-                    .collect();
-                Ok(Some(calls))
-            })
-        } else {
-            let task = self.request_multiple_lsp_locally(
-                buffer,
-                None::<PointUtf16>,
-                GetIncomingCalls { item },
-                cx,
-            );
-            cx.background_spawn(async move {
+                let calls = join_all(responses.payload.into_iter().map(|response| {
+                    request.clone().response_from_proto(
+                        response.response,
+                        lsp_store.clone(),
+                        buffer.clone(),
+                        cx.clone(),
+                    )
+                }))
+                .await;
                 Ok(Some(
-                    task.await
+                    calls
                         .into_iter()
-                        .flat_map(|(_, calls)| calls)
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
                         .collect(),
                 ))
             })
+        } else {
+            let task = self.request_lsp(
+                buffer,
+                LanguageServerToQuery::Other(server_id),
+                GetIncomingCalls { item },
+                cx,
+            );
+            cx.background_spawn(async move { Ok(Some(task.await?)) })
         }
     }
 
     pub fn outgoing_calls(
         &mut self,
-        buffer: &Entity<Buffer>,
         item: CallHierarchyItem,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Vec<OutgoingCall>>>> {
+        let buffer = item.buffer.clone();
+        let server_id = item.server_id;
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetOutgoingCalls { item };
-            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
                 return Task::ready(Ok(None));
             }
+
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+
             let request_task = upstream_client.request_lsp(
                 project_id,
-                None,
-                DEFAULT_LSP_REQUEST_TIMEOUT,
+                Some(server_id.to_proto()),
+                request_timeout,
                 cx.background_executor().clone(),
                 request.to_proto(project_id, buffer.read(cx)),
             );
-            cx.background_spawn(async move {
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(None);
+                };
                 let Some(responses) = request_task.await? else {
                     return Ok(None);
                 };
-                let calls = responses
-                    .payload
-                    .into_iter()
-                    .flat_map(|response| {
-                        response
-                            .response
-                            .calls
-                            .into_iter()
-                            .filter_map(|call| outgoing_call_from_proto(call).ok())
-                    })
-                    .collect();
-                Ok(Some(calls))
-            })
-        } else {
-            let task = self.request_multiple_lsp_locally(
-                buffer,
-                None::<PointUtf16>,
-                GetOutgoingCalls { item },
-                cx,
-            );
-            cx.background_spawn(async move {
+                let calls = join_all(responses.payload.into_iter().map(|response| {
+                    request.clone().response_from_proto(
+                        response.response,
+                        lsp_store.clone(),
+                        buffer.clone(),
+                        cx.clone(),
+                    )
+                }))
+                .await;
                 Ok(Some(
-                    task.await
+                    calls
                         .into_iter()
-                        .flat_map(|(_, calls)| calls)
+                        .collect::<Result<Vec<Vec<_>>>>()?
+                        .into_iter()
+                        .flatten()
                         .collect(),
                 ))
             })
+        } else {
+            let task = self.request_lsp(
+                buffer,
+                LanguageServerToQuery::Other(server_id),
+                GetOutgoingCalls { item },
+                cx,
+            );
+            cx.background_spawn(async move { Ok(Some(task.await?)) })
         }
     }
 
@@ -10215,37 +10238,25 @@ impl LspStore {
                 .await?;
             }
             Request::GetIncomingCalls(get_incoming_calls) => {
-                let uri = get_incoming_calls
-                    .item
-                    .as_ref()
-                    .map(|item| lsp::Uri::from_str(&item.uri))
-                    .transpose()?
-                    .context("missing item uri")?;
-                Self::query_call_hierarchy_locally::<GetIncomingCalls>(
+                Self::query_lsp_locally::<GetIncomingCalls>(
                     lsp_store,
                     server_id,
                     sender_id,
                     lsp_request_id,
                     get_incoming_calls,
-                    uri,
+                    None,
                     &mut cx,
                 )
                 .await?;
             }
             Request::GetOutgoingCalls(get_outgoing_calls) => {
-                let uri = get_outgoing_calls
-                    .item
-                    .as_ref()
-                    .map(|item| lsp::Uri::from_str(&item.uri))
-                    .transpose()?
-                    .context("missing item uri")?;
-                Self::query_call_hierarchy_locally::<GetOutgoingCalls>(
+                Self::query_lsp_locally::<GetOutgoingCalls>(
                     lsp_store,
                     server_id,
                     sender_id,
                     lsp_request_id,
                     get_outgoing_calls,
-                    uri,
+                    None,
                     &mut cx,
                 )
                 .await?;
@@ -13910,98 +13921,6 @@ impl LspStore {
         Ok((buffer_version, buffer))
     }
 
-    async fn query_call_hierarchy_locally<T>(
-        lsp_store: Entity<Self>,
-        for_server_id: Option<LanguageServerId>,
-        sender_id: proto::PeerId,
-        lsp_request_id: LspRequestId,
-        proto_request: T::ProtoRequest,
-        uri: lsp::Uri,
-        cx: &mut AsyncApp,
-    ) -> Result<()>
-    where
-        T: LspCommand + Clone,
-        T::ProtoRequest: proto::LspRequestMessage,
-        <T::ProtoRequest as proto::RequestMessage>::Response:
-            Into<<T::ProtoRequest as proto::LspRequestMessage>::Response>,
-    {
-        let server_id = for_server_id.context("server_id required for call hierarchy queries")?;
-
-        let buffer = lsp_store
-            .update(cx, |lsp_store, cx| {
-                lsp_store.open_local_buffer_via_lsp(uri, server_id, cx)
-            })
-            .await?;
-
-        let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version());
-        let request =
-            T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
-        let key = LspKey {
-            request_type: TypeId::of::<T>(),
-            server_queried: Some(server_id),
-        };
-
-        lsp_store.update(cx, |lsp_store, cx| {
-            let server_task = lsp_store.request_lsp(
-                buffer.clone(),
-                LanguageServerToQuery::Other(server_id),
-                request.clone(),
-                cx,
-            );
-            let request_task = cx.background_spawn(async move {
-                let mut responses = Vec::new();
-                match server_task.await {
-                    Ok(response) => responses.push((server_id, response)),
-                    Err(e) if format!("{e:#}").ends_with("content modified") => (),
-                    Err(e) => log::error!("Error handling response for request {request:?}: {e:#}"),
-                }
-                responses
-            });
-
-            let lsp_data = lsp_store.latest_lsp_data(&buffer, cx);
-            lsp_data.lsp_requests.entry(key).or_default().insert(
-                lsp_request_id,
-                cx.spawn(async move |lsp_store, cx| {
-                    let response = request_task.await;
-                    lsp_store
-                        .update(cx, |lsp_store, cx| {
-                            if let Some((client, project_id)) = lsp_store.downstream_client.clone()
-                            {
-                                let response = response
-                                    .into_iter()
-                                    .map(|(server_id, response)| {
-                                        (
-                                            server_id.to_proto(),
-                                            T::response_to_proto(
-                                                response,
-                                                lsp_store,
-                                                sender_id,
-                                                &buffer_version,
-                                                cx,
-                                            )
-                                            .into(),
-                                        )
-                                    })
-                                    .collect::<HashMap<_, _>>();
-                                match client.send_lsp_response::<T::ProtoRequest>(
-                                    project_id,
-                                    lsp_request_id,
-                                    response,
-                                ) {
-                                    Ok(()) => {}
-                                    Err(e) => {
-                                        log::error!("Failed to send LSP response: {e:#}",)
-                                    }
-                                }
-                            }
-                        })
-                        .ok();
-                }),
-            );
-        });
-        Ok(())
-    }
-
     pub fn downstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         self.downstream_client.clone()
     }
@@ -14355,6 +14274,22 @@ fn remove_empty_hover_blocks(mut hover: Hover) -> Option<Hover> {
     } else {
         Some(hover)
     }
+}
+
+fn dedup_call_hierarchy_items(
+    items: impl IntoIterator<Item = CallHierarchyItem>,
+) -> Vec<CallHierarchyItem> {
+    let mut seen = HashSet::default();
+    items
+        .into_iter()
+        .filter(|item| {
+            seen.insert((
+                item.buffer.entity_id(),
+                item.selection_range.clone(),
+                item.name.clone(),
+            ))
+        })
+        .collect()
 }
 
 fn deduplicate_hovers(hovers: Vec<Hover>) -> Vec<Hover> {

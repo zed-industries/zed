@@ -117,60 +117,60 @@ message DocumentHighlight {
   }
 }
 
-message LspRange {
-    uint32 start_line = 1;
-    uint32 start_column = 2;
-    uint32 end_line = 3;
-    uint32 end_column = 4;
-}
-
 message CallHierarchyItem {
-    string name = 1;
-    int32 kind = 2;
-    optional string detail = 3;
-    string uri = 4;
-    LspRange range = 5;
-    LspRange selection_range = 6;
-    optional bytes data = 7;
+  string name = 1;
+  int32 kind = 2;
+  optional string detail = 3;
+  uint64 buffer_id = 4;
+  uint64 server_id = 5;
+  Anchor range_start = 6;
+  Anchor range_end = 7;
+  Anchor selection_range_start = 8;
+  Anchor selection_range_end = 9;
+  optional bytes data = 10;
 }
 
 message CallHierarchyIncomingCall {
-    CallHierarchyItem from = 1;
-    repeated LspRange from_ranges = 2;
+  CallHierarchyItem from = 1;
+  repeated Location from_ranges = 2;
 }
 
 message CallHierarchyOutgoingCall {
-    CallHierarchyItem to = 1;
-    repeated LspRange from_ranges = 2;
+  CallHierarchyItem to = 1;
+  repeated Location from_ranges = 2;
 }
 
 message PrepareCallHierarchy {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    Anchor position = 3;
-    repeated VectorClockEntry version = 4;
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
 }
 
 message PrepareCallHierarchyResponse {
-    repeated CallHierarchyItem items = 1;
+  repeated CallHierarchyItem items = 1;
 }
 
 message GetIncomingCalls {
-    uint64 project_id = 1;
-    CallHierarchyItem item = 2;
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CallHierarchyItem item = 3;
+  repeated VectorClockEntry version = 4;
 }
 
 message GetIncomingCallsResponse {
-    repeated CallHierarchyIncomingCall calls = 1;
+  repeated CallHierarchyIncomingCall calls = 1;
 }
 
 message GetOutgoingCalls {
-    uint64 project_id = 1;
-    CallHierarchyItem item = 2;
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CallHierarchyItem item = 3;
+  repeated VectorClockEntry version = 4;
 }
 
 message GetOutgoingCallsResponse {
-    repeated CallHierarchyOutgoingCall calls = 1;
+  repeated CallHierarchyOutgoingCall calls = 1;
 }
 
 message GetProjectSymbols {

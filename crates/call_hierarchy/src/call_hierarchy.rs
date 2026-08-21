@@ -1,18 +1,18 @@
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
-use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
+use editor::{Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     HighlightStyle, ParentElement, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
     actions, rems,
 };
-use language::{CodeLabel, PointUtf16, ToPointUtf16, Unclipped};
+use language::{CodeLabel, Location, ToOffset, ToPoint, ToPointUtf16, lsp_to_symbol_kind};
 use picker::{Picker, PickerDelegate};
 use project::{CallHierarchyItem, Project};
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*, vh};
+use ui::{ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::{ResultExt, paths::PathExt};
 use workspace::{ModalView, Workspace};
 
@@ -28,13 +28,13 @@ pub enum CallHierarchyMode {
 #[derive(Debug, Clone)]
 pub struct Call {
     pub item: CallHierarchyItem,
-    pub target: Unclipped<PointUtf16>,
+    pub target: Location,
     pub label: Option<CodeLabel>,
 }
 
 pub async fn make_call(
     item: CallHierarchyItem,
-    target: Unclipped<PointUtf16>,
+    target: Location,
     project: &Entity<Project>,
     cx: &mut AsyncWindowContext,
 ) -> Call {
@@ -46,47 +46,71 @@ pub async fn make_call(
     }
 }
 
+fn item_location(item: &CallHierarchyItem) -> Location {
+    Location {
+        buffer: item.buffer.clone(),
+        range: item.selection_range.clone(),
+    }
+}
+
 pub async fn fetch_calls(
     item: &CallHierarchyItem,
     project: &Entity<Project>,
-    buffer: &Entity<language::Buffer>,
     mode: CallHierarchyMode,
     cx: &mut AsyncWindowContext,
 ) -> Vec<Call> {
+    let mut labeled_calls = Vec::new();
     match mode {
         CallHierarchyMode::Incoming => {
-            let task = project.update(cx, |project, cx| {
-                project.incoming_calls(buffer, item.clone(), cx)
-            });
+            let task = project.update(cx, |project, cx| project.incoming_calls(item.clone(), cx));
             let Some(calls) = task.await.log_err().flatten() else {
                 return Vec::new();
             };
-            let mut labeled_calls = Vec::with_capacity(calls.len());
             for call in calls {
-                let target = call
-                    .from_ranges
-                    .first()
-                    .map_or(call.from.selection_range.start, |r| r.start);
-                labeled_calls.push(make_call(call.from, target, project, cx).await);
+                if call.from_ranges.is_empty() {
+                    let target = item_location(&call.from);
+                    labeled_calls.push(make_call(call.from, target, project, cx).await);
+                } else {
+                    for target in call.from_ranges {
+                        labeled_calls.push(make_call(call.from.clone(), target, project, cx).await);
+                    }
+                }
             }
-            labeled_calls
         }
         CallHierarchyMode::Outgoing => {
-            let task = project.update(cx, |project, cx| {
-                project.outgoing_calls(buffer, item.clone(), cx)
-            });
+            let task = project.update(cx, |project, cx| project.outgoing_calls(item.clone(), cx));
             let Some(calls) = task.await.log_err().flatten() else {
                 return Vec::new();
             };
-            let mut labeled_calls = Vec::with_capacity(calls.len());
             for call in calls {
-                labeled_calls.push(
-                    make_call(call.to.clone(), call.to.selection_range.start, project, cx).await,
-                );
+                if call.from_ranges.is_empty() {
+                    let target = item_location(&call.to);
+                    labeled_calls.push(make_call(call.to, target, project, cx).await);
+                } else {
+                    for target in call.from_ranges {
+                        labeled_calls.push(make_call(call.to.clone(), target, project, cx).await);
+                    }
+                }
             }
-            labeled_calls
         }
     }
+    sort_calls(&mut labeled_calls, cx);
+    labeled_calls
+}
+
+fn sort_calls(calls: &mut [Call], cx: &mut AsyncWindowContext) {
+    cx.update(|_, cx| {
+        calls.sort_by_key(|call| {
+            let buffer = call.target.buffer.read(cx);
+            let path = buffer
+                .file()
+                .map(|file| file.full_path(cx).to_string_lossy().to_string())
+                .unwrap_or_default();
+            let offset = call.target.range.start.to_offset(buffer);
+            (path, offset)
+        });
+    })
+    .log_err();
 }
 
 async fn label_for_call_hierarchy_item(
@@ -95,12 +119,9 @@ async fn label_for_call_hierarchy_item(
     cx: &mut AsyncWindowContext,
 ) -> Option<CodeLabel> {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    let file_path = item.uri.to_file_path().ok()?;
-    let file_name = file_path.file_name()?;
-    let language = language_registry
-        .load_language_for_file_path(Path::new(file_name))
-        .await
-        .ok()?;
+    let language = item
+        .buffer
+        .read_with(cx, |buffer, _| buffer.language().cloned())?;
     let lsp_adapter = language_registry
         .lsp_adapters(&language.name())
         .first()
@@ -110,7 +131,7 @@ async fn label_for_call_hierarchy_item(
         .labels_for_symbols(
             &[language::Symbol {
                 name: item.name.clone(),
-                kind: item.kind,
+                kind: lsp_to_symbol_kind(item.kind),
                 container_name: None,
             }],
             &language,
@@ -132,7 +153,8 @@ fn toggle_call_hierarchy(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let Some(workspace) = window.root::<Workspace>().flatten() else {
+    let Some(workspace) = editor.read(cx).workspace() else {
+        log::error!("call hierarchy: editor has no workspace");
         return;
     };
 
@@ -186,7 +208,10 @@ impl CallHierarchyView {
         let delegate =
             CallHierarchyDelegate::new(cx.entity().downgrade(), editor, project, workspace, mode);
         let picker = cx.new(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window)))
+            Picker::uniform_list(delegate, window, cx).max_height(Rems::from_pixels(
+                window.viewport_size().height * 0.75,
+                window,
+            ))
         });
 
         let picker_entity = picker.clone();
@@ -216,19 +241,20 @@ impl ModalView for CallHierarchyView {}
 
 impl Render for CallHierarchyView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .w(rems(34.))
-            .when(self.mode == CallHierarchyMode::Incoming, |this| {
-                this.on_action(cx.listener(|_this, _: &ShowIncomingCalls, _window, cx| {
+        let container = v_flex().w(rems(34.));
+        let container = match self.mode {
+            CallHierarchyMode::Incoming => {
+                container.on_action(cx.listener(|_, _: &ShowIncomingCalls, _window, cx| {
                     cx.emit(DismissEvent);
                 }))
-            })
-            .when(self.mode == CallHierarchyMode::Outgoing, |this| {
-                this.on_action(cx.listener(|_this, _: &ShowOutgoingCalls, _window, cx| {
+            }
+            CallHierarchyMode::Outgoing => {
+                container.on_action(cx.listener(|_, _: &ShowOutgoingCalls, _window, cx| {
                     cx.emit(DismissEvent);
                 }))
-            })
-            .child(self.picker.clone())
+            }
+        };
+        container.child(self.picker.clone())
     }
 }
 
@@ -268,6 +294,7 @@ impl CallHierarchyDelegate {
     fn fetch_calls(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) -> Task<()> {
         let buffer = self.editor.read(cx).buffer().read(cx).as_singleton();
         let Some(buffer) = buffer else {
+            log::warn!("call hierarchy: active editor has no singleton buffer");
             return Task::ready(());
         };
 
@@ -285,19 +312,30 @@ impl CallHierarchyDelegate {
         });
 
         let project = self.project.clone();
-        let buffer_clone = buffer.clone();
+        let workspace = self.workspace.clone();
         let mode = self.mode;
 
         cx.spawn_in(window, async move |picker, mut cx| {
-            let items = prepare_task.await;
-            let Ok(Some(items)) = items else {
-                return;
+            let items = match prepare_task.await {
+                Ok(Some(items)) => items,
+                Ok(None) => {
+                    log::warn!("call hierarchy: no capable language server responded to prepare");
+                    Vec::new()
+                }
+                Err(error) => {
+                    log::error!("failed to prepare call hierarchy: {error:#}");
+                    workspace
+                        .update(cx, |workspace, cx| workspace.show_error(error, cx))
+                        .log_err();
+                    return;
+                }
             };
             let Some(root_item) = items.into_iter().next() else {
+                log::info!("no call hierarchy items at the requested position");
                 return;
             };
 
-            let calls = fetch_calls(&root_item, &project, &buffer_clone, mode, &mut cx).await;
+            let calls = fetch_calls(&root_item, &project, mode, &mut cx).await;
 
             picker
                 .update_in(cx, |picker, _window, cx| {
@@ -326,10 +364,20 @@ impl CallHierarchyDelegate {
 impl PickerDelegate for CallHierarchyDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "call hierarchy"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        match self.mode {
-            CallHierarchyMode::Incoming => "Search incoming calls...".into(),
-            CallHierarchyMode::Outgoing => "Search outgoing calls...".into(),
+        match (&self.root_item, self.mode) {
+            (Some(root), CallHierarchyMode::Incoming) => {
+                format!("Search calls to `{}`...", root.name).into()
+            }
+            (Some(root), CallHierarchyMode::Outgoing) => {
+                format!("Search calls from `{}`...", root.name).into()
+            }
+            (None, CallHierarchyMode::Incoming) => "Search incoming calls...".into(),
+            (None, CallHierarchyMode::Outgoing) => "Search outgoing calls...".into(),
         }
     }
 
@@ -410,24 +458,12 @@ impl PickerDelegate for CallHierarchyDelegate {
             return;
         };
 
-        let uri = call.item.uri.clone();
-        let start_point = call.target;
+        let buffer = call.target.buffer.clone();
+        let target = call.target.range.start;
 
-        let abs_path = match uri.to_file_path() {
-            Ok(path) => path,
-            Err(_) => return,
-        };
-
-        let buffer_task = self
-            .project
-            .update(cx, |project, cx| project.open_local_buffer(&abs_path, cx));
-        let workspace = self.workspace.clone();
-
-        cx.spawn_in(window, async move |_, cx| {
-            let buffer = buffer_task.await?;
-
-            workspace.update_in(cx, |workspace, window, cx| {
-                let position = buffer.read(cx).clip_point_utf16(start_point, Bias::Left);
+        self.workspace
+            .update(cx, |workspace, cx| {
+                let position = target.to_point(&buffer.read(cx).snapshot());
                 let pane = if secondary {
                     workspace.adjacent_pane(window, cx)
                 } else {
@@ -445,11 +481,8 @@ impl PickerDelegate for CallHierarchyDelegate {
                         |s| s.select_ranges([position..position]),
                     );
                 });
-            })?;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            })
+            .log_err();
 
         self.dismissed(window, cx);
     }
@@ -468,8 +501,18 @@ impl PickerDelegate for CallHierarchyDelegate {
         let mat = self.matches.get(ix)?;
         let call = self.calls.get(mat.candidate_id)?;
 
-        let match_ranges = mat.positions.iter().map(|pos| *pos..*pos + 1);
+        let match_ranges = mat
+            .positions
+            .iter()
+            .map(|pos| *pos..call.item.name.ceil_char_boundary(pos + 1));
         let (name_styled, detail_styled, path_styled) = render_item(call, match_ranges, cx);
+
+        let (name, detail, path) = extract_call_display_info(call, cx);
+        let full_signature = SharedString::from(match detail {
+            Some(detail) => format!("{name}{detail}"),
+            None => name,
+        });
+        let full_path = path.map(SharedString::from);
 
         Some(
             ListItem::new(ix)
@@ -479,47 +522,68 @@ impl PickerDelegate for CallHierarchyDelegate {
                 .child(
                     v_flex()
                         .text_ui(cx)
-                        .child(name_styled)
-                        .when_some(detail_styled, |this, detail| this.child(detail)),
+                        .child(
+                            h_flex()
+                                .overflow_x_hidden()
+                                .child(name_styled)
+                                .children(detail_styled),
+                        )
+                        .children(path_styled.map(|path| {
+                            Label::new(path)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate()
+                        })),
                 )
-                .when_some(path_styled, |this, path| {
-                    this.tooltip(Tooltip::element(move |_window, _cx| {
-                        div().max_w_72().child(path.clone()).into_any_element()
-                    }))
-                }),
+                .tooltip(Tooltip::element(move |_window, _cx| {
+                    v_flex()
+                        .max_w_96()
+                        .gap_0p5()
+                        .child(div().child(full_signature.clone()))
+                        .children(full_path.clone().map(|path| {
+                            Label::new(path).size(LabelSize::Small).color(Color::Muted)
+                        }))
+                        .into_any_element()
+                })),
         )
     }
 }
 
 /// Extracts display information from a `Call` for rendering in UI.
-fn extract_call_display_info(call: &Call) -> (String, Option<String>, Option<String>) {
+fn extract_call_display_info(call: &Call, cx: &App) -> (String, Option<String>, Option<String>) {
     let name = call.item.name.clone();
-    let line_number = call.target.0.row + 1;
-    let file_path = call.item.uri.to_file_path().ok();
+    let buffer = call.target.buffer.read(cx);
+    let line_number = call.target.range.start.to_point(&buffer.snapshot()).row + 1;
+    let file_path = buffer.file().map(|file| {
+        file.as_local()
+            .map(|file| file.abs_path(cx))
+            .unwrap_or_else(|| file.full_path(cx))
+    });
 
     let file_with_line = file_path
         .as_ref()
-        .map(|p| format!("{}:{}", p.compact().to_string_lossy(), line_number));
+        .map(|path| format!("{}:{}", path.compact().to_string_lossy(), line_number));
 
-    let detail = extract_call_detail(call).or(file_with_line.clone());
+    let detail = extract_call_detail(call);
 
     (name, detail, file_with_line)
 }
 
 fn extract_call_detail(call: &Call) -> Option<String> {
-    if let Some(label) = call.label.as_ref()
-        && let Some(detail) = detail_from_label_suffix(label)
-    {
-        return Some(detail);
-    }
-
-    call.item
-        .detail
-        .as_deref()
-        .map(str::trim)
-        .filter(|detail| !detail.is_empty())
-        .map(|detail| detail.replace('\n', "↵"))
-        .and_then(|detail| trim_detail_after_symbol_name(&detail, &call.item.name).or(Some(detail)))
+    let detail = if let Some(detail) = call.label.as_ref().and_then(detail_from_label_suffix) {
+        Some(detail)
+    } else {
+        call.item
+            .detail
+            .as_deref()
+            .map(str::trim)
+            .filter(|detail| !detail.is_empty())
+            .and_then(|detail| {
+                trim_detail_after_symbol_name(detail, &call.item.name)
+                    .or_else(|| Some(detail.to_owned()))
+            })
+    };
+    detail.map(|detail| detail.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 fn detail_from_label_suffix(label: &CodeLabel) -> Option<String> {
@@ -543,12 +607,12 @@ fn trim_detail_after_symbol_name(detail: &str, symbol_name: &str) -> Option<Stri
 /// Returns a tuple of (name_styled, detail_styled) where:
 /// - name_styled: function-colored text with match highlight backgrounds
 /// - detail_styled: muted-colored text (if detail is provided)
-pub fn render_item(
+fn render_item(
     call_item: &Call,
     match_ranges: impl IntoIterator<Item = Range<usize>>,
     cx: &App,
 ) -> (StyledText, Option<StyledText>, Option<String>) {
-    let (name, detail, path) = extract_call_display_info(call_item);
+    let (name, detail, path) = extract_call_display_info(call_item, cx);
 
     let settings = ThemeSettings::get_global(cx);
 
@@ -559,6 +623,7 @@ pub fn render_item(
         font_size: settings.buffer_font_size(cx).into(),
         font_weight: settings.buffer_font.weight,
         line_height: relative(1.),
+        text_overflow: Some(gpui::TextOverflow::Truncate("…".into())),
         ..Default::default()
     };
 
@@ -566,6 +631,12 @@ pub fn render_item(
         background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..Default::default()
     };
+
+    let detail_styled = detail.map(|detail| {
+        let mut detail_style = base_text_style.clone();
+        detail_style.color = cx.theme().colors().text_muted;
+        StyledText::new(detail).with_default_highlights(&detail_style, std::iter::empty())
+    });
 
     let name_styled = if let Some(label) = call_item.label.as_ref() {
         let theme = cx.theme();
@@ -582,7 +653,7 @@ pub fn render_item(
             gpui::combine_highlights(custom_highlights, syntax_runs),
         )
     } else {
-        let mut name_style = base_text_style.clone();
+        let mut name_style = base_text_style;
         name_style.color = cx.theme().colors().text;
 
         StyledText::new(name).with_default_highlights(
@@ -590,12 +661,6 @@ pub fn render_item(
             match_ranges.into_iter().map(|r| (r, highlight_style)),
         )
     };
-
-    let detail_styled = detail.map(|d| {
-        let mut detail_style = base_text_style;
-        detail_style.color = cx.theme().colors().text_muted;
-        StyledText::new(d).with_default_highlights(&detail_style, std::iter::empty())
-    });
 
     (name_styled, detail_styled, path)
 }
@@ -624,10 +689,10 @@ mod tests {
         Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
-                matcher: LanguageMatcher {
+                matcher: Arc::new(LanguageMatcher {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
-                },
+                }),
                 ..Default::default()
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
@@ -663,19 +728,46 @@ mod tests {
         }
     }
 
-    fn make_call(name: &str, uri: lsp::Uri, line: u32, detail: Option<String>) -> Call {
+    fn source() -> String {
+        format!("{}\n", "x".repeat(30)).repeat(20)
+    }
+
+    async fn make_call(
+        name: &str,
+        abs_path: &std::path::Path,
+        line: u32,
+        detail: Option<String>,
+        project: &Entity<Project>,
+        cx: &mut TestAppContext,
+    ) -> Call {
+        let buffer = project
+            .update(cx, |project, cx| project.open_local_buffer(abs_path, cx))
+            .await
+            .unwrap();
+        let (range, selection_range) = buffer.read_with(cx, |buffer, _| {
+            (
+                buffer.anchor_after(language::Point::new(line, 0))
+                    ..buffer.anchor_before(language::Point::new(line, 10)),
+                buffer.anchor_after(language::Point::new(line, 3))
+                    ..buffer.anchor_before(language::Point::new(line, 3 + name.len() as u32)),
+            )
+        });
+        let target = Location {
+            buffer: buffer.clone(),
+            range: selection_range.clone(),
+        };
         Call {
             item: CallHierarchyItem {
+                buffer,
+                server_id: lsp::LanguageServerId(0),
                 name: name.to_string(),
                 kind: lsp::SymbolKind::FUNCTION,
                 detail,
-                uri,
-                range: Unclipped(PointUtf16::new(line, 0))..Unclipped(PointUtf16::new(line, 10)),
-                selection_range: Unclipped(PointUtf16::new(line, 3))
-                    ..Unclipped(PointUtf16::new(line, 3 + name.len() as u32)),
+                range,
+                selection_range,
                 data: None,
             },
-            target: Unclipped(PointUtf16::new(line, 3)),
+            target,
             label: None,
         }
     }
@@ -685,13 +777,20 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({"src": {"main.rs": ""}}))
+        fs.insert_tree(path!("/test"), json!({"src": {"main.rs": source()}}))
             .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
-        let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
-
-        let call = make_call("my_function", test_uri, 10, None);
-        let (name, detail, file_with_line) = extract_call_display_info(&call);
+        let call = make_call(
+            "my_function",
+            path!("/test/src/main.rs").as_ref(),
+            10,
+            None,
+            &project,
+            cx,
+        )
+        .await;
+        let (name, detail, file_with_line) = cx.update(|cx| extract_call_display_info(&call, cx));
 
         #[cfg(not(windows))]
         let expected_path = "/test/src/main.rs:11";
@@ -699,7 +798,7 @@ mod tests {
         let expected_path = "C:\\test\\src\\main.rs:11";
 
         assert_eq!(name, "my_function");
-        assert_eq!(detail.as_deref(), Some(expected_path));
+        assert_eq!(detail, None);
         assert_eq!(file_with_line.as_deref(), Some(expected_path));
     }
 
@@ -708,28 +807,31 @@ mod tests {
         init_test(cx);
 
         let home_dir = util::paths::home_dir();
-        let test_path = home_dir.join("projects/app/src/main.rs");
+        let test_path = home_dir
+            .join("projects")
+            .join("app")
+            .join("src")
+            .join("main.rs");
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             &home_dir,
-            json!({"projects": {"app": {"src": {"main.rs": ""}}}}),
+            json!({"projects": {"app": {"src": {"main.rs": source()}}}}),
         )
         .await;
+        let project = Project::test(fs, [home_dir.as_path()], cx).await;
 
-        let test_uri = lsp::Uri::from_file_path(&test_path).unwrap();
-
-        let call = make_call("my_function", test_uri, 10, None);
-        let (name, detail, file_with_line) = extract_call_display_info(&call);
+        let call = make_call("my_function", &test_path, 10, None, &project, cx).await;
+        let (name, detail, file_with_line) = cx.update(|cx| extract_call_display_info(&call, cx));
 
         #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
-        let expected_path = "~/projects/app/src/main.rs:11";
+        let expected_path = "~/projects/app/src/main.rs:11".to_string();
         #[cfg(windows)]
         let expected_path = format!("{}:11", test_path.to_string_lossy());
 
         assert_eq!(name, "my_function");
-        assert_eq!(detail.as_deref(), Some(expected_path));
-        assert_eq!(file_with_line.as_deref(), Some(expected_path));
+        assert_eq!(detail, None);
+        assert_eq!(file_with_line, Some(expected_path));
     }
 
     #[gpui::test]
@@ -737,18 +839,20 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": ""}}))
+        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": source()}}))
             .await;
-
-        let test_uri = lsp::Uri::from_file_path(path!("/test/src/lib.rs")).unwrap();
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let call = make_call(
             "helper",
-            test_uri,
+            path!("/test/src/lib.rs").as_ref(),
             5,
             Some("fn helper() -> i32".to_string()),
-        );
-        let (name, detail, file_with_line) = extract_call_display_info(&call);
+            &project,
+            cx,
+        )
+        .await;
+        let (name, detail, file_with_line) = cx.update(|cx| extract_call_display_info(&call, cx));
 
         #[cfg(not(windows))]
         let expected_path = "/test/src/lib.rs:6";
@@ -756,7 +860,7 @@ mod tests {
         let expected_path = "C:\\test\\src\\lib.rs:6";
 
         assert_eq!(name, "helper");
-        assert_eq!(detail.as_deref(), Some("fn helper() -> i32"));
+        assert_eq!(detail.as_deref(), Some("() -> i32"));
         assert_eq!(file_with_line.as_deref(), Some(expected_path));
     }
 
@@ -765,24 +869,26 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": ""}}))
+        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": source()}}))
             .await;
-
-        let test_uri = lsp::Uri::from_file_path(path!("/test/src/lib.rs")).unwrap();
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let mut call = make_call(
             "helper",
-            test_uri,
+            path!("/test/src/lib.rs").as_ref(),
             5,
             Some("fn helper(&self) -> i32".to_string()),
-        );
+            &project,
+            cx,
+        )
+        .await;
         call.label = Some(CodeLabel::new(
             "fn helper(&self) -> i32".to_string(),
             3..9,
             Vec::new(),
         ));
 
-        let (_, detail, _) = extract_call_display_info(&call);
+        let (_, detail, _) = cx.update(|cx| extract_call_display_info(&call, cx));
         assert_eq!(detail.as_deref(), Some("(&self) -> i32"));
     }
 
@@ -793,19 +899,21 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": ""}}))
+        fs.insert_tree(path!("/test"), json!({"src": {"lib.rs": source()}}))
             .await;
-
-        let test_uri = lsp::Uri::from_file_path(path!("/test/src/lib.rs")).unwrap();
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let call = make_call(
             "helper",
-            test_uri,
+            path!("/test/src/lib.rs").as_ref(),
             5,
             Some("fn helper(&self, arg: i32) -> i32".to_string()),
-        );
+            &project,
+            cx,
+        )
+        .await;
 
-        let (_, detail, _) = extract_call_display_info(&call);
+        let (_, detail, _) = cx.update(|cx| extract_call_display_info(&call, cx));
         assert_eq!(detail.as_deref(), Some("(&self, arg: i32) -> i32"));
     }
 
@@ -814,15 +922,52 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), json!({"main.rs": ""})).await;
+        fs.insert_tree(path!("/test"), json!({"main.rs": source()}))
+            .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
-        let test_uri = lsp::Uri::from_file_path(path!("/test/main.rs")).unwrap();
-
-        let call = make_call("foo", test_uri, 0, Some("line1\nline2\nline3".to_string()));
-        let (name, detail, _) = extract_call_display_info(&call);
+        let call = make_call(
+            "foo",
+            path!("/test/main.rs").as_ref(),
+            0,
+            Some("line1\nline2\nline3".to_string()),
+            &project,
+            cx,
+        )
+        .await;
+        let (name, detail, _) = cx.update(|cx| extract_call_display_info(&call, cx));
 
         assert_eq!(name, "foo");
-        assert_eq!(detail.as_deref(), Some("line1↵line2↵line3"));
+        assert_eq!(detail.as_deref(), Some("line1 line2 line3"));
+    }
+
+    #[gpui::test]
+    async fn test_extract_call_display_info_multiline_where_clause(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({"main.rs": source()}))
+            .await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let call = make_call(
+            "contains",
+            path!("/test/main.rs").as_ref(),
+            0,
+            Some(
+                "fn contains<Q>(&self, value: &Q) -> bool\nwhere\n    Q: ?Sized,\n    T: Borrow<Q>,"
+                    .to_string(),
+            ),
+            &project,
+            cx,
+        )
+        .await;
+        let (_, detail, _) = cx.update(|cx| extract_call_display_info(&call, cx));
+
+        assert_eq!(
+            detail.as_deref(),
+            Some("<Q>(&self, value: &Q) -> bool where Q: ?Sized, T: Borrow<Q>,")
+        );
     }
 
     #[gpui::test]
@@ -890,6 +1035,7 @@ mod tests {
             .unwrap();
 
         let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().run_until_parked();
         let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
 
         fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
@@ -986,6 +1132,7 @@ mod tests {
             .unwrap();
 
         let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().run_until_parked();
         let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
 
         fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
@@ -1094,6 +1241,7 @@ mod tests {
             .unwrap();
 
         let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().run_until_parked();
         let test_uri = lsp::Uri::from_file_path(path!("/test/src/main.rs")).unwrap();
 
         fake_server.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
