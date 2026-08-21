@@ -24,7 +24,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
+use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -811,6 +811,7 @@ impl Item for Editor {
                         params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
                     )
                 })
+                .single_line()
                 .color(label_color)
                 .when(params.truncate_title_middle, |this| {
                     this.truncate_middle().flex_1()
@@ -821,6 +822,7 @@ impl Item for Editor {
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
+                        .single_line()
                         .size(LabelSize::XSmall)
                         .when(params.truncate_title_middle, |this| {
                             this.truncate_start().flex_shrink()
@@ -1652,6 +1654,41 @@ impl Editor {
     }
 }
 
+// Replace-all commonly expands several hits against the same line.
+#[derive(Default)]
+struct SearchHitContext {
+    row: Option<u32>,
+    text: String,
+}
+
+impl SearchHitContext {
+    fn for_hit(
+        &mut self,
+        snapshot: &MultiBufferSnapshot,
+        hit: &Range<Anchor>,
+    ) -> (&str, Range<usize>) {
+        let start = hit.start.to_point(snapshot);
+        let end = hit.end.to_point(snapshot);
+        let range = if start.row == end.row {
+            if self.row != Some(start.row) {
+                self.text.clear();
+                self.text.extend(snapshot.text_for_range(
+                    Point::new(start.row, 0)
+                        ..Point::new(start.row, snapshot.line_len(MultiBufferRow(start.row))),
+                ));
+                self.row = Some(start.row);
+            }
+            start.column as usize..end.column as usize
+        } else {
+            self.row = None;
+            self.text.clear();
+            self.text.extend(snapshot.text_for_range(start..end));
+            0..self.text.len()
+        };
+        (&self.text, range)
+    }
+}
+
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
@@ -1837,19 +1874,20 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
-        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
-        let text: Cow<_> = if text.len() == 1 {
-            text.first().cloned().unwrap().into()
+        let replacement = if query.replacement_requires_context() {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let mut context = SearchHitContext::default();
+            let (line, hit) = context.for_hit(&snapshot, identifier);
+            query
+                .replacement_for(line, hit)
+                .map(|replacement| Arc::<str>::from(&*replacement))
         } else {
-            let joined_chunks = text.concat();
-            joined_chunks.into()
+            query.replacement().map(Arc::<str>::from)
         };
 
-        if let Some(replacement) = query.replacement_for(&text) {
+        if let Some(replacement) = replacement {
             self.transact(window, cx, |this, _, cx| {
-                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+                this.edit([(identifier.clone(), replacement)], cx);
             });
         }
     }
@@ -1861,26 +1899,18 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut edits = vec![];
 
         // A regex might have replacement variables so we cannot apply
         // the same replacement to all matches
-        if query.is_regex() {
+        if query.replacement_requires_context() {
+            let mut context = SearchHitContext::default();
             edits = matches
                 .filter_map(|m| {
-                    let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-                    let text: Cow<_> = if text.len() == 1 {
-                        text.first().cloned().unwrap().into()
-                    } else {
-                        let joined_chunks = text.concat();
-                        joined_chunks.into()
-                    };
-
+                    let (line, hit) = context.for_hit(&snapshot, m);
                     query
-                        .replacement_for(&text)
+                        .replacement_for(line, hit)
                         .map(|replacement| (m.clone(), Arc::from(&*replacement)))
                 })
                 .collect();

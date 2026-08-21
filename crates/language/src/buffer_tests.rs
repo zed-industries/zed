@@ -4112,13 +4112,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             let range = buffer.random_byte_range(0, &mut rng);
                             let range = range.to_point_utf16(buffer);
                             let range = range.start..range.end;
-                            DiagnosticEntry {
+                            DiagnosticEntry::new(
                                 range,
-                                diagnostic: Diagnostic {
+                                Diagnostic {
                                     message: post_inc(&mut next_diagnostic_id).to_string(),
                                     ..Default::default()
                                 },
-                            }
+                            )
                         }),
                         buffer,
                     );

@@ -2949,12 +2949,14 @@ impl LspCommand for GetCodeActions {
         language_server: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::CodeActionParams> {
+        let text_document = make_text_document_identifier(path)?;
+        let snapshot = buffer.snapshot();
         let mut relevant_diagnostics = Vec::new();
-        for entry in buffer
-            .snapshot()
-            .diagnostics_in_range::<_, language::PointUtf16>(self.range.clone(), false)
-        {
-            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub()?);
+        for entry in snapshot.diagnostic_entries_in_range(self.range.clone(), false) {
+            let entry = entry.clone().map_coordinates(|range| {
+                range.start.to_point_utf16(&snapshot)..range.end.to_point_utf16(&snapshot)
+            });
+            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub(&text_document.uri)?);
         }
 
         let only = if let Some(requested) = &self.kinds {
