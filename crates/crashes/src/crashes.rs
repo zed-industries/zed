@@ -182,6 +182,7 @@ pub struct CrashServer {
     active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
     user_info: Mutex<Option<UserInfo>>,
     abort_message_location: Mutex<Option<AbortMessageLocation>>,
+    shutdown: Arc<AtomicBool>,
     has_connection: Arc<AtomicBool>,
     logs_dir: PathBuf,
 }
@@ -255,6 +256,11 @@ pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
     send_crash_server_message(crash_client, CrashServerMessage::UserInfo(info));
 }
 
+/// Requests an orderly exit from the crash-handler sidecar.
+pub fn shutdown_crash_handler(crash_client: &Arc<Client>) {
+    send_crash_server_message(crash_client, CrashServerMessage::Shutdown);
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 enum CrashServerMessage {
     Init(InitCrashHandler),
@@ -262,6 +268,7 @@ enum CrashServerMessage {
     GPUInfo(GpuSpecs),
     UserInfo(UserInfo),
     AbortMessageLocation(AbortMessageLocation),
+    Shutdown,
 }
 
 /// glibc records the diagnostic it prints just before aborting (malloc integrity
@@ -463,6 +470,9 @@ impl minidumper::ServerHandler for CrashServer {
             }
             CrashServerMessage::AbortMessageLocation(location) => {
                 self.abort_message_location.lock().replace(location);
+            }
+            CrashServerMessage::Shutdown => {
+                self.shutdown.store(true, Ordering::SeqCst);
             }
         }
     }
@@ -668,6 +678,7 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
                 panic_info: Mutex::default(),
                 user_info: Mutex::default(),
                 abort_message_location: Mutex::default(),
+                shutdown: shutdown.clone(),
                 has_connection,
                 active_gpu: Mutex::default(),
                 logs_dir,
@@ -681,6 +692,44 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_stops_crash_server() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock is before the Unix epoch")
+            .as_nanos();
+        let socket = PathBuf::from(format!(
+            "crashes-shutdown-test-{}-{unique}",
+            std::process::id()
+        ));
+        let logs_dir = std::env::temp_dir();
+        let (server_stopped_tx, server_stopped_rx) = std::sync::mpsc::channel();
+        let server_socket = socket.clone();
+        std::thread::spawn(move || {
+            crash_server(&server_socket, logs_dir);
+            server_stopped_tx
+                .send(())
+                .expect("test receiver should remain connected");
+        });
+
+        let client = Arc::new(
+            (0..100)
+                .find_map(|_| {
+                    let client = Client::with_name(SocketName::Path(&socket)).ok();
+                    if client.is_none() {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    client
+                })
+                .expect("crash server did not start"),
+        );
+
+        shutdown_crash_handler(&client);
+        server_stopped_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("crash server did not stop");
+    }
 
     #[test]
     fn abort_message_read_len_requires_page_rounded_total() {
