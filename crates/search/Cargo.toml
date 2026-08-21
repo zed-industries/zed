@@ -38,7 +38,6 @@ picker.workspace = true
 picker_preview.workspace = true
 project.workspace = true
 regex.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
@@ -62,6 +61,3 @@ lsp.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
-
-[package.metadata.cargo-machete]
-ignored = ["tracing"]
