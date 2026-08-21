@@ -51,16 +51,16 @@ The docs use a custom preprocessor (`docs_preprocessor`) that expands special co
 
 ### Formatting Requirements
 
-All documentation must pass **Prettier** formatting:
+All documentation must pass **Prettier** formatting. From the repo root:
 
 ```sh
-cd docs && npx prettier --check src/
+script/prettier --check
 ```
 
 Before any documentation change is considered complete:
 
-1. Run Prettier to format: `cd docs && npx prettier --write src/`
-2. Verify it passes: `cd docs && npx prettier --check src/`
+1. Run Prettier to format: `script/prettier --write`
+2. Verify it passes: `script/prettier --check`
 
 Prettier config: 80 character line width (`docs/.prettierrc`)
 
@@ -128,56 +128,7 @@ Images are hosted externally. Reference format:
 
 ## Voice and Tone
 
-### Core Principles
-
-- **Practical over promotional**: Focus on what users can do, not on selling Zed. Avoid marketing language like "powerful," "revolutionary," or "best-in-class."
-- **Honest about limitations**: When Zed lacks a feature or doesn't match another tool's depth, say so directly. Pair limitations with workarounds or alternative workflows.
-- **Direct and concise**: Use short sentences. Get to the point. Developers are scanning, not reading novels.
-- **Second person**: Address the reader as "you." Avoid "the user" or "one."
-- **Present tense**: "Zed opens the file" not "Zed will open the file."
-
-### What to Avoid
-
-- Superlatives without substance ("incredibly fast," "seamlessly integrated")
-- Hedging language ("simply," "just," "easily")—if something is simple, the instructions will show it
-- Apologetic tone for missing features—state the limitation and move on
-- Comparisons that disparage other tools—be factual, not competitive
-- Lots of use of em or en dashes.
-
-## Examples of Good Copy
-
-### Good: Direct and actionable
-
-```
-To format on save, open the Settings Editor (`Cmd+,`) and search for `format_on_save`. Set it to `on`.
-
-Or add this to your settings.json:
-{
-  "format_on_save": "on"
-}
-```
-
-### Bad: Wordy and promotional
-
-```
-Zed provides a powerful and seamless formatting experience. Simply navigate to the settings and you'll find the format_on_save option which enables Zed's incredible auto-formatting capabilities.
-```
-
-### Good: Honest about limitations
-
-```
-Zed doesn't index your project like IntelliJ does. You open a folder and start working immediately—no waiting. The trade-off: cross-project analysis relies on language servers, which may not go as deep.
-
-**How to adapt:**
-- Use `Cmd+Shift+F` for project-wide text search
-- Use `Cmd+O` for symbol search (powered by your language server)
-```
-
-### Bad: Defensive or dismissive
-
-```
-While some users might miss indexing, Zed's approach is actually better because it's faster.
-```
+Follow `docs/.rules` for voice, tone, terminology, and writing examples.
 
 ## Scope
 

@@ -108,7 +108,7 @@ Ask clarifying questions:
 
 ### Phase 2: Gather Context
 
-1. **Load reference files** (auto-loaded from skill folder):
+1. **Read reference files**:
    - `rubric.md` — 8 scoring criteria for validation
    - `taboo-phrases.md` — patterns to eliminate
    - `voice-examples.md` — transformation patterns and fact preservation rules
@@ -200,14 +200,14 @@ Present final copy with scorecard:
 | Earned Claims       |   5   |
 | **TOTAL**           | 37/40 |
 
-✅ All criteria 4+
-✅ Zero taboo phrases
-✅ All facts preserved
+All criteria 4+: Pass
+Zero taboo phrases: Pass
+All facts preserved: Pass
 
 ## Facts Verified
-- [FACT: Rust] ✓
-- [FACT: GPU-accelerated] ✓
-- [FACT: 120fps] ✓
+- [FACT: Rust] - verified
+- [FACT: GPU-accelerated] - verified
+- [FACT: 120fps] - verified
 ```
 
 **Output formats by context:**
