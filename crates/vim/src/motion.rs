@@ -2335,23 +2335,24 @@ fn start_of_next_sentence(
     Some(map.buffer_snapshot().len())
 }
 
-fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -> DisplayPoint {
+fn go_to_line(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    line: usize,
+    column: u32,
+) -> Option<DisplayPoint> {
     let point = map.display_point_to_point(display_point, Bias::Left);
     let snapshot = map.buffer_snapshot();
-    let Some((buffer_snapshot, _)) = snapshot.point_to_buffer_point(point) else {
-        return display_point;
-    };
+    let (buffer_snapshot, _) = snapshot.point_to_buffer_point(point)?;
 
-    let Some(anchor) = snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(
-        buffer_snapshot.clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
-    )) else {
-        return display_point;
-    };
+    let anchor = snapshot.anchor_in_excerpt(buffer_snapshot.anchor_after(
+        buffer_snapshot.clip_point(Point::new((line - 1) as u32, column), Bias::Left),
+    ))?;
 
-    map.clip_point(
+    Some(map.clip_point(
         map.point_to_display_point(anchor.to_point(snapshot), Bias::Left),
         Bias::Left,
-    )
+    ))
 }
 
 fn start_of_document(
@@ -2360,20 +2361,21 @@ fn start_of_document(
     maybe_times: Option<usize>,
 ) -> DisplayPoint {
     if let Some(times) = maybe_times {
-        return go_to_line(map, display_point, times);
+        let Some(line_end) = go_to_line(map, display_point, times, u32::MAX) else {
+            return display_point;
+        };
+        return first_non_whitespace(map, false, line_end);
     }
 
-    let point = map.display_point_to_point(display_point, Bias::Left);
-    let mut first_point = Point::zero();
-    first_point.column = point.column;
-
-    map.clip_point(
+    let line_end = map.clip_point(
         map.point_to_display_point(
-            map.buffer_snapshot().clip_point(first_point, Bias::Left),
+            map.buffer_snapshot()
+                .clip_point(Point::new(0, u32::MAX), Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
-    )
+    );
+    first_non_whitespace(map, false, line_end)
 }
 
 fn end_of_document(
@@ -2382,7 +2384,8 @@ fn end_of_document(
     maybe_times: Option<usize>,
 ) -> DisplayPoint {
     if let Some(times) = maybe_times {
-        return go_to_line(map, display_point, times);
+        let point = map.display_point_to_point(display_point, Bias::Left);
+        return go_to_line(map, display_point, times, point.column).unwrap_or(display_point);
     };
     let point = map.display_point_to_point(display_point, Bias::Left);
     let mut last_point = map.buffer_snapshot().max_point();
