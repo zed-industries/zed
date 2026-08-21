@@ -86,6 +86,7 @@ pub struct CommitView {
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
     is_shallow_boundary: bool,
+    file_filter: Option<RepoPath>,
     _load_diff_task: Task<Result<()>>,
 }
 
@@ -248,6 +249,7 @@ impl CommitView {
                                 workspace_entity,
                                 workspace_handle,
                                 stash,
+                                file_filter,
                                 window,
                                 cx,
                             )
@@ -294,6 +296,7 @@ impl CommitView {
         workspace_entity: Entity<Workspace>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
+        file_filter: Option<RepoPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -524,6 +527,7 @@ impl CommitView {
             workspace,
             remote,
             is_shallow_boundary,
+            file_filter,
             _load_diff_task: load_diff_task,
         }
     }
@@ -533,6 +537,7 @@ impl CommitView {
         let repository = self.repository.downgrade();
         let workspace = self.workspace.clone();
         let stash = self.stash;
+        let file_filter = self.file_filter.clone();
         v_flex()
             .flex_grow(1.)
             .items_center()
@@ -549,18 +554,27 @@ impl CommitView {
                 .color(Color::Muted),
             )
             .child(
-                Button::new("load-shallow-snapshot", "Load Full Snapshot")
+                Button::new(
+                    "load-shallow-snapshot",
+                    if file_filter.is_some() {
+                        "Load File Snapshot"
+                    } else {
+                        "Load Full Snapshot"
+                    },
+                )
                     .style(ButtonStyle::Filled)
-                    .tooltip(Tooltip::text(
-                        "Show every file at this commit as added. This can be slow in large repositories.",
-                    ))
+                    .tooltip(Tooltip::text(if file_filter.is_some() {
+                        "Show this file's full contents at this commit as added."
+                    } else {
+                        "Show every file at this commit as added. This can be slow in large repositories."
+                    }))
                     .on_click(move |_, window, cx| {
                         Self::open_with_options(
                             commit_sha.clone(),
                             repository.clone(),
                             workspace.clone(),
                             stash,
-                            None,
+                            file_filter.clone(),
                             true,
                             window,
                             cx,
@@ -1309,6 +1323,7 @@ impl Item for CommitView {
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
                 is_shallow_boundary: self.is_shallow_boundary,
+                file_filter: self.file_filter.clone(),
                 _load_diff_task: Task::ready(Ok(())),
             }
         })))
