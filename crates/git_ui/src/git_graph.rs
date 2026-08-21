@@ -5199,6 +5199,78 @@ mod tests {
         }
     }
 
+    /// A lane that goes empty can be handed to an unrelated branch later. That
+    /// branch has to start its own color rather than pick up the color of
+    /// whatever used the column before it.
+    #[test]
+    fn test_recycled_lane_does_not_reuse_the_previous_branch_color() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let first_tip = Oid::random(&mut rng);
+        let first_tip_parent = Oid::random(&mut rng);
+        let second_tip = Oid::random(&mut rng);
+        let second_tip_parent = Oid::random(&mut rng);
+        let third_tip = Oid::random(&mut rng);
+        let shared_root = Oid::random(&mut rng);
+
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: first_tip,
+                parents: smallvec![first_tip_parent],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: first_tip_parent,
+                parents: smallvec![shared_root],
+                ref_names: vec![],
+            }),
+            // Starts a branch of its own, so it takes the first free lane, 1.
+            Arc::new(InitialGraphCommitData {
+                sha: second_tip,
+                parents: smallvec![second_tip_parent],
+                ref_names: vec![],
+            }),
+            // Ends that branch, which frees lane 1 again.
+            Arc::new(InitialGraphCommitData {
+                sha: second_tip_parent,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+            // Unrelated to the branch above, but reuses its lane.
+            Arc::new(InitialGraphCommitData {
+                sha: third_tip,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: shared_root,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+
+        let mut graph_data = GraphData::new(8);
+        graph_data.add_commits(&commits);
+
+        let lanes = graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.lane)
+            .collect::<Vec<_>>();
+        let colors = graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.color_idx)
+            .collect::<Vec<_>>();
+
+        assert_eq!(lanes, vec![0, 0, 1, 1, 1, 0]);
+        assert_eq!(colors, vec![0, 0, 1, 1, 2, 0]);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!("Graph invariant violation for recycled lanes:\n{}", error);
+        }
+    }
+
     #[test]
     fn test_git_graph_linear_commits() {
         let mut rng = StdRng::seed_from_u64(42);
