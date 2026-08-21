@@ -26,7 +26,7 @@ test-support = [
     "x11",
     "proptest",
 ]
-bench = ["test-support", "profiler", "dep:criterion"]
+bench = ["profiler", "dep:criterion"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 wayland = []
