@@ -2956,13 +2956,17 @@ impl LspCommand for GetCodeActions {
         for (source_server_id, entry) in
             snapshot.diagnostic_entries_in_range_with_server_id(self.range.clone(), false)
         {
-            if source_server_id != target_server_id && entry.diagnostic.message.has_lsp_markup() {
-                continue;
-            }
+            let downgrade_markup =
+                source_server_id != target_server_id && entry.diagnostic.message.has_lsp_markup();
             let entry = entry.clone().map_coordinates(|range| {
                 range.start.to_point_utf16(&snapshot)..range.end.to_point_utf16(&snapshot)
             });
-            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub(&text_document.uri)?);
+            let mut diagnostic = entry.to_lsp_diagnostic_stub(&text_document.uri)?;
+            if downgrade_markup {
+                diagnostic.message =
+                    lsp::DiagnosticMessage::from(entry.diagnostic.message.as_str());
+            }
+            relevant_diagnostics.push(diagnostic);
         }
 
         let only = if let Some(requested) = &self.kinds {
