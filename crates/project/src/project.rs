@@ -3270,6 +3270,22 @@ impl Project {
         })
     }
 
+    /// Like [`Project::open_buffer`], but reads content that looks like binary
+    /// data as text instead of refusing to open it.
+    pub fn open_buffer_forcing_text(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Buffer>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+
+        self.buffer_store.update(cx, |buffer_store, cx| {
+            buffer_store.open_buffer_forcing_text(path.into(), cx)
+        })
+    }
+
     #[cfg(feature = "test-support")]
     pub fn open_buffer_with_lsp(
         &mut self,
@@ -5845,9 +5861,15 @@ impl Project {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         let path = RelPath::from_unix_str(&envelope.payload.path)?.into();
+        let force_text = envelope.payload.force_text;
         let open_buffer = this
             .update(&mut cx, |this, cx| {
-                this.open_buffer(ProjectPath { worktree_id, path }, cx)
+                let project_path = ProjectPath { worktree_id, path };
+                if force_text {
+                    this.open_buffer_forcing_text(project_path, cx)
+                } else {
+                    this.open_buffer(project_path, cx)
+                }
             })
             .await?;
         Project::respond_to_open_buffer_request(this, open_buffer, peer_id, &mut cx)

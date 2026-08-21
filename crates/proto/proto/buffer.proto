@@ -31,6 +31,7 @@ message OpenBufferByPath {
   uint64 project_id = 1;
   uint64 worktree_id = 2;
   string path = 3;
+  bool force_text = 4;
 }
 
 message OpenBufferById {

@@ -8,6 +8,7 @@ use crate::{
     PLAIN_TEXT, RunnableTag, TextObject, TreeSitterOptions, analyze_byte_content,
     binary_file_error,
     diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup},
+    from_utf8_lossy_owned,
     language_settings::{AutoIndentMode, LanguageSettings},
     outline::OutlineItem,
     row_chunk::RowChunks,
@@ -142,6 +143,7 @@ pub struct Buffer {
     tree_sitter_data: Arc<TreeSitterData>,
     encoding: &'static Encoding,
     has_bom: bool,
+    force_text: bool,
     reload_with_encoding_txns: HashMap<TransactionId, (&'static Encoding, bool)>,
 }
 
@@ -1156,6 +1158,7 @@ impl Buffer {
             _subscriptions: Vec::new(),
             encoding: encoding_rs::UTF_8,
             has_bom: false,
+            force_text: false,
             reload_with_encoding_txns: HashMap::default(),
         }
     }
@@ -1460,6 +1463,19 @@ impl Buffer {
         self.encoding
     }
 
+    /// Marks this buffer as being read as text even though its content looks like
+    /// binary data, so that reloading it from disk does not reject it again, its
+    /// line endings are never normalized, and saving it without edits is a no-op.
+    pub fn set_force_text(&mut self, force_text: bool) {
+        self.force_text = force_text;
+    }
+
+    /// Whether this buffer was read as text even though its content looks like
+    /// binary data.
+    pub fn force_text(&self) -> bool {
+        self.force_text
+    }
+
     /// Sets the character encoding of the buffer.
     pub fn set_encoding(&mut self, encoding: &'static Encoding) {
         self.encoding = encoding;
@@ -1597,13 +1613,15 @@ impl Buffer {
         let prev_version = self.text.version();
 
         self.reload_task = Some(cx.spawn(async move |this, cx| {
-            let Some((new_mtime, load_bytes_task, current_encoding)) =
+            let Some((new_mtime, load_bytes_task, current_encoding, current_has_bom, force_text)) =
                 this.update(cx, |this, cx| {
                     let file = this.file.as_ref()?.as_local()?;
                     Some((
                         file.disk_state().mtime(),
                         file.load_bytes(cx),
                         this.encoding,
+                        this.has_bom,
+                        this.force_text,
                     ))
                 })?
             else {
@@ -1614,7 +1632,7 @@ impl Buffer {
 
             let bytes = load_bytes_task.await?;
 
-            if analyze_byte_content(&bytes) == ByteContent::Binary {
+            if !force_text && analyze_byte_content(&bytes) == ByteContent::Binary {
                 return Err(binary_file_error());
             }
 
@@ -1622,7 +1640,14 @@ impl Buffer {
                 || target_encoding == encoding_rs::UTF_16LE
                 || target_encoding == encoding_rs::UTF_16BE;
 
-            let (new_text, has_bom, encoding_used) = if force_encoding.is_some() && !is_unicode {
+            let reload_as_raw_utf8 = force_text
+                && force_encoding.is_none()
+                && current_encoding == encoding_rs::UTF_8
+                && !current_has_bom;
+
+            let (new_text, has_bom, encoding_used) = if reload_as_raw_utf8 {
+                (from_utf8_lossy_owned(bytes), false, encoding_rs::UTF_8)
+            } else if force_encoding.is_some() && !is_unicode {
                 let (cow, _had_errors) = target_encoding.decode_without_bom_handling(&bytes);
                 (cow.into_owned(), false, target_encoding)
             } else {
@@ -2282,7 +2307,9 @@ impl Buffer {
             let old_text = old_text.to_string();
             let mut new_text = new_text.as_ref().to_owned();
             // Raw content must reflect the file's exact bytes, so its carriage
-            // returns are kept rather than normalized away.
+            // returns are kept rather than normalized away. Unlike the
+            // host-only `force_text` flag, the line ending is replicated, so
+            // this holds on remote replicas too.
             let line_ending = if current_line_ending == LineEnding::Raw {
                 current_line_ending
             } else {

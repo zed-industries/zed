@@ -2147,6 +2147,67 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_remote_open_binary_file_as_text(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/code"), json!({ "project1": {} }))
+        .await;
+    // The NUL bytes make this look like binary data rather than text.
+    fs.insert_file(
+        path!("/code/project1/device.log"),
+        b"boot\0\0\0ok\n".to_vec(),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+
+    let error = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("device.log")), cx)
+        })
+        .await
+        .expect_err("binary content should not open as text by default");
+    // The client relies on recognizing this error to offer opening the file as text.
+    assert!(language::is_binary_file_error(&error));
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer_forcing_text((worktree_id, rel_path("device.log")), cx)
+        })
+        .await
+        .unwrap();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "boot\0\0\0ok\n");
+        // The replica must carry the forced-open state, so that client-side
+        // guards (the editor's save filter, diff normalization) apply on
+        // remote projects too.
+        assert!(buffer.force_text());
+        assert_eq!(buffer.line_ending(), language::LineEnding::Raw);
+    });
+
+    // Saving the unedited buffer must not touch the file on the server.
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load(path!("/code/project1/device.log").as_ref())
+            .await
+            .unwrap(),
+        "boot\0\0\0ok\n"
+    );
+}
+
+#[gpui::test]
 async fn test_remote_resolve_path_in_buffer(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

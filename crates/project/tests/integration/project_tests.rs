@@ -16142,6 +16142,131 @@ async fn test_undo_encoding_change(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_reloading_binary_buffer_opened_as_text(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    // The NUL bytes make this look like binary data rather than text; the
+    // carriage returns must survive as-is rather than being normalized.
+    fs.insert_file(path!("/dir/device.log"), b"boot\r\n\0\0\0ok\r\n".to_vec())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let project_path = project.read_with(cx, |project, cx| {
+        (
+            project.worktrees(cx).next().unwrap().read(cx).id(),
+            rel_path("device.log"),
+        )
+    });
+
+    project
+        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+        .await
+        .expect_err("binary content should not open as text by default");
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer_forcing_text(project_path, cx)
+        })
+        .await
+        .unwrap();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "boot\r\n\0\0\0ok\r\n");
+    });
+
+    // Saving the unedited buffer must not touch the file.
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load(path!("/dir/device.log").as_ref()).await.unwrap(),
+        "boot\r\n\0\0\0ok\r\n"
+    );
+
+    // An external append whose inserted text itself contains CRLF: the reload
+    // diff must keep the insertion verbatim rather than normalizing it away.
+    fs.save(
+        path!("/dir/device.log").as_ref(),
+        &"boot\r\n\0\0\0ok\r\nagain\r\n".into(),
+        LineEnding::Raw,
+    )
+    .await
+    .unwrap();
+    let reload = buffer.update(cx, |buffer, cx| buffer.reload(cx));
+    cx.executor().run_until_parked();
+    reload
+        .await
+        .expect("reloading should not reject the binary content");
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "boot\r\n\0\0\0ok\r\nagain\r\n");
+        assert!(!buffer.is_dirty());
+    });
+
+    // An actual edit saves normally, writing the text back byte for byte.
+    buffer.update(cx, |buffer, cx| buffer.edit([(0..4, "init")], None, cx));
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load(path!("/dir/device.log").as_ref()).await.unwrap(),
+        "init\r\n\0\0\0ok\r\nagain\r\n"
+    );
+
+    // Deleting the file on disk and saving again must recreate it, even
+    // though the unedited buffer is not dirty.
+    fs.remove_file(path!("/dir/device.log").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load(path!("/dir/device.log").as_ref()).await.unwrap(),
+        "init\r\n\0\0\0ok\r\nagain\r\n"
+    );
+}
+
+#[gpui::test]
+async fn test_open_as_text_joining_plain_binary_open(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+    fs.insert_file(path!("/dir/device.log"), b"boot\0\0\0ok\n".to_vec())
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let project_path = project.read_with(cx, |project, cx| {
+        (
+            project.worktrees(cx).next().unwrap().read(cx).id(),
+            rel_path("device.log"),
+        )
+    });
+
+    // A forced open racing a plain open of the same path must not inherit the
+    // plain load's binary rejection.
+    let (plain, forced) = project.update(cx, |project, cx| {
+        (
+            project.open_buffer(project_path, cx),
+            project.open_buffer_forcing_text(project_path, cx),
+        )
+    });
+    plain
+        .await
+        .expect_err("binary content should not open as text by default");
+    let buffer = forced
+        .await
+        .expect("the forced open should retry after the plain load fails");
+    buffer.read_with(cx, |buffer, _| assert_eq!(buffer.text(), "boot\0\0\0ok\n"));
+}
+
+#[gpui::test]
 async fn test_initial_scan_complete(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

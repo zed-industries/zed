@@ -13,6 +13,7 @@ use gpui::{
 };
 use language::{
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, LineEnding, Operation,
+    is_binary_file_error,
     language_settings::{AllLanguageSettings, LineEndingSetting},
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
@@ -34,7 +35,13 @@ use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId, WorktreeS
 pub struct BufferStore {
     state: BufferStoreState,
     #[allow(clippy::type_complexity)]
-    loading_buffers: HashMap<ProjectPath, Shared<Task<Result<Entity<Buffer>, Arc<anyhow::Error>>>>>,
+    loading_buffers: HashMap<
+        ProjectPath,
+        (
+            bool,
+            Shared<Task<Result<Entity<Buffer>, Arc<anyhow::Error>>>>,
+        ),
+    >,
     worktree_store: Entity<WorktreeStore>,
     opened_buffers: HashMap<BufferId, OpenBuffer>,
     path_to_buffer_id: HashMap<ProjectPath, BufferId>,
@@ -302,6 +309,7 @@ impl RemoteBufferStore {
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
+        force_text: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
         let worktree_id = worktree.read(cx).id().to_proto();
@@ -313,6 +321,7 @@ impl RemoteBufferStore {
                     project_id,
                     worktree_id,
                     path: path.as_unix_str().to_owned(),
+                    force_text,
                 })
                 .await?;
             let buffer_id = BufferId::new(response.buffer_id)?;
@@ -322,6 +331,10 @@ impl RemoteBufferStore {
                     |this, cx| this.wait_for_remote_buffer(buffer_id, cx)
                 })?
                 .await?;
+
+            if force_text {
+                buffer.update(cx, |buffer, _| buffer.set_force_text(true));
+            }
 
             Ok(buffer)
         })
@@ -391,6 +404,18 @@ impl LocalBufferStore {
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<()>> {
         let buffer = buffer_handle.read(cx);
+
+        // Saving re-encodes the content, so a forced-text buffer must not
+        // rewrite its file unless it was actually edited. Only skip the save
+        // while the file still exists, though: an unedited buffer is not
+        // dirty even when its file was deleted on disk, and saving then must
+        // still recreate the file.
+        let file_exists_on_disk = buffer
+            .file()
+            .is_some_and(|file| matches!(file.disk_state(), DiskState::Present { .. }));
+        if buffer.force_text() && !buffer.is_dirty() && !has_changed_file && file_exists_on_disk {
+            return Task::ready(Ok(()));
+        }
 
         let text = buffer.as_rope().clone();
         let line_ending = buffer.line_ending();
@@ -679,9 +704,16 @@ impl LocalBufferStore {
         &self,
         path: Arc<RelPath>,
         worktree: Entity<Worktree>,
+        force_text: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
-        let load_file = worktree.update(cx, |worktree, cx| worktree.load_file(path.as_ref(), cx));
+        let load_file = worktree.update(cx, |worktree, cx| {
+            if force_text {
+                worktree.load_file_forcing_text(path.as_ref(), cx)
+            } else {
+                worktree.load_file(path.as_ref(), cx)
+            }
+        });
         cx.spawn(async move |this, cx| {
             let path = path.clone();
             let buffer = match load_file.await {
@@ -708,6 +740,7 @@ impl LocalBufferStore {
                         let mut buffer = Buffer::build(text_buffer, Some(loaded.file), capability);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
+                        buffer.set_force_text(force_text);
                         buffer
                     })
                 }
@@ -905,12 +938,52 @@ impl BufferStore {
         project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
+        self.open_buffer_impl(project_path, false, cx)
+    }
+
+    /// Like [`BufferStore::open_buffer`], but reads content that looks like
+    /// binary data as text instead of refusing to open it.
+    pub fn open_buffer_forcing_text(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        self.open_buffer_impl(project_path, true, cx)
+    }
+
+    fn open_buffer_impl(
+        &mut self,
+        project_path: ProjectPath,
+        force_text: bool,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<Buffer>>> {
+        // A path maps to at most one buffer entity at a time, so a buffer that
+        // is already open is returned whatever mode either open used.
         if let Some(buffer) = self.get_by_path(&project_path) {
             return Task::ready(Ok(buffer));
         }
 
         let task = match self.loading_buffers.entry(project_path.clone()) {
-            hash_map::Entry::Occupied(e) => e.get().clone(),
+            hash_map::Entry::Occupied(entry) => {
+                let (loading_force_text, task) = entry.get();
+                // A forced open that joined an in-flight plain load would fail
+                // with the very binary content error the caller chose to
+                // override, so wait that load out and retry forced instead.
+                if force_text && !loading_force_text {
+                    let task = task.clone();
+                    return cx.spawn(async move |this, cx| match task.await {
+                        Ok(buffer) => Ok(buffer),
+                        Err(error) if is_binary_file_error(&error) => {
+                            this.update(cx, |this, cx| {
+                                this.open_buffer_impl(project_path, true, cx)
+                            })?
+                            .await
+                        }
+                        Err(error) => Err(shared_load_error(&error)),
+                    });
+                }
+                task.clone()
+            }
             hash_map::Entry::Vacant(entry) => {
                 let path = project_path.path.clone();
                 let Some(worktree) = self
@@ -921,37 +994,32 @@ impl BufferStore {
                     return Task::ready(Err(anyhow!("no such worktree")));
                 };
                 let load_buffer = match &self.state {
-                    BufferStoreState::Local(this) => this.open_buffer(path, worktree, cx),
-                    BufferStoreState::Remote(this) => this.open_buffer(path, worktree, cx),
+                    BufferStoreState::Local(this) => {
+                        this.open_buffer(path, worktree, force_text, cx)
+                    }
+                    BufferStoreState::Remote(this) => {
+                        this.open_buffer(path, worktree, force_text, cx)
+                    }
                 };
 
-                entry
-                    .insert(
-                        cx.spawn(async move |this, cx| {
-                            let load_result = load_buffer.await;
-                            this.update(cx, |this, _cx| {
-                                // Record the fact that the buffer is no longer loading.
-                                this.loading_buffers.remove(&project_path);
+                let task = cx
+                    .spawn(async move |this, cx| {
+                        let load_result = load_buffer.await;
+                        this.update(cx, |this, _cx| {
+                            // Record the fact that the buffer is no longer loading.
+                            this.loading_buffers.remove(&project_path);
 
-                                let buffer = load_result.map_err(Arc::new)?;
-                                Ok(buffer)
-                            })?
-                        })
-                        .shared(),
-                    )
-                    .clone()
+                            let buffer = load_result.map_err(Arc::new)?;
+                            Ok(buffer)
+                        })?
+                    })
+                    .shared();
+                entry.insert((force_text, task.clone()));
+                task
             }
         };
 
-        cx.background_spawn(async move {
-            task.await.map_err(|e| {
-                if e.error_code() != ErrorCode::Internal {
-                    anyhow!(e.error_code())
-                } else {
-                    anyhow!("{e}")
-                }
-            })
-        })
+        cx.background_spawn(async move { task.await.map_err(|error| shared_load_error(&error)) })
     }
 
     pub fn create_buffer(
@@ -1072,16 +1140,10 @@ impl BufferStore {
     pub fn loading_buffers(
         &self,
     ) -> impl Iterator<Item = (&ProjectPath, impl Future<Output = Result<Entity<Buffer>>>)> {
-        self.loading_buffers.iter().map(|(path, task)| {
+        self.loading_buffers.iter().map(|(path, (_, task))| {
             let task = task.clone();
             (path, async move {
-                task.await.map_err(|e| {
-                    if e.error_code() != ErrorCode::Internal {
-                        anyhow!(e.error_code())
-                    } else {
-                        anyhow!("{e}")
-                    }
-                })
+                task.await.map_err(|error| shared_load_error(&error))
             })
         })
     }
@@ -1847,6 +1909,14 @@ impl OpenBuffer {
             OpenBuffer::Complete { buffer, .. } => buffer.upgrade(),
             OpenBuffer::Operations(_) => None,
         }
+    }
+}
+
+fn shared_load_error(error: &anyhow::Error) -> anyhow::Error {
+    if error.error_code() != ErrorCode::Internal {
+        error.cloned()
+    } else {
+        anyhow!("{error}")
     }
 }
 

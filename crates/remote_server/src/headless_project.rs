@@ -586,10 +586,16 @@ impl HeadlessProject {
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
         let path = RelPath::from_unix_str(&message.payload.path)?.into();
+        let force_text = message.payload.force_text;
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
+                let project_path = ProjectPath { worktree_id, path };
+                if force_text {
+                    buffer_store.open_buffer_forcing_text(project_path, cx)
+                } else {
+                    buffer_store.open_buffer(project_path, cx)
+                }
             });
             (buffer_store, buffer)
         });
