@@ -33,6 +33,7 @@ Note that maintainers will raise non-compliance during the publishing process. S
 ## Language Extensions
 
 - Only provide support for the language your extension targets, as well as any dialects that are directly associated with that language.
+- Define a [grammar](../languages.md#grammar) in your extension's `extension.toml` for every language that you provide.
 - You may also provide language servers, debuggers and snippets for that language.
 - Choose an extension ID and name similar or equal to the name of the primary language you intend to add.
 - Do not include any Rust code should your extension not also provide language servers.

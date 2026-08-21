@@ -84,6 +84,10 @@ Without one of these, the extension stays with its current owner as is.
 
 Such a switch also does not have to be permanent: should the original owner become responsive again, the extension may be switched back to the original repository.
 
+## Why can't my language reuse builtin grammars or a grammar from another extension? {#grammar-reuse}
+
+If your language depended on a grammar it does not own, updates to that grammar could change the nodes produced by Tree-sitter parsing and silently break your language. To avoid this, every language must use a grammar defined in its own extension's `extension.toml`.
+
 ## I have questions about these policies or disagree with them. Where can I raise that? {#policy-discussion}
 
 First of all, thank you for reading through these!
