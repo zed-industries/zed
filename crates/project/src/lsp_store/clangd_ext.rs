@@ -30,7 +30,7 @@ impl lsp::notification::Notification for InactiveRegions {
 pub fn is_inactive_region(diag: &Diagnostic) -> bool {
     diag.is_unnecessary
         && diag.severity == INACTIVE_DIAGNOSTIC_SEVERITY
-        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag.message.as_str() == INACTIVE_REGION_MESSAGE
         && diag
             .source
             .as_ref()

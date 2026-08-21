@@ -56,7 +56,7 @@ impl DiagnosticRenderer {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: primary.diagnostic.message.clone().into(),
+                    copy_message: primary.diagnostic.message.as_shared_string().clone(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -73,7 +73,7 @@ impl DiagnosticRenderer {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: entry.diagnostic.message.clone().into(),
+                    copy_message: entry.diagnostic.message.as_shared_string().clone(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -87,8 +87,8 @@ impl DiagnosticRenderer {
     fn markdown(diagnostic: &Diagnostic) -> String {
         let mut markdown = String::new();
 
-        if let Some(md) = &diagnostic.markdown {
-            markdown.push_str(md);
+        if let Some(message_markdown) = diagnostic.message.markdown() {
+            markdown.push_str(message_markdown);
         } else {
             markdown.push_str(&Markdown::escape(&diagnostic.message));
         };
@@ -100,7 +100,7 @@ fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
     if diagnostic.source.is_none() && diagnostic.code.is_none() {
         return;
     }
-    if diagnostic.markdown.is_some() {
+    if diagnostic.message.markdown().is_some() {
         markdown.push_str("\n\n(");
     } else {
         markdown.push_str(" (");

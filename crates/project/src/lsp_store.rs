@@ -76,11 +76,12 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter, Capability, CodeLabel,
-    CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff,
-    File as _, Language, LanguageAwareStyling, LanguageName, LanguageRegistry, LocalFile,
-    LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate, ManifestName, ModelineSettings,
-    OffsetUtf16, Patch, PointUtf16, RelatedInformation, RelatedLocation, TextBufferSnapshot,
-    ToOffset, ToOffsetUtf16, ToPointUtf16, Toolchain, Transaction, Unclipped,
+    CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSet,
+    DiagnosticSourceKind, Diff, File as _, Language, LanguageAwareStyling, LanguageName,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
+    ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16, RelatedInformation,
+    RelatedLocation, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16, Toolchain,
+    Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
         all_language_settings,
@@ -12263,19 +12264,19 @@ impl LspStore {
                 primary_diagnostic_group_ids
                     .insert((source, diagnostic.code.clone(), range.clone()), group_id);
 
-                let (message, markdown, lsp_markup) = match &diagnostic.message {
-                    lsp::DiagnosticMessage::String(message) => (
-                        message.trim().to_string(),
-                        adapter
-                            .as_ref()
-                            .and_then(|adapter| adapter.diagnostic_message_to_markdown(message)),
-                        None,
-                    ),
-                    lsp::DiagnosticMessage::MarkupContent(markup) => (
-                        markup.value.trim().to_string(),
-                        (markup.kind == lsp::MarkupKind::Markdown).then(|| markup.value.clone()),
-                        Some(markup.clone()),
-                    ),
+                let message = match &diagnostic.message {
+                    lsp::DiagnosticMessage::String(message) => {
+                        DiagnosticMessage::plain_with_adapter_markdown(
+                            message.trim(),
+                            adapter
+                                .as_ref()
+                                .and_then(|adapter| adapter.diagnostic_message_to_markdown(message))
+                                .map(SharedString::from),
+                        )
+                    }
+                    lsp::DiagnosticMessage::MarkupContent(markup) => {
+                        DiagnosticMessage::from_lsp_markup(markup)
+                    }
                 };
                 diagnostics.push(DiagnosticEntry {
                     range,
@@ -12292,8 +12293,6 @@ impl LspStore {
                             .as_ref()
                             .and_then(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        markdown,
-                        lsp_markup,
                         message,
                         group_id,
                         is_primary: true,
@@ -12320,11 +12319,16 @@ impl LspStore {
                                         .as_ref()
                                         .and_then(|d| d.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
-                                    markdown: adapter.as_ref().and_then(|adapter| {
-                                        adapter.diagnostic_message_to_markdown(&info.message)
-                                    }),
-                                    lsp_markup: None,
-                                    message: info.message.trim().to_string(),
+                                    message: DiagnosticMessage::plain_with_adapter_markdown(
+                                        info.message.trim(),
+                                        adapter
+                                            .as_ref()
+                                            .and_then(|adapter| {
+                                                adapter
+                                                    .diagnostic_message_to_markdown(&info.message)
+                                            })
+                                            .map(SharedString::from),
+                                    ),
                                     group_id,
                                     is_primary: false,
                                     is_disk_based,

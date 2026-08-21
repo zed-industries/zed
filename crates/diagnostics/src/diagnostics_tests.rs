@@ -1004,7 +1004,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
         }
     "});
 
-    let message = "Something's wrong!";
+    let message = "`Something's wrong!`";
     cx.update(|_, cx| {
         lsp_store.update(cx, |lsp_store, cx| {
             lsp_store
@@ -1045,6 +1045,50 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
         fn func(abcˇ def: i32) -> u32 {
         }
     "});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Uri::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![lsp::Diagnostic {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 11),
+                                lsp::Position::new(0, 12),
+                            ),
+                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                            message: lsp::MarkupContent {
+                                kind: lsp::MarkupKind::Markdown,
+                                value: message.to_string(),
+                            }
+                            .into(),
+                            ..Default::default()
+                        }],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(
+            editor.active_diagnostic_message(),
+            None,
+            "changing only the diagnostic's Markdown rendering should invalidate the active group"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
+        assert_eq!(editor.active_diagnostic_message(), Some(message));
+    });
 
     cx.update(|_, cx| {
         lsp_store.update(cx, |lsp_store, cx| {
