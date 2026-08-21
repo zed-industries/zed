@@ -1248,6 +1248,7 @@ impl Markdown {
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
             let link_definition_spans = parsed.link_definition_spans;
+            let has_untagged_code_block = parsed.has_untagged_code_block;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -1273,15 +1274,6 @@ impl Markdown {
                     }
                 }
 
-                let has_untagged_code_block = events.iter().any(|(_, event)| {
-                    matches!(
-                        event,
-                        MarkdownEvent::Start(MarkdownTag::CodeBlock {
-                            kind: CodeBlockKind::Fenced,
-                            ..
-                        })
-                    )
-                });
                 if has_untagged_code_block && let Some(fallback) = &fallback {
                     fallback_code_block_language =
                         registry.language_for_name(fallback.as_ref()).await.ok();
@@ -5034,7 +5026,11 @@ mod tests {
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         language_registry.add(language.clone());
 
-        let source = "```\nfn main() {}\n```";
+        let source = indoc::indoc! {"
+            ```
+            fn main() {}
+            ```
+        "};
         let markdown = cx.new(|cx| {
             Markdown::new(
                 source.into(),
@@ -5068,7 +5064,11 @@ mod tests {
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         language_registry.add(language.clone());
 
-        let source = "```rust\nfn main() {}\n```";
+        let source = indoc::indoc! {"
+            ```rust
+            fn main() {}
+            ```
+        "};
         let markdown = cx.new(|cx| {
             Markdown::new(
                 source.into(),
