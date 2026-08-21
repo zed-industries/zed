@@ -10752,6 +10752,7 @@ fn serialize_blame_entry(entry: git::blame::BlameEntry) -> proto::BlameEntry {
         summary: entry.summary,
         previous: entry.previous,
         filename: entry.filename,
+        boundary: entry.boundary,
     }
 }
 
@@ -10771,6 +10772,7 @@ fn deserialize_blame_entry(entry: proto::BlameEntry) -> Option<git::blame::Blame
         summary: entry.summary,
         previous: entry.previous,
         filename: entry.filename,
+        boundary: entry.boundary,
     })
 }
 

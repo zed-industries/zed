@@ -511,6 +511,7 @@ message BlameEntry {
   optional string previous = 14;
 
   string filename = 15;
+  bool boundary = 16;
 }
 
 message CommitMessage {
