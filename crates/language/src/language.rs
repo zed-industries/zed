@@ -1195,6 +1195,12 @@ pub fn build_highlight_map(capture_names: &[&str], theme: &SyntaxTheme) -> Highl
 }
 
 impl LanguageScope {
+    pub fn has_brackets_query(&self) -> bool {
+        self.language
+            .grammar()
+            .is_some_and(|grammar| grammar.brackets_config.is_some())
+    }
+
     pub fn path_suffixes(&self) -> &[String] {
         self.language.path_suffixes()
     }
