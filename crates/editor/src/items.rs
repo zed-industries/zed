@@ -855,7 +855,7 @@ impl Item for Editor {
     }
 
     fn can_save_as(&self, cx: &App) -> bool {
-        !self.read_only(cx) && self.buffer.read(cx).is_singleton()
+        self.buffer.read(cx).is_singleton()
     }
 
     fn can_split(&self) -> bool {
@@ -941,6 +941,10 @@ impl Item for Editor {
         } else {
             true
         }
+    }
+
+    fn is_read_only(&self, cx: &App) -> bool {
+        self.read_only(cx)
     }
 
     fn save(
