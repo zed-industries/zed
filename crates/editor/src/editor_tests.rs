@@ -4249,7 +4249,7 @@ fn test_newline_trailing_whitespace(cx: &mut TestAppContext) {
             assert_eq!(editor.text(cx), "    hello\n    \n    world\n");
 
             editor.newline(&Newline, window, cx);
-            assert_eq!(editor.text(cx), "    hello\n\n\n    world\n");
+            assert_eq!(editor.text(cx), "    hello\n\n    \n    world\n");
         })
         .unwrap();
 
@@ -4298,7 +4298,7 @@ fn test_newline_trailing_whitespace(cx: &mut TestAppContext) {
             assert_eq!(editor.text(cx), "\thello\n\t\n\tworld\n");
 
             editor.newline(&Newline, window, cx);
-            assert_eq!(editor.text(cx), "\thello\n\n\n\tworld\n");
+            assert_eq!(editor.text(cx), "\thello\n\n\t\n\tworld\n");
         })
         .unwrap();
 }
@@ -5350,6 +5350,44 @@ async fn test_newline_closing_comment_indent_across_languages(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+async fn test_newline_after_closing_delimiter_lookalike_in_string(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // A line inside a string literal that happens to look like a block comment's
+    // closing delimiter does not close anything, so it keeps its own indentation.
+    cx.set_state("func test() {\n\tvar s = `\n*/ˇ\n`\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\tvar s = `\n*/\nˇ\n`\n}");
+}
+
+#[gpui::test]
+async fn test_newline_twice_inside_block(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    cx.set_state("func test() {ˇ}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n    ˇ\n}");
+    // The blank line the cursor sits on holds nothing but auto-indent
+    // whitespace, but the line that replaces it still belongs inside the block.
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\n    ˇ\n}");
+}
+
+#[gpui::test]
 async fn test_newline_comments_with_block_comment(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
@@ -5672,6 +5710,24 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
             ˇ)
         );
     "});
+}
+
+#[gpui::test]
+async fn test_tab_after_closing_comment_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // The suggested indent is taken from the line the comment opened on, so that
+    // it agrees with what pressing enter after the closing delimiter produces.
+    cx.set_state("func test() {\n\t/**\n\t * doc\n\t */\nˇ\n}");
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state("func test() {\n\t/**\n\t * doc\n\t */\n\tˇ\n}");
 }
 
 #[gpui::test]
@@ -10134,11 +10190,8 @@ async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
-async fn test_paste_removes_common_leading_indent(cx: &mut TestAppContext) {
+async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
-    cx.write_to_clipboard(ClipboardItem::new_string(
-        " func find() {\n \treturn 1\n }".into(),
-    ));
 
     let mut cx = EditorTestContext::new(cx).await;
     cx.update_buffer(|buffer, cx| {
@@ -10147,9 +10200,40 @@ async fn test_paste_removes_common_leading_indent(cx: &mut TestAppContext) {
             cx,
         )
     });
+
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        " func find() {\n \treturn 1\n }".into(),
+    ));
     cx.set_state("package test\n\nˇ");
     cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
     cx.assert_editor_state("package test\n\nfunc find() {\n\treturn 1\n}ˇ");
+
+    // The block moves by however far its first line moved, so a first line that
+    // is indented deeper than the lines below it stays deeper.
+    cx.write_to_clipboard(ClipboardItem::new_string("        foo()\n    bar()".into()));
+    cx.set_state("func test() {\nˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("func test() {\n    foo()\nbar()ˇ\n}");
+}
+
+#[gpui::test]
+async fn test_paste_after_closing_comment_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // The closing delimiter's line is not part of the paste, so it keeps its own
+    // indentation even though that indentation differs from the opening line's.
+    cx.write_to_clipboard(ClipboardItem::new_string("x := 1\ny := 2".into()));
+    cx.set_state("package test\n\n/*\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/*\n * test\n */x := 1\n y := 2ˇ");
 }
 
 #[gpui::test]
