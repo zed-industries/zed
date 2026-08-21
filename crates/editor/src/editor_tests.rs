@@ -40442,6 +40442,31 @@ fn test_editor_rendering_when_positioned_above_viewport(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn test_editor_rendering_with_pathologically_long_line(cx: &mut TestAppContext) {
+    // A single very long line (e.g. a minified bundle or a pg_dump COPY block) must not make
+    // every paint pay for a full syntax-highlight pass over it (zed-industries/zed#61944).
+    init_test(cx, |_| {});
+
+    let window = cx.add_window(|_, _| gpui::Empty);
+    let mut cx = VisualTestContext::from_window(*window, cx);
+
+    let long_line = "x".repeat(200_000);
+    let text = format!("before\n{long_line}\nafter\n");
+    let buffer = cx.update(|_, cx| MultiBuffer::build_simple(&text, cx));
+    let editor = cx.new_window_entity(|window, cx| build_editor(buffer, window, cx));
+
+    cx.simulate_resize(gpui::size(px(500.), px(500.)));
+
+    cx.draw(
+        gpui::point(px(0.), px(0.)),
+        gpui::size(px(500.), px(500.)),
+        |_, _| editor.clone().into_any_element(),
+    );
+
+    // If we get here without hanging, the test passes.
+}
+
+#[gpui::test]
 async fn test_diff_review_indicator_created_on_gutter_hover(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

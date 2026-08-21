@@ -13,7 +13,8 @@ use crate::{
     EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
     EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
     HandleInput, HoveredCursor, InlayHintRefreshReason, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MINIMAP_FONT_SIZE, PageDown, PageUp, Point, RowExt, RowRangeExt, Selection,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, PATHOLOGICAL_LINE_LEN, PageDown, PageUp, Point, RowExt,
+    RowRangeExt, Selection,
     SelectionDragState, SizingBehavior, SoftWrap, ToPoint,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     column_pixels,
@@ -3117,23 +3118,63 @@ impl EditorElement {
         } else {
             let use_tree_sitter = !snapshot.semantic_tokens_enabled
                 || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
-            let language_aware = LanguageAwareStyling {
-                tree_sitter: use_tree_sitter,
-                diagnostics: true,
-            };
-            let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);
-            LineWithInvisibles::from_chunks(
-                chunks,
-                style,
-                MAX_LINE_LEN,
-                rows.len(),
-                &snapshot.mode,
-                editor_width,
-                is_row_soft_wrapped,
-                bg_segments_per_row,
-                window,
-                cx,
-            )
+
+            let longest_row = snapshot.longest_row_in_range(rows.clone());
+            let has_pathological_row =
+                snapshot.line_len(longest_row) as usize > PATHOLOGICAL_LINE_LEN;
+
+            if !has_pathological_row {
+                let language_aware = LanguageAwareStyling {
+                    tree_sitter: use_tree_sitter,
+                    diagnostics: true,
+                };
+                let chunks = snapshot.highlighted_chunks(rows.clone(), language_aware, style);
+                LineWithInvisibles::from_chunks(
+                    chunks,
+                    style,
+                    MAX_LINE_LEN,
+                    rows.len(),
+                    &snapshot.mode,
+                    editor_width,
+                    is_row_soft_wrapped,
+                    bg_segments_per_row,
+                    window,
+                    cx,
+                )
+            } else {
+                // Fetch one row at a time so tree-sitter highlighting and diagnostics can be
+                // skipped for just the pathological row(s), instead of paying full syntax-highlight
+                // cost on a multi-megabyte line every frame (zed-industries/zed#61944).
+                let mut layouts = Vec::with_capacity(rows.len());
+                for row in rows.start.0..rows.end.0 {
+                    let row = DisplayRow(row);
+                    let row_is_pathological =
+                        snapshot.line_len(row) as usize > PATHOLOGICAL_LINE_LEN;
+                    let language_aware = LanguageAwareStyling {
+                        tree_sitter: use_tree_sitter && !row_is_pathological,
+                        diagnostics: !row_is_pathological,
+                    };
+                    let chunks =
+                        snapshot.highlighted_chunks(row..row.next_row(), language_aware, style);
+                    let row_index = (row.0 - rows.start.0) as usize;
+                    let bg_segments_for_row = bg_segments_per_row
+                        .get(row_index..row_index + 1)
+                        .unwrap_or(&[]);
+                    layouts.extend(LineWithInvisibles::from_chunks(
+                        chunks,
+                        style,
+                        MAX_LINE_LEN,
+                        1,
+                        &snapshot.mode,
+                        editor_width,
+                        is_row_soft_wrapped,
+                        bg_segments_for_row,
+                        window,
+                        cx,
+                    ));
+                }
+                layouts
+            }
         }
     }
 

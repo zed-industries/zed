@@ -292,6 +292,10 @@ pub const BUFFER_HEADER_PADDING: Rems = rems(0.25);
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
+// Lines past this length skip tree-sitter highlighting and diagnostics entirely, not just
+// shaping past `MAX_LINE_LEN`, so a single pathological line doesn't cost a full syntax
+// highlight pass every frame (zed-industries/zed#61944).
+const PATHOLOGICAL_LINE_LEN: usize = MAX_LINE_LEN * 64;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
