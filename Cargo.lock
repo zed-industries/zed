@@ -1394,6 +1394,7 @@ dependencies = [
  "tempfile",
  "util",
  "which 6.0.3",
+ "windows 0.61.3",
  "workspace",
  "zlog",
 ]
