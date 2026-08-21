@@ -1630,6 +1630,7 @@ mod tests {
         supports_multi_select: bool,
         selected_items: Vec<usize>,
         multi_confirmed: Rc<Cell<Option<Vec<usize>>>>,
+        queries: Rc<RefCell<Vec<String>>>,
     }
 
     impl TestDelegate {
@@ -1641,6 +1642,7 @@ mod tests {
                 supports_multi_select: false,
                 selected_items: Vec::new(),
                 multi_confirmed: Rc::new(Cell::new(None)),
+                queries: Rc::new(RefCell::new(Vec::new())),
             }
         }
 
@@ -1689,10 +1691,11 @@ mod tests {
 
         fn update_matches(
             &mut self,
-            _query: String,
+            query: String,
             _window: &mut Window,
             _cx: &mut Context<Picker<Self>>,
         ) -> Task<()> {
+            self.queries.borrow_mut().push(query);
             Task::ready(())
         }
 
@@ -1762,23 +1765,90 @@ mod tests {
         }
     }
 
+    type TestEditorCallback = Box<dyn FnMut(ErasedEditorEvent, &mut Window, &mut App) + 'static>;
+
+    /// Shared so the focus-out listener registered alongside the editor delivers to the same
+    /// callbacks the text mutations do.
+    #[derive(Default)]
+    struct TestEditorSubscribers {
+        callbacks: RefCell<Vec<(usize, TestEditorCallback)>>,
+        next_id: Cell<usize>,
+    }
+
+    /// The real editor emits through GPUI, which applies the event in `flush_effects` after the
+    /// current entity update ends. Delivering synchronously would re-enter `Picker` while
+    /// `set_query`'s own `Context<Picker>` still holds the entity lease, which panics.
+    fn emit_test_editor_event(
+        subscribers: &Rc<TestEditorSubscribers>,
+        event: ErasedEditorEvent,
+        window: &Window,
+        cx: &mut App,
+    ) {
+        let subscribers = subscribers.clone();
+        window.defer(cx, move |window, cx| {
+            // Re-borrow per callback and hand the slot back afterwards: a callback that
+            // subscribes, or drops a subscription, would otherwise hit an outstanding borrow
+            // and panic somewhere far from the cause.
+            let mut index = 0;
+            loop {
+                let Some((id, mut callback)) = subscribers
+                    .callbacks
+                    .borrow_mut()
+                    .get_mut(index)
+                    .map(|(id, callback)| {
+                        (*id, std::mem::replace(callback, Box::new(|_, _, _| {})))
+                    })
+                else {
+                    break;
+                };
+                callback(event, window, cx);
+                if let Some(slot) = subscribers
+                    .callbacks
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|(other, _)| *other == id)
+                {
+                    slot.1 = callback;
+                }
+                index += 1;
+            }
+        });
+    }
+
     /// Stands in for the factory `editor::init` installs. Picker cannot take `editor` even as a
     /// dev-dependency: `editor` depends on `picker`, so linking it into this test binary would
     /// compile `picker` a second time and register its actions twice.
     struct TestQueryEditor {
         focus_handle: FocusHandle,
-        text: std::sync::RwLock<String>,
+        text: RefCell<String>,
+        subscribers: Rc<TestEditorSubscribers>,
+        _blur_subscription: Subscription,
     }
 
     impl ui_input::ErasedEditor for TestQueryEditor {
         fn text(&self, _: &App) -> String {
-            self.text.read().expect("test editor lock").clone()
+            self.text.borrow().clone()
         }
-        fn set_text(&self, text: &str, _: &mut Window, _: &mut App) {
-            *self.text.write().expect("test editor lock") = text.to_string();
+        fn set_text(&self, text: &str, window: &mut Window, cx: &mut App) {
+            // Emit even when the text is unchanged: the real editor rewrites the whole buffer
+            // and always reports an edit, and the breadcrumb delegate drills by calling
+            // `set_query("")` on an already-empty query.
+            *self.text.borrow_mut() = text.to_string();
+            emit_test_editor_event(
+                &self.subscribers,
+                ErasedEditorEvent::BufferEdited,
+                window,
+                cx,
+            );
         }
-        fn clear(&self, _: &mut Window, _: &mut App) {
-            self.text.write().expect("test editor lock").clear();
+        fn clear(&self, window: &mut Window, cx: &mut App) {
+            self.text.borrow_mut().clear();
+            emit_test_editor_event(
+                &self.subscribers,
+                ErasedEditorEvent::BufferEdited,
+                window,
+                cx,
+            );
         }
         fn set_placeholder_text(&self, _: &str, _: &mut Window, _: &mut App) {}
         fn move_selection_to_end(&self, _: &mut Window, _: &mut App) {}
@@ -1791,11 +1861,20 @@ mod tests {
         }
         fn subscribe(
             &self,
-            _: Box<dyn FnMut(ErasedEditorEvent, &mut Window, &mut App) + 'static>,
+            callback: TestEditorCallback,
             _: &mut Window,
             _: &mut App,
         ) -> Subscription {
-            Subscription::new(|| {})
+            let id = self.subscribers.next_id.get();
+            self.subscribers.next_id.set(id + 1);
+            self.subscribers.callbacks.borrow_mut().push((id, callback));
+            let subscribers = self.subscribers.clone();
+            Subscription::new(move || {
+                subscribers
+                    .callbacks
+                    .borrow_mut()
+                    .retain(|(other, _)| *other != id)
+            })
         }
         fn render(&self, _: &mut Window, _: &App) -> AnyElement {
             gpui::Empty.into_any_element()
@@ -1811,13 +1890,57 @@ mod tests {
             cx.set_global(store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             ui_input::ERASED_EDITOR_FACTORY
-                .set(|_window, cx| {
+                .set(|window, cx| {
+                    let focus_handle = cx.focus_handle();
+                    let subscribers = Rc::new(TestEditorSubscribers::default());
+                    let blur_subscription = window.on_focus_out(&focus_handle, cx, {
+                        let subscribers = subscribers.clone();
+                        move |_, window, cx| {
+                            emit_test_editor_event(
+                                &subscribers,
+                                ErasedEditorEvent::Blurred,
+                                window,
+                                cx,
+                            )
+                        }
+                    });
+                    // The trait hands back an `Arc`, but the callbacks this holds are plain
+                    // `FnMut` and everything here lives on the one test thread, so there is
+                    // nothing to make `Send`.
+                    #[allow(clippy::arc_with_non_send_sync)]
                     Arc::new(TestQueryEditor {
-                        focus_handle: cx.focus_handle(),
-                        text: std::sync::RwLock::new(String::new()),
+                        focus_handle,
+                        text: RefCell::new(String::new()),
+                        subscribers,
+                        _blur_subscription: blur_subscription,
                     })
                 })
                 .ok();
+        });
+    }
+
+    #[gpui::test]
+    async fn test_set_query_reaches_the_delegate(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true, true]), window, cx)
+        });
+
+        picker.update_in(cx, |picker, window, cx| {
+            // `Picker::new` already ran one empty update; only the next one is under test.
+            picker.delegate.queries.borrow_mut().clear();
+            picker.set_query("needle", window, cx);
+        });
+        cx.run_until_parked();
+
+        picker.update(cx, |picker, cx| {
+            assert_eq!(picker.query(cx), "needle");
+            assert_eq!(
+                picker.delegate.queries.borrow().as_slice(),
+                ["needle".to_string()],
+                "set_query must reach update_matches through a BufferEdited event"
+            );
         });
     }
 

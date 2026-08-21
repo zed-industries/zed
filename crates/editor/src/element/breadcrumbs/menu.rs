@@ -14,14 +14,14 @@ use crate::EditorEvent;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::Task;
 use postage::stream::Stream as _;
-use std::cell::RefCell;
+use project::git_store::{GitStoreEvent, RepositoryEvent};
 use settings::SettingsStore;
+use std::cell::RefCell;
 use std::sync::atomic::AtomicBool;
-use std::time::Duration;
 use ui::utils::WithRemSize;
 
-/// Ordered so a batch of updates folds with `max`: one dead ancestor outranks any number of
-/// ordinary changes.
+/// Ordered so a batch of updates folds with `max`: one update that may have taken the listing
+/// with it outranks any number of ordinary changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum ListingPathImpact {
     Ignore,
@@ -29,14 +29,16 @@ pub(super) enum ListingPathImpact {
     Dead,
 }
 
-/// A worktree update names the path that changed and never the path it moved to, so renaming
-/// or deleting an ancestor arrives as an update at that ancestor - and reloading there would
-/// paint "Empty directory" over a path that no longer exists.
+/// A worktree update names the path that changed and never the path it moved to, so renaming or
+/// deleting the listed directory - or any ancestor of it - arrives as an update at that path,
+/// and reloading there would paint "Empty directory" over a path that no longer exists. The
+/// shape of the update cannot tell removal from an ordinary change, so both route to `Dead`,
+/// where looking the path up settles it.
 pub(super) fn listing_path_impact(updated: &RelPath, listing: &RelPath) -> ListingPathImpact {
-    if updated == listing || updated.parent() == Some(listing) {
-        ListingPathImpact::Reload
-    } else if listing.is_descendant_of(updated) {
+    if updated == listing || listing.is_descendant_of(updated) {
         ListingPathImpact::Dead
+    } else if updated.parent() == Some(listing) {
+        ListingPathImpact::Reload
     } else {
         ListingPathImpact::Ignore
     }
@@ -122,9 +124,15 @@ pub struct BreadcrumbNavigationMenu {
     /// The row that was arrowed to when a filesystem event forced a reload, restored by path
     /// once the rank that reload triggered lands. Ranked positions do not survive the rebuild.
     pending_restore_path: Option<Arc<RelPath>>,
-    /// Held while a rank is in flight, so the picker's pending-update contract has something
-    /// to await. Shared rather than read back off the menu: `Picker::new` finalizes its first
-    /// update while `BreadcrumbNavigationMenu::new` still holds the menu's lease.
+    /// The symbol that was highlighted when a buffer edit forced a reload, restored by anchor
+    /// range once that reload lands. Latched rather than read back off the rows, because the
+    /// reload blanks them: a second edit arriving while the first is still in flight would
+    /// otherwise find nothing left to restore. Anchors survive edits elsewhere in the buffer,
+    /// so the range is what still identifies the row across one.
+    pending_restore_symbol_range: Option<Range<Anchor>>,
+    /// Held while a rank is in flight. The delegate's `update_matches` task awaits it, so the
+    /// picker's notion of "the update finished" spans the rank and the publish that follows it
+    /// rather than just the handoff.
     filter_settled: FilterSettled,
     filter_match_truncated: bool,
     filter_candidates: Arc<Vec<StringMatchCandidate>>,
@@ -181,6 +189,7 @@ impl BreadcrumbNavigationMenu {
                 filter_epoch: 0,
                 ranked_epoch: 0,
                 pending_restore_path: None,
+                pending_restore_symbol_range: None,
                 filter_settled: FilterSettled::default(),
                 filter_match_truncated: false,
                 filter_candidates: Arc::new(Vec::new()),
@@ -194,7 +203,6 @@ impl BreadcrumbNavigationMenu {
         menu.update(cx, |this, cx| {
             let delegate = BreadcrumbPickerDelegate::new(
                 cx.weak_entity(),
-                this.filter_settled.clone(),
                 Self::placeholder_for(&this.listing),
             );
             let picker = cx.new(|cx| {
@@ -254,11 +262,15 @@ impl BreadcrumbNavigationMenu {
                             ListingPathImpact::Ignore => {}
                             ListingPathImpact::Reload => this.reload_directory_rows(cx),
                             ListingPathImpact::Dead => {
-                                // Metadata on an ancestor lands here too, so only an ancestor
-                                // that is actually gone takes the listing with it.
+                                // Metadata on the listing or an ancestor lands here too, so
+                                // only a path that is gone - or no longer a directory - takes
+                                // the listing with it.
                                 let listing_survives =
                                     this.worktree(listing_worktree, cx).is_some_and(|worktree| {
-                                        worktree.read(cx).entry_for_path(&listing_path).is_some()
+                                        worktree
+                                            .read(cx)
+                                            .entry_for_path(&listing_path)
+                                            .is_some_and(|entry| entry.is_dir())
                                     });
                                 if listing_survives {
                                     this.reload_directory_rows(cx);
@@ -266,6 +278,29 @@ impl BreadcrumbNavigationMenu {
                                     this.dismiss_dead_listing(cx);
                                 }
                             }
+                        }
+                    }));
+            }
+            if let Some(project) = this.project(cx) {
+                // Directory rows carry a git summary aggregated over the whole subtree, and a
+                // change below the immediate children never reaches the worktree subscription
+                // above - nor does an index-only change, which touches no path at all.
+                let git_store = project.read(cx).git_store().clone();
+                this._subscriptions
+                    .push(cx.subscribe(&git_store, |this, _, event, cx| {
+                        if !matches!(this.listing, BreadcrumbListing::Directory { .. }) {
+                            return;
+                        }
+                        match event {
+                            GitStoreEvent::RepositoryUpdated(
+                                _,
+                                RepositoryEvent::StatusesChanged,
+                                _,
+                            )
+                            | GitStoreEvent::RepositoryAdded
+                            | GitStoreEvent::RepositoryRemoved(_)
+                            | GitStoreEvent::DiffBaseChanged(_) => this.reload_directory_rows(cx),
+                            _ => {}
                         }
                     }));
             }
@@ -315,6 +350,7 @@ impl BreadcrumbNavigationMenu {
     ) {
         self.active_file_path = active_file_path;
         self.pending_restore_path = None;
+        self.pending_restore_symbol_range = None;
         if navigated {
             if let BreadcrumbListing::Directory { worktree_id, path } = &listing {
                 self.navigated_path = Some((*worktree_id, path.clone()));
@@ -345,6 +381,11 @@ impl BreadcrumbNavigationMenu {
         self.reload_listing(window, cx);
         self.focus_menu(window, cx);
         cx.notify();
+    }
+
+    #[cfg(test)]
+    pub fn symbol_restore_pending(&self) -> bool {
+        self.pending_restore_symbol_range.is_some()
     }
 
     #[cfg(test)]
@@ -394,6 +435,13 @@ impl BreadcrumbNavigationMenu {
 
     /// What the picker is rendering, which is what the user can act on. It diverges from the
     /// menu's own state whenever a mutation forgets to publish.
+    #[cfg(test)]
+    pub fn published_icon_flags(&self, cx: &App) -> Option<(bool, bool)> {
+        let picker = self.picker.as_ref()?;
+        let delegate = &picker.read(cx).delegate;
+        Some((delegate.show_file_icons, delegate.show_folder_icons))
+    }
+
     #[cfg(test)]
     pub fn published_row_labels(&self, cx: &App) -> Vec<SharedString> {
         let Some(picker) = self.picker.as_ref() else {
@@ -477,6 +525,7 @@ impl BreadcrumbNavigationMenu {
             filter_epoch: 0,
             ranked_epoch: 0,
             pending_restore_path: None,
+            pending_restore_symbol_range: None,
             filter_settled: FilterSettled::default(),
             filter_match_truncated: false,
             filter_candidates: Arc::new(Vec::new()),
@@ -489,7 +538,6 @@ impl BreadcrumbNavigationMenu {
         menu.update(cx, |this, cx| {
             let delegate = BreadcrumbPickerDelegate::new(
                 cx.weak_entity(),
-                this.filter_settled.clone(),
                 Self::placeholder_for(&this.listing),
             );
             let picker = cx.new(|cx| {
@@ -554,6 +602,7 @@ impl BreadcrumbNavigationMenu {
         }
         self.query = query;
         self.pending_restore_path = None;
+        self.pending_restore_symbol_range = None;
         if !self.filter_is_empty() {
             self.pending_initial_selection = false;
         }
@@ -566,16 +615,29 @@ impl BreadcrumbNavigationMenu {
 
     fn clear_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.clear();
-        // Deferred for the same reason as `publish_rows`.
-        if let Some(picker) = self.picker.clone() {
-            cx.defer_in(window, move |_, window, cx| {
-                picker.update(cx, |picker, cx| picker.set_query("", window, cx));
-            });
-        }
         self.ranked_matches.clear();
         self.filter_match_truncated = false;
         self.filter_epoch = self.filter_epoch.wrapping_add(1);
+        self.pending_restore_symbol_range = None;
+        // Nothing reranks after a listing change - the cleared query short-circuits
+        // `set_filter_query` - so leaving the epochs apart would make `rank_pending` true
+        // forever and swallow every later drill.
+        self.ranked_epoch = self.filter_epoch;
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
         self.filter_task = None;
+        let picker = self.picker.clone();
+        // Deferred for the same reason as `publish_rows`: callers reach here with the picker
+        // leased. Dropping the rank task drops the settle it owed, and the picker waits on that
+        // barrier before it will confirm anything - so republish first, then release it.
+        cx.defer_in(window, move |this, window, cx| {
+            this.publish_rows_now(cx);
+            this.filter_settled.settle();
+            if let Some(picker) = picker {
+                picker.update(cx, |picker, cx| picker.set_query("", window, cx));
+            }
+        });
     }
 
     pub(super) fn set_selected_row(&mut self, position: usize, cx: &mut Context<Self>) {
@@ -620,6 +682,7 @@ impl BreadcrumbNavigationMenu {
         self.listing != listing_before || self.load_epoch != epoch_before
     }
 
+    /// Ungated unlike the drill: the parent comes from the listing, not from rows a rank replaces.
     pub(super) fn step_out_of_listing(
         &mut self,
         window: &mut Window,
@@ -904,7 +967,12 @@ impl BreadcrumbNavigationMenu {
         if !self.filter_is_empty() {
             self.ranked_matches.clear();
             self.selected_index = None;
-            self.pending_restore_path = selected_path;
+            // Latched, not overwritten: a second refresh landing before the rank consumes the latch
+            // sees `selected_index` already blanked above, so it would carry a `None` in and drop the
+            // user's row to the top match.
+            if selected_path.is_some() {
+                self.pending_restore_path = selected_path;
+            }
             self.rerank_filter(cx);
         } else if let Some(selected_path) = selected_path {
             let display_count = self.directory_entries.len().min(MAX_BREADCRUMB_MENU_ROWS);
@@ -1103,10 +1171,33 @@ impl BreadcrumbNavigationMenu {
         parent: Option<OutlineItem<Anchor>>,
         cx: &mut Context<Self>,
     ) {
+        // Latched here, not after the reload: the lines below blank the rows this reads from,
+        // so a second edit landing mid-reload would find nothing to name the row with. Only
+        // once the user has moved the highlight - before that, `apply_loaded_outline` keeps
+        // re-picking the row for the cursor.
+        if !self.pending_initial_selection && self.pending_restore_symbol_range.is_none() {
+            self.pending_restore_symbol_range = match self.selected_row() {
+                Some(BreadcrumbMenuRow::Symbol { item, .. }) => Some(item.range.clone()),
+                _ => None,
+            };
+        }
         // `symbol_trail` is deliberately kept: it is what the bar paints the menu's anchor
         // segment from, and a frame without an anchor dismisses the menu.
         self.all_symbol_items.clear();
         self.listed_symbol_indices.clear();
+        // Candidates and matches are outline indices into `all_symbol_items`, so keeping them
+        // past the clear would publish a match count over rows that can no longer resolve. The
+        // directory path gets this for free by swapping its entries and reranking in one
+        // synchronous block; this one is split across an await.
+        self.filter_candidates = Arc::new(Vec::new());
+        self.ranked_matches.clear();
+        self.filter_match_truncated = false;
+        self.selected_index = None;
+        if let Some(cancel) = self.filter_cancel.take() {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.filter_task = None;
+        self.filter_epoch = self.filter_epoch.wrapping_add(1);
         self.load_epoch = self.load_epoch.wrapping_add(1);
         let epoch = self.load_epoch;
         self.loading = true;
@@ -1135,10 +1226,49 @@ impl BreadcrumbNavigationMenu {
                 if this.load_epoch != epoch {
                     return;
                 }
-                this.apply_loaded_outline(buffer_id, &text_items, parent, cx);
+                if !this.apply_loaded_outline(buffer_id, &text_items, parent, cx) {
+                    return;
+                }
+                this.restore_symbol_selection(cx);
             })
             .ok();
         }));
+        cx.notify();
+    }
+
+    fn restore_symbol_selection(&mut self, cx: &mut Context<Self>) {
+        // Taken before the filter check: a reload that lands under a query has its selection
+        // re-derived by the rank, so holding the latch back would carry this level's row into
+        // whatever level the user drills to next.
+        let Some(selected_symbol_range) = self.pending_restore_symbol_range.take() else {
+            return;
+        };
+        if !self.filter_is_empty() {
+            return;
+        }
+        let display_count = self
+            .listed_symbol_indices
+            .len()
+            .min(MAX_BREADCRUMB_MENU_ROWS);
+        let all_symbol_items = &self.all_symbol_items;
+        self.selected_index = self
+            .listed_symbol_indices
+            .iter()
+            .take(display_count)
+            .position(|index| {
+                all_symbol_items
+                    .get(*index)
+                    .is_some_and(|item| item.range == selected_symbol_range)
+            });
+        if self.selected_index.is_none() {
+            // The edit took the symbol the user was on with it, so fall back to the rule that
+            // picks a row when the menu first opens rather than leaving nothing highlighted.
+            self.pending_initial_selection = true;
+            self.apply_initial_selection_if_needed(cx);
+        } else {
+            self.scroll_to_selection_pending = true;
+        }
+        self.publish_rows(cx);
         cx.notify();
     }
 
@@ -1297,9 +1427,7 @@ impl BreadcrumbNavigationMenu {
             self.ranked_matches.clear();
             self.filter_match_truncated = false;
             self.filter_task = None;
-            self.filter_settled.settle();
             self.ranked_epoch = epoch;
-            self.publish_rows(cx);
             if let Some(position) = unranked_selection {
                 self.selected_index = Some(position);
             }
@@ -1313,6 +1441,10 @@ impl BreadcrumbNavigationMenu {
                     self.selected_index = visible.checked_sub(1);
                 }
             }
+            // Same promise as the ranked branch: settling says the delegate's rows already
+            // describe this query, so the publish cannot be left to the effect queue.
+            self.publish_rows_now(cx);
+            self.filter_settled.settle();
             cx.notify();
             return;
         }
@@ -1823,6 +1955,19 @@ impl BreadcrumbNavigationMenu {
                 if this.load_epoch != generation {
                     return;
                 }
+                // The removal that takes this path names it while the listing we are leaving is
+                // still installed, so it classifies as an ordinary reload there and leaves this
+                // drill running. The epoch alone cannot tell us the target is gone.
+                let target_survives = this.worktree(worktree_id, cx).is_some_and(|worktree| {
+                    worktree
+                        .read(cx)
+                        .entry_for_path(&path)
+                        .is_some_and(|entry| entry.is_dir())
+                });
+                if !target_survives {
+                    this.dismiss_dead_listing(cx);
+                    return;
+                }
                 let active_file_path = this.active_file_path.clone();
                 this.set_listing(
                     BreadcrumbListing::Directory { worktree_id, path },
@@ -2013,8 +2158,10 @@ impl gpui::Element for OutsideClickBoundary {
                 .update(cx, |menu, _| std::mem::take(&mut menu.pressed_outside))
                 .unwrap_or(false);
             if was_pressed_outside && !bounds.contains(&window.mouse_position()) {
-                menu.update(cx, |menu, cx| menu.dismiss_after_release_outside(window, cx))
-                    .ok();
+                menu.update(cx, |menu, cx| {
+                    menu.dismiss_after_release_outside(window, cx)
+                })
+                .ok();
             }
         });
     }
@@ -2064,8 +2211,8 @@ pub(super) enum BreadcrumbMenuRow {
     },
 }
 
-/// A rank in flight, shared by the menu that runs it and the delegate that has to tell the
-/// picker whether the rows it is about to confirm are the ones the query asked for.
+/// A rank in flight. The delegate's `update_matches` task awaits it so the picker's notion of
+/// "the update finished" spans the rank and the publish that follows it, not just the handoff.
 #[derive(Clone, Default)]
 pub(super) struct FilterSettled(
     Rc<RefCell<Option<(postage::barrier::Sender, postage::barrier::Receiver)>>>,
@@ -2073,7 +2220,13 @@ pub(super) struct FilterSettled(
 
 impl FilterSettled {
     fn arm(&self) {
-        *self.0.borrow_mut() = Some(postage::barrier::channel());
+        // A superseding rank reuses the outstanding barrier. Overwriting it drops the sender,
+        // which resolves a receiver already handed out and releases the picker's pending update
+        // before any rows have been published for the replacement query.
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(postage::barrier::channel());
+        }
     }
 
     fn settle(&self) {
@@ -2090,7 +2243,6 @@ impl FilterSettled {
 
 pub struct BreadcrumbPickerDelegate {
     menu: WeakEntity<BreadcrumbNavigationMenu>,
-    filter_settled: FilterSettled,
     rows: Rc<Vec<BreadcrumbMenuRow>>,
     selected_index: usize,
     empty_message: SharedString,
@@ -2103,14 +2255,9 @@ pub struct BreadcrumbPickerDelegate {
 }
 
 impl BreadcrumbPickerDelegate {
-    fn new(
-        menu: WeakEntity<BreadcrumbNavigationMenu>,
-        filter_settled: FilterSettled,
-        placeholder: Arc<str>,
-    ) -> Self {
+    fn new(menu: WeakEntity<BreadcrumbNavigationMenu>, placeholder: Arc<str>) -> Self {
         Self {
             menu,
-            filter_settled,
             rows: Rc::new(Vec::new()),
             selected_index: 0,
             empty_message: "Loading…".into(),
@@ -2241,26 +2388,6 @@ impl picker::PickerDelegate for BreadcrumbPickerDelegate {
                 settled.recv().await;
             }
         })
-    }
-
-    fn finalize_update_matches(
-        &mut self,
-        _query: String,
-        duration: Duration,
-        _window: &mut Window,
-        cx: &mut Context<picker::Picker<Self>>,
-    ) -> bool {
-        let Some(mut settled) = self.filter_settled.receiver() else {
-            // Either nothing is in flight or the query has not reached the menu yet, and the
-            // two are indistinguishable from here. Report not-final and let the picker confirm
-            // once the update lands.
-            return false;
-        };
-        cx.foreground_executor()
-            .block_with_timeout(duration, async move {
-                settled.recv().await;
-            })
-            .is_ok()
     }
 
     fn confirm(

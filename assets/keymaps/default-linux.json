@@ -146,6 +146,7 @@
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
+      // Menu bindings live in keymaps/specific-overrides.json.
       "ctrl-alt-shift-p": "editor::OpenBreadcrumbNavigation",
       "ctrl-alt-f": "text_finder::Toggle",
     },
@@ -1192,9 +1193,6 @@
       // Editor bindings.
     },
   },
-  // Breadcrumb navigation menu bindings live in keymaps/specific-overrides*.json,
-  // which is loaded after the base keymaps so they win over conflicting
-  // base-keymap Editor bindings (Emacs binds home/end there, for example).
   {
     "context": "ChannelModal > Picker > Editor",
     "bindings": {

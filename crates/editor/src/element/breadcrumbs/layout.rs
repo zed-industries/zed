@@ -1,6 +1,5 @@
 use super::super::*;
 use super::BreadcrumbSegmentTarget;
-use super::menu::BreadcrumbListing;
 use super::outline::flatten_text_for_single_line_display;
 use super::path::reveal_directory_in_project_panel;
 use crate::actions::OpenBreadcrumbNavigation;
@@ -119,14 +118,16 @@ fn hard_cap_kind_run(
     }
 
     if let Some(protected) = protected_index.filter(|index| run.contains(index)) {
-        let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP;
+        // Either end of the window can splice, and each glyph a splice inserts occupies one of
+        // the capped slots.
+        let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP - 2;
         let mut window_start = protected.saturating_sub(keep / 2).max(run.start);
         let mut window_end = window_start + keep;
         if window_end > run.end {
             window_end = run.end;
             window_start = window_end.saturating_sub(keep).max(run.start);
         }
-        // Right side first so left indices stay valid.
+        // Splicing the left side first would shift the indices the right range addresses.
         splice_segment_run(
             segments,
             symbol_segments,
@@ -148,14 +149,18 @@ fn hard_cap_kind_run(
         return;
     }
 
-    let half = MAX_BREADCRUMB_SEGMENTS_HARD_CAP / 2;
+    // The splice puts a glyph back into the run it collapses, so one capped slot is already
+    // spoken for; keeping half the cap on each side would leave the cap plus one behind.
+    let keep = MAX_BREADCRUMB_SEGMENTS_HARD_CAP - 1;
+    let head = keep - keep / 2;
+    let tail = keep / 2;
     splice_segment_run(
         segments,
         symbol_segments,
         kinds,
         file_segment_index,
         protected_index,
-        run.start + half..run.end - half,
+        run.start + head..run.end - tail,
         kind,
     );
 }
@@ -315,6 +320,8 @@ pub(super) struct BreadcrumbSegmentMetrics {
     /// Prepaint subtracts it to turn room left in the strip into a `max_w` for the label.
     chrome_widths: Vec<Pixels>,
     ellipsis_width: Pixels,
+    /// The same accounting as `chrome_widths`, for the glyph a collapsed run paints.
+    ellipsis_chrome_width: Pixels,
     protected_index: Option<usize>,
     /// Carried rather than rebuilt: request_layout and prepaint both plan the layout, and the
     /// bar replans on every repaint.
@@ -346,33 +353,13 @@ impl BreadcrumbStrip {
         let editor = self.editor.as_ref()?.upgrade()?;
         let menu = editor.read(cx).breadcrumb_navigation_menu()?.clone();
         let menu = menu.read(cx);
-        match menu.listing() {
-            BreadcrumbListing::Directory { worktree_id, path } => {
-                self.segments.iter().position(|segment| {
-                    matches!(
-                        &segment.target,
-                        Some(BreadcrumbSegmentTarget::Directory {
-                            worktree_id: segment_worktree,
-                            path: segment_path,
-                            ..
-                        }) if segment_worktree == worktree_id && segment_path.as_ref() == path.as_ref()
-                    )
-                })
-            }
-            BreadcrumbListing::Symbols { buffer_id, parent } => {
-                self.segments.iter().position(|segment| match &segment.target {
-                    Some(BreadcrumbSegmentTarget::Symbol {
-                        buffer_id: segment_buffer,
-                        item,
-                    }) if segment_buffer == buffer_id => match (parent, item) {
-                        (None, None) => true,
-                        (Some(a), Some(b)) => super::outline::same_symbol_item(a, b),
-                        _ => false,
-                    },
-                    _ => false,
-                })
-            }
-        }
+        let listing = menu.listing();
+        self.segments.iter().position(|segment| {
+            segment
+                .target
+                .as_ref()
+                .is_some_and(|target| target.matches_listing(listing))
+        })
     }
 
     fn effective_text_style(&self, window: &Window) -> gpui::TextStyle {
@@ -402,7 +389,8 @@ impl BreadcrumbStrip {
             .text_system()
             .shape_line(ELLIPSIS_GLYPH.into(), font_size, &[ellipsis_run], None)
             .width();
-        let ellipsis_width = ellipsis_label_width + arrow_width + gap * 2.;
+        let ellipsis_chrome_width = arrow_width + gap * 2.;
+        let ellipsis_width = ellipsis_label_width + ellipsis_chrome_width;
 
         let (widths, chrome_widths) = self
             .segments
@@ -438,6 +426,7 @@ impl BreadcrumbStrip {
             widths,
             chrome_widths,
             ellipsis_width,
+            ellipsis_chrome_width,
             protected_index: None,
             kinds: self.segments.iter().map(|segment| segment.kind).collect(),
         }
@@ -687,10 +676,20 @@ impl BreadcrumbStrip {
         hidden: Range<usize>,
         position: usize,
         last_position: usize,
+        max_glyph_width: Option<Pixels>,
         window: &mut Window,
         cx: &mut App,
     ) -> gpui::AnyElement {
         let content = self.styled_separator_glyph(ELLIPSIS_GLYPH, window, cx);
+        // `min_w_0` before `max_w`: taffy applies the automatic minimum size afterwards, which
+        // would otherwise hand the glyph back the width the cap just took away.
+        let content = div()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .when_some(max_glyph_width, |this, max_width| this.max_w(max_width))
+            .child(content)
+            .into_any_element();
         // Standing in for a run of hidden segments, the ellipsis browses the deepest of
         // them, so collapsing the bar never puts an ancestor out of reach.
         let deepest_hidden = hidden
@@ -844,15 +843,20 @@ impl gpui::Element for BreadcrumbStrip {
                 Some(FinalItem::Segment(index)) => Some(*index),
                 _ => None,
             };
+            // Only a run that already occupies an earlier slot can take the tail over. A fresh
+            // glyph would start where the tail did and inherit the room just found too short,
+            // and dropping the tail outright would claim the trail ends where it does not - the
+            // tail's own budget below already clamps it to what is left.
             if bounds.origin.x + bounds.size.width - tail_start < metrics.ellipsis_width
                 && let Some(tail_index) = tail_index
+                && matches!(
+                    sequence.iter().rev().nth(1),
+                    Some(FinalItem::Ellipsis(range)) if range.end == tail_index
+                )
             {
                 sequence.pop();
-                match sequence.last_mut() {
-                    Some(FinalItem::Ellipsis(range)) if range.end == tail_index => {
-                        range.end = tail_index + 1;
-                    }
-                    _ => sequence.push(FinalItem::Ellipsis(tail_index..tail_index + 1)),
+                if let Some(FinalItem::Ellipsis(range)) = sequence.last_mut() {
+                    range.end = tail_index + 1;
                 }
             }
         }
@@ -884,7 +888,19 @@ impl gpui::Element for BreadcrumbStrip {
                     self.render_segment(index, position, last_position, label_budget, window, cx)
                 }
                 FinalItem::Ellipsis(hidden) => {
-                    self.render_ellipsis(hidden, position, last_position, window, cx)
+                    // The collapse below can only pick which slot a run lands in, never widen
+                    // it, and a protected segment ahead of it may already have eaten the strip.
+                    // Only a hard cap keeps the glyph inside the bounds we were handed.
+                    let glyph_budget =
+                        (remaining_width - metrics.ellipsis_chrome_width).max(Pixels::ZERO);
+                    self.render_ellipsis(
+                        hidden,
+                        position,
+                        last_position,
+                        Some(glyph_budget),
+                        window,
+                        cx,
+                    )
                 }
             };
             let available_width = if is_last {
