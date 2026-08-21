@@ -1053,7 +1053,10 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
+            // Subagent tool calls carry `session_info` in their raw output
+            // for replay; it must not leak into the card as fallback content.
             if self.content.is_empty()
+                && !self.is_subagent()
                 && let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
             {
                 self.content

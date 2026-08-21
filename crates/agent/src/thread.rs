@@ -2308,13 +2308,24 @@ impl Thread {
         }
     }
 
+    /// Cancels the currently running turn and, recursively, every running
+    /// subagent. Used for explicit user stops (and truncates), where the
+    /// intent is to halt all work started on this thread's behalf.
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
         for subagent in self.running_subagents.drain(..) {
             if let Some(subagent) = subagent.upgrade() {
                 subagent.update(cx, |thread, cx| thread.cancel(cx)).detach();
             }
         }
+        self.cancel_turn(cx)
+    }
 
+    /// Cancels the currently running turn only; running subagents are left
+    /// alone. Used for turn handoffs (starting a new turn, compaction,
+    /// dispatching a queued message), where nobody asked to stop the
+    /// subagents — non-blocking tool calls are explicitly meant to survive
+    /// turn cancellation.
+    pub fn cancel_turn(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let Some(running_turn) = self.running_turn.take() else {
             self.flush_pending_message(cx);
             return Task::ready(());
@@ -2628,7 +2639,7 @@ impl Thread {
         // start, mirroring `run_turn` so a stray completion can't race with the
         // compaction we're about to perform.
         self.flush_pending_message(cx);
-        self.cancel(cx).detach();
+        self.cancel_turn(cx).detach();
 
         let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
             self.advance_prompt_id();
@@ -2752,7 +2763,7 @@ impl Thread {
         // to avoid a race where the detached cancel task might flush the NEW
         // turn's pending message instead of the old one.
         self.flush_pending_message(cx);
-        self.cancel(cx).detach();
+        self.cancel_turn(cx).detach();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);

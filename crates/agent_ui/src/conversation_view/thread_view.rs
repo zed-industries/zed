@@ -1828,16 +1828,27 @@ impl ThreadView {
         self.stop_current_and_send_new_message(message_editor, window, cx);
     }
 
+    /// Cancels the current turn without cascading to running subagents, for
+    /// turn handoffs (dispatching a queued message, stop-and-send) where
+    /// nobody asked to stop the subagents. Falls back to the generic ACP
+    /// cancel for non-native agents, which have no subagent concept.
+    fn cancel_turn_for_handoff(&self, cx: &mut Context<Self>) -> Task<()> {
+        if let Some(native_thread) = self.as_native_thread(cx) {
+            native_thread.update(cx, |thread, cx| thread.cancel_turn(cx))
+        } else {
+            self.thread.update(cx, |thread, cx| thread.cancel(cx))
+        }
+    }
+
     fn stop_current_and_send_new_message(
         &mut self,
         message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread = self.thread.clone();
         self.message_queue.pause();
 
-        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
+        let cancelled = self.cancel_turn_for_handoff(cx);
 
         cx.spawn_in(window, async move |this, cx| {
             cancelled.await;
@@ -2285,7 +2296,7 @@ impl ThreadView {
             })
             .is_some();
 
-        let cancelled = self.thread.update(cx, |thread, cx| thread.cancel(cx));
+        let cancelled = self.cancel_turn_for_handoff(cx);
 
         let workspace = self.workspace.clone();
 
