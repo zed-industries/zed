@@ -3970,7 +3970,7 @@ async fn test_markup_content_diagnostic_messages(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
-async fn test_code_actions_preserve_markup_diagnostics_for_originating_server(
+async fn test_code_actions_downgrade_cross_server_markup_diagnostics(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx);
@@ -4081,7 +4081,11 @@ async fn test_code_actions_preserve_markup_diagnostics_for_originating_server(
                     .into_iter()
                     .map(|diagnostic| diagnostic.message)
                     .collect::<Vec<_>>(),
-                vec![lsp::DiagnosticMessage::String("C is invalid".to_string())]
+                vec![
+                    lsp::DiagnosticMessage::String("`A` is invalid".to_string()),
+                    lsp::DiagnosticMessage::String("B is invalid".to_string()),
+                    lsp::DiagnosticMessage::String("C is invalid".to_string()),
+                ]
             );
             Ok(None)
         });
