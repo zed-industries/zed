@@ -2,6 +2,15 @@
 
 set -euo pipefail
 
+# Every match test below feeds a captured `cargo tree` output into `grep
+# --quiet` through `<<<` rather than `echo "${output}" | grep --quiet ...`.
+# `grep --quiet` exits as soon as it finds the first match instead of reading
+# the rest of its input, so with `pipefail` set, a large enough `echo` can
+# still be writing when `grep` exits and receive `SIGPIPE`; that turns a real
+# match into a nonzero pipeline status, which `if` reads as "no match" (or,
+# for a negated `if !` check, as a false failure). `<<<` avoids the pipe
+# entirely.
+
 # `gpui`'s `bench` feature must stay usable without pulling in `test-support`,
 # so that `#[gpui::bench]` consumers only compile production-capable code
 # rather than transitively depending on test-only APIs. This walks the
@@ -17,7 +26,7 @@ output=$(cargo tree \
   --edges features \
   --invert gpui)
 
-if echo "${output}" | grep --quiet 'gpui feature "test-support"'; then
+if grep --quiet 'gpui feature "test-support"' <<< "${output}"; then
   echo "gpui's \"bench\" feature pulls in \"test-support\":"
   echo "${output}"
   exit 1
@@ -42,7 +51,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       --edges features \
       --invert "${platform_crate}")
 
-    if echo "${output}" | grep --quiet "${platform_crate} feature \"test-support\""; then
+    if grep --quiet "${platform_crate} feature \"test-support\"" <<< "${output}"; then
       echo "benchmarks pulls \"test-support\" into \"${platform_crate}\":"
       echo "${output}"
       exit 1
@@ -70,7 +79,7 @@ for isolated_crate in agent editor language_model project; do
     --package benchmarks \
     --edges features \
     --invert "${isolated_crate}" 2>&1); then
-    if echo "${output}" | grep --quiet 'did not match any packages'; then
+    if grep --quiet 'did not match any packages' <<< "${output}"; then
       continue
     fi
     echo "failed to resolve \"${isolated_crate}\" in benchmarks' dependency graph:"
@@ -78,7 +87,7 @@ for isolated_crate in agent editor language_model project; do
     exit 1
   fi
 
-  if echo "${output}" | grep --quiet "${isolated_crate} feature \"test-support\""; then
+  if grep --quiet "${isolated_crate} feature \"test-support\"" <<< "${output}"; then
     echo "benchmarks pulls \"test-support\" into \"${isolated_crate}\":"
     echo "${output}"
     exit 1
@@ -116,9 +125,8 @@ for foundational_crate in theme util settings; do
   # are actually listed; checking the couple of lines after it for a
   # "benchmarks" edge is enough to catch a direct request without also
   # matching the expected indirect one from `language`.
-  if echo "${output}" \
-    | grep -A2 "[|\`]-- ${foundational_crate} feature \"test-support\"\$" \
-    | grep --quiet 'benchmarks v'; then
+  direct_dependents=$(grep -A2 "[|\`]-- ${foundational_crate} feature \"test-support\"\$" <<< "${output}" || true)
+  if grep --quiet 'benchmarks v' <<< "${direct_dependents}"; then
     echo "benchmarks directly requests \"${foundational_crate}\"'s \"test-support\" feature:"
     echo "${output}"
     exit 1
@@ -136,7 +144,7 @@ output=$(cargo tree \
   --package benchmarks \
   --edges features \
   --invert settings)
-if ! echo "${output}" | grep --quiet 'settings feature "benchmarks"'; then
+if ! grep --quiet 'settings feature "benchmarks"' <<< "${output}"; then
   echo "benchmarks no longer requests settings' \"benchmarks\" feature:"
   echo "${output}"
   exit 1
@@ -157,7 +165,7 @@ output=$(cargo tree \
   --package benchmarks \
   --edges features \
   --invert multi_buffer)
-if echo "${output}" | grep --quiet 'multi_buffer feature "test-support"'; then
+if grep --quiet 'multi_buffer feature "test-support"' <<< "${output}"; then
   echo "benchmarks pulls multi_buffer's \"test-support\" feature:"
   echo "${output}"
   exit 1
@@ -176,7 +184,7 @@ output=$(cargo tree \
   --features benchmarks \
   --edges features \
   --invert multi_buffer)
-if echo "${output}" | grep --quiet 'test-support'; then
+if grep --quiet 'test-support' <<< "${output}"; then
   echo "multi_buffer's \"benchmarks\" feature pulls in \"test-support\":"
   echo "${output}"
   exit 1
@@ -211,7 +219,7 @@ for freed_crate in language lsp; do
     --edges features \
     --invert "${freed_crate}")
 
-  if echo "${output}" | grep --quiet "${freed_crate} feature \"test-support\""; then
+  if grep --quiet "${freed_crate} feature \"test-support\"" <<< "${output}"; then
     echo "benchmarks pulls \"${freed_crate}\"'s \"test-support\" feature:"
     echo "${output}"
     exit 1
@@ -228,7 +236,7 @@ output=$(cargo tree \
   --package benchmarks \
   --edges features \
   --invert language)
-if ! echo "${output}" | grep --quiet 'language feature "benchmarks"'; then
+if ! grep --quiet 'language feature "benchmarks"' <<< "${output}"; then
   echo "benchmarks no longer requests language's \"benchmarks\" feature:"
   echo "${output}"
   exit 1
@@ -246,7 +254,7 @@ output=$(cargo tree \
   --features benchmarks \
   --edges features \
   --invert language)
-if echo "${output}" | grep --quiet 'test-support'; then
+if grep --quiet 'test-support' <<< "${output}"; then
   echo "language's \"benchmarks\" feature pulls in \"test-support\":"
   echo "${output}"
   exit 1
@@ -269,8 +277,32 @@ output=$(cargo tree \
   --package benchmarks \
   --edges features \
   --invert gpui)
-if echo "${output}" | grep --quiet 'gpui feature "test-support"'; then
+if grep --quiet 'gpui feature "test-support"' <<< "${output}"; then
   echo "benchmarks pulls gpui's \"test-support\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# `crates/context_server/Cargo.toml` used to unconditionally request
+# `http_client`'s `test-support` feature from its normal `[dependencies]`,
+# entirely so `context_server`'s own `#[cfg(test)]` modules could build
+# `http_client::FakeHttpClient` transports. Because that request lived in
+# `[dependencies]` rather than `[dev-dependencies]`, it activated
+# `http_client/test-support` for every build that links `context_server` at
+# all, including a plain release build of the `zed` binary itself, not merely
+# `context_server`'s own test target; moving it to `context_server`'s
+# `[dev-dependencies]` (see `crates/context_server/Cargo.toml`) fixed that.
+# All of the checks above confirm individual crates don't leak `test-support`
+# into `benchmarks` through a specific edge; this instead scans `benchmarks`'
+# entire resolved feature graph for the literal feature name, so a future
+# direct or transitive dependency reintroducing `test-support` anywhere — not
+# just through one of the crates named above — fails here too.
+output=$(cargo tree \
+  --offline \
+  --package benchmarks \
+  --edges features)
+if grep --quiet 'feature "test-support"' <<< "${output}"; then
+  echo "benchmarks' resolved feature graph still contains \"test-support\":"
   echo "${output}"
   exit 1
 fi
