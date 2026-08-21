@@ -294,6 +294,17 @@ message Diagnostic {
   optional string data = 12;
   optional string code_description = 13;
   optional string markdown = 14;
+  optional LspMarkup lsp_markup = 18;
+
+  message LspMarkup {
+    Kind kind = 1;
+    string value = 2;
+
+    enum Kind {
+      PlainText = 0;
+      Markdown = 1;
+    }
+  }
 }
 
 message SearchQuery {

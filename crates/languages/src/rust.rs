@@ -326,7 +326,7 @@ impl LspAdapter for RustLspAdapter {
                 .iter_mut()
                 .flatten()
                 .map(|info| &mut info.message)
-                .chain([&mut diagnostic.message])
+                .chain([diagnostic.message.as_mut_string()])
             {
                 if let Cow::Owned(sanitized) = REGEX.replace_all(message, "`$1`") {
                     *message = sanitized;
@@ -1487,18 +1487,21 @@ mod tests {
             diagnostics: vec![
                 // no newlines
                 lsp::Diagnostic {
-                    message: "use of moved value `a`".to_string(),
+                    message: lsp::DiagnosticMessage::from("use of moved value `a`"),
                     ..Default::default()
                 },
                 // newline at the end of a code span
                 lsp::Diagnostic {
-                    message: "consider importing this struct: `use b::c;\n`".to_string(),
+                    message: lsp::DiagnosticMessage::from(
+                        "consider importing this struct: `use b::c;\n`",
+                    ),
                     ..Default::default()
                 },
                 // code span starting right after a newline
                 lsp::Diagnostic {
-                    message: "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
-                        .to_string(),
+                    message: lsp::DiagnosticMessage::from(
+                        "cannot borrow `self.d` as mutable\n`self` is a `&` reference".to_string(),
+                    ),
                     ..Default::default()
                 },
             ],

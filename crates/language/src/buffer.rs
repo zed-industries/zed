@@ -5108,13 +5108,30 @@ impl BufferSnapshot {
     where
         T: 'a + Clone + ToOffset,
     {
+        self.diagnostic_entries_in_range_with_server_id(search_range, reversed)
+            .map(|(_, entry)| entry)
+    }
+
+    /// Returns the stored entries that intersect the given range along with the
+    /// language server that produced each diagnostic.
+    pub fn diagnostic_entries_in_range_with_server_id<'a, T>(
+        &'a self,
+        search_range: Range<T>,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = (LanguageServerId, &'a DiagnosticEntry<Anchor>)>
+    where
+        T: 'a + Clone + ToOffset,
+    {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
-            .map(|(_, collection)| {
-                collection
-                    .entries_in_range::<T>(search_range.clone(), self, true, reversed)
-                    .peekable()
+            .map(|(server_id, collection)| {
+                (
+                    *server_id,
+                    collection
+                        .entries_in_range::<T>(search_range.clone(), self, true, reversed)
+                        .peekable(),
+                )
             })
             .collect();
 
@@ -5122,7 +5139,7 @@ impl BufferSnapshot {
             let (next_ix, _) = iterators
                 .iter_mut()
                 .enumerate()
-                .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
+                .flat_map(|(ix, (_, iter))| Some((ix, iter.peek()?)))
                 .min_by(|(_, a), (_, b)| {
                     let cmp = a
                         .range
@@ -5134,7 +5151,9 @@ impl BufferSnapshot {
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
                     if reversed { cmp.reverse() } else { cmp }
                 })?;
-            iterators[next_ix].next()
+            let (server_id, iterator) = iterators.get_mut(next_ix)?;
+            let server_id = *server_id;
+            iterator.next().map(|entry| (server_id, entry))
         })
     }
 
