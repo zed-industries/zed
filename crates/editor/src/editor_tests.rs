@@ -36745,7 +36745,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     use std::sync::atomic::AtomicU32;
     use std::time::Duration;
 
-    const BASE_TIMEOUT_SECS: u64 = 1;
+    const BASE_TIMEOUT: Duration = Duration::from_secs(1);
 
     let request_count = Arc::new(AtomicU32::new(0));
     let closure_request_count = request_count.clone();
@@ -36760,7 +36760,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
-                    request_timeout: Some(BASE_TIMEOUT_SECS),
+                    request_timeout: Some(BASE_TIMEOUT.as_secs()),
                     max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
@@ -36795,9 +36795,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
                     move |params, cx| {
                         let request_count = request_count.clone();
                         async move {
-                            cx.background_executor()
-                                .timer(Duration::from_secs(BASE_TIMEOUT_SECS * 2))
-                                .await;
+                            cx.background_executor().timer(BASE_TIMEOUT * 2).await;
                             let count = request_count.fetch_add(1, atomic::Ordering::Release) + 1;
                             assert_eq!(
                                 params.text_document.uri,
@@ -36833,7 +36831,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -36850,7 +36848,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         .into_response()
         .unwrap();
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -36865,7 +36863,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
-                    request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    request_timeout: Some(BASE_TIMEOUT.as_secs() * 4),
                     max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
@@ -36880,7 +36878,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         .into_response()
         .unwrap();
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT * 4 + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
