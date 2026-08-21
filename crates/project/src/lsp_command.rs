@@ -4502,22 +4502,19 @@ impl GetDocumentDiagnostics {
             })
             .collect::<Vec<_>>();
 
-        let message = match diagnostic
+        let kind = match diagnostic
             .markup_message_kind
             .and_then(proto::MarkupKind::from_i32)
         {
-            Some(proto::MarkupKind::PlainText) => {
-                lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::PlainText,
-                    value: diagnostic.message,
-                })
-            }
-            Some(proto::MarkupKind::Markdown) => {
-                lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
-                    kind: lsp::MarkupKind::Markdown,
-                    value: diagnostic.message,
-                })
-            }
+            Some(proto::MarkupKind::PlainText) => Some(lsp::MarkupKind::PlainText),
+            Some(proto::MarkupKind::Markdown) => Some(lsp::MarkupKind::Markdown),
+            None => None,
+        };
+        let message = match kind {
+            Some(kind) => lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+                kind,
+                value: diagnostic.message,
+            }),
             None => diagnostic.message.into(),
         };
 
