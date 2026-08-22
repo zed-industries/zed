@@ -1365,6 +1365,23 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Mock(_) => "mock",
         }
     }
+
+    /// A user-facing display name for the remote connection type.
+    pub fn connection_type_display_name(&self) -> &'static str {
+        match self {
+            RemoteConnectionOptions::Ssh(_) => "SSH",
+            RemoteConnectionOptions::Wsl(_) => "WSL",
+            RemoteConnectionOptions::Docker(options) => {
+                if options.use_podman {
+                    "Podman"
+                } else {
+                    "Docker"
+                }
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            RemoteConnectionOptions::Mock(_) => "Mock",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1423,6 +1440,44 @@ mod tests {
             })
             .connection_type(),
             "podman"
+        );
+    }
+
+    #[test]
+    fn test_connection_type_display_name() {
+        assert_eq!(
+            RemoteConnectionOptions::Ssh(SshConnectionOptions::default())
+                .connection_type_display_name(),
+            "SSH"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name: "Ubuntu".to_string(),
+                user: None,
+            })
+            .connection_type_display_name(),
+            "WSL"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: false,
+                ..Default::default()
+            })
+            .connection_type_display_name(),
+            "Docker"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                use_podman: true,
+                ..Default::default()
+            })
+            .connection_type_display_name(),
+            "Podman"
+        );
+        assert_eq!(
+            RemoteConnectionOptions::Mock(crate::transport::mock::MockConnectionOptions { id: 1 })
+                .connection_type_display_name(),
+            "Mock"
         );
     }
 
