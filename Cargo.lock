@@ -10811,6 +10811,7 @@ dependencies = [
  "anyhow",
  "collections",
  "convert_case 0.11.0",
+ "indoc",
  "log",
  "pretty_assertions",
  "serde_json",
