@@ -1659,8 +1659,8 @@ impl GitGraph {
                 RedistributableColumnsState::new(
                     4,
                     vec![
-                        DefiniteLength::Fraction(0.66),
-                        DefiniteLength::Fraction(0.12),
+                        DefiniteLength::Fraction(0.64),
+                        DefiniteLength::Fraction(0.14),
                         DefiniteLength::Fraction(0.12),
                         DefiniteLength::Fraction(0.10),
                     ],
@@ -1673,8 +1673,8 @@ impl GitGraph {
                     5,
                     vec![
                         DefiniteLength::Fraction(0.30),
-                        DefiniteLength::Fraction(0.39),
-                        DefiniteLength::Fraction(0.11),
+                        DefiniteLength::Fraction(0.37),
+                        DefiniteLength::Fraction(0.13),
                         DefiniteLength::Fraction(0.11),
                         DefiniteLength::Fraction(0.09),
                     ],
