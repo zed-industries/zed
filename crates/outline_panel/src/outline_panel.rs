@@ -6014,15 +6014,14 @@ outline: fn hints_lifetimes_named  <==== selected"
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"one/
+                r#"one/
   a.txt
     search: «aaa» aaa  <==== selected
     search: aaa «aaa»
 two/
   b.txt
-    search: a «aaa»"#,
-                ),
+    search: a «aaa»"#
+                    .to_string(),
             );
         });
 
@@ -6042,13 +6041,12 @@ two/
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"one/
+                r#"one/
   a.txt  <==== selected
 two/
   b.txt
-    search: a «aaa»"#,
-                ),
+    search: a «aaa»"#
+                    .to_string(),
             );
         });
 
@@ -6068,11 +6066,10 @@ two/
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"one/
+                r#"one/
   a.txt
-two/  <==== selected"#,
-                ),
+two/  <==== selected"#
+                    .to_string(),
             );
         });
 
@@ -6091,13 +6088,12 @@ two/  <==== selected"#,
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"one/
+                r#"one/
   a.txt
 two/  <==== selected
   b.txt
-    search: a «aaa»"#,
-                )
+    search: a «aaa»"#
+                    .to_string()
             );
         });
     }
@@ -6535,11 +6531,10 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/
+                r#"frontend-project/
   public/lottie/
     syntax-tree.json
-      search: {{ "something": "«static»" }}  <==== selected
+      search: { "something": "«static»" }  <==== selected
   src/
     app/(site)/
       (about)/jobs/[slug]/
@@ -6551,7 +6546,7 @@ outline: struct OutlineEntryExcerpt
     components/
       ErrorBoundary.tsx
         search: «static»"#
-                )
+                    .to_string()
             );
         });
 
@@ -6574,17 +6569,16 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/
+                r#"frontend-project/
   public/lottie/
     syntax-tree.json
-      search: {{ "something": "«static»" }}
+      search: { "something": "«static»" }
   src/
     app/(site)/  <==== selected
     components/
       ErrorBoundary.tsx
         search: «static»"#
-                )
+                    .to_string()
             );
         });
 
@@ -6604,17 +6598,16 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/
+                r#"frontend-project/
   public/lottie/
     syntax-tree.json
-      search: {{ "something": "«static»" }}
+      search: { "something": "«static»" }
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx
         search: «static»  <==== selected"#
-                )
+                    .to_string()
             );
         });
 
@@ -6638,16 +6631,15 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/
+                r#"frontend-project/
   public/lottie/
     syntax-tree.json
-      search: {{ "something": "«static»" }}
+      search: { "something": "«static»" }
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx  <==== selected"#
-                )
+                    .to_string()
             );
         });
 
@@ -6671,17 +6663,16 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/
+                r#"frontend-project/
   public/lottie/
     syntax-tree.json
-      search: {{ "something": "«static»" }}
+      search: { "something": "«static»" }
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx  <==== selected
         search: «static»"#
-                )
+                    .to_string()
             );
         });
 
@@ -6700,7 +6691,7 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(r#"frontend-project/"#)
+                r#"frontend-project/"#.to_string()
             );
         });
 
@@ -6719,11 +6710,10 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                format!(
-                    r#"frontend-project/
+                r#"frontend-project/
   public/lottie/
     syntax-tree.json
-      search: {{ "something": "«static»" }}
+      search: { "something": "«static»" }
   src/
     app/(site)/
       (about)/jobs/[slug]/
@@ -6735,7 +6725,7 @@ outline: struct OutlineEntryExcerpt
     components/
       ErrorBoundary.tsx  <==== selected
         search: «static»"#
-                )
+                    .to_string()
             );
         });
     }
