@@ -310,14 +310,61 @@ fi
 # `edit_file_tool_benchmarks` is the isolated package `edit_file_tool` moved
 # into. It is intentionally *not* held to the isolation bar above, including
 # the `settings` checks just above: it still needs `test-support` from
-# `agent`, `editor`, `language`, `language_model`, `lsp`, `project`, and
-# `settings` (via `SettingsStore::update_user_settings`, which has no
-# production-capable equivalent for mutating already-loaded settings
-# content) for the same harness this script used to document against
-# `benchmarks`. That is tracked debt toward eventually having no benchmark
-# depend on `test-support` at all, not a gap this script hides — confirm the
-# package still exists and builds rather than silently skipping it.
+# `agent`, `editor`, `language`, `lsp`, `project`, and `settings` (via
+# `SettingsStore::update_user_settings`, which has no production-capable
+# equivalent for mutating already-loaded settings content) for the same
+# harness this script used to document against `benchmarks`. That is tracked
+# debt toward eventually having no benchmark depend on `test-support` at all,
+# not a gap this script hides — confirm the package still exists and builds
+# rather than silently skipping it.
 if ! cargo tree --offline --package edit_file_tool_benchmarks >/dev/null; then
   echo "edit_file_tool_benchmarks package is missing or fails to resolve"
+  exit 1
+fi
+
+# `edit_file_tool_benchmarks` used to also directly request `language_model`'s
+# `test-support` feature, entirely to build a `FakeLanguageModel` to satisfy
+# `Thread::new`'s model parameter. `edit_file` never reads a thread's
+# configured model (see `EditSessionContext`/`authorize_file_edit` in
+# `agent::tools`, which only touch the project, action log, and agent
+# settings), so the harness now passes `None` instead, dropping that fake
+# object and its `test-support` edge entirely rather than merely renaming it.
+# Unlike the crates named above, nothing else `edit_file_tool_benchmarks`
+# depends on has a legitimate reason to reach `language_model`'s
+# `test-support` feature either, so this checks the whole resolved graph.
+output=$(cargo tree \
+  --offline \
+  --package edit_file_tool_benchmarks \
+  --edges features \
+  --invert language_model)
+if grep --quiet 'language_model feature "test-support"' <<< "${output}"; then
+  echo "edit_file_tool_benchmarks pulls language_model's \"test-support\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# `edit_file_tool_benchmarks` also used to directly request `lsp`'s
+# `test-support` feature, but everything it uses from `lsp`'s test-only
+# surface (`FakeLanguageServer::handle_notification`/`notify`, reached
+# through `language::LanguageRegistry::register_fake_lsp`) is already pulled
+# in by its direct request of `language`'s `test-support` feature, which
+# requests `lsp/test-support` itself. The direct request to `lsp` was
+# therefore fully redundant, not a `test-support` edge this benchmark still
+# needs on its own; dropping it does not change the resolved feature graph
+# (`lsp/test-support` stays on, tracked as debt above), only which crate asks
+# for it. This checks only the direct edge, the same way the `theme`/`util`/
+# `settings` checks above do for `benchmarks`, since `lsp/test-support`
+# itself is expected to remain in the whole resolved graph until `language`
+# is migrated too.
+output=$(cargo tree \
+  --offline \
+  --package edit_file_tool_benchmarks \
+  --edges features \
+  --charset ascii \
+  --invert lsp)
+direct_dependents=$(grep -A2 '[|`]-- lsp feature "test-support"$' <<< "${output}" || true)
+if grep --quiet 'edit_file_tool_benchmarks v' <<< "${direct_dependents}"; then
+  echo "edit_file_tool_benchmarks directly requests lsp's \"test-support\" feature:"
+  echo "${output}"
   exit 1
 fi

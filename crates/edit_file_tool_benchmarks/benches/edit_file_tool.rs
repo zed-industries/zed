@@ -26,7 +26,6 @@ use gpui::{
     UpdateGlobal as _,
 };
 use language::{FakeLspAdapter, rust_lang};
-use language_model::fake_provider::FakeLanguageModel;
 use project::{FakeFs, Project};
 use prompt_store::ProjectContext;
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
@@ -206,14 +205,17 @@ async fn setup_editor_and_tool(cx: &mut TestAppContext, file_text: String) -> Ha
 
     let context_server_registry =
         cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
-    let model = Arc::new(FakeLanguageModel::default());
+    // `edit_file` never reads the thread's configured model (see
+    // `EditSessionContext`/`authorize_file_edit`, which only touch the
+    // project, action log, and agent settings), so leaving it unset measures
+    // the same tool path without needing a fake language model.
     let thread = cx.new(|cx| {
         Thread::new(
             project.clone(),
             cx.new(|_cx| ProjectContext::default()),
             context_server_registry,
             Templates::new(),
-            Some(model),
+            None,
             cx,
         )
     });

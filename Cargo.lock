@@ -5336,7 +5336,6 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "language",
- "language_model",
  "lsp",
  "project",
  "prompt_store",
