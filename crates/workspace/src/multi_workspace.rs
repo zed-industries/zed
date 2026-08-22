@@ -560,22 +560,29 @@ impl MultiWorkspace {
                 multi_workspace.workspaces().cloned().collect::<Vec<_>>()
             })?;
 
+            let mut prepared = anyhow::Ok(true);
             for workspace in workspaces {
-                let should_continue = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
-                    })?
-                    .await?;
-                if !should_continue {
-                    this.update(cx, |multi_workspace, cx| {
-                        for workspace in multi_workspace.workspaces() {
-                            workspace.update(cx, |workspace, _| {
-                                workspace.removing = false;
-                            });
-                        }
-                    })?;
-                    return anyhow::Ok(());
+                prepared = match workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                }) {
+                    Ok(task) => task.await,
+                    Err(error) => Err(error),
+                };
+                if !matches!(prepared, Ok(true)) {
+                    break;
                 }
+            }
+
+            if !matches!(prepared, Ok(true)) {
+                this.update(cx, |multi_workspace, cx| {
+                    for workspace in multi_workspace.workspaces() {
+                        workspace.update(cx, |workspace, _| {
+                            workspace.removing = false;
+                        });
+                    }
+                })?;
+                prepared?;
+                return anyhow::Ok(());
             }
 
             let flush_tasks = this.update_in(cx, |multi_workspace, window, cx| {
