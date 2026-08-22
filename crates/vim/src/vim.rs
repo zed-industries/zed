@@ -527,6 +527,7 @@ pub(crate) struct Vim {
 
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
+    pub(crate) helix_append_state: Option<HelixAppendState>,
     pub(crate) undo_modes: HashMap<TransactionId, Mode>,
     pub(crate) undo_last_line_tx: Option<TransactionId>,
     extended_pending_selection_id: Option<usize>,
@@ -539,6 +540,13 @@ pub(crate) struct Vim {
     last_command: Option<String>,
     running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Captured by `helix_append` so that escape can restore the pre-append
+/// selections when nothing was inserted, matching Helix.
+pub(crate) struct HelixAppendState {
+    pub(crate) selections_before_append: Vec<Range<Anchor>>,
+    pub(crate) cursors_after_append: Vec<Range<Anchor>>,
 }
 
 // Hack: Vim intercepts events dispatched to a window and updates the view in response.
@@ -588,6 +596,7 @@ impl Vim {
             current_tx: None,
             undo_last_line_tx: None,
             current_anchor: None,
+            helix_append_state: None,
             extended_pending_selection_id: None,
             undo_modes: HashMap::default(),
 
@@ -1106,6 +1115,21 @@ impl Vim {
                         cx,
                     );
                 }
+                operator @ Operator::HelixJump { .. } if keystroke_event.action.is_none() => {
+                    let modifiers = keystroke_event.keystroke.modifiers;
+                    let mut input = keystroke_event.keystroke.key.chars();
+                    if !modifiers.control
+                        && !modifiers.alt
+                        && !modifiers.platform
+                        && !modifiers.function
+                        && let Some(input_char) = input.next()
+                        && input.next().is_none()
+                    {
+                        // Jump overlays use ASCII labels even on non-ASCII keyboard layouts.
+                        self.handle_helix_jump_input(operator, input_char, window, cx);
+                        cx.stop_propagation();
+                    }
+                }
                 _ if !operator.is_waiting(self.mode) => {
                     self.clear_operator(window, cx);
                     self.stop_recording_immediately(Box::new(ClearOperators), cx)
@@ -1210,6 +1234,9 @@ impl Vim {
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
+            if mode != Mode::Insert {
+                self.helix_append_state.take();
+            }
             self.update_editor(cx, |_, editor, _| {
                 editor.clear_selection_drag_state();
             });
@@ -1237,6 +1264,17 @@ impl Vim {
             } else if self.mode == Mode::Visual {
                 self.mode = Mode::HelixSelect
             }
+        }
+
+        // Multi-key bindings in Insert mode temporarily insert their pending keys
+        // and remove them only after the action runs. Refresh the selection anchors
+        // afterward so they re-attach to the remaining text.
+        if last_mode == Mode::Insert && matches!(self.mode, Mode::Normal | Mode::HelixNormal) {
+            cx.defer_in(window, |vim, _window, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.refresh_selection_anchors(cx);
+                });
+            })
         }
 
         if leave_selections {
@@ -1400,7 +1438,8 @@ impl Vim {
     fn expects_character_input(&self) -> bool {
         if let Some(operator) = self.operator_stack.last() {
             if operator.is_waiting(self.mode) {
-                return true;
+                // Helix jump labels are commands that need to reach Vim before an active IME.
+                return !matches!(operator, Operator::HelixJump { .. });
             }
         }
         self.editor_input_enabled()
@@ -1976,7 +2015,7 @@ impl Vim {
             return;
         }
 
-        let newest = editor.read(cx).selections.newest_anchor().clone();
+        let newest = *editor.read(cx).selections.newest_anchor();
         let is_multicursor = editor.read(cx).selections.count() > 1;
         if self.mode == Mode::Insert && self.current_tx.is_some() {
             if let Some(current_anchor) = &self.current_anchor {

@@ -49,7 +49,8 @@ pub use agent_server_store::{AgentId, AgentServerStore, AgentServersUpdated, Ext
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
-    linked_worktree_short_name, repo_identity_path, worktrees_directory_for_repo,
+    is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
+    worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -420,7 +421,12 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    EntryRenamed {
+        transaction: ProjectTransaction,
+        new_project_path: ProjectPath,
+        old_abs_path: PathBuf,
+        new_abs_path: PathBuf,
+    },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
     BufferEdited {
@@ -621,6 +627,19 @@ impl CompletionSource {
     pub fn server_id(&self) -> Option<LanguageServerId> {
         if let CompletionSource::Lsp { server_id, .. } = self {
             Some(*server_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn filter_text(&self) -> Option<&str> {
+        if let Self::Lsp { lsp_completion, .. } = self {
+            Some(
+                lsp_completion
+                    .filter_text
+                    .as_deref()
+                    .unwrap_or(lsp_completion.label.as_str()),
+            )
         } else {
             None
         }
@@ -2658,11 +2677,12 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed(
+                    cx.emit(Event::EntryRenamed {
                         transaction,
-                        new_path.clone(),
-                        new_abs_path.clone(),
-                    ));
+                        new_project_path: new_path.clone(),
+                        old_abs_path: old_abs_path.clone(),
+                        new_abs_path: new_abs_path.clone(),
+                    });
                 })
                 .ok();
 
@@ -3079,6 +3099,15 @@ impl Project {
             }
             _ => false,
         }
+    }
+
+    /// Whether this project is served by a WSL distribution.
+    #[inline]
+    pub fn is_via_wsl(&self, cx: &App) -> bool {
+        matches!(
+            self.remote_connection_options(cx),
+            Some(RemoteConnectionOptions::Wsl(_))
+        )
     }
 
     pub fn disable_worktree_scanner(&mut self, cx: &mut Context<Self>) {
@@ -3888,6 +3917,8 @@ impl Project {
                 }),
                 Err(_) => {}
             },
+            SettingsObserverEvent::GlobalTasksUpdated(_)
+            | SettingsObserverEvent::GlobalDebugScenariosUpdated(_) => {}
         }
     }
 
@@ -4621,7 +4652,7 @@ impl Project {
         trigger: String,
         push_to_history: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
+    ) -> Option<Task<Result<Option<Transaction>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.on_type_format(buffer, position, trigger, push_to_history, cx)
         })
@@ -6748,6 +6779,12 @@ impl Completion {
         self.source
             .lsp_completion(false)
             .map(|lsp_completion| lsp_completion.label.clone())
+    }
+
+    pub fn filter_text(&self) -> &str {
+        self.source
+            .filter_text()
+            .unwrap_or_else(|| self.label.filter_text())
     }
 
     /// A key that can be used to sort completions when displaying
