@@ -1106,6 +1106,12 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
+    bookmark_view_subscription: Option<Subscription>,
+    bookmark_refresh_task: Option<Task<()>>,
+    /// Set when a Bookmarks tab is opened, and consumed by whichever refresh first manages to
+    /// populate its excerpts. Lives on the editor rather than in the initial refresh task
+    /// because a bookmark change arriving mid-load cancels that task by replacing it.
+    bookmark_initial_selection_pending: bool,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -1829,6 +1835,14 @@ impl Editor {
         clone.needs_initial_data_update = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
         clone.enable_code_lens = self.enable_code_lens;
+        if self.bookmark_view_subscription.is_some()
+            && let Some(bookmark_store) = clone.bookmark_store.clone()
+        {
+            clone.bookmark_view_subscription =
+                Some(clone.subscribe_to_bookmark_store(bookmark_store.clone(), window, cx));
+            clone.bookmark_initial_selection_pending = self.bookmark_initial_selection_pending;
+            clone.schedule_bookmark_refresh(bookmark_store, window, cx);
+        }
         clone
     }
 
@@ -2417,6 +2431,9 @@ impl Editor {
             pending_blame_hover_observation: None,
 
             bookmark_store,
+            bookmark_view_subscription: None,
+            bookmark_refresh_task: None,
+            bookmark_initial_selection_pending: false,
             breakpoint_store,
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),

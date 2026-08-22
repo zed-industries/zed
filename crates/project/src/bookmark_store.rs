@@ -2,13 +2,22 @@ use std::{collections::BTreeMap, ops::Range, path::Path, sync::Arc};
 
 use anyhow::Result;
 use futures::{StreamExt, TryFutureExt, TryStreamExt, stream::FuturesUnordered};
-use gpui::{App, AppContext, Context, Entity, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Subscription, Task};
 use itertools::Itertools;
 use language::{Buffer, BufferEvent};
 use std::collections::HashMap;
 use text::{BufferSnapshot, Point};
 
 use crate::{ProjectPath, buffer_store::BufferStore, worktree_store::WorktreeStore};
+
+/// Emitted whenever the set of bookmarks (or a bookmark's label) actually changes.
+///
+/// Deliberately not emitted from `resolve_all`, which only resolves already-known
+/// bookmarks to anchors and notifies for its own bookkeeping purposes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BookmarkStoreEvent {
+    BookmarksChanged,
+}
 
 #[derive(Clone, Debug)]
 pub struct Bookmark {
@@ -85,6 +94,8 @@ pub struct BookmarkStore {
     bookmarks: BTreeMap<Arc<Path>, BookmarkEntry>,
 }
 
+impl EventEmitter<BookmarkStoreEvent> for BookmarkStore {}
+
 impl BookmarkStore {
     pub fn new(worktree_store: Entity<WorktreeStore>, buffer_store: Entity<BufferStore>) -> Self {
         Self {
@@ -92,6 +103,10 @@ impl BookmarkStore {
             worktree_store,
             bookmarks: BTreeMap::new(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bookmarks.values().all(BookmarkEntry::is_empty)
     }
 
     pub fn load_serialized_bookmarks(
@@ -112,6 +127,7 @@ impl BookmarkStore {
             self.bookmarks.insert(path, BookmarkEntry::Unloaded(rows));
         }
 
+        cx.emit(BookmarkStoreEvent::BookmarksChanged);
         cx.notify();
         Task::ready(Ok(()))
     }
@@ -209,6 +225,7 @@ impl BookmarkStore {
             buffer_bookmarks.bookmarks.push(Bookmark { anchor, label });
         }
 
+        cx.emit(BookmarkStoreEvent::BookmarksChanged);
         cx.notify();
     }
 
@@ -268,6 +285,7 @@ impl BookmarkStore {
             .find(|existing| existing.anchor.summary::<Point>(&snapshot).row == row)
         {
             bookmark.label = label;
+            cx.emit(BookmarkStoreEvent::BookmarksChanged);
             cx.notify();
         }
     }
@@ -327,6 +345,7 @@ impl BookmarkStore {
                 }
                 BookmarkEntry::Unloaded(_) => true,
             });
+            cx.emit(BookmarkStoreEvent::BookmarksChanged);
             cx.notify();
             return;
         }
@@ -355,6 +374,7 @@ impl BookmarkStore {
                     return;
                 };
                 self.bookmarks.insert(new_abs_path, entry);
+                cx.emit(BookmarkStoreEvent::BookmarksChanged);
                 cx.notify();
             }
         }
@@ -481,6 +501,7 @@ impl BookmarkStore {
 
     pub fn clear_bookmarks(&mut self, cx: &mut Context<Self>) {
         self.bookmarks.clear();
+        cx.emit(BookmarkStoreEvent::BookmarksChanged);
         cx.notify();
     }
 }
