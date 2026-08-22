@@ -2402,6 +2402,7 @@ impl LspCommand for GetHover {
             contents,
             range,
             language,
+            debugger_value: None,
         }))
     }
 
@@ -2525,6 +2526,7 @@ impl LspCommand for GetHover {
             contents,
             range,
             language,
+            debugger_value: None,
         }))
     }
 
