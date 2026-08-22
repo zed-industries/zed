@@ -82,7 +82,6 @@ impl From<SettingsLocation> for latest::SettingsLocation {
             //
             // This has been fixed in the API itself as of v0.2.0. Align the behavior
             // here so that older extensions can also read project settings.
-
             path: String::new(),
         }
     }
