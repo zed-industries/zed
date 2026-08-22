@@ -885,6 +885,7 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        project: &Entity<Project>,
         cx: &mut App,
     ) -> Result<Self> {
         let title = if tool_call.kind == acp::ToolKind::Execute {
@@ -903,6 +904,7 @@ impl ToolCall {
                 language_registry.clone(),
                 path_style,
                 terminals,
+                project,
                 cx,
             )? {
                 content.push(item);
@@ -956,6 +958,7 @@ impl ToolCall {
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        project: &Entity<Project>,
         cx: &mut App,
     ) -> Result<()> {
         let acp::ToolCallUpdateFields {
@@ -1021,8 +1024,14 @@ impl ToolCall {
 
             // Reuse existing content if we can
             for (old, new) in self.content.iter_mut().zip(content.by_ref()) {
-                let valid_content =
-                    old.update_from_acp(new, language_registry.clone(), path_style, terminals, cx)?;
+                let valid_content = old.update_from_acp(
+                    new,
+                    language_registry.clone(),
+                    path_style,
+                    terminals,
+                    project,
+                    cx,
+                )?;
                 if !valid_content {
                     new_content_len -= 1;
                 }
@@ -1033,6 +1042,7 @@ impl ToolCall {
                     language_registry.clone(),
                     path_style,
                     terminals,
+                    project,
                     cx,
                 )? {
                     self.content.push(new);
@@ -1817,6 +1827,7 @@ impl ToolCallContent {
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        project: &Entity<Project>,
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
@@ -1829,8 +1840,10 @@ impl ToolCallContent {
                 )),
             )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
+                let file = file_for_path(project, &diff.path, cx);
                 Diff::finalized(
                     diff.path.to_string_lossy().into_owned(),
+                    file,
                     diff.old_text,
                     diff.new_text,
                     language_registry,
@@ -1852,6 +1865,7 @@ impl ToolCallContent {
         language_registry: Arc<LanguageRegistry>,
         path_style: PathStyle,
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
+        project: &Entity<Project>,
         cx: &mut App,
     ) -> Result<bool> {
         // Update streaming text in place so the rendered markdown element is
@@ -1876,7 +1890,9 @@ impl ToolCallContent {
             _ => true,
         };
 
-        if let Some(update) = Self::from_acp(new, language_registry, path_style, terminals, cx)? {
+        if let Some(update) =
+            Self::from_acp(new, language_registry, path_style, terminals, project, cx)?
+        {
             if needs_update {
                 *self = update;
             }
@@ -3164,6 +3180,7 @@ impl AcpThread {
                     languages,
                     path_style,
                     &self.terminals,
+                    &self.project,
                     cx,
                 )?;
                 if location_updated {
@@ -3236,6 +3253,7 @@ impl AcpThread {
                 language_registry,
                 path_style,
                 &self.terminals,
+                &self.project,
                 cx,
             )?;
             call.update_status(status);
@@ -3248,6 +3266,7 @@ impl AcpThread {
                 language_registry,
                 self.project.read(cx).path_style(cx),
                 &self.terminals,
+                &self.project,
                 cx,
             )?;
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);

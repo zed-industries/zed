@@ -12,12 +12,12 @@ use std::{num::NonZeroU32, sync::LazyLock};
 pub struct ModelineSettings {
     /// The emacs mode or vim filetype.
     pub mode: Option<String>,
-    /// How many columns a tab should occupy.
+    /// How many columns a literal tab character should occupy.
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     pub hard_tabs: Option<bool>,
-    /// The number of bytes that comprise the indentation.
+    /// How many columns each indentation level should occupy.
     pub indent_size: Option<NonZeroU32>,
     /// Whether to auto-indent lines.
     pub auto_indent: Option<bool>,

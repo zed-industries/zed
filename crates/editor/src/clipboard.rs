@@ -24,9 +24,9 @@ impl ClipboardSelection {
         project: Option<&Entity<Project>>,
         cx: &App,
     ) -> Self {
-        let first_line_indent = buffer
-            .indent_size_for_line(MultiBufferRow(range.start.row))
-            .len;
+        let indentation = buffer.language_settings_at(range.start, cx).indentation();
+        let first_line_indent =
+            buffer.indentation_column_for_line(MultiBufferRow(range.start.row), indentation);
 
         let file_path = util::maybe!({
             let project = project?.read(cx);
@@ -728,6 +728,32 @@ fn edit_for_markdown_paste<'a>(
         Cow::Owned(format!("[{old_text}]({to_insert})"))
     };
     (range, new_text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor_tests::init_test;
+
+    #[gpui::test]
+    fn test_clipboard_selection_records_indentation_column(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let selection = cx.update(|cx| {
+            let buffer = MultiBuffer::build_simple("  \ttext", cx);
+            let snapshot = buffer.read(cx).snapshot(cx);
+
+            ClipboardSelection::for_buffer(
+                4,
+                false,
+                Point::new(0, 3)..Point::new(0, 7),
+                &snapshot,
+                None,
+                cx,
+            )
+        });
+
+        assert_eq!(selection.first_line_indent, 4);
+    }
 }
 
 /// Returns a filename of the form `image.{extension}` (or `image_{N}.{extension}`

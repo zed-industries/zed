@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use futures::{StreamExt as _, future::join_all, stream::FuturesUnordered};
 use gpui::{MouseButton, SharedString, Task, TaskExt, WeakEntity};
 use itertools::Itertools;
-use language::{BufferId, ClientCommand};
+use language::{BufferId, ClientCommand, Point};
 use multi_buffer::{Anchor, BufferOffset, MultiBufferRow, MultiBufferSnapshot, ToPoint as _};
 use project::{CodeAction, TaskSourceKind, lsp_store::code_lens::CodeLensActions};
 use task::TaskContext;
@@ -323,7 +323,7 @@ impl Editor {
             }
         }
 
-        let mut new_lines_by_row = group_lenses_by_row(all_lenses, snapshot)
+        let mut new_lines_by_row = group_lenses_by_row(all_lenses, snapshot, cx)
             .map(|line| (MultiBufferRow(line.position.to_point(snapshot).row), line))
             .collect::<HashMap<_, _>>();
 
@@ -580,6 +580,7 @@ fn displayed_title(item: &CodeLensItem) -> Option<&SharedString> {
 fn group_lenses_by_row(
     lenses: Vec<(Anchor, CodeLensItem)>,
     snapshot: &MultiBufferSnapshot,
+    cx: &App,
 ) -> impl Iterator<Item = CodeLensLine> {
     lenses
         .into_iter()
@@ -592,7 +593,10 @@ fn group_lenses_by_row(
         .filter_map(|(row, entries)| {
             let position = entries.first()?.0;
             let items = entries.into_iter().map(|(_, item)| item).collect();
-            let indent_column = snapshot.indent_size_for_line(row).len;
+            let indentation = snapshot
+                .language_settings_at(Point::new(row.0, 0), cx)
+                .indentation();
+            let indent_column = snapshot.indentation_column_for_line(row, indentation);
             Some(CodeLensLine {
                 position,
                 indent_column,
@@ -776,7 +780,7 @@ mod tests {
                 ]))
             });
 
-        cx.set_state("ˇfunction hello() {}\nfunction world() {}");
+        cx.set_state("ˇ\tfunction hello() {}\n  \tfunction world() {}");
 
         assert!(
             code_lens_request.next().await.is_some(),
@@ -791,14 +795,23 @@ mod tests {
                 "code lens should be enabled"
             );
             assert_eq!(
+                editor
+                    .code_lens
+                    .as_ref()
+                    .unwrap()
+                    .blocks
+                    .values()
+                    .flatten()
+                    .map(|block| block.line.indent_column)
+                    .collect::<Vec<_>>(),
+                vec![4, 4],
+            );
+            assert_eq!(
                 code_lens_assertion_text(editor, cx),
-                indoc! {r#"
-                    Lenses: 2 references
-                    Line 1: function hello() {}
-
-                    Lenses: 0 references
-                    Line 2: function world() {}
-                "#},
+                "Lenses: 2 references\n\
+                 Line 1: \tfunction hello() {}\n\n\
+                 Lenses: 0 references\n\
+                 Line 2:   \tfunction world() {}\n",
                 "both lenses should render their server-provided titles"
             );
         });

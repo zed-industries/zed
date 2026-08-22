@@ -3,9 +3,10 @@ use super::{
     fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
 
-use language::{LanguageAwareStyling, Point};
+use collections::HashMap;
+use language::{BufferId, LanguageAwareStyling, Point, language_settings::IndentationSettings};
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
-use std::{cmp, num::NonZeroU32, ops::Range};
+use std::{cmp, num::NonZeroU32, ops::Range, sync::Arc};
 use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
@@ -19,12 +20,31 @@ const MAX_TABS: NonZeroU32 = NonZeroU32::new(SPACES.len() as u32).unwrap();
 /// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct TabMap(TabSnapshot);
 
+pub(super) type PerBufferIndentationSettings = (
+    IndentationSettings,
+    Arc<HashMap<BufferId, IndentationSettings>>,
+);
+
 impl TabMap {
     #[ztracing::instrument(skip_all)]
     pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
+        Self::new_with_indentation_settings(
+            fold_snapshot,
+            (
+                IndentationSettings::new(tab_size, tab_size, false),
+                Arc::default(),
+            ),
+        )
+    }
+
+    #[ztracing::instrument(skip_all)]
+    pub(super) fn new_with_indentation_settings(
+        fold_snapshot: FoldSnapshot,
+        indentation_settings: PerBufferIndentationSettings,
+    ) -> (Self, TabSnapshot) {
         let snapshot = TabSnapshot {
             fold_snapshot,
-            tab_size: tab_size.min(MAX_TABS),
+            indentation_settings,
             max_expansion_column: MAX_EXPANSION_COLUMN,
             version: 0,
         };
@@ -41,16 +61,31 @@ impl TabMap {
     pub fn sync(
         &mut self,
         fold_snapshot: FoldSnapshot,
-        mut fold_edits: Vec<FoldEdit>,
+        fold_edits: Vec<FoldEdit>,
         tab_size: NonZeroU32,
     ) -> (TabSnapshot, Vec<TabEdit>) {
-        let tab_size = tab_size.min(MAX_TABS);
+        self.sync_with_indentation_settings(
+            fold_snapshot,
+            fold_edits,
+            (
+                IndentationSettings::new(tab_size, tab_size, false),
+                Arc::default(),
+            ),
+        )
+    }
 
-        if self.0.tab_size != tab_size {
+    #[ztracing::instrument(skip_all)]
+    pub(super) fn sync_with_indentation_settings(
+        &mut self,
+        fold_snapshot: FoldSnapshot,
+        mut fold_edits: Vec<FoldEdit>,
+        indentation_settings: PerBufferIndentationSettings,
+    ) -> (TabSnapshot, Vec<TabEdit>) {
+        if self.0.indentation_settings != indentation_settings {
             let old_max_point = self.0.max_point();
             self.0.version += 1;
             self.0.fold_snapshot = fold_snapshot;
-            self.0.tab_size = tab_size;
+            self.0.indentation_settings = indentation_settings;
             return (
                 self.0.clone(),
                 vec![TabEdit {
@@ -69,10 +104,10 @@ impl TabMap {
         if fold_edits.is_empty() {
             old_snapshot.version = new_version;
             old_snapshot.fold_snapshot = fold_snapshot;
-            old_snapshot.tab_size = tab_size;
             return (old_snapshot.clone(), vec![]);
         }
 
+        let indentation_settings = old_snapshot.indentation_settings.clone();
         let old_fold_max_point = old_snapshot.fold_snapshot.max_point();
 
         // Expand each edit to include the next tab on the same line as the edit,
@@ -145,7 +180,7 @@ impl TabMap {
 
         let new_snapshot = TabSnapshot {
             fold_snapshot,
-            tab_size,
+            indentation_settings,
             max_expansion_column: old_snapshot.max_expansion_column,
             version: new_version,
         };
@@ -196,7 +231,7 @@ impl TabMap {
 #[derive(Clone)]
 pub struct TabSnapshot {
     pub fold_snapshot: FoldSnapshot,
-    pub tab_size: NonZeroU32,
+    indentation_settings: PerBufferIndentationSettings,
     /// The maximum column up to which a tab can expand.
     /// Any tab after this column will not expand.
     pub max_expansion_column: u32,
@@ -317,7 +352,8 @@ impl TabSnapshot {
             max_expansion_column: self.max_expansion_column,
             output_position: range.start.0,
             max_output_position: range.end.0,
-            tab_size: self.tab_size,
+            current_indentation_settings_row: None,
+            current_indentation_settings: self.indentation_settings.0,
             chunk: Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
                 is_tab: true,
@@ -365,7 +401,11 @@ impl TabSnapshot {
     pub fn fold_point_to_tab_point(&self, input: FoldPoint) -> TabPoint {
         let chunks = self.fold_snapshot.chunks_at(FoldPoint::new(input.row(), 0));
         let tab_cursor = TabStopCursor::new(chunks);
-        let expanded = self.expand_tabs(tab_cursor, input.column());
+        let expanded = self.expand_tabs(
+            tab_cursor,
+            input.column(),
+            self.indentation_settings_for_row(input.row()),
+        );
         TabPoint::new(input.row(), expanded)
     }
 
@@ -382,8 +422,12 @@ impl TabSnapshot {
 
         let tab_cursor = TabStopCursor::new(chunks);
         let expanded = output.column();
-        let (collapsed, expanded_char_column, to_next_stop) =
-            self.collapse_tabs(tab_cursor, expanded, bias);
+        let (collapsed, expanded_char_column, to_next_stop) = self.collapse_tabs(
+            tab_cursor,
+            expanded,
+            bias,
+            self.indentation_settings_for_row(output.row()),
+        );
 
         (
             FoldPoint::new(output.row(), collapsed),
@@ -414,12 +458,17 @@ impl TabSnapshot {
     }
 
     #[ztracing::instrument(skip_all)]
-    fn expand_tabs<'a>(&self, mut cursor: TabStopCursor<'a>, column: u32) -> u32 {
+    fn expand_tabs<'a>(
+        &self,
+        mut cursor: TabStopCursor<'a>,
+        column: u32,
+        indentation_settings: IndentationSettings,
+    ) -> u32 {
         // we only ever act on a single row at a time
         // so the main difference is that other layers build a transform sumtree, and can then just run through that
         // we cant quite do this here, as we need to work with the previous layer chunk to understand the tabs of the corresponding row
         // we can still do forward searches for this though, we search for a row, then traverse the column up to where we need to be
-        let tab_size = self.tab_size.get();
+        let tab_size = indentation_settings.tab_width().min(MAX_TABS).get();
 
         let end_column = column.min(self.max_expansion_column);
         let mut seek_target = end_column;
@@ -454,8 +503,9 @@ impl TabSnapshot {
         mut cursor: TabStopCursor<'a>,
         column: u32,
         bias: Bias,
+        indentation_settings: IndentationSettings,
     ) -> (u32, u32, u32) {
-        let tab_size = self.tab_size.get();
+        let tab_size = indentation_settings.tab_width().min(MAX_TABS).get();
         let mut collapsed_column = column;
         let mut seek_target = column.min(self.max_expansion_column);
         let mut tab_count = 0;
@@ -502,6 +552,27 @@ impl TabSnapshot {
             expanded_chars,
             0,
         )
+    }
+
+    fn indentation_settings_for_row(&self, row: u32) -> IndentationSettings {
+        if self.indentation_settings.1.is_empty() {
+            return self.indentation_settings.0;
+        }
+
+        let inlay_point = FoldPoint::new(row, 0).to_inlay_point(&self.fold_snapshot);
+        let buffer_point = self
+            .fold_snapshot
+            .inlay_snapshot
+            .to_buffer_point(inlay_point);
+        self.buffer_snapshot()
+            .point_to_buffer_point(buffer_point)
+            .and_then(|(buffer, _)| {
+                self.indentation_settings
+                    .1
+                    .get(&buffer.remote_id())
+                    .copied()
+            })
+            .unwrap_or(self.indentation_settings.0)
     }
 }
 
@@ -605,7 +676,8 @@ pub struct TabChunks<'a> {
     snapshot: &'a TabSnapshot,
     max_expansion_column: u32,
     max_output_position: Point,
-    tab_size: NonZeroU32,
+    current_indentation_settings_row: Option<u32>,
+    current_indentation_settings: IndentationSettings,
     // region: iteration state
     fold_chunks: FoldChunks<'a>,
     chunk: Chunk<'a>,
@@ -640,6 +712,8 @@ impl TabChunks<'_> {
         self.column = expanded_char_column;
         self.output_position = range.start.0;
         self.max_output_position = range.end.0;
+        self.current_indentation_settings_row = None;
+        self.current_indentation_settings = self.snapshot.indentation_settings.0;
         self.chunk = Chunk {
             text: unsafe { std::str::from_utf8_unchecked(&SPACES[..to_next_stop as usize]) },
             is_tab: true,
@@ -675,7 +749,16 @@ impl<'a> Iterator for TabChunks<'a> {
             self.chunk.newlines >>= 1;
 
             let tab_size = if self.input_column < self.max_expansion_column {
-                self.tab_size.get()
+                if self.current_indentation_settings_row != Some(self.output_position.row) {
+                    self.current_indentation_settings_row = Some(self.output_position.row);
+                    self.current_indentation_settings = self
+                        .snapshot
+                        .indentation_settings_for_row(self.output_position.row);
+                }
+                self.current_indentation_settings
+                    .tab_width()
+                    .min(MAX_TABS)
+                    .get()
             } else {
                 1
             };
@@ -944,7 +1027,7 @@ mod tests {
             column: u32,
             bias: Bias,
         ) -> (u32, u32, u32) {
-            let tab_size = self.tab_size.get();
+            let tab_size = self.indentation_settings.0.tab_width().min(MAX_TABS).get();
 
             let mut expanded_bytes = 0;
             let mut expanded_chars = 0;
@@ -997,7 +1080,7 @@ mod tests {
         }
 
         fn expected_expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
-            let tab_size = self.tab_size.get();
+            let tab_size = self.indentation_settings.0.tab_width().min(MAX_TABS).get();
 
             let mut expanded_chars = 0;
             let mut expanded_bytes = 0;
@@ -1143,7 +1226,7 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         tab_snapshot.max_expansion_column = rng.random_range(0..323);
-        tab_snapshot.tab_size = tab_size;
+        tab_snapshot.indentation_settings.0 = IndentationSettings::new(tab_size, tab_size, false);
 
         for (ix, _) in input.char_indices() {
             let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
