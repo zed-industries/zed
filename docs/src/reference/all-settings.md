@@ -5693,6 +5693,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "fallback_branch_name": "main",
     "sort_by": "path",
     "group_by": "status",
+    "tree_view": false,
+    "directory_diff_stats": false,
     "collapse_untracked_diff": false,
     "scrollbar": {
       "show": null

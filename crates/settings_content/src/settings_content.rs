@@ -765,6 +765,12 @@ pub struct GitPanelSettingsContent {
     /// Default: true
     pub diff_stats: Option<bool>,
 
+    /// Whether to show the cumulative addition/deletion change count next to
+    /// directories in the git panel tree view.
+    ///
+    /// Default: false
+    pub directory_diff_stats: Option<bool>,
+
     /// Whether to show a badge on the git panel icon with the count of uncommitted changes.
     ///
     /// Default: false
