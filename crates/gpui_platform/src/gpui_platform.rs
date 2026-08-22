@@ -38,9 +38,7 @@ pub fn embedded_platform() -> anyhow::Result<Rc<dyn EmbeddedPlatform>> {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        Err(anyhow::anyhow!(
-            "embedded GPUI platforms are not implemented on Linux or FreeBSD"
-        ))
+        gpui_linux::embedded_platform()
     }
 
     #[cfg(target_family = "wasm")]
@@ -319,5 +317,114 @@ mod windows_tests {
         }
 
         assert!(completed.get(), "the updated frames did not finish");
+    }
+}
+
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
+mod linux_tests {
+    use super::*;
+    use gpui::{App, Context, Render, Window, WindowOptions, div, prelude::*, rgb};
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
+
+    struct SmokeView {
+        updated: bool,
+        updated_frames: usize,
+        quit_scheduled: bool,
+        completed: Rc<Cell<bool>>,
+    }
+
+    impl Render for SmokeView {
+        fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            if self.updated {
+                self.updated_frames += 1;
+                if self.updated_frames < 2 {
+                    window.request_animation_frame();
+                } else if !self.quit_scheduled {
+                    self.quit_scheduled = true;
+                    let completed = self.completed.clone();
+                    window.on_next_frame(move |_, cx| {
+                        completed.set(true);
+                        cx.quit();
+                    });
+                }
+            }
+
+            div().size_full().bg(if self.updated {
+                rgb(0x22aa44)
+            } else {
+                rgb(0xaa2244)
+            })
+        }
+    }
+
+    fn embedded_smoke(expected_compositor: &str) {
+        assert_eq!(
+            gpui::guess_compositor(),
+            expected_compositor,
+            "run this smoke test inside the requested compositor"
+        );
+
+        let platform = embedded_platform().expect("failed to construct embedded Linux platform");
+        let application = gpui::Application::with_platform(platform.clone().into_platform());
+        let completed = Rc::new(Cell::new(false));
+        let completed_for_app = completed.clone();
+
+        let _app = application.run_embedded(move |cx: &mut App| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|_| SmokeView {
+                    updated: false,
+                    updated_frames: 0,
+                    quit_scheduled: false,
+                    completed: completed_for_app,
+                });
+                let view_to_update = view.clone();
+
+                window.on_next_frame(move |window, _| {
+                    window.on_next_frame(move |_, cx| {
+                        view_to_update.update(cx, |view, cx| {
+                            view.updated = true;
+                            cx.notify();
+                        });
+                    });
+                });
+
+                view
+            })
+            .expect("failed to open smoke-test window");
+            cx.activate(true);
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let pump_started = Instant::now();
+            let active = platform.pump_events();
+            assert!(
+                pump_started.elapsed() < Duration::from_secs(2),
+                "embedded Linux pump blocked"
+            );
+            if !active {
+                break;
+            }
+            assert!(Instant::now() < deadline, "embedded Linux smoke timed out");
+            std::thread::yield_now();
+        }
+
+        assert!(completed.get(), "the updated frames did not finish");
+    }
+
+    #[test]
+    #[ignore = "opens a real X11 window and requires Xvfb or an X server plus graphics services"]
+    fn x11_embedded_platform_presents_updated_frames_without_blocking() {
+        embedded_smoke("X11");
+    }
+
+    #[test]
+    #[ignore = "opens a real Wayland window and requires a compositor plus graphics services"]
+    fn wayland_embedded_platform_presents_updated_frames_without_blocking() {
+        embedded_smoke("Wayland");
     }
 }

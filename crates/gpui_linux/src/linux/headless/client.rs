@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use calloop::{EventLoop, LoopHandle};
 use gpui_util::ResultExt;
@@ -139,5 +140,30 @@ impl LinuxClient for HeadlessClient {
             .expect("App is already running");
 
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
+    }
+
+    fn pump_events(&self) -> bool {
+        let mut state = self.0.borrow_mut();
+        state
+            .common
+            .assert_main_thread("HeadlessClient::pump_events");
+        if state.common.event_loop_stopped() {
+            return false;
+        }
+        let mut event_loop = state.event_loop.take().expect(
+            "HeadlessClient::pump_events called re-entrantly or while the loop is blocking",
+        );
+        drop(state);
+
+        let result = event_loop.dispatch(Some(Duration::ZERO), &mut self.clone());
+
+        let mut state = self.0.borrow_mut();
+        state.event_loop = Some(event_loop);
+        if let Err(error) = result {
+            log::error!("headless embedded event dispatch failed: {error:?}");
+            state.common.stop_event_loop();
+            return false;
+        }
+        !state.common.event_loop_stopped()
     }
 }

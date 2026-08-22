@@ -1,17 +1,15 @@
 use std::{
+    cell::Cell,
     env,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
+    thread::{self, ThreadId},
 };
 #[cfg(any(feature = "wayland", feature = "x11"))]
-use std::{
-    ffi::OsString,
-    fs::File,
-    io::Read as _,
-    os::fd::{AsFd, AsRawFd},
-    time::Duration,
-};
+use std::{ffi::OsString, fs::File, os::fd::AsFd, time::Duration};
+#[cfg(feature = "wayland")]
+use std::{io::Read as _, os::fd::AsRawFd};
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use anyhow::ensure;
@@ -25,8 +23,8 @@ use xkbcommon::xkb::{self, Keycode, Keysym, State};
 use crate::linux::{LinuxDispatcher, PriorityQueueCalloopReceiver};
 use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    EmbeddedPlatform, ForegroundExecutor, Keymap, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, RunnableVariant, Task, ThermalState, WindowAppearance,
     WindowButtonLayout, WindowParams,
 };
@@ -94,6 +92,11 @@ pub(crate) trait LinuxClient {
     fn active_window(&self) -> Option<AnyWindowHandle>;
     fn window_stack(&self) -> Option<Vec<AnyWindowHandle>>;
     fn run(&self);
+    fn pump_events(&self) -> bool;
+
+    fn assert_main_thread(&self, operation: &str) {
+        self.with_common(|common| common.assert_main_thread(operation));
+    }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     fn window_identifier(
@@ -133,6 +136,8 @@ pub(crate) struct LinuxCommon {
     )]
     wake_sender: Sender<()>,
     wake_listener_started: bool,
+    main_thread_id: ThreadId,
+    event_loop_stopped: bool,
 }
 
 impl LinuxCommon {
@@ -172,6 +177,8 @@ impl LinuxCommon {
             ),
             wake_sender,
             wake_listener_started: false,
+            main_thread_id: thread::current().id(),
+            event_loop_stopped: false,
         };
 
         (common, main_receiver, wake_receiver)
@@ -199,6 +206,23 @@ impl LinuxCommon {
             callback();
             self.callbacks.system_wake = Some(callback);
         }
+    }
+
+    pub(crate) fn assert_main_thread(&self, operation: &str) {
+        assert_eq!(
+            thread::current().id(),
+            self.main_thread_id,
+            "{operation} must run on the thread that created the Linux client"
+        );
+    }
+
+    pub(crate) fn stop_event_loop(&mut self) {
+        self.event_loop_stopped = true;
+        self.signal.stop();
+    }
+
+    pub(crate) fn event_loop_stopped(&self) -> bool {
+        self.event_loop_stopped
     }
 }
 
@@ -228,6 +252,109 @@ async fn listen_for_system_wake(wake_sender: Sender<()>) -> anyhow::Result<()> {
 
 pub(crate) struct LinuxPlatform<P> {
     pub(crate) inner: P,
+    mode: Cell<LinuxPlatformMode>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinuxPlatformMode {
+    Blocking,
+    Embedded(EmbeddedLifecycle),
+}
+
+#[cfg_attr(not(any(feature = "wayland", feature = "x11")), allow(dead_code))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EmbeddedLifecycle {
+    Ready,
+    Running,
+    Launched,
+    Terminated,
+}
+
+impl EmbeddedLifecycle {
+    fn begin_run(self) -> Self {
+        match self {
+            Self::Ready => Self::Running,
+            _ => panic!("embedded LinuxPlatform can only run once"),
+        }
+    }
+
+    fn begin_pump(self) -> Option<Self> {
+        match self {
+            Self::Ready => panic!("pump_events requires Platform::run first"),
+            Self::Running => panic!("pump_events must not run re-entrantly"),
+            Self::Launched => Some(Self::Running),
+            Self::Terminated => None,
+        }
+    }
+
+    fn finish(self) -> (Self, bool) {
+        match self {
+            Self::Running => (Self::Launched, true),
+            Self::Terminated => (Self::Terminated, false),
+            _ => unreachable!("embedded event loop returned from an invalid state"),
+        }
+    }
+}
+
+impl<P: LinuxClient> LinuxPlatform<P> {
+    pub(crate) fn new(inner: P) -> Self {
+        Self {
+            inner,
+            mode: Cell::new(LinuxPlatformMode::Blocking),
+        }
+    }
+
+    #[cfg_attr(not(any(feature = "wayland", feature = "x11")), allow(dead_code))]
+    pub(crate) fn new_embedded(inner: P) -> Self {
+        inner.assert_main_thread("LinuxPlatform::new_embedded");
+        Self {
+            inner,
+            mode: Cell::new(LinuxPlatformMode::Embedded(EmbeddedLifecycle::Ready)),
+        }
+    }
+
+    fn finish_embedded_run(&self) -> bool {
+        let LinuxPlatformMode::Embedded(lifecycle) = self.mode.get() else {
+            unreachable!("only embedded platforms finish an embedded event loop")
+        };
+        let (lifecycle, active) = lifecycle.finish();
+        self.mode.set(LinuxPlatformMode::Embedded(lifecycle));
+        active
+    }
+
+    fn invoke_quit_callback(&self) {
+        let quit = self
+            .inner
+            .with_common(|common| common.callbacks.quit.take());
+        if let Some(mut callback) = quit {
+            callback();
+        }
+    }
+
+    pub(crate) fn pump_events(&self) -> bool {
+        self.inner.assert_main_thread("LinuxPlatform::pump_events");
+
+        let lifecycle = match self.mode.get() {
+            LinuxPlatformMode::Blocking => panic!("pump_events requires embedded_platform"),
+            LinuxPlatformMode::Embedded(lifecycle) => lifecycle,
+        };
+        let Some(lifecycle) = lifecycle.begin_pump() else {
+            self.invoke_quit_callback();
+            return false;
+        };
+        self.mode.set(LinuxPlatformMode::Embedded(lifecycle));
+
+        if !self.inner.pump_events() {
+            self.mode
+                .set(LinuxPlatformMode::Embedded(EmbeddedLifecycle::Terminated));
+        }
+
+        let active = self.finish_embedded_run();
+        if !active {
+            self.invoke_quit_callback();
+        }
+        active
+    }
 }
 
 impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
@@ -265,20 +392,38 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
+        let embedded = match self.mode.get() {
+            LinuxPlatformMode::Blocking => false,
+            LinuxPlatformMode::Embedded(lifecycle) => {
+                self.inner.assert_main_thread("embedded LinuxPlatform::run");
+                self.mode
+                    .set(LinuxPlatformMode::Embedded(lifecycle.begin_run()));
+                true
+            }
+        };
+
         on_finish_launching();
 
-        LinuxClient::run(&self.inner);
-
-        let quit = self
-            .inner
-            .with_common(|common| common.callbacks.quit.take());
-        if let Some(mut fun) = quit {
-            fun();
+        if embedded {
+            if !self.finish_embedded_run() {
+                self.invoke_quit_callback();
+            }
+            return;
         }
+
+        LinuxClient::run(&self.inner);
+        self.invoke_quit_callback();
     }
 
     fn quit(&self) {
-        self.inner.with_common(|common| common.signal.stop());
+        self.inner.with_common(|common| common.stop_event_loop());
+        if matches!(
+            self.mode.get(),
+            LinuxPlatformMode::Embedded(EmbeddedLifecycle::Running | EmbeddedLifecycle::Launched)
+        ) {
+            self.mode
+                .set(LinuxPlatformMode::Embedded(EmbeddedLifecycle::Terminated));
+        }
     }
 
     fn compositor_name(&self) -> &'static str {
@@ -751,6 +896,16 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
     fn add_recent_document(&self, _path: &Path) {}
 }
 
+impl<P: LinuxClient + 'static> EmbeddedPlatform for LinuxPlatform<P> {
+    fn into_platform(self: Rc<Self>) -> Rc<dyn Platform> {
+        self
+    }
+
+    fn pump_events(&self) -> bool {
+        LinuxPlatform::pump_events(self)
+    }
+}
+
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn open_uri_internal(
     executor: BackgroundExecutor,
@@ -873,10 +1028,10 @@ pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::S
     state
 }
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
+#[cfg(feature = "wayland")]
 pub(super) const PIPE_READ_TIMEOUT: Duration = Duration::from_secs(4);
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
+#[cfg(feature = "wayland")]
 pub(super) fn read_fd_with_timeout(
     mut fd: filedescriptor::FileDescriptor,
     timeout: Duration,
@@ -1261,7 +1416,64 @@ pub(super) fn compositor_gpu_hint_from_dev_t(dev: u64) -> Option<gpui_wgpu::Comp
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::linux::HeadlessClient;
     use gpui::{Point, px};
+    use std::cell::Cell;
+
+    #[test]
+    fn embedded_headless_lifecycle_launches_and_quits_once() {
+        let platform = LinuxPlatform::new_embedded(HeadlessClient::new());
+        let launched = Rc::new(Cell::new(0));
+        let quit = Rc::new(Cell::new(0));
+
+        platform.on_quit(Box::new({
+            let quit = quit.clone();
+            move || quit.set(quit.get() + 1)
+        }));
+        Platform::run(
+            &platform,
+            Box::new({
+                let launched = launched.clone();
+                move || launched.set(launched.get() + 1)
+            }),
+        );
+
+        assert_eq!(launched.get(), 1);
+        assert!(platform.pump_events());
+
+        Platform::quit(&platform);
+        assert!(!platform.pump_events());
+        assert!(!platform.pump_events());
+        assert_eq!(quit.get(), 1);
+    }
+
+    #[test]
+    fn embedded_lifecycle_runs_once_and_stops_pumping() {
+        let running = EmbeddedLifecycle::Ready.begin_run();
+        assert_eq!(running, EmbeddedLifecycle::Running);
+
+        let (launched, active) = running.finish();
+        assert_eq!(launched, EmbeddedLifecycle::Launched);
+        assert!(active);
+        assert_eq!(launched.begin_pump(), Some(EmbeddedLifecycle::Running));
+        assert_eq!(EmbeddedLifecycle::Terminated.begin_pump(), None);
+        assert_eq!(
+            EmbeddedLifecycle::Terminated.finish(),
+            (EmbeddedLifecycle::Terminated, false)
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "pump_events requires Platform::run first")]
+    fn embedded_lifecycle_rejects_pump_before_run() {
+        EmbeddedLifecycle::Ready.begin_pump();
+    }
+
+    #[test]
+    #[should_panic(expected = "pump_events must not run re-entrantly")]
+    fn embedded_lifecycle_rejects_reentrant_pump() {
+        EmbeddedLifecycle::Running.begin_pump();
+    }
 
     #[cfg(any(feature = "wayland", feature = "x11"))]
     #[test]
@@ -1298,7 +1510,7 @@ mod tests {
         ),);
     }
 
-    #[cfg(any(feature = "wayland", feature = "x11"))]
+    #[cfg(feature = "wayland")]
     mod read_fd_with_timeout {
         use super::super::{PIPE_READ_TIMEOUT, read_fd_with_timeout};
         use std::io::Write as _;
