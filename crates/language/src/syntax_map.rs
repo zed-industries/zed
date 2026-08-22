@@ -1724,32 +1724,50 @@ pub(crate) fn splice_included_ranges(
         let next_new_range = new_ranges.peek();
         let next_removed_range = removed_ranges.peek();
 
-        let (remove, insert) = match (next_removed_range, next_new_range) {
-            (None, None) => break,
-            (Some(_), None) => (removed_ranges.next().unwrap(), None),
-            (Some(next_removed_range), Some(next_new_range)) => {
-                if next_removed_range.end < next_new_range.start_byte {
-                    (removed_ranges.next().unwrap(), None)
-                } else {
-                    let mut start = next_new_range.start_byte;
-                    let mut end = next_new_range.end_byte;
+        if next_removed_range.is_none()
+            && let Some(next_new_range) = next_new_range
+        {
+            let start_ix = ranges_ix
+                + ranges[ranges_ix..]
+                    .partition_point(|range| range.end_byte <= next_new_range.start_byte);
+            let end_ix = start_ix
+                + ranges[start_ix..]
+                    .partition_point(|range| range.start_byte < next_new_range.end_byte);
+            ranges.splice(start_ix..end_ix, new_ranges.next());
+            let changed_start = changed_portion
+                .as_ref()
+                .map_or(start_ix, |range| range.start.min(start_ix));
+            let changed_end = changed_portion
+                .as_ref()
+                .map_or(start_ix + 1, |range| range.end.max(start_ix + 1));
+            changed_portion = Some(changed_start..changed_end);
+            ranges_ix = start_ix;
+            continue;
+        }
 
-                    while let Some(next_removed_range) = removed_ranges.peek() {
-                        if next_removed_range.start > next_new_range.end_byte {
-                            break;
-                        }
-                        let next_removed_range = removed_ranges.next().unwrap();
-                        start = cmp::min(start, next_removed_range.start);
-                        end = cmp::max(end, next_removed_range.end);
+        let Some(next_removed_range) = next_removed_range else {
+            break;
+        };
+        let (remove, insert) = if let Some(next_new_range) = next_new_range {
+            if next_removed_range.end < next_new_range.start_byte {
+                (removed_ranges.next().unwrap(), None)
+            } else {
+                let mut start = next_new_range.start_byte;
+                let mut end = next_new_range.end_byte;
+
+                while let Some(next_removed_range) = removed_ranges.peek() {
+                    if next_removed_range.start > next_new_range.end_byte {
+                        break;
                     }
-
-                    (start..end, Some(new_ranges.next().unwrap()))
+                    let next_removed_range = removed_ranges.next().unwrap();
+                    start = cmp::min(start, next_removed_range.start);
+                    end = cmp::max(end, next_removed_range.end);
                 }
+
+                (start..end, Some(new_ranges.next().unwrap()))
             }
-            (None, Some(next_new_range)) => (
-                next_new_range.start_byte..next_new_range.end_byte,
-                Some(new_ranges.next().unwrap()),
-            ),
+        } else {
+            (removed_ranges.next().unwrap(), None)
         };
 
         let mut start_ix = ranges_ix
