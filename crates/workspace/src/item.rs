@@ -1458,6 +1458,7 @@ pub mod test {
         pub reload_count: usize,
         pub is_dirty: bool,
         pub buffer_kind: ItemBufferKind,
+        can_split: bool,
         pub has_conflict: bool,
         pub has_deleted_file: bool,
         pub capability: Capability,
@@ -1554,6 +1555,7 @@ pub mod test {
                 capability: Capability::ReadWrite,
                 project_items: Vec::new(),
                 buffer_kind: ItemBufferKind::Singleton,
+                can_split: true,
                 nav_history: None,
                 tab_descriptions: None,
                 tab_detail: Default::default(),
@@ -1577,6 +1579,11 @@ pub mod test {
 
         pub fn with_buffer_kind(mut self, buffer_kind: ItemBufferKind) -> Self {
             self.buffer_kind = buffer_kind;
+            self
+        }
+
+        pub fn with_can_split(mut self, can_split: bool) -> Self {
+            self.can_split = can_split;
             self
         }
 
@@ -1723,7 +1730,7 @@ pub mod test {
         }
 
         fn can_split(&self) -> bool {
-            true
+            self.can_split
         }
 
         fn clone_on_split(
@@ -1744,6 +1751,7 @@ pub mod test {
                     reload_count: self.reload_count,
                     is_dirty: self.is_dirty,
                     buffer_kind: self.buffer_kind,
+                    can_split: self.can_split,
                     has_conflict: self.has_conflict,
                     has_deleted_file: self.has_deleted_file,
                     capability: self.capability,
