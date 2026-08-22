@@ -3418,6 +3418,11 @@ pub async fn copy_recursive<'a>(
     target: &'a Path,
     options: CopyOptions,
 ) -> Result<()> {
+    if !target.starts_with(source) {
+        return copy_recursive_streaming(fs, source, target, options).await;
+    }
+
+    // Snapshot the source tree when copying into itself so newly-created targets are not revisited.
     for (item, is_dir) in read_dir_items(fs, source).await? {
         let Ok(item_relative_path) = item.strip_prefix(source) else {
             continue;
@@ -3450,6 +3455,64 @@ pub async fn copy_recursive<'a>(
         }
     }
     Ok(())
+}
+
+fn copy_recursive_streaming<'a>(
+    fs: &'a dyn Fs,
+    source: &'a Path,
+    target: &'a Path,
+    options: CopyOptions,
+) -> BoxFuture<'a, Result<()>> {
+    use futures::future::FutureExt;
+
+    async move {
+        let metadata = fs
+            .metadata(source)
+            .await?
+            .with_context(|| format!("path does not exist: {source:?}"))?;
+
+        if !metadata.is_dir {
+            return fs.copy_file(source, target, options).await;
+        }
+
+        let target_exists = fs
+            .metadata(target)
+            .await
+            .is_ok_and(|metadata| metadata.is_some());
+        if target_exists && !options.overwrite {
+            if options.ignore_if_exists {
+                return Ok(());
+            }
+            anyhow::bail!("{target:?} already exists");
+        }
+
+        if target_exists {
+            fs.remove_dir(
+                target,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+        }
+        fs.create_dir(target).await?;
+
+        let mut children = fs.read_dir(source).await?;
+        while let Some(child_path) = children.next().await {
+            let Ok(child_path) = child_path else {
+                continue;
+            };
+            let Some(file_name) = child_path.file_name() else {
+                continue;
+            };
+            let child_target = target.join(file_name);
+            copy_recursive_streaming(fs, &child_path, &child_target, options).await?;
+        }
+
+        Ok(())
+    }
+    .boxed()
 }
 
 /// Recursively reads all of the paths in the given directory.
