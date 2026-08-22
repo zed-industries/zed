@@ -2181,6 +2181,18 @@ impl ProjectPanel {
         });
     }
 
+    fn open_entry_from_click(
+        &mut self,
+        entry_id: ProjectEntryId,
+        click_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let preview_tabs_enabled =
+            PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
+        let allow_preview = preview_tabs_enabled && click_count == 1;
+        self.open_entry(entry_id, true, allow_preview, cx);
+    }
+
     fn split_entry(
         &mut self,
         entry_id: ProjectEntryId,
@@ -6129,12 +6141,7 @@ impl ProjectPanel {
                             project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
-                        let preview_tabs_enabled =
-                            PreviewTabsSettings::get_global(cx).enable_preview_from_project_panel;
-                        let click_count = event.click_count();
-                        let focus_opened_item = click_count > 1;
-                        let allow_preview = preview_tabs_enabled && click_count == 1;
-                        project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                        project_panel.open_entry_from_click(entry_id, event.click_count(), cx);
                     }
                 }),
             )
