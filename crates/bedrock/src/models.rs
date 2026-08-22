@@ -958,8 +958,8 @@ impl MantleModel {
         match self {
             Self::Gpt5_6Sol
             | Self::Gpt5_6Terra
-            | Self::Gpt5_6Luna
-            | Self::Gpt5_5
+            | Self::Gpt5_6Luna => 1_000_000,
+            Self::Gpt5_5
             | Self::Gpt5_4 => 272_000,
             Self::Grok4_3 => 1_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
