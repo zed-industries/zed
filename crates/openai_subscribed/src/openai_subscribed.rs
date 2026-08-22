@@ -422,8 +422,16 @@ impl ChatGptModel {
 
     fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
+            Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 1_000_000,
             Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
+            Self::Discovered(model)
+                if matches!(
+                    model.id.as_str(),
+                    "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna"
+                ) =>
+            {
+                1_000_000
+            }
             Self::Discovered(model) => model.max_token_count,
         }
     }
@@ -1323,6 +1331,30 @@ mod tests {
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn test_gpt_56_models_use_one_million_token_context_window() {
+        for model in [
+            ChatGptModel::Gpt56Sol,
+            ChatGptModel::Gpt56Terra,
+            ChatGptModel::Gpt56Luna,
+        ] {
+            assert_eq!(model.max_token_count(), 1_000_000);
+        }
+
+        for id in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            let discovered_model = ChatGptModel::Discovered(Box::new(DiscoveredChatGptModel {
+                id: id.to_string(),
+                display_name: id.to_string(),
+                max_token_count: 372_000,
+                supports_images: true,
+                default_reasoning_effort: Some(ReasoningEffort::Low),
+                supported_reasoning_efforts: vec![ReasoningEffort::Low],
+                supports_priority: true,
+            }));
+            assert_eq!(discovered_model.max_token_count(), 1_000_000);
+        }
+    }
 
     #[gpui::test]
     async fn test_concurrent_refresh_deduplicates(cx: &mut TestAppContext) {
