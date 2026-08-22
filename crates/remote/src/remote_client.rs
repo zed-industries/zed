@@ -138,6 +138,7 @@ pub trait RemoteClientDelegate: Send + Sync {
         &self,
         prompt: String,
         tx: oneshot::Sender<EncryptedPassword>,
+        cancellation: oneshot::Receiver<()>,
         cx: &mut AsyncApp,
     );
     fn get_download_url(
@@ -928,7 +929,7 @@ impl RemoteClient {
     }
 
     fn set_state(&mut self, state: State, cx: &mut Context<Self>) {
-        log::info!("setting state to '{}'", &state);
+        log::info!("setting state to '{state}'");
 
         let is_reconnect_exhausted = state.is_reconnect_exhausted();
         let is_server_not_running = state.is_server_not_running();

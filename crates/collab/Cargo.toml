@@ -42,14 +42,12 @@ envy = "0.4.2"
 futures.workspace = true
 gpui.workspace = true
 hex.workspace = true
-http_client.workspace = true
 livekit_api.workspace = true
 log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
 prometheus = "0.14"
 prost.workspace = true
-rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
 rpc.workspace = true
 # sea-orm and sea-orm-macros versions must match exactly.
@@ -74,9 +72,8 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-agent = { workspace = true, features = ["test-support"] }
-async-trait.workspace = true
 async-channel.workspace = true
+async-trait.workspace = true
 
 buffer_diff.workspace = true
 call = { workspace = true, features = ["test-support"] }
@@ -101,6 +98,7 @@ git_hosting_providers.workspace = true
 git_ui = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
+http_client.workspace = true
 
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
@@ -113,7 +111,7 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-prompt_store.workspace = true
+rand.workspace = true
 recent_projects = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
@@ -123,11 +121,10 @@ sea-orm = { version = "=1.1.10", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
-smol.workspace = true
 sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
-theme_settings = { workspace = true, features = ["test-support"] }
 theme.workspace = true
+theme_settings = { workspace = true, features = ["test-support"] }
 title_bar = { workspace = true, features = ["test-support"] }
 
 unindent.workspace = true
@@ -136,3 +133,6 @@ workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 zed_actions.workspace = true
 zlog.workspace = true
+
+[package.metadata.cargo-shear]
+ignored = ["sea-orm-macros"]

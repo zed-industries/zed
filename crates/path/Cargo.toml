@@ -18,6 +18,7 @@ serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
+pretty_assertions.workspace = true
 
 [lints]
 workspace = true

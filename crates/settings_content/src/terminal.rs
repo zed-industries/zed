@@ -137,6 +137,10 @@ pub struct TerminalSettingsContent {
     /// Default: true
     pub button: Option<bool>,
     pub dock: Option<TerminalDockPosition>,
+    /// Whether the terminal panel should open on startup.
+    ///
+    /// Default: false
+    pub starts_open: Option<bool>,
     /// Whether the terminal panel should use flexible (proportional) sizing.
     ///
     /// Default: true
@@ -144,13 +148,11 @@ pub struct TerminalSettingsContent {
     /// Default width when the terminal is docked to the left or right.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// Default height when the terminal is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_height: Option<f32>,
+    pub default_height: Option<crate::PixelSetting>,
     /// The maximum number of lines to keep in the scrollback history.
     /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
     /// 0 disables the scrolling.
