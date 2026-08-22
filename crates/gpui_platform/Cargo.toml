@@ -21,6 +21,7 @@ wayland = ["gpui_linux/wayland"]
 x11 = ["gpui_linux/x11"]
 
 [dependencies]
+anyhow.workspace = true
 gpui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -340,6 +340,17 @@ pub trait Platform: 'static {
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 }
 
+/// A native platform whose event loop is driven by an external host.
+pub trait EmbeddedPlatform: Platform {
+    /// Converts this handle to the same platform object used by [`Application`](crate::Application).
+    fn into_platform(self: Rc<Self>) -> Rc<dyn Platform>;
+
+    /// Processes pending native events without waiting for new work.
+    ///
+    /// Returns `false` after the native application terminates.
+    fn pump_events(&self) -> bool;
+}
+
 /// A handle to a platform's display, e.g. a monitor or laptop screen.
 pub trait PlatformDisplay: Debug {
     /// Get the ID for this display

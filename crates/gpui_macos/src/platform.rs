@@ -35,9 +35,9 @@ use ctor::ctor;
 use dispatch2::DispatchQueue;
 use futures::channel::oneshot;
 use gpui::{
-    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, ForegroundExecutor,
-    KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, EmbeddedPlatform,
+    ForegroundExecutor, KeyContext, Keymap, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions,
+    Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
     PlatformWindow, Result, SystemMenuType, Task, ThermalState, WindowAppearance, WindowKind,
     WindowParams, popup::PopupNotSupportedError,
 };
@@ -1410,6 +1410,16 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
+    }
+}
+
+impl EmbeddedPlatform for MacPlatform {
+    fn into_platform(self: Rc<Self>) -> Rc<dyn Platform> {
+        self
+    }
+
+    fn pump_events(&self) -> bool {
+        MacPlatform::pump_events(self)
     }
 }
 

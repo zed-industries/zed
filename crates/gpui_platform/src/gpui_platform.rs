@@ -1,7 +1,7 @@
-//! Convenience crate that re-exports GPUI's platform traits and the
-//! `current_platform` constructor so consumers don't need `#[cfg]` gating.
+//! Cross-platform constructors for normal, headless, and externally driven
+//! GPUI platforms, without OS-specific `#[cfg]` gating in consumers.
 
-pub use gpui::Platform;
+pub use gpui::{EmbeddedPlatform, Platform};
 
 use std::rc::Rc;
 
@@ -22,6 +22,33 @@ pub fn application() -> gpui::Application {
 
 pub fn headless() -> gpui::Application {
     gpui::Application::with_platform(current_platform(true))
+}
+
+/// Returns a native platform whose event loop can be pumped by an external host.
+pub fn embedded_platform() -> anyhow::Result<Rc<dyn EmbeddedPlatform>> {
+    #[cfg(target_os = "macos")]
+    {
+        Ok(Rc::new(gpui_macos::MacPlatform::new_embedded()))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Ok(Rc::new(gpui_windows::WindowsPlatform::new_embedded()?))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        Err(anyhow::anyhow!(
+            "embedded GPUI platforms are not implemented on Linux or FreeBSD"
+        ))
+    }
+
+    #[cfg(target_family = "wasm")]
+    {
+        Err(anyhow::anyhow!(
+            "embedded GPUI platforms are not available on WebAssembly"
+        ))
+    }
 }
 
 #[cfg(target_family = "wasm")]
@@ -203,5 +230,94 @@ mod tests {
 
         // Now the task should have run
         assert!(*task_ran.borrow());
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+    use gpui::{App, Context, Render, Window, WindowOptions, div, prelude::*, rgb};
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
+
+    struct SmokeView {
+        updated: bool,
+        updated_frames: usize,
+        quit_scheduled: bool,
+        completed: Rc<Cell<bool>>,
+    }
+
+    impl Render for SmokeView {
+        fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            if self.updated {
+                self.updated_frames += 1;
+                if self.updated_frames < 2 {
+                    window.request_animation_frame();
+                } else if !self.quit_scheduled {
+                    self.quit_scheduled = true;
+                    let completed = self.completed.clone();
+                    window.on_next_frame(move |_, cx| {
+                        completed.set(true);
+                        cx.quit();
+                    });
+                }
+            }
+
+            div().size_full().bg(if self.updated {
+                rgb(0x22aa44)
+            } else {
+                rgb(0xaa2244)
+            })
+        }
+    }
+
+    #[test]
+    #[ignore = "opens a real HWND and requires Windows graphics services"]
+    fn embedded_platform_presents_updated_frames_without_blocking() {
+        let platform = embedded_platform().expect("failed to construct embedded Windows platform");
+        let application = gpui::Application::with_platform(platform.clone().into_platform());
+        let completed = Rc::new(Cell::new(false));
+        let completed_for_app = completed.clone();
+
+        let _app = application.run_embedded(move |cx: &mut App| {
+            cx.open_window(WindowOptions::default(), move |window, cx| {
+                let view = cx.new(|_| SmokeView {
+                    updated: false,
+                    updated_frames: 0,
+                    quit_scheduled: false,
+                    completed: completed_for_app,
+                });
+                let view_to_update = view.clone();
+
+                // The first callback permits the initial frame to present. The second
+                // changes state before the next frame, then Render requests one more.
+                window.on_next_frame(move |window, _| {
+                    window.on_next_frame(move |_, cx| {
+                        view_to_update.update(cx, |view, cx| {
+                            view.updated = true;
+                            cx.notify();
+                        });
+                    });
+                });
+
+                view
+            })
+            .expect("failed to open smoke-test window");
+            cx.activate(true);
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while platform.pump_events() {
+            assert!(
+                Instant::now() < deadline,
+                "embedded Windows smoke timed out"
+            );
+            std::thread::yield_now();
+        }
+
+        assert!(completed.get(), "the updated frames did not finish");
     }
 }
