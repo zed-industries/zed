@@ -133,6 +133,123 @@ async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext
 }
 
 #[gpui::test]
+async fn test_local_semantic_tokens_request_uses_matching_dynamic_registration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/semanticTokens";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let matching_options = lsp::SemanticTokensRegistrationOptions {
+        text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+            document_selector: Some(vec![lsp::DocumentFilter {
+                language: Some("rust".to_string()),
+                scheme: Some("file".to_string()),
+                pattern: None,
+            }]),
+        },
+        semantic_tokens_options: lsp::SemanticTokensOptions {
+            legend: lsp::SemanticTokensLegend {
+                token_types: vec!["keyword".into()],
+                token_modifiers: Vec::new(),
+            },
+            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: Some(true) }),
+            ..lsp::SemanticTokensOptions::default()
+        },
+        static_registration_options: lsp::StaticRegistrationOptions::default(),
+    };
+    let nonmatching_options = lsp::SemanticTokensRegistrationOptions {
+        text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+            document_selector: Some(vec![lsp::DocumentFilter {
+                language: Some("rust".to_string()),
+                scheme: Some("untitled".to_string()),
+                pattern: None,
+            }]),
+        },
+        semantic_tokens_options: lsp::SemanticTokensOptions {
+            legend: lsp::SemanticTokensLegend {
+                token_types: vec!["keyword".into()],
+                token_modifiers: Vec::new(),
+            },
+            full: Some(lsp::SemanticTokensFullOptions::Bool(false)),
+            ..lsp::SemanticTokensOptions::default()
+        },
+        static_registration_options: lsp::StaticRegistrationOptions::default(),
+    };
+
+    register_capability(
+        &fake_server,
+        method,
+        "file-semantic-tokens",
+        serde_json::to_value(matching_options).ok(),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "untitled-semantic-tokens",
+        serde_json::to_value(nonmatching_options).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    let aggregate_options = match server_capabilities(&project, server_id, cx)
+        .semantic_tokens_provider
+        .expect("expected the later registration to become the aggregate capability")
+    {
+        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options,
+        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+            options.semantic_tokens_options
+        }
+    };
+    assert_eq!(
+        aggregate_options.full,
+        Some(lsp::SemanticTokensFullOptions::Bool(false)),
+        "expected the nonmatching registration to make the aggregate capability reject full requests",
+    );
+
+    let semantic_token_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+        let semantic_token_request_count = semantic_token_request_count.clone();
+        move |params, _| {
+            semantic_token_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Uri::from_file_path(path!("/the-root/a.rs")).unwrap()
+            );
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens::default(),
+                )))
+            }
+        }
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        semantic_token_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the matching registration to route a full semantic tokens request",
+    );
+}
+
+#[gpui::test]
 async fn test_multi_registration_inlay_hint(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let (project, fake_server) =
