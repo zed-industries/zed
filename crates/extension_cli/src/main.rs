@@ -521,12 +521,10 @@ fn test_languages(
                         let query_source = fs::read_to_string(&file_path)?;
                         let _query = Query::new(grammar, &query_source)?;
                     } else if file_name.ends_with(".scm") {
-                        bail!(
-                            "unrecognized query found: Query {file_name} is not supported by Zed and should be removed"
-                        )
+                        bail!("query {file_name} is not supported by Zed and should be removed")
                     } else if !context.is_known_resource(&file_path) {
                         bail!(
-                            "file {file_name} is not recognized within languages and should be removed"
+                            "'{file_name}' is not a supported file in a language directory and should be removed"
                         )
                     }
                 }
