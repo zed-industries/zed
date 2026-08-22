@@ -260,7 +260,8 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         LanguageServerName("eslint".into()),
         eslint_adapter.clone(),
     );
-    languages.register_available_lsp_adapter(LanguageServerName("vtsls".into()), vtsls_adapter);
+    languages
+        .register_available_lsp_adapter(LanguageServerName("vtsls".into()), vtsls_adapter.clone());
     languages.register_available_lsp_adapter(
         LanguageServerName("typescript-language-server".into()),
         typescript_lsp_adapter,
@@ -293,6 +294,12 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     for language in eslint_languages {
         languages.register_lsp_adapter(language.into(), eslint_adapter.clone());
     }
+
+    // Hybrid Vue architecture (volar 3.x): vtsls + @vue/typescript-plugin
+    // renders TS completions/diagnostics inside .vue, so vtsls must
+    // start for Vue.js buffers, just like VS Code / Neovim do.
+    //
+    languages.register_lsp_adapter(LanguageName::new_static("Vue.js"), vtsls_adapter.clone());
 
     let mut subscription = languages.subscribe();
     let mut prev_language_settings = languages.language_settings();
