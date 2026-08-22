@@ -3351,9 +3351,19 @@ async fn synthetic_drag(
         if let Some(window_state) = window_state.upgrade() {
             let mut lock = window_state.lock();
             if lock.synthetic_drag_counter == drag_id {
+                // Modifiers may have changed since the drag event we're replaying.
+                let modifiers = match &lock.previous_modifiers_changed_event {
+                    Some(PlatformInput::ModifiersChanged(modifiers_changed)) => {
+                        modifiers_changed.modifiers
+                    }
+                    _ => event.modifiers,
+                };
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
-                    callback(PlatformInput::MouseMove(event.clone()));
+                    callback(PlatformInput::MouseMove(MouseMoveEvent {
+                        modifiers,
+                        ..event.clone()
+                    }));
                     window_state.lock().event_callback = Some(callback);
                 }
             } else {

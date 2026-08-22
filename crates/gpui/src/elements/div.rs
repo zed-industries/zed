@@ -4462,6 +4462,74 @@ mod tests {
         assert_eq!(*hover_transitions.borrow(), [true]);
     }
 
+    struct MouseUpTestView {
+        mouse_up_count: Rc<Cell<usize>>,
+    }
+
+    impl Render for MouseUpTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mouse_up_count = self.mouse_up_count.clone();
+            div()
+                .size_full()
+                .child(div().id("mouse-up-target").size(px(20.)).on_mouse_up(
+                    MouseButton::Left,
+                    move |_, _, _| {
+                        mouse_up_count.set(mouse_up_count.get() + 1);
+                    },
+                ))
+        }
+    }
+
+    #[gpui::test]
+    fn mouse_up_listeners_fire_when_button_released_after_keystroke(cx: &mut TestAppContext) {
+        let mouse_up_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let mouse_up_count = mouse_up_count.clone();
+            move |_, _| MouseUpTestView { mouse_up_count }
+        });
+        let any_window = AnyWindowHandle::from(window);
+        let mouse_position = point(px(10.), px(10.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(mouse_position, cx);
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                KeyDownEvent {
+                    keystroke: Keystroke::parse("tab").unwrap(),
+                    is_held: false,
+                    prefer_character_input: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(window.last_input_was_keyboard());
+            window.dispatch_event(
+                MouseUpEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(!window.last_input_was_keyboard());
+        })
+        .unwrap();
+        assert_eq!(mouse_up_count.get(), 1);
+    }
+
     struct TestTooltipView;
 
     impl Render for TestTooltipView {
