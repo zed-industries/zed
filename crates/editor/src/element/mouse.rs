@@ -981,6 +981,26 @@ impl EditorElement {
         }
     }
 
+    // Coalesces selection updates to once per frame instead of once per mouse-move (zed-industries/zed#53711).
+    fn queue_selection_drag_update(
+        editor: &mut Editor,
+        update: SelectPhase,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if editor.pending_selection_drag_update.is_none() {
+            let this = cx.entity();
+            window.on_next_frame(move |window, cx| {
+                this.update(cx, |editor, cx| {
+                    if let Some(update) = editor.pending_selection_drag_update.take() {
+                        editor.select(update, window, cx);
+                    }
+                });
+            });
+        }
+        editor.pending_selection_drag_update = Some(update);
+    }
+
     fn mouse_dragged(
         editor: &mut Editor,
         event: &MouseMoveEvent,
@@ -1090,7 +1110,8 @@ impl EditorElement {
                             window,
                             cx,
                         );
-                        editor.select(
+                        Self::queue_selection_drag_update(
+                            editor,
                             SelectPhase::Update {
                                 position: point_for_position.nearest_valid,
                                 goal_column: point_for_position.exact_unclipped.column(),
@@ -1104,7 +1125,8 @@ impl EditorElement {
                 _ => {}
             }
         } else {
-            editor.select(
+            Self::queue_selection_drag_update(
+                editor,
                 SelectPhase::Update {
                     position: point_for_position.nearest_valid,
                     goal_column: point_for_position.exact_unclipped.column(),
