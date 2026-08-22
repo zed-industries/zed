@@ -1760,6 +1760,16 @@ This setting enables integration with macOS’s native window tabbing feature. W
 
 `boolean` values
 
+## Keybinding Sequence Timeout
+
+- Description: Time to wait in milliseconds before resolving a keybinding that is also the prefix of a longer keybinding.
+- Setting: `keybinding_sequence_timeout_ms`
+- Default: `1000`
+
+**Options**
+
+Positive `integer` values
+
 ## Line Ending
 
 - Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.

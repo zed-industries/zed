@@ -1273,6 +1273,7 @@ struct PendingInput {
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
     needs_timeout: bool,
+    needs_keybinding_sequence_timeout: bool,
 }
 
 pub(crate) struct ElementStateBox {
@@ -5334,10 +5335,16 @@ impl Window {
 
             currently_pending.needs_timeout |=
                 match_result.pending_has_binding || text_input_requires_timeout;
+            currently_pending.needs_keybinding_sequence_timeout |= match_result.pending_has_binding;
 
             if currently_pending.needs_timeout {
+                let timeout = if currently_pending.needs_keybinding_sequence_timeout {
+                    cx.keybinding_sequence_timeout()
+                } else {
+                    Duration::from_secs(1)
+                };
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                    cx.background_executor.timer(Duration::from_secs(1)).await;
+                    cx.background_executor.timer(timeout).await;
                     cx.update(move |window, cx| {
                         let Some(currently_pending) = window
                             .pending_input
