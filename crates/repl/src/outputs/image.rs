@@ -3,7 +3,10 @@ use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig},
 };
-use gpui::{App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, Window, img};
+use gpui::{
+    App, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, SMOOTH_SVG_SCALE_FACTOR, Window,
+    img,
+};
 use settings::Settings as _;
 use std::sync::Arc;
 use ui::{IntoElement, Styled, prelude::*};
@@ -67,6 +70,27 @@ impl ImageView {
             height,
             width,
             image: Arc::new(gpui_image_data),
+        })
+    }
+
+    pub fn from_svg(svg: &str, cx: &App) -> Result<Self> {
+        // SVG is vector text rather than a raster format, so it goes through
+        // GPUI's SVG renderer instead of the `image` crate used above.
+        let image = Image::from_bytes(ImageFormat::Svg, svg.as_bytes().to_vec());
+        let render_image = image.to_image_data(cx.svg_renderer())?;
+
+        // The SVG renderer rasterizes at SMOOTH_SVG_SCALE_FACTOR for crispness,
+        // so the pixel dimensions are scaled up from the logical size we want
+        // to lay out at.
+        let size = render_image.size(0);
+        let width = (size.width.0.max(0) as f32 / SMOOTH_SVG_SCALE_FACTOR).round() as u32;
+        let height = (size.height.0.max(0) as f32 / SMOOTH_SVG_SCALE_FACTOR).round() as u32;
+
+        Ok(ImageView {
+            clipboard_image: Arc::new(image),
+            height,
+            width,
+            image: render_image,
         })
     }
 
@@ -155,6 +179,16 @@ mod tests {
         }
 
         base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
+
+    #[gpui::test]
+    async fn test_image_view_from_svg_uses_intrinsic_size(cx: &mut gpui::TestAppContext) {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="red"/></svg>"#;
+        let view = cx
+            .update(|cx| ImageView::from_svg(svg, cx))
+            .expect("valid SVG should render");
+        assert_eq!(view.width, 120);
+        assert_eq!(view.height, 80);
     }
 
     #[test]
