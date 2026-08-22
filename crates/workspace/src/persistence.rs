@@ -3527,6 +3527,59 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_workspace_roundtrip_preserves_folder_order() {
+        let db = WorkspaceDb::open_test_db("test_workspace_roundtrip_preserves_folder_order").await;
+
+        // Folders in the order the user arranged them, which is not lexicographic.
+        let paths = PathList::new(&["/zed", "/api", "/mono"]);
+        let workspace = SerializedWorkspace {
+            id: WorkspaceId(1),
+            paths: paths.clone(),
+            identity_paths: Some(paths),
+            location: SerializedWorkspaceLocation::Local,
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: Some(1),
+            user_toolchains: Default::default(),
+        };
+
+        db.save_workspace(workspace).await;
+
+        // A workspace is looked up by its path set, in any order...
+        let restored = db.workspace_for_roots(&["/api", "/mono", "/zed"]).unwrap();
+
+        // ...but reopening it has to restore the folders in the user's order,
+        // since that is the order the worktrees are created in.
+        assert_eq!(
+            restored.paths.ordered_paths().collect::<Vec<_>>(),
+            [
+                &PathBuf::from("/zed"),
+                &PathBuf::from("/api"),
+                &PathBuf::from("/mono"),
+            ]
+        );
+        assert_eq!(
+            restored
+                .identity_paths
+                .as_ref()
+                .unwrap()
+                .ordered_paths()
+                .collect::<Vec<_>>(),
+            [
+                &PathBuf::from("/zed"),
+                &PathBuf::from("/api"),
+                &PathBuf::from("/mono"),
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_session_workspaces() {
         zlog::init_test();
 
