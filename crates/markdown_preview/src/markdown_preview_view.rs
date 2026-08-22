@@ -766,6 +766,15 @@ impl MarkdownPreviewView {
         }
     }
 
+    fn select_all(
+        &mut self,
+        _: &editor::actions::SelectAll,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.dispatch_action(Box::new(markdown::SelectAll), cx);
+    }
+
     fn reset_font_size(
         &mut self,
         action: &ResetBufferFontSize,
@@ -1667,6 +1676,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
             .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
             .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
+            .on_action(cx.listener(MarkdownPreviewView::select_all))
             .w_full()
             .flex_1()
             .min_h_0()

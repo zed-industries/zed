@@ -538,7 +538,9 @@ actions!(
         /// Copies the selected text to the clipboard.
         Copy,
         /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
+        CopyAsMarkdown,
+        /// Selects everything in the markdown preview
+        SelectAll
     ]
 );
 
@@ -1132,6 +1134,11 @@ impl Markdown {
             .parsed_markdown
             .rebalanced_markdown_for_selection(self.selection.start..self.selection.end);
         cx.write_to_clipboard(ClipboardItem::new_string(text));
+    }
+
+    fn select_all(&mut self, text: &RenderedText, _: &mut Window, _: &mut Context<Self>) {
+        self.selection.mode = SelectMode::All;
+        self.selection.set_head(0, text);
     }
 
     fn capture_for_context_menu(
@@ -3210,6 +3217,16 @@ impl Element for MarkdownElement {
             move |_, phase, window, cx| {
                 if phase == DispatchPhase::Bubble {
                     entity.update(cx, move |this, cx| this.copy_as_markdown(window, cx))
+                }
+            }
+        });
+        window.on_action(std::any::TypeId::of::<crate::SelectAll>(), {
+            let entity = self.markdown.clone();
+            let text = rendered_markdown.text.clone();
+            move |_, phase, window, cx| {
+                let text = text.clone();
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, move |this, cx| this.select_all(&text, window, cx))
                 }
             }
         });
@@ -5961,6 +5978,67 @@ mod tests {
             selected_text,
             "Hello world\nThis is a test\nwith multiple lines"
         );
+    }
+
+    fn render_markdown_and_dispatch_select_all(
+        markdown_source: &str,
+        cx: &mut TestAppContext,
+    ) -> Entity<Markdown> {
+        ensure_theme_initialized(cx);
+
+        struct TestView {
+            markdown: Entity<Markdown>,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div().size_full().child(MarkdownElement::new(
+                    self.markdown.clone(),
+                    MarkdownStyle::default(),
+                ))
+            }
+        }
+
+        let markdown = cx.new(|cx| Markdown::new(markdown_source.into(), None, None, cx));
+        let window = cx.open_window(size(px(400.), px(400.)), |_, _| TestView {
+            markdown: markdown.clone(),
+        });
+        cx.run_until_parked();
+
+        let focus_handle = markdown.read_with(cx, |md, cx| md.focus_handle(cx));
+        window
+            .update(cx, |_, window, cx| window.focus(&focus_handle, cx))
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(crate::SelectAll), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        markdown
+    }
+
+    #[gpui::test]
+    fn test_select_all_action_dispatch(cx: &mut TestAppContext) {
+        let source = "Hello\n\nworld\n\n\n";
+        let markdown = render_markdown_and_dispatch_select_all(source, cx);
+
+        markdown.read_with(cx, |md, _| {
+            // Newlines shouldn't be part of rendered text length
+            assert_eq!(md.selection.start..md.selection.end, 0..12,);
+        });
+    }
+
+    #[gpui::test]
+    fn test_select_all_empty_document(cx: &mut TestAppContext) {
+        let markdown = render_markdown_and_dispatch_select_all("", cx);
+
+        markdown.read_with(cx, |md, _| {
+            assert_eq!(md.selection.start, 0);
+            assert_eq!(md.selection.end, 0);
+        });
     }
 
     fn nbsp(n: usize) -> String {
