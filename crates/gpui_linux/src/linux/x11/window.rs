@@ -68,6 +68,8 @@ x11rb::atom_manager! {
         _NET_WM_STATE_HIDDEN,
         _NET_WM_STATE_FOCUSED,
         _NET_ACTIVE_WINDOW,
+        _NET_CURRENT_DESKTOP,
+        _NET_WM_DESKTOP,
         _NET_WM_SYNC_REQUEST,
         _NET_WM_SYNC_REQUEST_COUNTER,
         _NET_WM_BYPASS_COMPOSITOR,
