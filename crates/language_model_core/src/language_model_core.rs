@@ -183,9 +183,10 @@ pub enum LanguageModelCompletionError {
         #[source]
         error: http::Error,
     },
-    #[error("error sending HTTP request to {provider} API")]
+    #[error("error sending HTTP request to {host} for {provider}")]
     HttpSend {
         provider: LanguageModelProviderName,
+        host: String,
         #[source]
         error: anyhow::Error,
     },

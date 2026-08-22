@@ -26,7 +26,7 @@ use gpui::{
 use indoc::indoc;
 use language::{
     BracketPair, BracketPairConfig,
-    Capability::ReadWrite,
+    Capability::{Read, ReadOnly, ReadWrite},
     ContextLocation, ContextProvider, DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings,
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
     LanguageToolchainStore, Override, PLAIN_TEXT, Point,
@@ -15442,6 +15442,344 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_read_only_buffer_is_not_formatted_or_saved(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), b"one\ntwo\nthree\n".to_vec())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let format_request_count = Arc::new(AtomicUsize::new(0));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let format_request_count = format_request_count.clone();
+                move |fake_server| {
+                    let format_request_count = format_request_count.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |_, _| {
+                            let format_request_count = format_request_count.clone();
+                            async move {
+                                format_request_count.fetch_add(1, atomic::Ordering::Release);
+                                Ok(Some(vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 3),
+                                        lsp::Position::new(1, 0),
+                                    ),
+                                    ", ".to_string(),
+                                )]))
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    fake_servers.next().await.unwrap();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(format_request_count.load(atomic::Ordering::Acquire), 0);
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_read_only_buffer_can_be_saved_as(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let save_as = editor.update_in(cx, |editor, window, cx| {
+        editor.save_as(
+            project.clone(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path("copy.rs").into(),
+            },
+            window,
+            cx,
+        )
+    });
+    save_as.await.unwrap();
+
+    assert_eq!(
+        fs.load(path!("/dir/copy.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/dir/file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_format_and_save_skip_read_only_buffers_in_multi_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "one\ntwo\nthree\n",
+            "other.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let formatted_uris = Arc::new(Mutex::new(Vec::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let formatted_uris = formatted_uris.clone();
+                move |fake_server| {
+                    let formatted_uris = formatted_uris.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |params, _| {
+                            let formatted_uris = formatted_uris.clone();
+                            async move {
+                                formatted_uris.lock().push(params.text_document.uri.clone());
+                                Ok(Some(vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 3),
+                                        lsp::Position::new(1, 0),
+                                    ),
+                                    ", ".to_string(),
+                                )]))
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let writable_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let read_only_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/other.rs"), cx)
+        })
+        .await
+        .unwrap();
+    read_only_buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            writable_buffer.clone(),
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            read_only_buffer.clone(),
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    fake_servers.next().await.unwrap();
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| editor.format(&Format, window, cx))
+        .unwrap();
+    format.await.unwrap();
+
+    assert_eq!(
+        *formatted_uris.lock(),
+        vec![lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()]
+    );
+    writable_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one, two\nthree\n");
+    });
+    read_only_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\ntwo\nthree\n");
+    });
+
+    read_only_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "dirty ")], None, cx);
+    });
+    assert_eq!(
+        read_only_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+        true
+    );
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        fs.load(path!("/a/main.rs").as_ref()).await.unwrap(),
+        "one, two\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/a/other.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_save_actions_are_hidden_for_read_only_files(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), b"one\ntwo\nthree\n".to_vec())
+        .await;
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fn save_actions_visible(cx: &mut VisualTestContext) -> (bool, bool, bool, bool) {
+        let actions = cx.update(|window, cx| window.available_actions(cx));
+        let visible = |name: &str| actions.iter().any(|action| action.name() == name);
+        (
+            visible("workspace::Save"),
+            visible("workspace::FormatAndSave"),
+            visible("workspace::SaveWithoutFormat"),
+            visible("workspace::SaveAs"),
+        )
+    }
+
+    assert_eq!(save_actions_visible(cx), (true, true, true, true));
+
+    buffer.update(cx, |buffer, cx| buffer.set_capability(ReadOnly, cx));
+    cx.run_until_parked();
+    assert_eq!(save_actions_visible(cx), (false, false, false, true));
+
+    buffer.update(cx, |buffer, cx| buffer.set_capability(ReadWrite, cx));
+    cx.run_until_parked();
+    assert_eq!(save_actions_visible(cx), (true, true, true, true));
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -16228,160 +16566,6 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     );
 }
 
-async fn setup_range_format_test_with_capabilities(
-    cx: &mut TestAppContext,
-    capabilities: lsp::ServerCapabilities,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file(path!("/file.rs"), Default::default()).await;
-
-    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities,
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-    });
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    (project, editor, cx, fake_server)
-}
-
-async fn setup_range_format_test(
-    cx: &mut TestAppContext,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    setup_range_format_test_with_capabilities(
-        cx,
-        lsp::ServerCapabilities {
-            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..lsp::ServerCapabilities::default()
-        },
-    )
-    .await
-}
-
-/// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
-/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
-/// `head_content` sets the HEAD base, `index_content` sets the staged base.
-/// The buffer starts empty; the caller must `editor.set_text(...)` to set the
-/// working-tree content (the diff recomputes from buffer changes).
-async fn setup_range_format_test_with_git<'a>(
-    cx: &'a mut TestAppContext,
-    head_content: &str,
-    index_content: &str,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &'a mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({
-            ".git": {},
-            "file.rs": "",
-        }),
-    )
-    .await;
-
-    fs.set_head_for_repo(
-        std::path::Path::new(path!("/project/.git")),
-        &[("file.rs", head_content.to_string())],
-        "deadbeef",
-    );
-    fs.set_index_for_repo(
-        std::path::Path::new(path!("/project/.git")),
-        &[("file.rs", index_content.to_string())],
-    );
-
-    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-                document_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..lsp::ServerCapabilities::default()
-            },
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/project/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    // Open the unstaged diff so GitStore tracks this buffer. Without this,
-    // `get_unstaged_diff` returns None and compute_format_target cannot
-    // produce range-based FormatTarget.
-    project
-        .update(cx, |project, cx| {
-            project.open_unstaged_diff(buffer.clone(), cx)
-        })
-        .await
-        .unwrap();
-
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-    });
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    (project, editor, cx, fake_server)
-}
-
-fn refresh_editor_actions(cx: &mut VisualTestContext) {
-    cx.executor().run_until_parked();
-    cx.update(|window, cx| {
-        let _ = window.draw(cx);
-    });
-}
-
 #[gpui::test]
 async fn test_format_selections_action_available_when_range_formatting_is_supported(
     cx: &mut TestAppContext,
@@ -16899,6 +17083,129 @@ async fn test_modifications_format_multiple_hunks(cx: &mut TestAppContext) {
         "line0\nLINE1!\nline2\nline3\nLINE4!\nline5\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_overlapping_range_responses(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![vec![lsp_line_edit(0, 6, "fmt0\nfmt1\nfmt2\nfmt3\nfmt4\nfmt5\n")]],
+        "fmt0\nfmt1\nfmt2\nfmt3\nfmt4\nfmt5\n",
+        "a response covering the second hunk must suppress its request and must not duplicate the formatted block",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_divergent_overlapping_responses(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(1, 3, "one\ntwo\n")],
+            vec![lsp_line_edit(2, 5, "TWO\nthree\nfour\n")],
+        ],
+        "line0\none\ntwo\nline3\nLINE4\nline5\n",
+        "the first edit must win and the divergent overlapping edit must be dropped without corrupting the buffer",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_partially_overlapping_response_dropped_atomically(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(1, 2, "one\n")],
+            vec![
+                lsp_line_edit(4, 5, "four\n"),
+                lsp_line_edit(1, 2, "ONE\n"),
+            ],
+        ],
+        "line0\none\nline2\nline3\nLINE4\nline5\n",
+        "a response with any divergent overlapping edit must be dropped whole, including its non-overlapping edits",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_overlapping_edits_within_one_response(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nline4\nline5\n",
+        vec![vec![
+            lsp_line_edit(1, 2, "one\n"),
+            lsp_line_edit(1, 2, "uno\n"),
+        ]],
+        "line0\none\nline2\nline3\nline4\nline5\n",
+        "the later overlapping edit within one response must be dropped",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_same_position_inserts_within_one_response(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\n",
+        "line0\nLINE1\nline2\n",
+        vec![vec![
+            lsp_line_edit(1, 1, "alpha\n"),
+            lsp_line_edit(1, 1, "beta\n"),
+        ]],
+        "line0\nalpha\nbeta\nLINE1\nline2\n",
+        "multiple inserts at one position within one response are valid per the LSP spec and must all apply in array order",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_divergent_same_position_inserts_across_responses(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(4, 4, "alpha\n")],
+            vec![lsp_line_edit(4, 4, "beta\n")],
+        ],
+        "line0\nLINE1\nline2\nline3\nalpha\nLINE4\nline5\n",
+        "a later response inserting different text at the same position diverges and must be dropped",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_insert_touching_kept_edit_across_responses(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![
+                lsp_line_edit(1, 2, "one\n"),
+                lsp_line_edit(4, 4, "alpha\n"),
+            ],
+            vec![lsp_line_edit(4, 5, "alpha\nfour\n")],
+        ],
+        "line0\none\nline2\nline3\nalpha\nLINE4\nline5\n",
+        "an edit touching a kept insert at its boundary can duplicate the inserted text and must be dropped as divergent",
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -36776,7 +37083,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     use std::sync::atomic::AtomicU32;
     use std::time::Duration;
 
-    const BASE_TIMEOUT_SECS: u64 = 1;
+    const BASE_TIMEOUT: Duration = Duration::from_secs(1);
 
     let request_count = Arc::new(AtomicU32::new(0));
     let closure_request_count = request_count.clone();
@@ -36791,7 +37098,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
-                    request_timeout: Some(BASE_TIMEOUT_SECS),
+                    request_timeout: Some(BASE_TIMEOUT.as_secs()),
                     max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
@@ -36826,9 +37133,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
                     move |params, cx| {
                         let request_count = request_count.clone();
                         async move {
-                            cx.background_executor()
-                                .timer(Duration::from_secs(BASE_TIMEOUT_SECS * 2))
-                                .await;
+                            cx.background_executor().timer(BASE_TIMEOUT * 2).await;
                             let count = request_count.fetch_add(1, atomic::Ordering::Release) + 1;
                             assert_eq!(
                                 params.text_document.uri,
@@ -36864,7 +37169,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -36881,7 +37186,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         .into_response()
         .unwrap();
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -36896,7 +37201,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
-                    request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    request_timeout: Some(BASE_TIMEOUT.as_secs() * 4),
                     max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
@@ -36911,7 +37216,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         .into_response()
         .unwrap();
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT * 4 + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -43363,4 +43668,314 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
+}
+
+#[gpui::test]
+async fn test_in_preview_key_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        serde_json::json!({
+            "test.txt": "hello",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(
+                (worktree_id, rel_path("test.txt")),
+                None,
+                true,
+                true,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert!(pane.is_active_preview_item(editor.entity_id()));
+    });
+
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            editor.key_context(window, cx).contains("in_preview"),
+            "Expected 'in_preview' context when the editor is the pane's preview item"
+        );
+    });
+
+    pane.update(cx, |pane, _cx| {
+        pane.unpreview_item_if_preview(editor.entity_id());
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.key_context(window, cx).contains("in_preview"),
+            "Expected no 'in_preview' context after the tab is unpreviewed"
+        );
+    });
+}
+
+async fn setup_range_format_test_with_capabilities(
+    cx: &mut TestAppContext,
+    capabilities: lsp::ServerCapabilities,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+async fn setup_range_format_test(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    setup_range_format_test_with_capabilities(
+        cx,
+        lsp::ServerCapabilities {
+            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await
+}
+
+/// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
+/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
+/// `head_content` sets the HEAD base, `index_content` sets the staged base.
+/// The buffer starts empty; the caller must `editor.set_text(...)` to set the
+/// working-tree content (the diff recomputes from buffer changes).
+async fn setup_range_format_test_with_git<'a>(
+    cx: &'a mut TestAppContext,
+    head_content: &str,
+    index_content: &str,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &'a mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", head_content.to_string())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", index_content.to_string())],
+    );
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Open the unstaged diff so GitStore tracks this buffer. Without this,
+    // `get_unstaged_diff` returns None and compute_format_target cannot
+    // produce range-based FormatTarget.
+    project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+fn refresh_editor_actions(cx: &mut VisualTestContext) {
+    cx.executor().run_until_parked();
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+}
+
+fn lsp_line_edit(start_line: u32, end_line: u32, text: &str) -> lsp::TextEdit {
+    lsp::TextEdit::new(
+        lsp::Range::new(
+            lsp::Position::new(start_line, 0),
+            lsp::Position::new(end_line, 0),
+        ),
+        text.to_string(),
+    )
+}
+
+async fn assert_range_format_merge(
+    cx: &mut TestAppContext,
+    head_content: &str,
+    buffer_text: &str,
+    responses: Vec<Vec<lsp::TextEdit>>,
+    expected_text: &str,
+    description: &str,
+) {
+    let expected_requests = responses.len();
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, head_content).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(buffer_text, window, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let responses = Arc::new(responses);
+    let mut responded_rx =
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>({
+            let request_count = request_count.clone();
+            move |params, _| {
+                let count = request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                let responses = responses.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Uri::from_file_path(path!("/project/file.rs")).unwrap()
+                    );
+                    match responses.get(count) {
+                        Some(edits) => Ok(Some(edits.clone())),
+                        None => panic!("unexpected range formatting request #{}", count + 1),
+                    }
+                }
+            }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    for _ in 0..expected_requests {
+        responded_rx.next().await;
+    }
+    save.await;
+
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        expected_requests,
+        "{description}"
+    );
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        expected_text,
+        "{description}"
+    );
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
 }

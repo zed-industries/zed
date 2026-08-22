@@ -33,5 +33,5 @@ zlog.workspace = true
 name = "rope_benchmark"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

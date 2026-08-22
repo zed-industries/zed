@@ -808,8 +808,12 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, cx.clone()).map(|r| r.log_err()),
+            initialize_agent_panel(workspace_handle.clone(), cx.clone()).map(|r| r.log_err()),
         );
+
+        workspace_handle.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        })?;
 
         anyhow::Ok(())
     })
@@ -1026,10 +1030,11 @@ fn register_actions(
             window.zoom_window();
         })
         .register_action(|_, _: &ToggleFullScreen, window, cx| {
-            let use_simple_fullscreen = window.is_simple_fullscreen()
-                || (!window.is_fullscreen()
-                    && WorkspaceSettings::get_global(cx).fullscreen_mode
-                        == settings::FullscreenMode::Simple);
+            let use_simple_fullscreen = PlatformStyle::platform() == PlatformStyle::Mac
+                && (window.is_simple_fullscreen()
+                    || (!window.is_fullscreen()
+                        && WorkspaceSettings::get_global(cx).fullscreen_mode
+                            == settings::FullscreenMode::Simple));
             if use_simple_fullscreen {
                 window.toggle_simple_fullscreen();
             } else {

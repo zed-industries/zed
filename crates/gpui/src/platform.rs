@@ -64,6 +64,7 @@ use std::io::Cursor;
 use std::ops;
 use std::time::Duration;
 use std::{
+    ffi::OsString,
     fmt::{self, Debug},
     ops::Range,
     path::{Path, PathBuf},
@@ -129,7 +130,7 @@ pub trait Platform: 'static {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>);
     fn quit(&self);
-    fn restart(&self, binary_path: Option<PathBuf>);
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>);
     fn activate(&self, ignoring_other_apps: bool);
     fn hide(&self);
     fn hide_other_apps(&self);
@@ -860,7 +861,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
-    fn completed_frame(&self) {}
+    fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 
