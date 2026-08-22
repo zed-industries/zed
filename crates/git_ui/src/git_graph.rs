@@ -922,9 +922,43 @@ impl GraphData {
             })
     }
 
-    fn allocate_color(&mut self) -> BranchColor {
-        let color = self.next_color;
-        self.next_color = BranchColor((color.0 + 1) % self.accent_colors_count as u8);
+    /// Two lanes that are alive at the same time must not share a color: where
+    /// they meet, a shared color hides which line ends where, and two branches
+    /// can only join while both are still active. Stepping over the colors
+    /// already in use keeps every junction readable for as long as there are
+    /// more colors than live lanes.
+    ///
+    /// Past that point some pair has to share one, and which pair it is
+    /// matters. Falling back to the lane's own column makes two lanes collide
+    /// only when their columns are a whole palette apart, which leaves the
+    /// short hops that most lines make readable. Handing out the next color in
+    /// sequence instead would spread those collisions evenly over every
+    /// distance, including the adjacent lanes that are hardest to tell apart.
+    fn allocate_color(&mut self, lane: ActiveLaneIdx) -> BranchColor {
+        let accent_colors_count = (self.accent_colors_count as u8).max(1);
+        let mut color = self.next_color;
+
+        for _ in 0..accent_colors_count {
+            let in_use = self.lane_states.iter().any(|lane_state| {
+                matches!(
+                    lane_state,
+                    LaneState::Active {
+                        color: Some(lane_color),
+                        ..
+                    } if lane_color.0 == color.0
+                )
+            });
+
+            if !in_use {
+                self.next_color = BranchColor((color.0 + 1) % accent_colors_count);
+                return color;
+            }
+
+            color = BranchColor((color.0 + 1) % accent_colors_count);
+        }
+
+        let color = BranchColor((lane % accent_colors_count as usize) as u8);
+        self.next_color = BranchColor((color.0 + 1) % accent_colors_count);
         color
     }
 
@@ -951,7 +985,7 @@ impl GraphData {
                 Some(LaneState::Active { color, .. }) => *color,
                 _ => None,
             };
-            let commit_color = inherited_color.unwrap_or_else(|| self.allocate_color());
+            let commit_color = inherited_color.unwrap_or_else(|| self.allocate_color(commit_lane));
 
             if let Some(lanes) = self.parent_to_lanes.remove(&commit.sha) {
                 for lane_column in lanes {
@@ -5268,6 +5302,143 @@ mod tests {
 
         if let Err(error) = verify_all_invariants(&graph_data, &commits) {
             panic!("Graph invariant violation for recycled lanes:\n{}", error);
+        }
+    }
+
+    /// A long-lived lane keeps its color for as long as it is drawn, so colors
+    /// handed out while it is alive have to step over it even once the palette
+    /// has wrapped around. Otherwise a branch joining that lane would be drawn
+    /// in the lane's own color and the junction would be unreadable.
+    #[test]
+    fn test_allocated_color_avoids_colors_still_in_use() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let long_lived_tip = Oid::random(&mut rng);
+        let long_lived_root = Oid::random(&mut rng);
+        let first_tip = Oid::random(&mut rng);
+        let first_root = Oid::random(&mut rng);
+        let second_tip = Oid::random(&mut rng);
+        let second_root = Oid::random(&mut rng);
+        let third_tip = Oid::random(&mut rng);
+        let third_root = Oid::random(&mut rng);
+
+        let branch = |sha, parent| {
+            Arc::new(InitialGraphCommitData {
+                sha,
+                parents: smallvec![parent],
+                ref_names: vec![],
+            })
+        };
+        let root = |sha| {
+            Arc::new(InitialGraphCommitData {
+                sha,
+                parents: smallvec![],
+                ref_names: vec![],
+            })
+        };
+
+        let commits = vec![
+            // Holds lane 0, and its color, for the whole graph.
+            branch(long_lived_tip, long_lived_root),
+            // Three short branches that take lane 1 one after another.
+            branch(first_tip, first_root),
+            root(first_root),
+            branch(second_tip, second_root),
+            root(second_root),
+            branch(third_tip, third_root),
+            root(third_root),
+            root(long_lived_root),
+        ];
+
+        // Only three colors, so the third short branch is where the palette
+        // wraps back onto the color lane 0 is still using.
+        let mut graph_data = GraphData::new(3);
+        graph_data.add_commits(&commits);
+
+        let lanes = graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.lane)
+            .collect::<Vec<_>>();
+        let colors = graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.color_idx)
+            .collect::<Vec<_>>();
+
+        assert_eq!(lanes, vec![0, 1, 1, 1, 1, 1, 1, 0]);
+        assert_eq!(colors, vec![0, 1, 1, 2, 2, 1, 1, 0]);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!("Graph invariant violation for color reuse:\n{}", error);
+        }
+    }
+
+    /// Once every color is taken, one has to be reused. Picking it from the
+    /// lane's own column keeps the reuse a whole palette apart, where the next
+    /// color in sequence would have landed it right next to an existing lane.
+    #[test]
+    fn test_exhausted_palette_falls_back_to_the_lane_column() {
+        let mut rng = StdRng::seed_from_u64(42);
+
+        let shas: Vec<Oid> = (0..10).map(|_| Oid::random(&mut rng)).collect();
+        let branch = |sha, parent| {
+            Arc::new(InitialGraphCommitData {
+                sha,
+                parents: smallvec![parent],
+                ref_names: vec![],
+            })
+        };
+        let root = |sha| {
+            Arc::new(InitialGraphCommitData {
+                sha,
+                parents: smallvec![],
+                ref_names: vec![],
+            })
+        };
+
+        let commits = vec![
+            // Four branches against three colors, so the fourth has to reuse
+            // one. It lands on lane 3, which wraps to the color lane 0 holds.
+            branch(shas[0], shas[4]),
+            branch(shas[1], shas[6]),
+            branch(shas[2], shas[7]),
+            branch(shas[3], shas[8]),
+            // Frees lane 0 while lane 3 keeps that lane's color alive, so the
+            // palette stays exhausted.
+            root(shas[4]),
+            // Takes lane 0 back with every color still spoken for.
+            branch(shas[5], shas[9]),
+            root(shas[6]),
+            root(shas[7]),
+            root(shas[8]),
+            root(shas[9]),
+        ];
+
+        let mut graph_data = GraphData::new(3);
+        graph_data.add_commits(&commits);
+
+        let lanes = graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.lane)
+            .collect::<Vec<_>>();
+        let colors = graph_data
+            .commits
+            .iter()
+            .map(|commit| commit.color_idx)
+            .collect::<Vec<_>>();
+
+        assert_eq!(lanes, vec![0, 1, 2, 3, 0, 0, 1, 2, 3, 0]);
+        // Lane 0 wraps to color 0, not to color 1, which is what plain
+        // sequence would have handed out here.
+        assert_eq!(colors, vec![0, 1, 2, 0, 0, 0, 1, 2, 0, 0]);
+
+        if let Err(error) = verify_all_invariants(&graph_data, &commits) {
+            panic!(
+                "Graph invariant violation for exhausted palette:\n{}",
+                error
+            );
         }
     }
 
