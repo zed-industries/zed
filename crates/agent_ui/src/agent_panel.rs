@@ -43,6 +43,7 @@ use crate::terminal_thread_metadata_store::{
     terminal_title_without_prefix,
 };
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
+use crate::threads_archive_view::{ThreadsArchiveView, ThreadsArchiveViewEvent};
 use crate::{
     Agent, AgentInitialContent, AgentThreadSource, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
@@ -50,8 +51,8 @@ use crate::{
 use crate::{
     AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow, LoadThreadFromClipboard,
     NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, ResetFastModeWarnings,
-    ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
-    ToggleNewThreadMenu, ToggleOptionsMenu,
+    ResetTrialEndUpsell, ResetTrialUpsell, SearchThreads, ShowAllSidebarThreadMetadata,
+    ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
@@ -1170,6 +1171,9 @@ pub struct AgentPanel {
     pending_terminal_spawn: Option<TerminalId>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
+    thread_search_view: Option<Entity<ThreadsArchiveView>>,
+    thread_search_previous_focus: Option<FocusHandle>,
+    _thread_search_subscription: Option<Subscription>,
     _extension_subscription: Option<Subscription>,
     _project_subscription: Subscription,
     zoomed: bool,
@@ -1572,6 +1576,9 @@ impl AgentPanel {
             pending_terminal_spawn: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
+            thread_search_view: None,
+            thread_search_previous_focus: None,
+            _thread_search_subscription: None,
 
             _extension_subscription: extension_subscription,
             _project_subscription,
@@ -1746,6 +1753,7 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_thread_search(window, cx);
         if !self.has_open_project(cx) {
             return;
         }
@@ -1773,6 +1781,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_thread_search(window, cx);
         if !self.has_open_project(cx) {
             return;
         }
@@ -4015,6 +4024,99 @@ impl AgentPanel {
         }
     }
 
+    fn focus_or_open_thread_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !AgentSettings::get_global(cx).search_within_agent_panel {
+            cx.propagate();
+            return;
+        }
+
+        if let Some(thread_search_view) = self.thread_search_view.clone() {
+            thread_search_view.update(cx, |view, cx| {
+                view.focus_filter_editor(window, cx);
+            });
+            return;
+        }
+
+        self.thread_search_previous_focus = Some(self.activation_focus_handle(cx));
+
+        let workspace = self.workspace.clone();
+        let agent_connection_store = self.connection_store.downgrade();
+        let agent_server_store = self.project.read(cx).agent_server_store().downgrade();
+        let thread_search_view = cx.new(|cx| {
+            ThreadsArchiveView::new_embedded(
+                workspace,
+                agent_connection_store,
+                agent_server_store,
+                window,
+                cx,
+            )
+        });
+        let subscription = cx.subscribe_in(
+            &thread_search_view,
+            window,
+            |this, _view, event: &ThreadsArchiveViewEvent, window, cx| {
+                this.handle_thread_search_event(event, window, cx);
+            },
+        );
+
+        self.thread_search_view = Some(thread_search_view.clone());
+        self._thread_search_subscription = Some(subscription);
+        thread_search_view.update(cx, |view, cx| {
+            view.focus_filter_editor(window, cx);
+        });
+        cx.notify();
+    }
+
+    fn close_thread_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.thread_search_view.is_none() {
+            return;
+        }
+        let previous_focus = self.thread_search_previous_focus.take();
+        self.thread_search_view = None;
+        self._thread_search_subscription = None;
+        previous_focus
+            .unwrap_or_else(|| self.activation_focus_handle(cx))
+            .focus(window, cx);
+        cx.notify();
+    }
+
+    fn search_threads(&mut self, _: &SearchThreads, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus_or_open_thread_search(window, cx);
+    }
+
+    fn handle_thread_search_event(
+        &mut self,
+        event: &ThreadsArchiveViewEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ThreadsArchiveViewEvent::Close => self.close_thread_search(window, cx),
+            ThreadsArchiveViewEvent::Activate { thread } => {
+                let agent = Agent::from(thread.agent_id.clone());
+                let thread_id = thread.thread_id;
+                let work_dirs = Some(thread.folder_paths().clone());
+                let title = thread.title();
+                self.close_thread_search(window, cx);
+                self.load_agent_thread(
+                    agent,
+                    thread_id,
+                    work_dirs,
+                    title,
+                    true,
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                );
+            }
+            ThreadsArchiveViewEvent::NewThread => {
+                self.close_thread_search(window, cx);
+                self.new_thread(&NewThread, window, cx);
+            }
+            ThreadsArchiveViewEvent::CancelRestore { .. } | ThreadsArchiveViewEvent::Import => {}
+        }
+    }
+
     pub fn conversation_view_for_id(
         &self,
         thread_id: &ThreadId,
@@ -4379,6 +4481,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_thread_search(window, cx);
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| {
                 store.unarchive(thread_id, cx);
@@ -4953,6 +5056,12 @@ impl Panel for AgentPanel {
     }
 
     fn activation_focus_handle(&self, cx: &App) -> FocusHandle {
+        if AgentSettings::get_global(cx).search_within_agent_panel
+            && let Some(thread_search_view) = &self.thread_search_view
+        {
+            return thread_search_view.focus_handle(cx);
+        }
+
         match self.visible_surface() {
             VisibleSurface::Uninitialized => self.focus_handle.clone(),
             VisibleSurface::AgentThread(conversation_view) => {
@@ -5779,10 +5888,12 @@ impl AgentPanel {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
+        let search_focus_handle = focus_handle.clone();
 
         let can_create_entries = self.has_open_project(cx);
         let supports_terminal = self.supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
+        let search_within_agent_panel = AgentSettings::get_global(cx).search_within_agent_panel;
 
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
             (None, SharedString::from("Terminal"))
@@ -6132,6 +6243,29 @@ impl AgentPanel {
                         .flex_none()
                         .gap_1()
                         .children(sandbox_status)
+                        .when(
+                            search_within_agent_panel && can_create_entries && !showing_terminal,
+                            |this| {
+                                this.child(
+                                    IconButton::new("search-threads", IconName::MagnifyingGlass)
+                                        .icon_size(IconSize::Small)
+                                        .toggle_state(self.thread_search_view.is_some())
+                                        .tooltip({
+                                            move |_window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Search Threads",
+                                                    &SearchThreads,
+                                                    &search_focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.focus_or_open_thread_search(window, cx);
+                                        })),
+                                )
+                            },
+                        )
                         .when(can_create_entries, |this| this.child(new_thread_menu))
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
@@ -6422,9 +6556,12 @@ impl AgentPanel {
         }
     }
 
-    fn key_context(&self) -> KeyContext {
+    fn key_context(&self, cx: &App) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
+        if AgentSettings::get_global(cx).search_within_agent_panel {
+            key_context.add("SearchWithinAgentPanel");
+        }
         key_context
     }
 }
@@ -6441,7 +6578,7 @@ impl Render for AgentPanel {
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
-            .key_context(self.key_context())
+            .key_context(self.key_context(cx))
             .relative()
             .size_full()
             .justify_between()
@@ -6460,6 +6597,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
             .on_action(cx.listener(Self::manage_skills))
             .on_action(cx.listener(Self::toggle_options_menu))
+            .on_action(cx.listener(Self::search_threads))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
@@ -6481,41 +6619,49 @@ impl Render for AgentPanel {
             }))
             .child(self.render_toolbar(window, cx))
             .children(self.render_new_user_onboarding(window, cx))
-            .map(|parent| match self.visible_surface() {
-                VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
-                    parent.child(self.render_no_project_state(cx))
-                }
-                VisibleSurface::Uninitialized => parent,
-                VisibleSurface::AgentThread(conversation_view) => parent
-                    .child(conversation_view.clone())
-                    .child(self.render_drag_target(cx)),
-                VisibleSurface::Terminal(terminal_view) => {
-                    let search_bar = self
-                        .active_terminal_id()
-                        .and_then(|terminal_id| self.terminals.get(&terminal_id))
-                        .and_then(|terminal| terminal.search_bar.clone());
-                    let terminal_content = v_flex()
-                        .size_full()
-                        .when_some(search_bar, |this, search_bar| {
-                            this.when(!search_bar.read(cx).is_dismissed(), |this| {
-                                this.child(
-                                    v_flex()
-                                        .group("toolbar")
-                                        .relative()
-                                        .py(DynamicSpacing::Base06.rems(cx))
-                                        .px(DynamicSpacing::Base08.rems(cx))
-                                        .border_b_1()
-                                        .border_color(cx.theme().colors().border_variant)
-                                        .bg(cx.theme().colors().toolbar_background)
-                                        .child(search_bar),
-                                )
-                            })
-                        })
-                        .child(terminal_view.clone());
+            .map(|parent| {
+                if AgentSettings::get_global(cx).search_within_agent_panel
+                    && let Some(thread_search_view) = self.thread_search_view.clone()
+                {
+                    parent.child(thread_search_view)
+                } else {
+                    match self.visible_surface() {
+                        VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
+                            parent.child(self.render_no_project_state(cx))
+                        }
+                        VisibleSurface::Uninitialized => parent,
+                        VisibleSurface::AgentThread(conversation_view) => parent
+                            .child(conversation_view.clone())
+                            .child(self.render_drag_target(cx)),
+                        VisibleSurface::Terminal(terminal_view) => {
+                            let search_bar = self
+                                .active_terminal_id()
+                                .and_then(|terminal_id| self.terminals.get(&terminal_id))
+                                .and_then(|terminal| terminal.search_bar.clone());
+                            let terminal_content = v_flex()
+                                .size_full()
+                                .when_some(search_bar, |this, search_bar| {
+                                    this.when(!search_bar.read(cx).is_dismissed(), |this| {
+                                        this.child(
+                                            v_flex()
+                                                .group("toolbar")
+                                                .relative()
+                                                .py(DynamicSpacing::Base06.rems(cx))
+                                                .px(DynamicSpacing::Base08.rems(cx))
+                                                .border_b_1()
+                                                .border_color(cx.theme().colors().border_variant)
+                                                .bg(cx.theme().colors().toolbar_background)
+                                                .child(search_bar),
+                                        )
+                                    })
+                                })
+                                .child(terminal_view.clone());
 
-                    parent
-                        .child(terminal_content)
-                        .child(self.render_drag_target(cx))
+                            parent
+                                .child(terminal_content)
+                                .child(self.render_drag_target(cx))
+                        }
+                    }
                 }
             })
             .children(self.render_trial_end_upsell(window, cx));
@@ -7572,6 +7718,45 @@ mod tests {
                 "the single initial terminal should become active"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_thread_search_is_gated_by_setting(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel(cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_or_open_thread_search(window, cx);
+        });
+        assert!(
+            panel.read_with(&cx, |panel, _cx| panel.thread_search_view.is_none()),
+            "thread search should remain unavailable when the setting is disabled"
+        );
+
+        cx.update(|_, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    search_within_agent_panel: true,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.focus_or_open_thread_search(window, cx);
+        });
+        assert!(
+            panel.read_with(&cx, |panel, _cx| panel.thread_search_view.is_some()),
+            "thread search should open when the setting is enabled"
+        );
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.close_thread_search(window, cx);
+        });
+        assert!(
+            panel.read_with(&cx, |panel, _cx| panel.thread_search_view.is_none()),
+            "closing thread search should remove the embedded view"
+        );
     }
 
     #[gpui::test]

@@ -322,6 +322,8 @@ actions!(
         ScrollOutputToNextMessage,
         /// Toggles in-thread search over the current agent thread's contents.
         ToggleSearch,
+        /// Opens or focuses search across agent threads.
+        SearchThreads,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
@@ -1012,6 +1014,7 @@ mod tests {
             sandbox_permissions: Default::default(),
             show_turn_stats: false,
             show_merge_conflict_indicator: true,
+            search_within_agent_panel: false,
             sidebar_side: Default::default(),
             thinking_display: Default::default(),
         };

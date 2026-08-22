@@ -341,6 +341,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub show_merge_conflict_indicator: Option<bool>,
+    /// Whether to enable experimental agent panel thread search.
+    ///
+    /// Default: false
+    pub search_within_agent_panel: Option<bool>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
