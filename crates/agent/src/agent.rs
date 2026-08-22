@@ -16,6 +16,7 @@ use context_server::ContextServerId;
 pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
+use parking_lot::Mutex;
 pub use pattern_extraction::*;
 pub use sandboxing::{
     ThreadSandbox, sandbox_worktree_writable_paths, settings_sandbox_policy,
@@ -199,6 +200,15 @@ struct ProjectState {
     _subscriptions: Vec<Subscription>,
 }
 
+/// A thread snapshot captured for persistence. Building it clones the thread's
+/// messages (cheap `Arc` clones) so the background save can serialize without
+/// racing the foreground mutation of the live thread.
+struct PendingThreadSave {
+    id: acp::SessionId,
+    folder_paths: PathList,
+    db_thread: Task<DbThread>,
+}
+
 /// Holds both the internal Thread and the AcpThread for a session
 struct Session {
     /// The internal thread that processes messages
@@ -206,7 +216,13 @@ struct Session {
     /// The ACP thread that handles protocol communication
     acp_thread: Entity<acp_thread::AcpThread>,
     project_id: EntityId,
-    pending_save: Task<Result<()>>,
+    /// Latest snapshot to persist. Overwritten in place on every save request;
+    /// the single save worker drains it, coalescing bursts into one write.
+    pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
+    /// Wakes the save worker once a new snapshot has been written.
+    save_wake: watch::Sender<()>,
+    /// The single coalescing save worker for this session.
+    save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
     ref_count: usize,
 }
@@ -822,14 +838,34 @@ impl NativeAgent {
             }),
         ];
 
+        let (save_wake, save_wake_rx) = watch::channel(());
+        let pending_save: Arc<Mutex<Option<PendingThreadSave>>> = Arc::new(Mutex::new(None));
+        let database_future = ThreadsDatabase::connect(cx);
+        let thread_store = self.thread_store.clone();
+        let save_worker = cx.spawn({
+            let pending_save = pending_save.clone();
+            async move |_this, cx| {
+                Self::run_save_worker(
+                    save_wake_rx,
+                    pending_save,
+                    database_future,
+                    thread_store,
+                    cx,
+                )
+                .await
+            }
+        });
+
         self.sessions.insert(
             session_id,
             Session {
                 thread: thread_handle,
                 acp_thread: acp_thread.clone(),
                 project_id,
+                pending_save,
+                save_wake,
+                save_worker,
                 _subscriptions: subscriptions,
-                pending_save: Task::ready(Ok(())),
                 ref_count,
             },
         );
@@ -1730,7 +1766,7 @@ impl NativeAgent {
             self.publish_skill_index(cx);
         }
 
-        session.pending_save
+        session.save_worker
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
@@ -1742,14 +1778,38 @@ impl NativeAgent {
             return;
         };
 
-        let database_future = ThreadsDatabase::connect(cx);
-        let thread_store = self.thread_store.clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        session.pending_save = cx.spawn(async move |_, cx| {
-            let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
-                return Ok(());
+        *session.pending_save.lock() = Some(PendingThreadSave {
+            id,
+            folder_paths,
+            db_thread,
+        });
+        session.save_wake.send(()).log_err();
+    }
+
+    async fn run_save_worker(
+        mut wake: watch::Receiver<()>,
+        pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
+        database_future: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
+        thread_store: Entity<ThreadStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
+            return Ok(());
+        };
+        loop {
+            if wake.changed().await.is_err() {
+                break;
+            }
+            let Some(PendingThreadSave {
+                id,
+                folder_paths,
+                db_thread,
+            }) = pending_save.lock().take()
+            else {
+                continue;
             };
             let db_thread = db_thread.await;
             database
@@ -1757,8 +1817,8 @@ impl NativeAgent {
                 .await
                 .log_err();
             thread_store.update(cx, |store, cx| store.reload(cx));
-            Ok(())
-        });
+        }
+        Ok(())
     }
 
     /// Builds everything needed to persist a session's thread content,
