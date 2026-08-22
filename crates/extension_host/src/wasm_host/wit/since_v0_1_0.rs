@@ -97,15 +97,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_location_targets_the_worktree_root() {
+    fn settings_location_targets_the_worktree_root() -> anyhow::Result<()> {
         let location = settings_location_from_legacy(Some(&SettingsLocation {
             worktree_id: 42,
             path: "/absolute/worktree/root".to_string(),
         }))
-        .unwrap();
+        .ok_or_else(|| anyhow::anyhow!("legacy settings location was dropped"))?;
 
         assert_eq!(location.worktree_id, WorktreeId::from_proto(42));
         assert_eq!(location.path, RelPath::empty());
+        Ok(())
     }
 }
 
