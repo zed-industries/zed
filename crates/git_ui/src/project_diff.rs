@@ -48,6 +48,8 @@ actions!(
         Diff,
         /// Shows working changes relative to HEAD.
         DiffHead,
+        /// Toggles the git diff base between HEAD and the default branch.
+        ToggleDiffBase,
         /// Adds files to the git staging area.
         Add,
         /// Opens a new agent thread with the branch diff for review.
@@ -76,6 +78,19 @@ impl ProjectDiff {
         workspace.register_action(Self::deploy);
         workspace.register_action(|workspace, _: &DiffHead, window, cx| {
             Self::deploy_at(workspace, None, window, cx);
+        });
+        workspace.register_action(|workspace, _: &ToggleDiffBase, _window, cx| {
+            settings::update_settings_file(
+                workspace.app_state().fs.clone(),
+                cx,
+                move |settings, _| {
+                    let git = settings.git.get_or_insert_default();
+                    git.diff_base = Some(match git.diff_base.unwrap_or_default() {
+                        GitDiffBaseSetting::Head => GitDiffBaseSetting::DefaultBranch,
+                        GitDiffBaseSetting::DefaultBranch => GitDiffBaseSetting::Head,
+                    });
+                },
+            );
         });
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
@@ -1116,6 +1131,33 @@ mod tests {
                 GitDiffBaseSetting::DefaultBranch
             );
         });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::DefaultBranch
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::Head
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
 
         cx.update(|window, cx| {
             window.dispatch_action(Diff.boxed_clone(), cx);
