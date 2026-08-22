@@ -1792,20 +1792,40 @@ mod resolve_worktree_tests {
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/olivetti/zed",
+                PathStyle::Unix,
                 Some("olivetti".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed2", Some("zed2".into())),
+            (
+                "/home/bob/zed",
+                "/home/bob/zed2",
+                PathStyle::Unix,
+                Some("zed2".into()),
+            ),
             (
                 "/home/bob/zed",
                 "/home/bob/worktrees/zed/selectric",
+                PathStyle::Unix,
                 Some("selectric".into()),
             ),
-            ("/home/bob/zed", "/home/bob/zed", None),
+            ("/home/bob/zed", "/home/bob/zed", PathStyle::Unix, None),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\worktrees\zed\olivetti\zed",
+                PathStyle::Windows,
+                Some("olivetti".into()),
+            ),
+            (
+                r"C:\Users\bob\dev\zed",
+                r"C:\Users\bob\dev\zed2",
+                PathStyle::Windows,
+                Some("zed2".into()),
+            ),
         ];
-        for (main_worktree_path, linked_worktree_path, expected) in examples {
+        for (main_worktree_path, linked_worktree_path, path_style, expected) in examples {
             let short_name = linked_worktree_short_name(
                 Path::new(main_worktree_path),
                 Path::new(linked_worktree_path),
+                path_style,
             );
             assert_eq!(
                 short_name, expected,
