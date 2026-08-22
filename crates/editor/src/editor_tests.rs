@@ -33888,8 +33888,6 @@ async fn test_bookmarks_tab_auto_refresh(cx: &mut TestAppContext) {
         editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
     });
     visual_cx.run_until_parked();
-    // The refresh task is spawned asynchronously; a second park drains it.
-    visual_cx.run_until_parked();
 
     let excerpt_count = bookmarks_editor.update_in(&mut visual_cx, |editor, _window, cx| {
         editor.buffer.read(cx).snapshot(cx).excerpts().count()
@@ -33897,6 +33895,449 @@ async fn test_bookmarks_tab_auto_refresh(cx: &mut TestAppContext) {
     assert_eq!(
         excerpt_count, 2,
         "bookmarks editor should auto-refresh to 2 excerpts after second bookmark"
+    );
+
+    // Removing a bookmark should incrementally drop just that excerpt, not rebuild everything.
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(7, 0)..Point::new(7, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    let excerpt_count = bookmarks_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    });
+    assert_eq!(
+        excerpt_count, 1,
+        "bookmarks editor should auto-refresh back to 1 excerpt after removing a bookmark"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_selects_first_bookmark(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .expect("window should still be open");
+    let mut visual_cx = VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have at least one worktree")
+                .read(cx)
+                .id()
+        })
+    });
+
+    let buffer = project
+        .update(&mut visual_cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .expect("main.rs buffer should open");
+
+    let editor = workspace.update_in(&mut visual_cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    let pane = workspace.update_in(&mut visual_cx, |workspace, _window, _cx| {
+        workspace.active_pane().clone()
+    });
+    pane.update_in(&mut visual_cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    // Row 5 has context lines above it, so an excerpt built around it starts at row 3. A tab
+    // that merely populates excerpts would leave the cursor there instead of on the bookmark.
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    workspace.update_in(&mut visual_cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    let bookmarks_editor = workspace
+        .update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.downcast::<Editor>())
+                    .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())
+            })
+        })
+        .expect("bookmarks editor should exist after view_bookmarks");
+
+    let cursor_text = bookmarks_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        let head = editor
+            .selections
+            .newest::<Point>(&editor.display_snapshot(cx))
+            .head();
+        snapshot
+            .text_for_range(Point::new(head.row, 0)..Point::new(head.row + 1, 0))
+            .collect::<String>()
+    });
+    assert_eq!(
+        cursor_text.trim_end(),
+        "line5",
+        "cursor should land on the bookmarked line, not the top of its excerpt context"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_selects_first_bookmark_despite_concurrent_change(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .expect("window should still be open");
+    let mut visual_cx = VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have at least one worktree")
+                .read(cx)
+                .id()
+        })
+    });
+
+    let buffer = project
+        .update(&mut visual_cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .expect("main.rs buffer should open");
+
+    let editor = workspace.update_in(&mut visual_cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    let pane = workspace.update_in(&mut visual_cx, |workspace, _window, _cx| {
+        workspace.active_pane().clone()
+    });
+    pane.update_in(&mut visual_cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    workspace.update_in(&mut visual_cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+
+    // Deliberately no park here: a bookmark change lands while the tab's initial population
+    // task is still queued, so the refresh it triggers must not swallow the pending selection.
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(9, 0)..Point::new(9, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    let bookmarks_editor = workspace
+        .update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.downcast::<Editor>())
+                    .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())
+            })
+        })
+        .expect("bookmarks editor should exist after view_bookmarks");
+
+    let cursor_text = bookmarks_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        let head = editor
+            .selections
+            .newest::<Point>(&editor.display_snapshot(cx))
+            .head();
+        snapshot
+            .text_for_range(Point::new(head.row, 0)..Point::new(head.row + 1, 0))
+            .collect::<String>()
+    });
+    assert_eq!(
+        cursor_text.trim_end(),
+        "line5",
+        "a bookmark change racing the initial population must not lose the initial selection"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_split_populates_when_original_closes_early(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .expect("window should still be open");
+    let mut visual_cx = VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have at least one worktree")
+                .read(cx)
+                .id()
+        })
+    });
+
+    let buffer = project
+        .update(&mut visual_cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .expect("main.rs buffer should open");
+
+    let editor = workspace.update_in(&mut visual_cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    let pane = workspace.update_in(&mut visual_cx, |workspace, _window, _cx| {
+        workspace.active_pane().clone()
+    });
+    pane.update_in(&mut visual_cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    workspace.update_in(&mut visual_cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+
+    // Deliberately no park: the tab exists (it is created synchronously) but its excerpts
+    // have not been populated yet.
+    let bookmarks_editor = workspace
+        .update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.downcast::<Editor>())
+                    .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())
+            })
+        })
+        .expect("bookmarks editor should exist synchronously after view_bookmarks");
+
+    let split_editor = bookmarks_editor.update_in(&mut visual_cx, |editor, window, cx| {
+        cx.new(|cx| editor.clone(window, cx))
+    });
+
+    // Closing the original tab drops its in-flight population task; the split is now the only
+    // thing that can fill in the (shared) multibuffer.
+    bookmarks_editor.update(&mut visual_cx, |editor, _cx| {
+        editor.bookmark_refresh_task = None;
+        editor.bookmark_view_subscription = None;
+    });
+    visual_cx.run_until_parked();
+
+    let excerpt_count = split_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    });
+    assert_eq!(
+        excerpt_count, 1,
+        "split should populate itself when the original tab closes mid-load"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_survives_split(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .expect("window should still be open");
+    let mut visual_cx = VisualTestContext::from_window(*window, cx);
+
+    let worktree_id = workspace.update_in(&mut visual_cx, |workspace, _window, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .next()
+                .expect("project should have at least one worktree")
+                .read(cx)
+                .id()
+        })
+    });
+
+    let buffer = project
+        .update(&mut visual_cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .expect("main.rs buffer should open");
+
+    let editor = workspace.update_in(&mut visual_cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    let pane = workspace.update_in(&mut visual_cx, |workspace, _window, _cx| {
+        workspace.active_pane().clone()
+    });
+    pane.update_in(&mut visual_cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    workspace.update_in(&mut visual_cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    let bookmarks_editor = workspace
+        .update_in(&mut visual_cx, |workspace, _window, cx| {
+            workspace.panes().iter().find_map(|pane| {
+                pane.read(cx)
+                    .items()
+                    .filter_map(|item| item.downcast::<Editor>())
+                    .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())
+            })
+        })
+        .expect("bookmarks editor should exist after view_bookmarks");
+
+    let split_editor = bookmarks_editor.update_in(&mut visual_cx, |editor, window, cx| {
+        cx.new(|cx| editor.clone(window, cx))
+    });
+    assert!(
+        split_editor.read_with(&visual_cx, |editor, _| editor
+            .bookmark_view_subscription
+            .is_some()),
+        "split clone should carry over the bookmark subscription"
+    );
+
+    // Simulate closing the original Bookmarks tab: its subscription is dropped, leaving the
+    // split clone's own subscription as the only thing keeping the (shared) multibuffer fresh.
+    bookmarks_editor.update_in(&mut visual_cx, |editor, _window, _cx| {
+        editor.bookmark_view_subscription = None;
+    });
+
+    editor.update_in(&mut visual_cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(7, 0)..Point::new(7, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+    visual_cx.run_until_parked();
+
+    let excerpt_count = split_editor.update_in(&mut visual_cx, |editor, _window, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    });
+    assert_eq!(
+        excerpt_count, 2,
+        "split clone's subscription should keep refreshing after the original tab closes"
     );
 }
 
@@ -34168,6 +34609,9 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     init_test(cx, |_| {});
     update_test_editor_settings(cx, &|settings| {
         settings.code_lens = Some(settings::CodeLens::Menu);
+        let capability = workspace.project().read(cx).capability();
+        let excerpt_buffer =
+            cx.new(|_cx| MultiBuffer::new(capability).with_title("Bookm
     });
 
     let fs = FakeFs::new(cx.executor());
