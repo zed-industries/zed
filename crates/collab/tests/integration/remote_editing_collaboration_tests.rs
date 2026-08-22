@@ -691,6 +691,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 ..LanguageMatcher::default()
             })
             .into(),
+            prettier_parser_name: Some("typescript".into()),
             ..LanguageConfig::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),

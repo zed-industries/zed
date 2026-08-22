@@ -1741,6 +1741,22 @@ impl LocalLspStore {
             .flatten()
             .chain(formatters);
 
+        // `auto` uses prettier when it's allowed and can actually format this buffer's language,
+        // otherwise it falls back to the primary language server. Prettier produces no edits for a
+        // language it has no parser for (e.g. XML), so picking it there would silently format
+        // nothing. Plugins can add parsers prettier doesn't know about, so any configured plugin
+        // keeps prettier in play.
+        let auto_uses_prettier = settings.prettier.allowed && {
+            let buffer_language = buffer
+                .handle
+                .read_with(cx, |buffer, _| buffer.language().cloned());
+            prettier::Prettier::has_parser_for_language(
+                buffer_language.as_deref(),
+                &settings.prettier,
+            ) || prettier_store::prettier_plugins_for_language(&settings)
+                .is_some_and(|plugins| !plugins.is_empty())
+        };
+
         // Only explicitly configured formatters surface their failures;
         // auto-resolved ones stay silent so a missing optional tool
         // (e.g. prettier) does not warn on every save.
@@ -1748,7 +1764,7 @@ impl LocalLspStore {
         for formatter in formatters {
             let is_auto = formatter == &Formatter::Auto;
             let formatter = if is_auto {
-                if settings.prettier.allowed {
+                if auto_uses_prettier {
                     zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
                     &Formatter::Prettier
                 } else {

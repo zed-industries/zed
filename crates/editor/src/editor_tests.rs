@@ -26346,6 +26346,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
                 ..Default::default()
             })
             .into(),
+            prettier_parser_name: Some("typescript".into()),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
