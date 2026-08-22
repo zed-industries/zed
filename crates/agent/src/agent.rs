@@ -3876,12 +3876,12 @@ mod internal_tests {
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal};
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
-        LanguageModelProviderName,
+        LanguageModelProviderName, LanguageModelToolUse, StopReason,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -6619,6 +6619,241 @@ mod internal_tests {
                 .expect("scroll position should be restored after reload");
             assert_eq!(scroll.item_ix, 5);
             assert_eq!(scroll.offset_in_item, gpui::px(12.5));
+        });
+    }
+
+    /// A tool that echoes its input only after being released via a oneshot,
+    /// used to keep a non-blocking tool call in flight. Mirrors
+    /// `tests::test_tools::GatedEchoTool`; duplicated here so this test doesn't
+    /// reach across test modules.
+    struct GatedEchoTool {
+        release_rx: std::sync::Mutex<Option<oneshot::Receiver<()>>>,
+    }
+
+    impl GatedEchoTool {
+        fn new(release_rx: oneshot::Receiver<()>) -> Self {
+            Self {
+                release_rx: std::sync::Mutex::new(Some(release_rx)),
+            }
+        }
+    }
+
+    impl AgentTool for GatedEchoTool {
+        type Input = serde_json::Value;
+        type Output = String;
+
+        const NAME: &'static str = "gated_echo";
+
+        fn kind() -> acp::ToolKind {
+            acp::ToolKind::Other
+        }
+
+        fn initial_title(
+            &self,
+            _input: Result<Self::Input, serde_json::Value>,
+            _cx: &mut App,
+        ) -> SharedString {
+            "Gated Echo".into()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            input: ToolInput<Self::Input>,
+            _event_stream: ToolCallEventStream,
+            cx: &mut App,
+        ) -> Task<Result<String, String>> {
+            let release_rx = self.release_rx.lock().unwrap().take();
+            cx.spawn(async move |_cx| {
+                let input = input.recv().await.map_err(|e| e.to_string())?;
+                if let Some(release_rx) = release_rx {
+                    release_rx.await.map_err(|e| e.to_string())?;
+                }
+                Ok(json!({
+                    "text": input.get("text"),
+                    "received_blocking_key": input.get("blocking").is_some(),
+                })
+                .to_string())
+            })
+        }
+    }
+
+    /// Reopening a thread whose non-blocking tool call was in flight at save
+    /// time starts a continuation turn that delivers a synthetic failure for
+    /// it. The continuation must not begin before the thread's history has
+    /// been replayed into the ACP thread: its events are forwarded to that
+    /// same ACP thread, and interleaving them with the replay scrambles the
+    /// rendered entry order (the tool call jumps to the top and the delivered
+    /// result fuses into the first user message) so it no longer matches the
+    /// model-visible message order.
+    #[gpui::test]
+    async fn test_reopened_thread_continuation_follows_replay(cx: &mut TestAppContext) {
+        init_test(cx);
+        // Tools are profile-gated: enable the test tool for the profile new
+        // threads start with.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        &json!({
+                            "agent": {
+                                "default_profile": "test-profile",
+                                "profiles": {
+                                    "test-profile": {
+                                        "name": "Test Profile",
+                                        "tools": {
+                                            GatedEchoTool::NAME: true,
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                        cx,
+                    )
+                    .ok();
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        // Register the model so the reloaded thread can resolve it for the
+        // continuation turn.
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        let (_release_tx, release_rx) = oneshot::channel::<()>();
+        thread.update(cx, |thread, _cx| {
+            thread.add_tool(GatedEchoTool::new(release_rx));
+        });
+
+        // Run a turn whose non-blocking tool call stays in flight.
+        let send = acp_thread.update(cx, |thread, cx| {
+            thread.send(vec!["Run the tool".into()], cx)
+        });
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: "gated_1".into(),
+                name: GatedEchoTool::NAME.into(),
+                raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(
+                    json!({"text": "slow", "blocking": false}),
+                ),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+        model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        // The placeholder result drives one more completion; answering it ends
+        // the turn with the tool call still in flight.
+        model.send_last_completion_stream_text_chunk("Running in the background.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.sessions.is_empty());
+        });
+
+        // Reopen: the interrupted call is queued as a synthetic failure and a
+        // continuation turn delivers it.
+        let acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        model.send_last_completion_stream_text_chunk("Understood.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        // The rendered entries must match the model-visible message order:
+        // replayed history first, the delivered result appended as its own
+        // user message at the end.
+        acp_thread.read_with(cx, |thread, cx| {
+            let markdown = thread.to_markdown(cx);
+            let user_ix = markdown.find("## User").expect("user message missing");
+            let run_ix = markdown.find("Run the tool").expect("user message missing");
+            let tool_ix = markdown
+                .find("**Tool Call: gated_echo**")
+                .expect("tool call missing");
+            let background_ix = markdown
+                .find("Running in the background.")
+                .expect("assistant message missing");
+            let delivery_ix = markdown
+                .find("Zed was restarted")
+                .expect("delivered result missing");
+            let understood_ix = markdown.find("Understood.").expect("continuation missing");
+            assert!(
+                user_ix < run_ix
+                    && run_ix < tool_ix
+                    && tool_ix < background_ix
+                    && background_ix < delivery_ix
+                    && delivery_ix < understood_ix,
+                "entries should render in model-visible order: user message, its tool call, \
+                 the rest of the replayed history, then the delivered result: {markdown}"
+            );
+            assert!(
+                !markdown[user_ix..tool_ix].contains("async_tool_call_id"),
+                "the delivered result should be its own user message, not fused into the first one: {markdown}"
+            );
         });
     }
 
