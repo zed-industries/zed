@@ -5362,6 +5362,26 @@ impl BackgroundScanner {
         let mut root_canonical_path = None;
         let mut new_entries: Vec<Entry> = Vec::new();
         let mut new_jobs: Vec<Option<ScanJob>> = Vec::new();
+
+        // Start watching before reading the directory. Otherwise, a child can
+        // be created after `read_dir` returns but before the watch is added,
+        // leaving the worktree permanently unaware of it on platforms where
+        // directory watches are non-recursive.
+        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
+            self.fs
+                .canonicalize(job.abs_path.as_ref())
+                .await
+                .ok()
+                .map(|canonical| {
+                    let canonical: Arc<Path> = canonical.into();
+                    self.watcher.add(&canonical).log_err();
+                    canonical
+                })
+        } else {
+            self.watcher.add(job.abs_path.as_ref()).log_err();
+            Some(job.abs_path.clone())
+        };
+
         let mut child_paths = self
             .fs
             .read_dir(&job.abs_path)
@@ -5586,25 +5606,6 @@ impl BackgroundScanner {
         // to know which abs path to unwatch), so both cleanup paths agree on
         // the path the watcher was actually registered on.
         //
-        // `canonicalize` is an async filesystem operation that may suspend, so
-        // the lock must not be held across the await point below.
-        drop(state);
-        let watched_abs_path: Option<Arc<Path>> = if job.is_external {
-            self.fs
-                .canonicalize(job.abs_path.as_ref())
-                .await
-                .ok()
-                .map(|canonical| {
-                    let canonical: Arc<Path> = canonical.into();
-                    self.watcher.add(&canonical).log_err();
-                    canonical
-                })
-        } else {
-            self.watcher.add(job.abs_path.as_ref()).log_err();
-            Some(job.abs_path.clone())
-        };
-
-        let mut state = self.state.lock().await;
         if let Some(watched_abs_path) = &watched_abs_path {
             if job.is_external {
                 state
