@@ -3196,29 +3196,130 @@ impl NativeThreadEnvironment {
         &self,
         session_id: acp::SessionId,
         cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
-        let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, _cx| {
+    ) -> Task<Result<Rc<dyn SubagentHandle>>> {
+        let live_session = self.agent.update(cx, |agent, _cx| {
             let session_id = agent.resolve_session_id(&session_id);
-            let session = agent
-                .sessions
-                .get(&session_id)
-                .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
-            anyhow::Ok((session.thread.clone(), session.acp_thread.clone()))
-        })??;
+            agent.sessions.get(&session_id).map(|session| {
+                (
+                    session_id,
+                    session.thread.clone(),
+                    session.acp_thread.clone(),
+                )
+            })
+        });
 
-        let depth = subagent_thread.read(cx).depth();
+        match live_session {
+            Err(error) => Task::ready(Err(error)),
+            Ok(Some((session_id, subagent_thread, acp_thread))) => {
+                let depth = subagent_thread.read(cx).depth();
+                if let Some(parent_thread_entity) = self.thread.upgrade() {
+                    telemetry::event!(
+                        "Subagent Started",
+                        session = parent_thread_entity.read(cx).id().to_string(),
+                        subagent_session = session_id.to_string(),
+                        depth,
+                        is_resumed = true,
+                    );
+                }
+                Task::ready(self.prompt_subagent(session_id, subagent_thread, acp_thread))
+            }
+            Ok(None) => self.restore_subagent_thread(session_id, cx),
+        }
+    }
 
-        if let Some(parent_thread_entity) = self.thread.upgrade() {
+    /// Resumes a subagent session that isn't live — e.g. Zed was restarted
+    /// after the subagent was spawned, dropping every session. Subagent
+    /// threads are persisted, so resolve any `s~` alias against the thread
+    /// database, load the thread back, and re-register its session before
+    /// prompting it.
+    fn restore_subagent_thread(
+        &self,
+        session_id: acp::SessionId,
+        cx: &mut App,
+    ) -> Task<Result<Rc<dyn SubagentHandle>>> {
+        let Some(parent_thread_entity) = self.thread.upgrade() else {
+            return Task::ready(Err(anyhow!("Parent thread no longer exists")));
+        };
+        let project = parent_thread_entity.read(cx).project.clone();
+        let database_future = ThreadsDatabase::connect(cx);
+        let agent = self.agent.clone();
+        cx.spawn(async move |cx| {
+            let session_id = if session_id.to_string().starts_with("s~") {
+                let database = database_future.await.map_err(|err| anyhow!(err))?;
+                let mut resolved = None;
+                for metadata in database.list_threads().await? {
+                    if session_alias(&metadata.id).as_ref() == session_id.to_string() {
+                        resolved = Some(metadata.id);
+                        break;
+                    }
+                }
+                resolved.ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?
+            } else {
+                session_id
+            };
+
+            let subagent_thread = agent
+                .update(cx, |agent, cx| {
+                    agent.load_thread(session_id.clone(), project.clone(), cx)
+                })?
+                .await?;
+            let acp_thread = agent.update(cx, |agent, cx| {
+                let project_id = agent.get_or_create_project_state(&project, cx);
+                agent.register_session(subagent_thread.clone(), project_id, 1, cx)
+            })?;
+
+            // Replay the restored history into the new ACP thread before the
+            // resumed turn starts streaming into it, so entries render in
+            // order and entry offsets line up.
+            let events = subagent_thread.update(cx, |thread, cx| thread.replay(cx));
+            cx.update(|cx| {
+                NativeAgentConnection::handle_thread_events(
+                    events,
+                    acp_thread.downgrade(),
+                    None,
+                    cx,
+                )
+            })
+            .await?;
+
+            // Deliver synthetic failures queued for calls that were in flight
+            // when the thread was last saved *now* — before the resumed turn
+            // pushes its new user message. They belong to the replayed
+            // history, and landing now keeps each a separate user message
+            // instead of merging into the follow-up.
+            let delivery = subagent_thread.update(cx, |thread, cx| {
+                thread.deliver_queued_non_blocking_results(cx)
+            });
+            if let Some(delivery) = delivery {
+                cx.update(|cx| {
+                    NativeAgentConnection::handle_thread_events(
+                        delivery,
+                        acp_thread.downgrade(),
+                        None,
+                        cx,
+                    )
+                })
+                .await?;
+            }
+
+            let parent_session =
+                parent_thread_entity.read_with(cx, |thread, _| thread.id().to_string());
+            let depth = subagent_thread.read_with(cx, |thread, _| thread.depth());
             telemetry::event!(
                 "Subagent Started",
-                session = parent_thread_entity.read(cx).id().to_string(),
+                session = parent_session,
                 subagent_session = session_id.to_string(),
                 depth,
                 is_resumed = true,
             );
-        }
 
-        self.prompt_subagent(session_id, subagent_thread, acp_thread)
+            Ok(Rc::new(NativeSubagentHandle::new(
+                session_id,
+                subagent_thread,
+                acp_thread,
+                parent_thread_entity,
+            )) as _)
+        })
     }
 
     fn prompt_subagent(
@@ -3352,7 +3453,7 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         &self,
         session_id: acp::SessionId,
         cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
+    ) -> Task<Result<Rc<dyn SubagentHandle>>> {
         self.resume_subagent_thread(session_id, cx)
     }
 
@@ -3365,15 +3466,19 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         let Some(parent_thread_entity) = self.thread.upgrade() else {
             anyhow::bail!("Parent thread no longer exists".to_string());
         };
-        let (subagent_thread, entry_count) = self.agent.update(cx, |agent, cx| {
+        let live_session = self.agent.update(cx, |agent, cx| {
             let resolved_session_id = agent.resolve_session_id(&session_id);
-            let session = agent
-                .sessions
-                .get(&resolved_session_id)
-                .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
-            let entry_count = session.acp_thread.read(cx).entries().len();
-            anyhow::Ok((session.thread.clone(), entry_count))
-        })??;
+            agent.sessions.get(&resolved_session_id).map(|session| {
+                let entry_count = session.acp_thread.read(cx).entries().len();
+                (session.thread.clone(), entry_count)
+            })
+        })?;
+        let Some((subagent_thread, entry_count)) = live_session else {
+            // A session that isn't live (e.g. Zed was restarted after it was
+            // spawned) can't be running, so there's nothing to steer — the
+            // caller resumes it with a new turn instead.
+            return Ok(None);
+        };
 
         // Only direct children may be steered, so a session's behavior stays
         // predictable for the thread that spawned it.

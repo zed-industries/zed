@@ -770,21 +770,26 @@ pub trait ThreadEnvironment {
 
     fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
 
+    /// Resumes an idle subagent session with a new turn. A session that is
+    /// no longer live (e.g. the app restarted after the subagent was
+    /// spawned) is restored from the thread database first, hence the
+    /// returned `Task`.
     fn resume_subagent(
         &self,
         _session_id: acp::SessionId,
         _cx: &mut App,
-    ) -> Result<Rc<dyn SubagentHandle>> {
-        Err(anyhow::anyhow!(
+    ) -> Task<Result<Rc<dyn SubagentHandle>>> {
+        Task::ready(Err(anyhow::anyhow!(
             "Resuming subagent sessions is not supported"
-        ))
+        )))
     }
 
     /// Steers a running subagent session with a follow-up message: the
     /// message is incorporated at the session's next reasoning boundary and
     /// no direct response is returned. Returns `Ok(Some(entry_count))` when
-    /// the session was running and thus steered, `Ok(None)` when it is idle
-    /// and should be resumed with a new turn instead.
+    /// the session was running and thus steered, `Ok(None)` when it is not
+    /// running (idle, or no longer live — e.g. after a restart) and should
+    /// be resumed with a new turn instead.
     fn steer_subagent(
         &self,
         _session_id: acp::SessionId,
@@ -4042,6 +4047,25 @@ impl Thread {
         cx.notify();
     }
 
+    /// Delivers queued synthetic results for non-blocking calls that were in
+    /// flight when the thread was last saved, outside of a turn — used when a
+    /// subagent session is restored before being resumed, so the delivered
+    /// results land right after the replayed history instead of merging into
+    /// the resumed turn's new user message. Returns the events to forward to
+    /// the session's ACP thread, or `None` when nothing was queued.
+    pub(crate) fn deliver_queued_non_blocking_results(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
+        if !self.has_queued_non_blocking_results() {
+            return None;
+        }
+        let (tx, rx) = mpsc::unbounded();
+        let event_stream = ThreadEventStream(tx);
+        self.drain_finished_non_blocking_tool_calls(&event_stream, cx);
+        Some(rx)
+    }
+
     /// Delivers finished non-blocking tool results as new user messages at a
     /// reasoning boundary, and reports their final status to the UI. Results
     /// are appended as new messages rather than patched into the originating
@@ -4504,18 +4528,15 @@ impl Thread {
                     let has_blocking_property = schema
                         .get("properties")
                         .and_then(|value| value.as_object())
-                        .is_some_and(|properties| {
-                            properties.contains_key(BLOCKING_INPUT_PROPERTY)
-                        });
+                        .is_some_and(|properties| properties.contains_key(BLOCKING_INPUT_PROPERTY));
                     if has_blocking_property {
                         if let Some(schema_object) = schema.as_object_mut() {
                             let required = schema_object
                                 .entry("required".to_string())
                                 .or_insert_with(|| serde_json::Value::Array(Vec::new()));
                             if let Some(required) = required.as_array_mut() {
-                                let blocking = serde_json::Value::String(
-                                    BLOCKING_INPUT_PROPERTY.to_string(),
-                                );
+                                let blocking =
+                                    serde_json::Value::String(BLOCKING_INPUT_PROPERTY.to_string());
                                 if !required.contains(&blocking) {
                                     required.push(blocking);
                                 }
