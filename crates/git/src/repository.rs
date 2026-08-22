@@ -1682,9 +1682,13 @@ impl GitRepository for RealGitRepository {
                 let mut urls = HashMap::default();
                 if let Ok(stdout) = git.run(&["remote", "-v"]).await {
                     for line in stdout.lines() {
-                        if let Some(line) = line.strip_suffix(" (fetch)")
-                            && let Some((name, url)) = line.split_once(char::is_whitespace)
-                        {
+                        // On promisor remotes, `git` appends `[filter]` (e.g. `[blob:none]`)
+                        // after `(fetch)`/`(push)`; strip it so the suffix check matches.
+                        let line = line.split(" [").next().unwrap_or(line);
+                        let Some(rest) = line.strip_suffix(" (fetch)") else {
+                            continue;
+                        };
+                        if let Some((name, url)) = rest.split_once(char::is_whitespace) {
                             urls.insert(name.to_string(), url.trim_start().to_string());
                         }
                     }
@@ -6531,6 +6535,50 @@ mod tests {
         assert_eq!(
             remote_urls.get("upstream").unwrap(),
             "/Users/user/My Projects/upstream.git"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_get_remote_urls_with_partial_clone(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let remote_repo = tempfile::tempdir().unwrap();
+        git_init_repo(remote_repo.path());
+
+        // Seed the remote repo
+        let remote_path = remote_repo.path();
+        fs::write(remote_path.join("file.txt"), "initial").unwrap();
+        git_command(remote_path, ["add", "file.txt"]);
+        git_command(remote_path, ["commit", "-m", "initial commit"]);
+
+        // Clone with --filter=blob:none, which marks origin as a promisor remote
+        // and causes `git remote -v` to annotate its fetching lines with "[blob:none]"
+        let clone_repo = tempfile::tempdir().unwrap();
+        let clone_path = clone_repo.path();
+        git_command(
+            clone_path,
+            [
+                OsString::from("clone"),
+                OsString::from("--filter=blob:none"),
+                remote_path.as_os_str().into(),
+                clone_path.as_os_str().into(),
+            ],
+        );
+
+        let repo = RealGitRepository::new(
+            &clone_path.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let remote_urls = repo.remote_urls().await;
+        assert_eq!(
+            remote_urls.get("origin"),
+            Some(&remote_path.to_string_lossy().to_string()),
+            "origin remote should be listed even though `git remote -v` includes a `[blob:none]` annotation"
         );
     }
 }
