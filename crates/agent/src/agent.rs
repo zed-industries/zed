@@ -3975,7 +3975,9 @@ mod internal_tests {
     use std::path::Path;
 
     use super::*;
-    use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
+    use acp_thread::{
+        AgentConnection, AgentModelGroupName, AgentModelInfo, AgentThreadEntry, MentionUri,
+    };
     use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
     use gpui::{TestAppContext, UpdateGlobal};
@@ -3983,7 +3985,7 @@ mod internal_tests {
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
         CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
-        LanguageModelProviderName, LanguageModelToolUse, StopReason,
+        LanguageModelProviderName, LanguageModelToolUse, MessageContent, Role, StopReason,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -6777,6 +6779,284 @@ mod internal_tests {
                 .to_string())
             })
         }
+    }
+
+    /// Sets up a session whose non-blocking gated tool call is in flight,
+    /// closes it, and reopens it from the database: the interrupted call is
+    /// queued as a pending synthetic failure, but delivering it waits for the
+    /// user to resume the session — no turn runs on its own.
+    async fn reopen_thread_with_interrupted_call(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AcpThread>, Arc<FakeLanguageModel>) {
+        init_test(cx);
+        // Tools are profile-gated: enable the test tool for the profile new
+        // threads start with.
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        &json!({
+                            "agent": {
+                                "default_profile": "test-profile",
+                                "profiles": {
+                                    "test-profile": {
+                                        "name": "Test Profile",
+                                        "tools": {
+                                            GatedEchoTool::NAME: true,
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                        cx,
+                    )
+                    .ok();
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        // Register the model so the reloaded thread can resolve it for the
+        // continuation turn.
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        let (_release_tx, release_rx) = oneshot::channel::<()>();
+        thread.update(cx, |thread, _cx| {
+            thread.add_tool(GatedEchoTool::new(release_rx));
+        });
+
+        // Run a turn whose non-blocking tool call stays in flight.
+        let send = acp_thread.update(cx, |thread, cx| {
+            thread.send(vec!["Run the tool".into()], cx)
+        });
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: "gated_1".into(),
+                name: GatedEchoTool::NAME.into(),
+                raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(
+                    json!({"text": "slow", "blocking": false}),
+                ),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+        model.end_last_completion_stream();
+        cx.run_until_parked();
+
+        // The placeholder result drives one more completion; answering it ends
+        // the turn with the tool call still in flight.
+        model.send_last_completion_stream_text_chunk("Running in the background.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        // Close the session so it can be reloaded from disk.
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(thread);
+        drop(acp_thread);
+        agent.read_with(cx, |agent, _| {
+            assert!(agent.sessions.is_empty());
+        });
+
+        // Reopen: the interrupted call is queued as a pending synthetic
+        // failure, but delivering it waits for the user to resume the
+        // session — no turn runs on its own.
+        let acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(
+            model.pending_completions().is_empty(),
+            "reopening must not start a turn on its own"
+        );
+        assert!(
+            acp_thread.read_with(cx, |thread, _| thread.has_pending_interrupted_tool_calls()),
+            "the UI should know an interrupted-call notification is pending"
+        );
+
+        (acp_thread, model)
+    }
+
+    /// The synthetic failure for an interrupted call is delivered with the
+    /// turn the user resumes the session with, right after the user's
+    /// message — in model context and rendered order alike.
+    #[gpui::test]
+    async fn test_reopened_thread_delivers_interrupted_results_on_resume(cx: &mut TestAppContext) {
+        let (acp_thread, model) = reopen_thread_with_interrupted_call(cx).await;
+
+        let send = acp_thread.update(cx, |thread, cx| {
+            thread.send(vec!["Continue, please.".into()], cx)
+        });
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        let completion = model
+            .pending_completions()
+            .pop()
+            .expect("a completion should have been requested");
+        let user_message_position = |needle: &str| {
+            completion.messages.iter().position(|message| {
+                message.role == Role::User
+                    && message.content.iter().any(|content| match content {
+                        MessageContent::Text(text) => text.contains(needle),
+                        _ => false,
+                    })
+            })
+        };
+        let resume_ix = user_message_position("Continue, please.").expect("resume message missing");
+        let delivery_ix =
+            user_message_position("Zed was restarted").expect("delivered result missing");
+        assert!(
+            resume_ix < delivery_ix,
+            "the delivered result should follow the resume message: {completion:#?}"
+        );
+
+        model.send_last_completion_stream_text_chunk("Understood.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            !acp_thread.read_with(cx, |thread, _| thread.has_pending_interrupted_tool_calls()),
+            "the pending notification was delivered with the resume"
+        );
+
+        // The rendered entries match the model-visible message order: the
+        // replayed history, then the resume message, then the delivered
+        // result as its own user message.
+        acp_thread.read_with(cx, |thread, cx| {
+            let markdown = thread.to_markdown(cx);
+            let run_ix = markdown.find("Run the tool").expect("user message missing");
+            let tool_ix = markdown
+                .find("**Tool Call: gated_echo**\nStatus: Failed")
+                .expect("interrupted tool call should render as failed");
+            let background_ix = markdown
+                .find("Running in the background.")
+                .expect("assistant message missing");
+            let resume_ix = markdown
+                .find("Continue, please.")
+                .expect("resume message missing");
+            let delivery_ix = markdown
+                .find("Zed was restarted")
+                .expect("delivered result missing");
+            let understood_ix = markdown.find("Understood.").expect("response missing");
+            assert!(
+                run_ix < tool_ix
+                    && tool_ix < background_ix
+                    && background_ix < resume_ix
+                    && resume_ix < delivery_ix
+                    && delivery_ix < understood_ix,
+                "entries should render in model-visible order: {markdown}"
+            );
+            assert!(
+                markdown[resume_ix..delivery_ix].contains("## User"),
+                "the delivered result should be its own user message, not fused into the resume message: {markdown}"
+            );
+        });
+    }
+
+    /// Resuming a reopened thread with an interrupted call needs no message
+    /// text: the delivered notification is itself the user content that
+    /// drives the turn.
+    #[gpui::test]
+    async fn test_reopened_thread_resume_with_empty_message(cx: &mut TestAppContext) {
+        let (acp_thread, model) = reopen_thread_with_interrupted_call(cx).await;
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(Vec::new(), cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        let completion = model
+            .pending_completions()
+            .pop()
+            .expect("a completion should have been requested");
+        let last_message = completion.messages.last().unwrap();
+        assert_eq!(last_message.role, Role::User);
+        let MessageContent::Text(text) = &last_message.content[0] else {
+            panic!(
+                "expected the delivered result, got {:?}",
+                last_message.content
+            );
+        };
+        assert!(
+            text.contains("Zed was restarted"),
+            "the delivered notification should drive the turn on its own: {completion:#?}"
+        );
+
+        model.send_last_completion_stream_text_chunk("Understood.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        send.await.unwrap();
+
+        // The empty resume injects no empty user message: only the replayed
+        // history's user message and the delivered notification render.
+        acp_thread.read_with(cx, |thread, _| {
+            let user_entries = thread
+                .entries()
+                .iter()
+                .filter(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+                .count();
+            assert_eq!(user_entries, 2);
+        });
     }
 
     #[gpui::test]

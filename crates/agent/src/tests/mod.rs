@@ -2090,6 +2090,15 @@ async fn test_non_blocking_tool_calls_persist_across_restart(cx: &mut TestAppCon
         "the restored thread should have the interrupted call queued"
     );
 
+    // Until it is delivered, the synthetic failure round-trips through saves:
+    // a save between reopen and resume must not drop the interrupted call.
+    let resaved = restored.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(resaved.pending_non_blocking_tool_calls.len(), 1);
+    assert_eq!(
+        resaved.pending_non_blocking_tool_calls[0].async_id,
+        async_id
+    );
+
     // Driving the continuation delivers the synthetic failure with the same
     // async_tool_call_id.
     let events = restored
@@ -2122,6 +2131,10 @@ async fn test_non_blocking_tool_calls_persist_across_restart(cx: &mut TestAppCon
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
     fake_model.end_last_completion_stream();
     events.collect::<Vec<_>>().await;
+
+    // Once delivered, nothing is pending anymore.
+    let resaved = restored.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert!(resaved.pending_non_blocking_tool_calls.is_empty());
 }
 
 /// Same bug as `test_tool_call_id_scoped_per_completion_request`, but
@@ -7508,7 +7521,7 @@ async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut T
         assert!(agent.sessions.is_empty(), "restart: no live sessions");
     });
 
-    let _acp_thread = agent
+    let acp_thread = agent
         .update(cx, |agent, cx| {
             agent.open_thread(session_id.clone(), project.clone(), cx)
         })
@@ -7521,10 +7534,17 @@ async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut T
         thread.set_model(model.clone(), cx);
     });
     cx.run_until_parked();
+    assert!(
+        model.pending_completions().is_empty(),
+        "reopening must not start a turn on its own"
+    );
 
     // The reopened parent has its in-flight spawn call's synthetic failure
-    // queued, so a continuation turn runs. The parent reacts by resuming the
-    // subagent via its model-facing alias.
+    // queued; delivering it waits for the user to resume the session. The
+    // parent reacts to the notification by resuming the subagent via its
+    // model-facing alias.
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Pick it back up", cx));
+    cx.run_until_parked();
     let parent_continuation = completion_containing("First prompt");
     let resume_input = json!({
         "label": "follow-up task",
@@ -7577,7 +7597,9 @@ async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut T
     model.send_completion_stream_text_chunk(&parent_follow_up, "Second response");
     model.end_completion_stream(&parent_follow_up);
     cx.run_until_parked();
+    send.await.unwrap();
 
+    // Teardown: the pre-restart spawn call is still parked waiting for the
     // In the restored session's view, the interrupted call renders as failed
     // and the delivered result is its own user message between the replayed
     // history and the follow-up — not fused into the follow-up.
