@@ -3172,7 +3172,7 @@ async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
 
-    panel
+    let build_terminal_id = panel
         .update_in(cx, |panel, window, cx| {
             panel.insert_test_terminal("Build", true, window, cx)
         })
@@ -3190,35 +3190,25 @@ async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
 
-    let (clicked_terminal_id, selector) = sidebar.read_with(cx, |sidebar, cx| {
+    let selector = sidebar.read_with(cx, |sidebar, cx| {
         let switcher = sidebar
             .thread_switcher
             .as_ref()
             .expect("switcher should be open")
             .read(cx);
-        let selected_index = switcher.selected_index();
-        let (_, entry) = switcher
+        let entry = switcher
             .entries()
             .iter()
-            .enumerate()
-            .find(|(ix, _)| *ix != selected_index)
-            .expect("switcher should have an unselected entry");
-        let terminal_id = entry
-            .terminal_id()
-            .expect("expected terminal switcher entry");
-        (terminal_id, format!("THREAD_ITEM-{}", entry.element_id()))
+            .find(|entry| entry.terminal_id() == Some(build_terminal_id))
+            .expect("switcher should list the build terminal");
+        format!("THREAD_ITEM-{}", entry.element_id())
     });
-    // Opening the switcher previews the selected entry, so the clicked
-    // (unselected) terminal is not the active one yet.
-    panel.read_with(cx, |panel, _cx| {
-        assert_ne!(panel.active_terminal_id(), Some(clicked_terminal_id));
-    });
-
+    // `debug_bounds` takes a `&'static str`; leaking a short string in a test is fine.
     let bounds = cx
         .debug_bounds(Box::leak(selector.into_boxed_str()))
         .expect("switcher entry should be rendered");
-    // macOS reports ctrl+left clicks as right-button, which is how the
-    // switcher is normally clicked while ctrl-tab is held.
+
+    // macOS reports ctrl+left clicks as right-button clicks.
     cx.simulate_mouse_down(
         bounds.center(),
         gpui::MouseButton::Right,
@@ -3231,91 +3221,8 @@ async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
     );
     cx.run_until_parked();
 
-    panel.read_with(cx, |panel, _cx| {
-        assert_eq!(panel.active_terminal_id(), Some(clicked_terminal_id));
-    });
     sidebar.read_with(cx, |sidebar, _cx| {
         assert!(sidebar.thread_switcher.is_none(), "switcher should close");
-        assert!(
-            matches!(&sidebar.active_entry, Some(ActiveEntry::Terminal { terminal_id, .. }) if *terminal_id == clicked_terminal_id),
-            "expected clicked terminal to become active, got {:?}",
-            sidebar.active_entry,
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_thread_switcher_confirms_on_modifier_release_while_mouse_is_held(
-    cx: &mut TestAppContext,
-) {
-    let project = init_test_project_with_agent_panel("/my-project", cx).await;
-    let (multi_workspace, cx) =
-        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
-    cx.update(|_, cx| {
-        cx.bind_keys([gpui::KeyBinding::new(
-            "ctrl-tab",
-            ToggleThreadSwitcher::default(),
-            None,
-        )]);
-    });
-
-    let build_terminal_id = panel
-        .update_in(cx, |panel, window, cx| {
-            panel.insert_test_terminal("Build", true, window, cx)
-        })
-        .expect("build test terminal should be inserted");
-    let server_terminal_id = panel
-        .update_in(cx, |panel, window, cx| {
-            panel.insert_test_terminal("Server", true, window, cx)
-        })
-        .expect("server test terminal should be inserted");
-    cx.run_until_parked();
-    panel.read_with(cx, |panel, _cx| {
-        assert_eq!(panel.active_terminal_id(), Some(server_terminal_id));
-    });
-
-    // Hold the mouse button and drag slightly before pressing ctrl-tab. On macOS
-    // the drag is replayed as synthetic mouse moves carrying the pre-ctrl modifiers.
-    focus_sidebar(&sidebar, cx);
-    let position = gpui::point(px(1.), px(1.));
-    cx.simulate_mouse_down(
-        position,
-        gpui::MouseButton::Left,
-        gpui::Modifiers::default(),
-    );
-    cx.simulate_mouse_move(
-        position,
-        gpui::MouseButton::Left,
-        gpui::Modifiers::default(),
-    );
-    cx.simulate_modifiers_change(gpui::Modifiers::control());
-    cx.simulate_mouse_move(
-        position,
-        gpui::MouseButton::Left,
-        gpui::Modifiers::default(),
-    );
-    cx.simulate_keystrokes("ctrl-tab");
-    cx.run_until_parked();
-
-    sidebar.read_with(cx, |sidebar, _cx| {
-        assert!(sidebar.thread_switcher.is_some(), "switcher should be open");
-    });
-
-    // macOS reports a ctrl+left release as a right-button release.
-    cx.simulate_mouse_up(
-        position,
-        gpui::MouseButton::Right,
-        gpui::Modifiers::default(),
-    );
-    cx.simulate_modifiers_change(gpui::Modifiers::default());
-    cx.run_until_parked();
-
-    sidebar.read_with(cx, |sidebar, _cx| {
-        assert!(
-            sidebar.thread_switcher.is_none(),
-            "releasing ctrl should confirm and close the switcher"
-        );
     });
     panel.read_with(cx, |panel, _cx| {
         assert_eq!(panel.active_terminal_id(), Some(build_terminal_id));

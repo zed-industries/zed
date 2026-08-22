@@ -5016,9 +5016,7 @@ impl Window {
         let old_modality = self.last_input_modality;
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
-            PlatformInput::MouseMove(_)
-            | PlatformInput::MouseDown(_)
-            | PlatformInput::MouseUp(_) => InputModality::Mouse,
+            PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
             PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
@@ -5124,17 +5122,7 @@ impl Window {
                 }
             },
             PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
-            // Keystrokes carry the live modifier state. Without this, a stale
-            // synthetic mouse move replayed during a drag can leave `modifiers`
-            // out of date when a keybinding's action runs.
-            PlatformInput::KeyDown(key_down) => {
-                self.modifiers = key_down.keystroke.modifiers;
-                PlatformInput::KeyDown(key_down)
-            }
-            PlatformInput::KeyUp(key_up) => {
-                self.modifiers = key_up.keystroke.modifiers;
-                PlatformInput::KeyUp(key_up)
-            }
+            PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
         if let Some(any_mouse_event) = event.mouse_event() {
@@ -6897,12 +6885,12 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Capslock, Context, DragMoveEvent, Empty,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent, Keystroke, Modifiers,
-        ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-        Point, Render, RequestFrameOptions, StatefulInteractiveElement as _, Styled,
-        TestAppContext, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
+        InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+        MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
+        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
+        WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
@@ -6911,70 +6899,6 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
         }
-    }
-
-    #[gpui::test]
-    fn keystroke_refreshes_window_modifiers_after_stale_drag_move(cx: &mut TestAppContext) {
-        let window = cx.add_window(|_, _| EmptyView);
-        let any_window = AnyWindowHandle::from(window);
-        let position = point(px(10.), px(10.));
-
-        cx.update_window(any_window, |_, window, cx| {
-            window.draw(cx).clear(cx);
-            window.dispatch_event(
-                MouseDownEvent {
-                    position,
-                    button: MouseButton::Left,
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                    first_mouse: false,
-                }
-                .to_platform_input(),
-                cx,
-            );
-            window.dispatch_event(
-                MouseMoveEvent {
-                    position,
-                    pressed_button: Some(MouseButton::Left),
-                    modifiers: Modifiers::default(),
-                }
-                .to_platform_input(),
-                cx,
-            );
-            window.dispatch_event(
-                ModifiersChangedEvent {
-                    modifiers: Modifiers::control(),
-                    capslock: Capslock::default(),
-                }
-                .to_platform_input(),
-                cx,
-            );
-            assert!(window.modifiers().control);
-
-            // A synthetic drag replays the original move, whose modifiers predate ctrl.
-            window.dispatch_event(
-                MouseMoveEvent {
-                    position,
-                    pressed_button: Some(MouseButton::Left),
-                    modifiers: Modifiers::default(),
-                }
-                .to_platform_input(),
-                cx,
-            );
-            assert!(!window.modifiers().control);
-
-            window.dispatch_event(
-                KeyDownEvent {
-                    keystroke: Keystroke::parse("ctrl-tab").unwrap(),
-                    is_held: false,
-                    prefer_character_input: false,
-                }
-                .to_platform_input(),
-                cx,
-            );
-            assert!(window.modifiers().control);
-        })
-        .unwrap();
     }
 
     struct OpensWindowOnPaint {

@@ -5,7 +5,7 @@ use agent_ui::{
     terminal_thread_metadata_store::TerminalThreadMetadata, thread_metadata_store::ThreadMetadata,
 };
 use gpui::{
-    ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
+    Action as _, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
     ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
 };
 use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, prelude::*};
@@ -325,7 +325,7 @@ impl ThreadSwitcher {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        _window: &mut gpui::Window,
+        window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
         let Some(init_modifiers) = self.init_modifiers else {
@@ -336,7 +336,7 @@ impl ThreadSwitcher {
             if self.entries.is_empty() {
                 cx.emit(DismissEvent);
             } else {
-                self.confirm_selected(cx);
+                window.dispatch_action(menu::Confirm.boxed_clone(), cx);
             }
         }
     }
@@ -410,8 +410,8 @@ impl Render for ThreadSwitcher {
                             .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                                 this.select_and_confirm(ix, cx);
                             }))
-                            // macOS reports ctrl+left clicks as right-button, and the
-                            // switcher is usually open while ctrl is held.
+                            // macOS reports ctrl+left clicks as right-button clicks, and the
+                            // switcher is usually clicked while ctrl is still held.
                             .on_aux_click(cx.listener(
                                 move |this, _event: &ClickEvent, _window, cx| {
                                     this.select_and_confirm(ix, cx);

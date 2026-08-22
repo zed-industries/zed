@@ -1467,23 +1467,7 @@ impl PlatformWindow for MacWindow {
     }
 
     fn modifiers(&self) -> Modifiers {
-        unsafe {
-            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
-
-            let control = modifiers.contains(NSEventModifierFlags::NSControlKeyMask);
-            let alt = modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask);
-            let shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
-            let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
-            let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask);
-
-            Modifiers {
-                control,
-                alt,
-                shift,
-                platform: command,
-                function,
-            }
-        }
+        current_modifiers()
     }
 
     fn capslock(&self) -> Capslock {
@@ -3351,17 +3335,12 @@ async fn synthetic_drag(
         if let Some(window_state) = window_state.upgrade() {
             let mut lock = window_state.lock();
             if lock.synthetic_drag_counter == drag_id {
-                // Modifiers may have changed since the drag event we're replaying.
-                let modifiers = match &lock.previous_modifiers_changed_event {
-                    Some(PlatformInput::ModifiersChanged(modifiers_changed)) => {
-                        modifiers_changed.modifiers
-                    }
-                    _ => event.modifiers,
-                };
                 if let Some(mut callback) = lock.event_callback.take() {
                     drop(lock);
+                    // The replayed event predates any modifier changes made since the
+                    // real drag event, so report the live modifier state instead.
                     callback(PlatformInput::MouseMove(MouseMoveEvent {
-                        modifiers,
+                        modifiers: current_modifiers(),
                         ..event.clone()
                     }));
                     window_state.lock().event_callback = Some(callback);
@@ -3370,6 +3349,17 @@ async fn synthetic_drag(
                 break;
             }
         }
+    }
+}
+
+fn current_modifiers() -> Modifiers {
+    let modifiers: NSEventModifierFlags = unsafe { msg_send![class!(NSEvent), modifierFlags] };
+    Modifiers {
+        control: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+        platform: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+        function: modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask),
     }
 }
 
