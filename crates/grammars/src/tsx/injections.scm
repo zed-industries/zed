@@ -107,8 +107,9 @@
     (template_string
       (string_fragment) @injection.content)
   ])
-  (#match? @_ecma_comment "^\\/\\*\\s*html\\s*\\*\\/")
-  (#set! injection.language "html"))
+  (#match? @_ecma_comment "(?i)^\\/\\*\\s*html\\s*\\*\\/")
+  (#set! injection.language "html")
+  (#set! injection.combined))
 
 ; '/* sql */' or '/*sql*/'
 (((comment) @_ecma_comment
@@ -118,8 +119,9 @@
     (template_string
       (string_fragment) @injection.content)
   ])
-  (#match? @_ecma_comment "^\\/\\*\\s*sql\\s*\\*\\/")
-  (#set! injection.language "sql"))
+  (#match? @_ecma_comment "(?i)^\\/\\*\\s*sql\\s*\\*\\/")
+  (#set! injection.language "sql")
+  (#set! injection.combined))
 
 ; '/* gql */' or '/*gql*/'
 ; '/* graphql */' or '/*graphql*/'
@@ -130,8 +132,9 @@
     (template_string
       (string_fragment) @injection.content)
   ])
-  (#match? @_ecma_comment "^\\/\\*\\s*(gql|graphql)\\s*\\*\\/")
-  (#set! injection.language "graphql"))
+  (#match? @_ecma_comment "(?i)^\\/\\*\\s*(gql|graphql)\\s*\\*\\/")
+  (#set! injection.language "graphql")
+  (#set! injection.combined))
 
 ; '/* css */' or '/*css*/'
 (((comment) @_ecma_comment
@@ -141,5 +144,30 @@
     (template_string
       (string_fragment) @injection.content)
   ])
-  (#match? @_ecma_comment "^\\/\\*\\s*(css)\\s*\\*\\/")
-  (#set! injection.language "css"))
+  (#match? @_ecma_comment "(?i)^\\/\\*\\s*(css)\\s*\\*\\/")
+  (#set! injection.language "css")
+  (#set! injection.combined))
+
+; '/* glsl */' or '/*glsl*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "(?i)^\\/\\*\\s*glsl\\s*\\*\\/")
+  (#set! injection.language "glsl")
+  (#set! injection.combined))
+
+; '/* wgsl */' or '/*wgsl*/'
+(((comment) @_ecma_comment
+  [
+    (string
+      (string_fragment) @injection.content)
+    (template_string
+      (string_fragment) @injection.content)
+  ])
+  (#match? @_ecma_comment "(?i)^\\/\\*\\s*wgsl\\s*\\*\\/")
+  (#set! injection.language "WGSL/WESL")
+  (#set! injection.combined))
