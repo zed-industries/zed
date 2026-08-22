@@ -170,15 +170,9 @@ pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
 pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
-enum RetryStrategy {
-    ExponentialBackoff {
-        initial_delay: Duration,
-        max_attempts: u8,
-    },
-    Fixed {
-        delay: Duration,
-        max_attempts: u8,
-    },
+struct RetryStrategy {
+    delay: Duration,
+    max_attempts: u8,
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -3313,28 +3307,17 @@ impl Thread {
             return Err(anyhow!(error));
         };
 
-        let max_attempts = match &strategy {
-            RetryStrategy::ExponentialBackoff { max_attempts, .. } => *max_attempts,
-            RetryStrategy::Fixed { max_attempts, .. } => *max_attempts,
-        };
-
-        if attempt > max_attempts {
+        if attempt > strategy.max_attempts {
             return Err(anyhow!(error));
         }
 
-        let delay = match &strategy {
-            RetryStrategy::ExponentialBackoff { initial_delay, .. } => {
-                let delay_secs = initial_delay.as_secs() * 2u64.pow((attempt - 1) as u32);
-                Duration::from_secs(delay_secs)
-            }
-            RetryStrategy::Fixed { delay, .. } => *delay,
-        };
+        let delay = strategy.delay;
         log::debug!("Retry attempt {attempt} with delay {delay:?}");
 
         Ok(acp_thread::RetryStatus {
             last_error: error.to_string().into(),
             attempt: attempt as usize,
-            max_attempts: max_attempts as usize,
+            max_attempts: strategy.max_attempts as usize,
             started_at: Instant::now(),
             duration: delay,
             meta: None,
@@ -4511,74 +4494,45 @@ impl Thread {
         use LanguageModelCompletionError::*;
         use http_client::StatusCode;
 
-        // General strategy here:
-        // - If retrying won't help (e.g. invalid API key or payload too large), return None so we don't retry at all.
-        // - If it's a time-based issue (e.g. server overloaded, rate limit exceeded), retry up to 4 times with exponential backoff.
-        // - If it's an issue that *might* be fixed by retrying (e.g. internal server error), retry up to 3 times.
         match error {
-            HttpResponseError {
-                status_code: StatusCode::TOO_MANY_REQUESTS,
-                ..
-            } => Some(RetryStrategy::ExponentialBackoff {
-                initial_delay: BASE_RETRY_DELAY,
-                max_attempts: MAX_RETRY_ATTEMPTS,
-            }),
             ServerOverloaded { retry_after, .. } | RateLimitExceeded { retry_after, .. } => {
-                Some(RetryStrategy::Fixed {
+                Some(RetryStrategy {
                     delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
                     max_attempts: MAX_RETRY_ATTEMPTS,
                 })
             }
-            UpstreamProviderError {
+            ProviderRejection {
                 status,
                 retry_after,
                 ..
-            } => match *status {
-                StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE => {
-                    Some(RetryStrategy::Fixed {
+            } => match status {
+                Some(StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE) => {
+                    Some(RetryStrategy {
                         delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
                         max_attempts: MAX_RETRY_ATTEMPTS,
                     })
                 }
-                StatusCode::INTERNAL_SERVER_ERROR => Some(RetryStrategy::Fixed {
+                Some(StatusCode::INTERNAL_SERVER_ERROR) => Some(RetryStrategy {
                     delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                    // Internal Server Error could be anything, retry up to 3 times.
                     max_attempts: 3,
                 }),
-                status => {
-                    // There is no StatusCode variant for the unofficial HTTP 529 ("The service is overloaded"),
-                    // but we frequently get them in practice. See https://http.dev/529
-                    if status.as_u16() == 529 {
-                        Some(RetryStrategy::Fixed {
-                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                            max_attempts: MAX_RETRY_ATTEMPTS,
-                        })
-                    } else {
-                        Some(RetryStrategy::Fixed {
-                            delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
-                            max_attempts: 2,
-                        })
-                    }
+                Some(status) if status.is_server_error() || status.as_u16() == 529 => {
+                    Some(RetryStrategy {
+                        delay: retry_after.unwrap_or(BASE_RETRY_DELAY),
+                        max_attempts: 3,
+                    })
                 }
+                Some(_) => None,
+                None => None,
             },
-            ApiInternalServerError { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 3,
-            }),
-            ApiReadResponseError { .. }
-            | HttpSend { .. }
-            | DeserializeResponse { .. }
-            | BadRequestFormat { .. } => Some(RetryStrategy::Fixed {
-                delay: BASE_RETRY_DELAY,
-                max_attempts: 3,
-            }),
-            // Retrying these errors definitely shouldn't help.
-            HttpResponseError {
-                status_code:
-                    StatusCode::PAYLOAD_TOO_LARGE | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED,
-                ..
+            ApiReadResponseError { .. } | HttpSend { .. } | DeserializeResponse { .. } => {
+                Some(RetryStrategy {
+                    delay: BASE_RETRY_DELAY,
+                    max_attempts: 3,
+                })
             }
-            | AuthenticationError { .. }
+            // Retrying these errors definitely shouldn't help.
+            AuthenticationError { .. }
             | PermissionError { .. }
             | NoApiKey { .. }
             | ApiEndpointNotFound { .. }
@@ -4586,18 +4540,9 @@ impl Thread {
             | InvalidEncryptedContent { .. } => None,
             // These errors might be transient, so retry them
             SerializeRequest { .. } | BuildRequestBody { .. } | StreamEndedUnexpectedly { .. } => {
-                Some(RetryStrategy::Fixed {
+                Some(RetryStrategy {
                     delay: BASE_RETRY_DELAY,
                     max_attempts: 1,
-                })
-            }
-            // Retry all other 4xx and 5xx errors once.
-            HttpResponseError { status_code, .. }
-                if status_code.is_client_error() || status_code.is_server_error() =>
-            {
-                Some(RetryStrategy::Fixed {
-                    delay: BASE_RETRY_DELAY,
-                    max_attempts: 3,
                 })
             }
             // Retrying won't help for Payment Required errors.
@@ -4605,8 +4550,9 @@ impl Thread {
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,
-            // Conservatively assume that any other errors are non-retryable
-            HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
+            // `Other` includes mid-stream mapping failures that can be caused by
+            // a transient malformed or interrupted provider event.
+            Other(..) => Some(RetryStrategy {
                 delay: BASE_RETRY_DELAY,
                 max_attempts: 2,
             }),

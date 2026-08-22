@@ -126,27 +126,13 @@ pub enum LanguageModelCompletionError {
         provider: LanguageModelProviderName,
         retry_after: Option<Duration>,
     },
-    #[error("{provider}'s API server reported an internal server error: {message}")]
-    ApiInternalServerError {
-        provider: LanguageModelProviderName,
-        message: String,
-    },
     #[error("{message}")]
-    UpstreamProviderError {
+    ProviderRejection {
+        provider: LanguageModelProviderName,
+        status: Option<StatusCode>,
+        code: Option<String>,
         message: String,
-        status: StatusCode,
         retry_after: Option<Duration>,
-    },
-    #[error("HTTP response error from {provider}'s API: status {status_code} - {message:?}")]
-    HttpResponseError {
-        provider: LanguageModelProviderName,
-        status_code: StatusCode,
-        message: String,
-    },
-    #[error("invalid request format to {provider}'s API: {message}")]
-    BadRequestFormat {
-        provider: LanguageModelProviderName,
-        message: String,
     },
     #[error("invalid encrypted content from {provider}'s API: {message}")]
     InvalidEncryptedContent {
@@ -226,34 +212,43 @@ impl LanguageModelCompletionError {
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
-        if let Some(tokens) = parse_prompt_too_long(&message) {
-            Self::PromptTooLarge {
-                tokens: Some(tokens),
-            }
-        } else if code == "upstream_http_error" {
+        if code == "upstream_http_error" {
             if let Some((upstream_status, inner_message)) =
                 Self::parse_upstream_error_json(&message)
             {
-                return Self::from_http_status(
+                return Self::from_provider_response(
                     upstream_provider,
-                    upstream_status,
+                    Some(upstream_status),
+                    Some(code),
                     inner_message,
                     retry_after,
                 );
             }
-            anyhow!("completion request failed, code: {code}, message: {message}").into()
+            Self::from_provider_response(upstream_provider, None, Some(code), message, retry_after)
         } else if let Some(status_code) = code
             .strip_prefix("upstream_http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
-            Self::from_http_status(upstream_provider, status_code, message, retry_after)
+            Self::from_provider_response(
+                upstream_provider,
+                Some(status_code),
+                Some(code),
+                message,
+                retry_after,
+            )
         } else if let Some(status_code) = code
             .strip_prefix("http_")
             .and_then(|code| StatusCode::from_str(code).ok())
         {
-            Self::from_http_status(ZED_CLOUD_PROVIDER_NAME, status_code, message, retry_after)
+            Self::from_provider_response(
+                ZED_CLOUD_PROVIDER_NAME,
+                Some(status_code),
+                Some(code),
+                message,
+                retry_after,
+            )
         } else {
-            anyhow!("completion request failed, code: {code}, message: {message}").into()
+            Self::from_provider_response(upstream_provider, None, Some(code), message, retry_after)
         }
     }
 
@@ -263,39 +258,58 @@ impl LanguageModelCompletionError {
         message: String,
         retry_after: Option<Duration>,
     ) -> Self {
-        match status_code {
-            StatusCode::BAD_REQUEST => {
-                if is_invalid_encrypted_content_message(&message) {
-                    Self::InvalidEncryptedContent { provider, message }
-                } else if is_context_window_exceeded_message(&message) {
-                    Self::PromptTooLarge { tokens: None }
-                } else {
-                    Self::BadRequestFormat { provider, message }
-                }
-            }
-            StatusCode::UNAUTHORIZED => Self::AuthenticationError { provider, message },
-            StatusCode::FORBIDDEN => Self::PermissionError { provider, message },
-            StatusCode::NOT_FOUND => Self::ApiEndpointNotFound { provider },
-            StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
+        Self::from_provider_response(provider, Some(status_code), None, message, retry_after)
+    }
+
+    /// Classifies a provider-originated failure when it has a known semantic
+    /// meaning, otherwise preserving the provider's response metadata.
+    pub fn from_provider_response(
+        provider: LanguageModelProviderName,
+        status: Option<StatusCode>,
+        code: Option<String>,
+        message: String,
+        retry_after: Option<Duration>,
+    ) -> Self {
+        if let Some(tokens) = parse_prompt_too_long(&message) {
+            return Self::PromptTooLarge {
+                tokens: Some(tokens),
+            };
+        }
+        if is_context_window_exceeded_message(&message) {
+            return Self::PromptTooLarge { tokens: None };
+        }
+        if code.as_deref() == Some("invalid_encrypted_content")
+            || is_invalid_encrypted_content_message(&message)
+        {
+            return Self::InvalidEncryptedContent { provider, message };
+        }
+
+        match status {
+            Some(StatusCode::UNAUTHORIZED) => Self::AuthenticationError { provider, message },
+            Some(StatusCode::FORBIDDEN) => Self::PermissionError { provider, message },
+            Some(StatusCode::NOT_FOUND) => Self::ApiEndpointNotFound { provider },
+            Some(StatusCode::PAYMENT_REQUIRED) => Self::PaymentRequired,
+            Some(StatusCode::PAYLOAD_TOO_LARGE) => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(&message),
             },
-            StatusCode::TOO_MANY_REQUESTS => Self::RateLimitExceeded {
+            Some(StatusCode::TOO_MANY_REQUESTS) => Self::RateLimitExceeded {
                 provider,
                 retry_after,
             },
-            StatusCode::INTERNAL_SERVER_ERROR => Self::ApiInternalServerError { provider, message },
-            StatusCode::SERVICE_UNAVAILABLE => Self::ServerOverloaded {
+            Some(StatusCode::SERVICE_UNAVAILABLE) => Self::ServerOverloaded {
                 provider,
                 retry_after,
             },
-            _ if status_code.as_u16() == 529 => Self::ServerOverloaded {
+            Some(status_code) if status_code.as_u16() == 529 => Self::ServerOverloaded {
                 provider,
                 retry_after,
             },
-            _ => Self::HttpResponseError {
+            _ => Self::ProviderRejection {
                 provider,
-                status_code,
+                status,
+                code,
                 message,
+                retry_after,
             },
         }
     }
@@ -679,12 +693,20 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code.as_deref(), Some("upstream_http_error"));
                 assert_eq!(message, "Internal server error");
             }
             _ => panic!(
-                "Expected ApiInternalServerError for 500 status, got: {:?}",
+                "Expected ProviderRejection for 500 status, got: {:?}",
                 error
             ),
         }
@@ -713,7 +735,10 @@ mod tests {
 
         assert!(matches!(
             error,
-            LanguageModelCompletionError::BadRequestFormat { .. }
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::BAD_REQUEST),
+                ..
+            }
         ));
     }
 
@@ -754,6 +779,29 @@ mod tests {
     }
 
     #[test]
+    fn test_from_cloud_failure_preserves_unknown_provider_rejection() {
+        let error = LanguageModelCompletionError::from_cloud_failure(
+            OPEN_AI_PROVIDER_NAME,
+            "cyber_policy".to_string(),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+        );
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
     fn test_upstream_http_error_connection_timeout() {
         let error = LanguageModelCompletionError::from_cloud_failure(
             String::from("anthropic").into(),
@@ -780,15 +828,23 @@ mod tests {
         );
 
         match error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                ..
+            } => {
                 assert_eq!(provider.0, "anthropic");
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code.as_deref(), Some("upstream_http_error"));
                 assert_eq!(
                     message,
                     "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers. reset reason: connection timeout"
                 );
             }
             _ => panic!(
-                "Expected ApiInternalServerError for connection timeout with 500 status, got: {:?}",
+                "Expected ProviderRejection for connection timeout with 500 status, got: {:?}",
                 error
             ),
         }

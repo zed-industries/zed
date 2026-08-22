@@ -3263,13 +3263,12 @@ async fn test_retry_cancelled_promptly_on_new_send(cx: &mut TestAppContext) {
     assert_eq!(model_a.completion_count(), 1);
 
     // Model returns a retryable upstream 500. The turn enters the retry delay.
-    model_a.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
-    );
+    model_a.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        language_model::LanguageModelProviderName::new("test"),
+        http_client::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error".to_string(),
+        None,
+    ));
     model_a.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -4047,11 +4046,12 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     fake_summary_model.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
+        LanguageModelCompletionError::from_http_status(
+            language_model::LanguageModelProviderName::new("test"),
+            gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+            None,
+        ),
     );
     fake_summary_model.end_last_completion_stream();
     send.collect::<Vec<_>>().await;
@@ -4662,13 +4662,12 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     // Before the fix, this would deadlock: the tool waits for more partials
     // (or cancellation), run_turn_internal waits for the tool, and the sender
     // keeping the channel open lives inside RunningTurn.
-    fake_model.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
-    );
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        language_model::LanguageModelProviderName::new("test"),
+        http_client::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
 
     // Advance past the retry delay so run_turn_internal retries.

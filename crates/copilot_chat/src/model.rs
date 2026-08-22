@@ -674,28 +674,35 @@ impl CopilotResponsesEventMapper {
             }
 
             copilot_responses::StreamEvent::Failed { response } => {
-                let provider = PROVIDER_NAME;
-                let (status_code, message) = match response.error {
+                let (status, code, message) = match response.error {
                     Some(error) => {
-                        let status_code = StatusCode::from_str(&error.code)
-                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-                        (status_code, error.message)
+                        let status = StatusCode::from_str(&error.code).ok();
+                        (status, Some(error.code), error.message)
                     }
                     None => (
-                        StatusCode::INTERNAL_SERVER_ERROR,
+                        None,
+                        Some("response.failed".to_string()),
                         "response.failed".to_string(),
                     ),
                 };
-                vec![Err(LanguageModelCompletionError::HttpResponseError {
-                    provider,
-                    status_code,
+                vec![Err(LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    status,
+                    code,
                     message,
-                })]
+                    None,
+                ))]
             }
 
-            copilot_responses::StreamEvent::GenericError { error } => vec![Err(
-                LanguageModelCompletionError::Other(anyhow!(error.message)),
-            )],
+            copilot_responses::StreamEvent::GenericError { error } => {
+                vec![Err(LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    None,
+                    Some(error.code),
+                    error.message,
+                    None,
+                ))]
+            }
 
             copilot_responses::StreamEvent::Created { .. }
             | copilot_responses::StreamEvent::Unknown => Vec::new(),
@@ -1649,7 +1656,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_failed_maps_http_response_error() {
+    fn responses_stream_failed_maps_rate_limit_error() {
         let events = vec![responses::StreamEvent::Failed {
             response: responses::Response {
                 error: Some(responses::ResponseError {
@@ -1669,15 +1676,14 @@ mod tests {
 
         assert_eq!(mapped_results.len(), 1);
         match &mapped_results[0] {
-            Err(LanguageModelCompletionError::HttpResponseError {
-                status_code,
-                message,
-                ..
+            Err(LanguageModelCompletionError::RateLimitExceeded {
+                provider,
+                retry_after,
             }) => {
-                assert_eq!(*status_code, http_client::StatusCode::TOO_MANY_REQUESTS);
-                assert_eq!(message, "too many requests");
+                assert_eq!(provider, &PROVIDER_NAME);
+                assert_eq!(*retry_after, None);
             }
-            other => panic!("expected HttpResponseError, got {:?}", other),
+            other => panic!("expected RateLimitExceeded, got {:?}", other),
         }
     }
 

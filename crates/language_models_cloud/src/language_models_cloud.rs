@@ -372,16 +372,19 @@ impl From<ApiError> for LanguageModelCompletionError {
                         .unwrap_or(error.status)
                 };
 
-                return LanguageModelCompletionError::UpstreamProviderError {
-                    message: cloud_error.message,
-                    status,
-                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
-                };
+                return LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    Some(status),
+                    Some(cloud_error.code),
+                    cloud_error.message,
+                    cloud_error.retry_after.map(Duration::from_secs_f64),
+                );
             }
 
-            return LanguageModelCompletionError::from_http_status(
+            return LanguageModelCompletionError::from_provider_response(
                 PROVIDER_NAME,
-                error.status,
+                Some(error.status),
+                Some(cloud_error.code),
                 cloud_error.message,
                 None,
             );
@@ -1554,19 +1557,20 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
-                assert_eq!(
-                    message,
-                    "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout"
-                );
+            LanguageModelCompletionError::ServerOverloaded {
+                provider,
+                retry_after,
+            } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream 503, got: {:?}",
+                "Expected ServerOverloaded for upstream 503, got: {:?}",
                 completion_error
             ),
         }
 
-        // upstream_http_error with 500 status should become ApiInternalServerError
+        // upstream_http_error with 500 status should preserve the rejection
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the OpenAI API: internal server error","upstream_status":500}"#;
 
         let api_error = ApiError {
@@ -1578,14 +1582,24 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                retry_after,
+            } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code.as_deref(), Some("upstream_http_error"));
                 assert_eq!(
                     message,
                     "Received an error from the OpenAI API: internal server error"
                 );
+                assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream 500, got: {:?}",
+                "Expected ProviderRejection for upstream 500, got: {:?}",
                 completion_error
             ),
         }
@@ -1602,19 +1616,20 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
-                assert_eq!(
-                    message,
-                    "Received an error from the Google API: rate limit exceeded"
-                );
+            LanguageModelCompletionError::RateLimitExceeded {
+                provider,
+                retry_after,
+            } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream 429, got: {:?}",
+                "Expected RateLimitExceeded for upstream 429, got: {:?}",
                 completion_error
             ),
         }
 
-        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        // Regular 500 error without upstream_http_error should preserve the Zed rejection
         let error_body = "Regular internal server error";
 
         let api_error = ApiError {
@@ -1626,17 +1641,26 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                retry_after,
+            } => {
                 assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code, None);
                 assert_eq!(message, "Regular internal server error");
+                assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected ApiInternalServerError for regular 500, got: {:?}",
+                "Expected ProviderRejection for regular 500, got: {:?}",
                 completion_error
             ),
         }
 
-        // upstream_http_429 format should be converted to UpstreamProviderError
+        // upstream_http_429 format should be converted to RateLimitExceeded
         let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
 
         let api_error = ApiError {
@@ -1648,17 +1672,15 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError {
-                message,
-                status,
+            LanguageModelCompletionError::RateLimitExceeded {
+                provider,
                 retry_after,
             } => {
-                assert_eq!(message, "Upstream Anthropic rate limit exceeded.");
-                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(retry_after, Some(Duration::from_secs_f64(30.5)));
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream_http_429, got: {:?}",
+                "Expected RateLimitExceeded for upstream_http_429, got: {:?}",
                 completion_error
             ),
         }
@@ -1675,11 +1697,20 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                ..
+            } => {
                 assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code, None);
+                assert_eq!(message, "Not JSON at all");
             }
             _ => panic!(
-                "Expected ApiInternalServerError for invalid JSON, got: {:?}",
+                "Expected ProviderRejection for invalid JSON, got: {:?}",
                 completion_error
             ),
         }

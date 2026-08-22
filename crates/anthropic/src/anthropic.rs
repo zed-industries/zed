@@ -1212,11 +1212,7 @@ pub fn completion_error_from_anthropic(
         AnthropicError::HttpResponseError {
             status_code,
             message,
-        } => Error::HttpResponseError {
-            provider,
-            status_code,
-            message,
-        },
+        } => Error::from_http_status(provider, status_code, message, None),
         AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
             provider,
             retry_after: Some(retry_after),
@@ -1237,50 +1233,26 @@ pub fn completion_error_from_anthropic_api(
 ) -> language_model_core::LanguageModelCompletionError {
     use ApiErrorCode::*;
     use language_model_core::LanguageModelCompletionError as Error;
-    match error.code() {
-        Some(code) => match code {
-            InvalidRequestError => Error::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Error::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            BillingError => Error::PaymentRequired,
-            PermissionError => Error::PermissionError {
-                provider,
-                message: error.message,
-            },
-            NotFoundError => Error::ApiEndpointNotFound { provider },
-            ConflictError => Error::HttpResponseError {
-                provider,
-                status_code: StatusCode::CONFLICT,
-                message: error.message,
-            },
-            RequestTooLarge => Error::PromptTooLarge {
-                tokens: language_model_core::parse_prompt_too_long(&error.message),
-            },
-            RateLimitError => Error::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            TimeoutError => Error::UpstreamProviderError {
-                message: error.message,
-                status: StatusCode::GATEWAY_TIMEOUT,
-                retry_after: None,
-            },
-            ApiError => Error::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Error::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
-        },
-        None => Error::Other(error.into()),
-    }
+    let status = error.code().and_then(|code| match code {
+        InvalidRequestError => Some(StatusCode::BAD_REQUEST),
+        AuthenticationError => Some(StatusCode::UNAUTHORIZED),
+        BillingError => Some(StatusCode::PAYMENT_REQUIRED),
+        PermissionError => Some(StatusCode::FORBIDDEN),
+        NotFoundError => Some(StatusCode::NOT_FOUND),
+        ConflictError => Some(StatusCode::CONFLICT),
+        RequestTooLarge => Some(StatusCode::PAYLOAD_TOO_LARGE),
+        RateLimitError => Some(StatusCode::TOO_MANY_REQUESTS),
+        TimeoutError => Some(StatusCode::GATEWAY_TIMEOUT),
+        ApiError => Some(StatusCode::INTERNAL_SERVER_ERROR),
+        OverloadedError => StatusCode::from_u16(529).ok(),
+    });
+    Error::from_provider_response(
+        provider,
+        status,
+        Some(error.error_type),
+        error.message,
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -1367,7 +1339,7 @@ mod tests {
     }
 
     #[test]
-    fn list_models_maps_anthropic_conflict_errors_to_http_conflict() {
+    fn list_models_preserves_anthropic_conflict_errors() {
         let client = FakeHttpClient::create(|_| async move {
             Ok(http::Response::builder()
                 .status(StatusCode::CONFLICT)
@@ -1388,11 +1360,14 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::HttpResponseError {
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
                 provider,
-                status_code: StatusCode::CONFLICT,
+                status: Some(StatusCode::CONFLICT),
+                code: Some(code),
                 message,
+                retry_after: None,
             } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "conflict_error"
                 && message == "The resource was modified concurrently."
         ));
     }
@@ -1419,11 +1394,15 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::UpstreamProviderError {
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                provider,
                 message,
-                status: StatusCode::GATEWAY_TIMEOUT,
+                status: Some(StatusCode::GATEWAY_TIMEOUT),
+                code: Some(code),
                 retry_after: None,
-            } if message == "The request timed out."
+            } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "timeout_error"
+                && message == "The request timed out."
         ));
     }
 

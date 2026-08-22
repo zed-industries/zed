@@ -454,24 +454,23 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                     | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
                         Some(retry_after.unwrap_or(Duration::from_secs(5)))
                     }
-                    LanguageModelCompletionError::UpstreamProviderError {
+                    LanguageModelCompletionError::ProviderRejection {
                         status,
                         retry_after,
                         ..
-                    } => {
-                        let should_retry = matches!(
-                            *status,
-                            StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
-                        ) || status.as_u16() == 529;
-
-                        if should_retry {
+                    } => match status {
+                        Some(StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE) => {
                             Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                        } else {
-                            None
                         }
-                    }
+                        Some(status) if status.as_u16() == 529 => {
+                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
+                        }
+                        Some(status) if status.is_server_error() => {
+                            Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
+                        }
+                        _ => None,
+                    },
                     LanguageModelCompletionError::ApiReadResponseError { .. }
-                    | LanguageModelCompletionError::ApiInternalServerError { .. }
                     | LanguageModelCompletionError::HttpSend { .. } => {
                         Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
                     }

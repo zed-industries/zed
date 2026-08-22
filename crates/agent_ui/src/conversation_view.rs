@@ -146,7 +146,9 @@ pub(crate) enum ThreadError {
         provider: SharedString,
         message: Option<SharedString>,
     },
-    RequestFailed,
+    ProviderRejection {
+        message: SharedString,
+    },
     MaxOutputTokens,
     NoModelSelected,
     ApiError {
@@ -174,11 +176,9 @@ impl From<anyhow::Error> for ThreadError {
                 RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
                     provider: provider.to_string().into(),
                 },
-                ServerOverloaded { provider, .. } | ApiInternalServerError { provider, .. } => {
-                    Self::ServerOverloaded {
-                        provider: provider.to_string().into(),
-                    }
-                }
+                ServerOverloaded { provider, .. } => Self::ServerOverloaded {
+                    provider: provider.to_string().into(),
+                },
                 PromptTooLarge { .. } => Self::PromptTooLarge,
                 PaymentRequired => Self::PaymentRequired,
                 NoApiKey { provider } => Self::NoCredentials {
@@ -197,11 +197,11 @@ impl From<anyhow::Error> for ThreadError {
                     provider: provider.to_string().into(),
                     message: Some(message.clone().into()),
                 },
-                UpstreamProviderError { .. } => Self::RequestFailed,
+                ProviderRejection { message, .. } => Self::ProviderRejection {
+                    message: message.clone().into(),
+                },
                 DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
-                BadRequestFormat { provider, .. }
-                | HttpResponseError { provider, .. }
-                | ApiEndpointNotFound { provider } => Self::ApiError {
+                ApiEndpointNotFound { provider } => Self::ApiError {
                     provider: provider.to_string().into(),
                 },
                 _ => {
@@ -3705,6 +3705,25 @@ pub(crate) mod tests {
             matches!(error, ThreadError::DataRetentionConsentRequired),
             "expected ThreadError::DataRetentionConsentRequired, got: {error:?}"
         );
+    }
+
+    #[test]
+    fn test_provider_rejection_preserves_provider_message() {
+        let provider_error = LanguageModelCompletionError::from_provider_response(
+            language_model::OPEN_AI_PROVIDER_NAME,
+            None,
+            Some("cyber_policy".to_string()),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+        );
+
+        let error = ThreadError::from(anyhow!(provider_error));
+
+        assert!(matches!(
+            error,
+            ThreadError::ProviderRejection { message }
+                if message == "This content was flagged as potentially violating our terms of use."
+        ));
     }
 
     #[gpui::test]

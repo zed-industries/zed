@@ -824,41 +824,23 @@ impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
         use ApiErrorCode::*;
         let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
-        match error.code {
-            InvalidRequestError => Self::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Self::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            PaymentRequiredError => Self::AuthenticationError {
-                provider,
-                message: format!("Payment required: {}", error.message),
-            },
-            PermissionError => Self::PermissionError {
-                provider,
-                message: error.message,
-            },
-            RequestTimedOut => Self::HttpResponseError {
-                provider,
-                status_code: http_client::StatusCode::REQUEST_TIMEOUT,
-                message: error.message,
-            },
-            RateLimitError => Self::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            ApiError => Self::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Self::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
-        }
+        let status = match error.code {
+            InvalidRequestError => http_client::StatusCode::BAD_REQUEST,
+            AuthenticationError => http_client::StatusCode::UNAUTHORIZED,
+            PaymentRequiredError => http_client::StatusCode::PAYMENT_REQUIRED,
+            PermissionError => http_client::StatusCode::FORBIDDEN,
+            RequestTimedOut => http_client::StatusCode::REQUEST_TIMEOUT,
+            RateLimitError => http_client::StatusCode::TOO_MANY_REQUESTS,
+            ApiError => http_client::StatusCode::BAD_GATEWAY,
+            OverloadedError => http_client::StatusCode::SERVICE_UNAVAILABLE,
+        };
+        Self::from_provider_response(
+            provider,
+            Some(status),
+            Some(error.code.to_string()),
+            error.message,
+            None,
+        )
     }
 }
 

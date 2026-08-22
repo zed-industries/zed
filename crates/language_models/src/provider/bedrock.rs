@@ -981,15 +981,24 @@ impl LanguageModel for BedrockModel {
             let response = request.await.map_err(|err| match err {
                 BedrockError::Validation(ref msg) => {
                     if msg.contains("model identifier is invalid") {
-                        LanguageModelCompletionError::Other(anyhow!(
-                            "{display_name} is not available in {region}. \
+                        LanguageModelCompletionError::from_provider_response(
+                            PROVIDER_NAME,
+                            Some(http_client::StatusCode::BAD_REQUEST),
+                            Some("ValidationException".to_string()),
+                            format!(
+                                "{display_name} is not available in {region}. \
                                  Try switching to a region where this model is supported."
-                        ))
+                            ),
+                            None,
+                        )
                     } else {
-                        LanguageModelCompletionError::BadRequestFormat {
-                            provider: PROVIDER_NAME,
-                            message: msg.clone(),
-                        }
+                        LanguageModelCompletionError::from_provider_response(
+                            PROVIDER_NAME,
+                            Some(http_client::StatusCode::BAD_REQUEST),
+                            Some("ValidationException".to_string()),
+                            msg.clone(),
+                            None,
+                        )
                     }
                 }
                 BedrockError::RateLimited => LanguageModelCompletionError::RateLimitExceeded {
@@ -1007,10 +1016,13 @@ impl LanguageModel for BedrockModel {
                     message: msg,
                 },
                 BedrockError::InternalServer(msg) => {
-                    LanguageModelCompletionError::ApiInternalServerError {
-                        provider: PROVIDER_NAME,
-                        message: msg,
-                    }
+                    LanguageModelCompletionError::from_provider_response(
+                        PROVIDER_NAME,
+                        Some(http_client::StatusCode::INTERNAL_SERVER_ERROR),
+                        Some("InternalServerException".to_string()),
+                        msg,
+                        None,
+                    )
                 }
                 other => LanguageModelCompletionError::Other(anyhow!(other)),
             })?;
