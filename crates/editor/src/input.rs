@@ -1167,6 +1167,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        self.unfold_buffers_with_selections(cx);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |_, selection| {
@@ -1961,6 +1962,8 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+
+        self.unfold_buffers_with_selections(cx);
 
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
