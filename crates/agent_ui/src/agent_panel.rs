@@ -5751,6 +5751,17 @@ impl AgentPanel {
                             menu = menu.action("Log Out", Box::new(LogoutAgent))
                         }
 
+                        if let Some(conversation_view) = conversation_view.as_ref() {
+                            menu = menu.entry("Reload Agent", None, {
+                                let conversation_view = conversation_view.clone();
+                                move |window, cx| {
+                                    conversation_view.update(cx, |conversation_view, cx| {
+                                        conversation_view.retry_connection(window, cx);
+                                    });
+                                }
+                            });
+                        }
+
                         menu
                     }))
                 }
@@ -6083,6 +6094,25 @@ impl AgentPanel {
         });
 
         let toolbar_content = {
+            let retry_launch_view = match &self.base_view {
+                BaseView::AgentThread { conversation_view }
+                    if conversation_view.read(cx).is_load_error() =>
+                {
+                    Some(conversation_view.clone())
+                }
+                _ => None,
+            };
+            let retry_launch_button = retry_launch_view.map(|conversation_view| {
+                IconButton::new("retry-agent-launch", IconName::RotateCw)
+                    .icon_size(IconSize::Small)
+                    .tooltip(Tooltip::text("Retry launching agent"))
+                    .on_click(cx.listener(move |_this, _, window, cx| {
+                        conversation_view.update(cx, |conversation_view, cx| {
+                            conversation_view.retry_connection(window, cx);
+                        });
+                    }))
+            });
+
             let new_thread_menu = PopoverMenu::new("new_thread_menu")
                 .trigger_with_tooltip(
                     IconButton::new("new_thread_menu_btn", IconName::Plus)
@@ -6132,6 +6162,7 @@ impl AgentPanel {
                         .flex_none()
                         .gap_1()
                         .children(sandbox_status)
+                        .when_some(retry_launch_button, |this, button| this.child(button))
                         .when(can_create_entries, |this| this.child(new_thread_menu))
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
