@@ -1879,6 +1879,40 @@ impl WorkspaceDb {
             .collect())
     }
 
+    /// Returns the paths of the most recently used local workspace whose
+    /// `identity_paths` match the given list. Project groups are keyed by the
+    /// identity paths of a repo (its main checkout), so opening a group with
+    /// no workspace currently loaded needs this to find the workspace the user
+    /// actually last worked in — a linked git worktree — instead of always
+    /// falling back to the main checkout.
+    pub(crate) fn most_recent_workspace_paths_for_identity(
+        &self,
+        identity_paths: &PathList,
+    ) -> Option<PathList> {
+        let serialized = identity_paths.serialize();
+        self.most_recent_local_workspace_paths_for_identity_query(serialized.paths)
+            .log_err()
+            .flatten()
+            .map(|(paths, paths_order)| {
+                PathList::deserialize(&SerializedPathList {
+                    paths,
+                    order: paths_order,
+                })
+            })
+    }
+
+    query! {
+        pub(crate) fn most_recent_local_workspace_paths_for_identity_query(identity_paths: String) -> Result<Option<(String, String)>> {
+            SELECT paths, paths_order
+            FROM workspaces
+            WHERE
+                identity_paths IS ?1 AND
+                remote_connection_id IS NULL
+            ORDER BY timestamp DESC
+            LIMIT 1
+        }
+    }
+
     query! {
         fn recent_workspaces_query() -> Result<Vec<(WorkspaceId, String, String, Option<String>, Option<String>, Option<u64>, Option<String>, String)>> {
             SELECT workspace_id, paths, paths_order, identity_paths, identity_paths_order, remote_connection_id, session_id, timestamp
@@ -5462,6 +5496,84 @@ mod tests {
         );
         assert_eq!(result[0].workspace_id, WorkspaceId(2));
         assert_eq!(result[0].timestamp, t1);
+    }
+
+    #[gpui::test]
+    async fn test_most_recent_workspace_paths_for_identity(cx: &mut gpui::TestAppContext) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db("test_most_recent_workspace_paths_for_identity").await;
+
+        fs.insert_tree(
+            "/the-project",
+            json!({
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "worktrees": {
+                        "feature-a": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature-a"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/the-project/feature-a",
+            json!({
+                ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let identity = PathList::new(&["/the-project"]);
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(identity.clone()),
+            ..workspace_with(1, &[Path::new("/the-project")], empty_pane_group(), None)
+        })
+        .await;
+        db.save_workspace(SerializedWorkspace {
+            identity_paths: Some(identity.clone()),
+            ..workspace_with(
+                2,
+                &[Path::new("/the-project/feature-a")],
+                empty_pane_group(),
+                None,
+            )
+        })
+        .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        // The linked worktree workspace is the most recent for the identity,
+        // so it should be the one resolved.
+        assert_eq!(
+            db.most_recent_workspace_paths_for_identity(&identity)
+                .unwrap()
+                .paths(),
+            &[PathBuf::from("/the-project/feature-a")]
+        );
+
+        // Flip the timestamps: the main checkout is now most recent.
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:02".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+        assert_eq!(
+            db.most_recent_workspace_paths_for_identity(&identity)
+                .unwrap()
+                .paths(),
+            &[PathBuf::from("/the-project")]
+        );
     }
 
     #[gpui::test]

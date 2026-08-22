@@ -1215,26 +1215,49 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&path_list, None, cx) {
+        // A project group's `path_list` is the group's *identity* paths, which
+        // for a linked git worktree is the main checkout of the repo. When
+        // opening such a group with no workspace currently loaded, resolve the
+        // paths to the most recently used workspace for that identity so the
+        // user gets the worktree they actually last worked in, rather than
+        // always falling back to the main checkout.
+        let identity_path_list = match project_group.as_ref() {
+            Some(project_group) if project_group.path_list() == &path_list => {
+                Some(path_list.clone())
+            }
+            _ => None,
+        };
+        let effective_path_list = match identity_path_list {
+            Some(identity) => {
+                let db = crate::persistence::WorkspaceDb::global(cx);
+                db.most_recent_workspace_paths_for_identity(&identity)
+                    .filter(|paths| !paths.is_empty() && paths != &identity)
+                    .unwrap_or(identity)
+            }
+            None => path_list.clone(),
+        };
+
+        if let Some(workspace) = self.workspace_for_paths(&effective_path_list, None, cx) {
             self.activate(workspace.clone(), source_workspace, window, cx);
             return Task::ready(Ok(workspace));
         }
 
         let paths = path_list.paths().to_vec();
+        let effective_paths = effective_path_list.paths().to_vec();
         let app_state = self.workspace().read(cx).app_state().clone();
         let requesting_window = window.window_handle().downcast::<MultiWorkspace>();
         let fs = <dyn Fs>::global(cx);
 
         cx.spawn(async move |_this, cx| {
             let effective_path_list = if let Some(project_group) = project_group {
-                let metadata_tasks: Vec<_> = paths
+                let metadata_tasks: Vec<_> = effective_paths
                     .iter()
                     .map(|path| fs.metadata(path.as_path()))
                     .collect();
                 let metadata_results = futures::future::join_all(metadata_tasks).await;
                 // Only fall back when every path is definitely absent; real
                 // filesystem errors should not be treated as "missing".
-                let all_paths_missing = !paths.is_empty()
+                let all_paths_missing = !effective_paths.is_empty()
                     && metadata_results
                         .into_iter()
                         // Ok(None) means the path is definitely absent
@@ -1243,7 +1266,7 @@ impl MultiWorkspace {
                 if all_paths_missing {
                     project_group.path_list().clone()
                 } else {
-                    PathList::new(&paths)
+                    PathList::new(&effective_paths)
                 }
             } else {
                 PathList::new(&paths)
@@ -1354,6 +1377,17 @@ impl MultiWorkspace {
         self.held[displayed].activated_at = Some(stamp);
 
         if !should_retain_workspaces && !old_active_was_retained {
+            // Persist the workspace we're leaving so its row reflects the
+            // moment it was last used. Without this the pending throttled
+            // serialization is dropped on detach, leaving a stale timestamp
+            // that makes the recent-projects dedup pick a different workspace
+            // of the same git identity (e.g. the main checkout) when the user
+            // switches back to the worktree they just left.
+            old_active_workspace
+                .update(cx, |workspace, cx| {
+                    workspace.flush_serialization(window, cx)
+                })
+                .detach();
             self.detach_workspace(&old_active_workspace, cx);
         }
 
@@ -1395,6 +1429,11 @@ impl MultiWorkspace {
         let displayed_workspace = self.workspace().clone();
         for workspace in self.workspaces().cloned().collect::<Vec<_>>() {
             if workspace != displayed_workspace {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.flush_serialization(window, cx)
+                    })
+                    .detach();
                 self.detach_workspace(&workspace, cx);
             }
         }

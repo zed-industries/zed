@@ -1,6 +1,10 @@
 use std::path::PathBuf;
 
 use super::*;
+use super::persistence::{
+    WorkspaceDb,
+    model::{SerializedPane, SerializedPaneGroup, SerializedWorkspace},
+};
 use crate::item::test::TestItem;
 use agent_settings::AgentSettings;
 use client::proto;
@@ -578,6 +582,120 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
             mw.workspaces().count(),
             1,
             "falling back to the project group key should not create a second workspace"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_find_or_create_local_workspace_reopens_most_recent_worktree_for_group(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    // Main repo with a linked worktree.
+    fs.insert_tree(
+        "/the-project",
+        json!({
+            ".git": "gitdir: ./.bare\n",
+            ".bare": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a"
+                    }
+                }
+            },
+            "src": { "main.rs": "" }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/the-project/feature-a",
+        json!({
+            ".git": "gitdir: ../.bare/worktrees/feature-a\n",
+            "src": { "lib.rs": "" }
+        }),
+    )
+    .await;
+    // A different project is what's currently open in the window.
+    fs.insert_tree("/other-project", json!({ "file.txt": "" })).await;
+
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+    // Seed the database with two workspaces for the same repo identity: the
+    // main checkout (older) and the linked worktree (most recent).
+    let identity = PathList::new(&["/the-project"]);
+    let db = cx.update(|cx| WorkspaceDb::global(cx));
+    db.save_workspace(SerializedWorkspace {
+        identity_paths: Some(identity.clone()),
+        id: WorkspaceId(1),
+        paths: identity.clone(),
+        center_group: SerializedPaneGroup::Pane(SerializedPane::default()),
+        window_bounds: Default::default(),
+        display: Default::default(),
+        docks: Default::default(),
+        bookmarks: Default::default(),
+        breakpoints: Default::default(),
+        centered_layout: false,
+        session_id: None,
+        window_id: Some(1),
+        user_toolchains: Default::default(),
+        location: SerializedWorkspaceLocation::Local,
+    })
+    .await;
+    db.save_workspace(SerializedWorkspace {
+        identity_paths: Some(identity.clone()),
+        id: WorkspaceId(2),
+        paths: PathList::new(&["/the-project/feature-a"]),
+        center_group: SerializedPaneGroup::Pane(SerializedPane::default()),
+        window_bounds: Default::default(),
+        display: Default::default(),
+        docks: Default::default(),
+        bookmarks: Default::default(),
+        breakpoints: Default::default(),
+        centered_layout: false,
+        session_id: None,
+        window_id: Some(2),
+        user_toolchains: Default::default(),
+        location: SerializedWorkspaceLocation::Local,
+    })
+    .await;
+    db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+        .await
+        .unwrap();
+    db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), ["/other-project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    let group_key = ProjectGroupKey::new(None, identity.clone());
+    let workspace = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_local_workspace(
+                identity.clone(),
+                Some(group_key),
+                None,
+                OpenMode::Activate,
+                None,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening a project group should create a workspace");
+
+    multi_workspace.read_with(cx, |_, cx| {
+        assert_eq!(
+            PathList::new(&workspace.read(cx).root_paths(cx)),
+            PathList::new(&["/the-project/feature-a"]),
+            "opening a project group should reopen the most recent linked worktree workspace, not the main checkout"
         );
     });
 }
