@@ -592,9 +592,14 @@ impl NotificationSubscriptionSet {
             return;
         };
 
-        for handler_id in handler_ids {
-            if let Some(handler) = self.handlers.get_mut(*handler_id) {
-                handler(payload.clone(), cx.clone());
+        if let Some((last_handler_id, handler_ids)) = handler_ids.split_last() {
+            for handler_id in handler_ids {
+                if let Some(handler) = self.handlers.get_mut(*handler_id) {
+                    handler(payload.clone(), cx.clone());
+                }
+            }
+            if let Some(handler) = self.handlers.get_mut(*last_handler_id) {
+                handler(payload, cx.clone());
             }
         }
     }
