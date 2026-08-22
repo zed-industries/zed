@@ -72,6 +72,11 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
+/// Synthetic failure content queued on load for non-blocking tool calls that
+/// were in flight when the thread was last saved — the app that ran them is
+/// gone, so their results will never arrive.
+const TOOL_CALL_INTERRUPTED_BY_RESTART_MESSAGE: &str =
+    "Zed was restarted before this tool call completed; its result is unavailable.";
 /// Tool input property the runtime injects into every tool schema so the
 /// model can run a call non-blockingly. Handled entirely by the agent
 /// runtime — tools (built-in, MCP, or future) never see it and never opt in.
@@ -1728,6 +1733,18 @@ impl Thread {
             )
     }
 
+    /// A synthetic restart failure carries only the
+    /// `TOOL_CALL_INTERRUPTED_BY_RESTART_MESSAGE` sentinel (queued on load for
+    /// calls that were in flight when the thread was last saved).
+    fn is_interrupted_by_restart_result(tool_result: &LanguageModelToolResult) -> bool {
+        tool_result.is_error
+            && matches!(
+                tool_result.content.as_slice(),
+                [LanguageModelToolResultContent::Text(text)]
+                    if text.as_ref() == TOOL_CALL_INTERRUPTED_BY_RESTART_MESSAGE
+            )
+    }
+
     fn tool_result_content_for_replay(
         tool_result: &LanguageModelToolResult,
     ) -> Option<Vec<acp::ToolCallContent>> {
@@ -1839,13 +1856,13 @@ impl Thread {
                 .map(|call| FinishedNonBlockingToolCall {
                     async_id: call.async_id,
                     tool_call_id: scoped_tool_call_id(call.owning_message_ix, &call.tool_use_id),
+                    owning_message_ix: call.owning_message_ix,
                     result: LanguageModelToolResult {
                         tool_use_id: call.tool_use_id,
                         tool_name: call.tool_name,
                         is_error: true,
                         content: vec![LanguageModelToolResultContent::Text(Arc::from(
-                            "Zed was restarted before this tool call completed; \
-                             its result is unavailable.",
+                            TOOL_CALL_INTERRUPTED_BY_RESTART_MESSAGE,
                         ))],
                         output: None,
                     },
@@ -1991,6 +2008,23 @@ impl Thread {
                     tool_name: call.tool_name.clone(),
                     owning_message_ix: call.owning_message_ix,
                 })
+                // Undelivered synthetic restart failures stay pending until
+                // they're delivered (on the user's next turn after a reopen),
+                // so a save in between doesn't drop them. Real results in the
+                // queue are left out: they were produced before this save and
+                // are either delivered with the next save's history or lost,
+                // as before.
+                .chain(
+                    self.queued_non_blocking_results
+                        .iter()
+                        .filter(|finished| Self::is_interrupted_by_restart_result(&finished.result))
+                        .map(|finished| crate::db::DbNonBlockingToolCall {
+                            async_id: finished.async_id.clone(),
+                            tool_use_id: finished.result.tool_use_id.clone(),
+                            tool_name: finished.result.tool_name.clone(),
+                            owning_message_ix: finished.owning_message_ix,
+                        }),
+                )
                 .collect(),
         };
 
@@ -2601,9 +2635,14 @@ impl Thread {
         let content = content.into_iter().map(Into::into).collect::<Arc<_>>();
         log::debug!("Thread::send content: {:?}", content);
 
-        self.messages
-            .push(Arc::new(Message::User(UserMessage { id, content })));
-        cx.notify();
+        // An empty message carries nothing, so don't record it. Pending
+        // interrupted-call notifications are delivered by the turn itself, so
+        // resuming a session that has any needs no message text.
+        if !content.is_empty() {
+            self.messages
+                .push(Arc::new(Message::User(UserMessage { id, content })));
+            cx.notify();
+        }
 
         self.send_existing(cx)
     }
@@ -4039,6 +4078,7 @@ impl Thread {
             .push(FinishedNonBlockingToolCall {
                 async_id: call.async_id,
                 tool_call_id: scoped_tool_call_id(call.owning_message_ix, &tool_use_id),
+                owning_message_ix: call.owning_message_ix,
                 result,
             });
         if self.running_turn.is_none() {
@@ -5323,6 +5363,7 @@ struct NonBlockingToolCall {
 struct FinishedNonBlockingToolCall {
     async_id: SharedString,
     tool_call_id: acp::ToolCallId,
+    owning_message_ix: usize,
     result: LanguageModelToolResult,
 }
 

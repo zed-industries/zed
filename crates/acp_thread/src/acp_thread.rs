@@ -2115,6 +2115,12 @@ pub struct AcpThread {
     pending_terminal_output: HashMap<acp::TerminalId, Vec<Vec<u8>>>,
     pending_terminal_exit: HashMap<acp::TerminalId, acp::TerminalExitStatus>,
     had_error: bool,
+    /// Non-blocking tool calls that were interrupted by an app restart and
+    /// whose failure notifications have not been delivered to the agent yet.
+    /// While set, an empty message may resume the session: the pending
+    /// notifications are delivered with that turn, so no user text is
+    /// required.
+    pending_interrupted_tool_calls: bool,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
     draft_prompt: Option<Vec<acp::ContentBlock>>,
     /// The initial scroll position for the thread view, set during session registration.
@@ -2328,6 +2334,7 @@ impl AcpThread {
             pending_terminal_output: HashMap::default(),
             pending_terminal_exit: HashMap::default(),
             had_error: false,
+            pending_interrupted_tool_calls: false,
             draft_prompt: None,
             ui_scroll_position: None,
             streaming_text_buffer: None,
@@ -2352,6 +2359,17 @@ impl AcpThread {
 
     pub fn draft_prompt(&self) -> Option<&[acp::ContentBlock]> {
         self.draft_prompt.as_deref()
+    }
+
+    pub fn has_pending_interrupted_tool_calls(&self) -> bool {
+        self.pending_interrupted_tool_calls
+    }
+
+    pub fn set_pending_interrupted_tool_calls(&mut self, pending: bool, cx: &mut Context<Self>) {
+        if self.pending_interrupted_tool_calls != pending {
+            self.pending_interrupted_tool_calls = pending;
+            cx.notify();
+        }
     }
 
     pub fn set_draft_prompt(
@@ -2717,6 +2735,14 @@ impl AcpThread {
             }) = last_entry
             && *existing_indented == indented
             && can_merge_message_chunks(existing_protocol_id.as_ref(), protocol_id.as_ref())
+            // Runtime-produced user messages (steered follow-ups, delivered
+            // tool results) each carry a fresh client id, so merging entries
+            // with different ids would fuse distinct messages — e.g. a
+            // delivered tool result into the message the user just sent.
+            && match (existing_client_id.as_ref(), incoming_client_id.as_ref()) {
+                (Some(existing), Some(incoming)) => existing == incoming,
+                _ => true,
+            }
             && !(*existing_is_optimistic
                 && !is_optimistic
                 && existing_protocol_id.is_none()
@@ -3670,38 +3696,53 @@ impl AcpThread {
             .as_ref()
             .map(|client_user_message_ids| client_user_message_ids.new_id());
 
+        let is_empty_message = message.is_empty();
+
         self.run_turn(cx, async move |this, cx| {
             if push_user_message {
+                // A user send resumes the session: any pending
+                // interrupted-call notifications are delivered with this
+                // turn, so the empty-send affordance no longer applies.
                 this.update(cx, |this, cx| {
-                    this.push_entry(
-                        AgentThreadEntry::UserMessage(UserMessage {
-                            protocol_id: None,
-                            client_id: client_id.clone(),
-                            is_optimistic: true,
-                            content: block,
-                            chunks: message,
-                            checkpoint: None,
-                            indented: false,
-                        }),
-                        cx,
-                    );
+                    this.set_pending_interrupted_tool_calls(false, cx);
                 })
                 .ok();
 
-                let old_checkpoint = git_store
-                    .update(cx, |git, cx| git.checkpoint(cx))
-                    .await
-                    .context("failed to get old checkpoint")
-                    .log_err();
-                this.update(cx, |this, _cx| {
-                    if let Some((_ix, message)) = this.last_user_message() {
-                        message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
-                            git_checkpoint,
-                            show: false,
-                        });
-                    }
-                })
-                .ok();
+                // An empty message resumes the session only to deliver those
+                // pending notifications; there is nothing to render or
+                // checkpoint for it.
+                if !is_empty_message {
+                    this.update(cx, |this, cx| {
+                        this.push_entry(
+                            AgentThreadEntry::UserMessage(UserMessage {
+                                protocol_id: None,
+                                client_id: client_id.clone(),
+                                is_optimistic: true,
+                                content: block,
+                                chunks: message,
+                                checkpoint: None,
+                                indented: false,
+                            }),
+                            cx,
+                        );
+                    })
+                    .ok();
+
+                    let old_checkpoint = git_store
+                        .update(cx, |git, cx| git.checkpoint(cx))
+                        .await
+                        .context("failed to get old checkpoint")
+                        .log_err();
+                    this.update(cx, |this, _cx| {
+                        if let Some((_ix, message)) = this.last_user_message() {
+                            message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
+                                git_checkpoint,
+                                show: false,
+                            });
+                        }
+                    })
+                    .ok();
+                }
             }
 
             this.update(cx, |this, cx| {
@@ -3724,6 +3765,13 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         self.run_turn(cx, async move |this, cx| {
+            // Retrying resumes the session: any pending interrupted-call
+            // notifications are delivered with this turn.
+            this.update(cx, |this, cx| {
+                this.set_pending_interrupted_tool_calls(false, cx);
+            })
+            .ok();
+
             this.update(cx, |this, cx| {
                 this.connection
                     .retry(&this.session_id, cx)
