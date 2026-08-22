@@ -10,6 +10,13 @@ path = "src/agent.rs"
 
 [features]
 test-support = ["db/test-support"]
+# Gates `ToolInput::for_benchmarks`/`ToolCallEventStream::for_benchmarks`,
+# production-faithful equivalents of `ToolInput::test`/`ToolCallEventStream::test`
+# for production-rendering benchmarks (`crates/edit_file_tool_benchmarks`).
+# Deliberately empty: unlike `test-support`, this must not enable any
+# dependency's test-only surface, so `benchmarks` consumers keep compiling
+# production code only.
+benchmarks = []
 unit-eval = []
 e2e = []
 

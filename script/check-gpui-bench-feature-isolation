@@ -310,7 +310,7 @@ fi
 # `edit_file_tool_benchmarks` is the isolated package `edit_file_tool` moved
 # into. It is intentionally *not* held to the isolation bar above, including
 # the `settings` checks just above: it still needs `test-support` from
-# `agent`, `editor`, `language`, `lsp`, `project`, and `settings` (via
+# `editor`, `language`, `lsp`, `project`, and `settings` (via
 # `SettingsStore::update_user_settings`, which has no production-capable
 # equivalent for mutating already-loaded settings content) for the same
 # harness this script used to document against `benchmarks`. That is tracked
@@ -365,6 +365,51 @@ output=$(cargo tree \
 direct_dependents=$(grep -A2 '[|`]-- lsp feature "test-support"$' <<< "${output}" || true)
 if grep --quiet 'edit_file_tool_benchmarks v' <<< "${direct_dependents}"; then
   echo "edit_file_tool_benchmarks directly requests lsp's \"test-support\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# `edit_file_tool_benchmarks` used to also directly request `agent`'s
+# `test-support` feature, entirely to reach `ToolInput::test`/
+# `ToolCallEventStream::test` for feeding the `edit_file` tool streamed input
+# and collecting its tool-call events. Both merely construct the same channel
+# primitives (`ToolInputSender::channel`, `ToolCallEventStream::new`) that a
+# live `Thread` already uses internally to run a streaming tool call (see
+# `Thread::handle_tool_use_event`/`Thread::run_tool` in `crates/agent/src/
+# thread.rs`), so `agent` now exposes `ToolInput::for_benchmarks`/
+# `ToolCallEventStream::for_benchmarks` behind its own narrow `benchmarks`
+# feature that delegates to those exact constructors. Unlike the `lsp` check
+# above, `agent`'s `test-support` feature is fully gone from this benchmark's
+# resolved graph, not just redundant as a direct edge: nothing else
+# `edit_file_tool_benchmarks` depends on has a legitimate reason to reach it
+# either.
+output=$(cargo tree \
+  --offline \
+  --package edit_file_tool_benchmarks \
+  --edges features \
+  --invert agent)
+if grep --quiet 'agent feature "test-support"' <<< "${output}"; then
+  echo "edit_file_tool_benchmarks pulls agent's \"test-support\" feature:"
+  echo "${output}"
+  exit 1
+fi
+
+# The check above proves `edit_file_tool_benchmarks` no longer reaches
+# `agent`'s `test-support` feature; this proves `agent`'s own `benchmarks`
+# feature (which `ToolInput::for_benchmarks`/`ToolCallEventStream::
+# for_benchmarks` live behind) doesn't itself resolve to any dependency's
+# `test-support`, the same guarantee this script proves above for `gpui`'s
+# `bench` feature and `multi_buffer`'s/`language`'s own `benchmarks`
+# features.
+output=$(cargo tree \
+  --offline \
+  --package agent \
+  --no-default-features \
+  --features benchmarks \
+  --edges features \
+  --invert agent)
+if grep --quiet 'test-support' <<< "${output}"; then
+  echo "agent's \"benchmarks\" feature pulls in \"test-support\":"
   echo "${output}"
   exit 1
 fi

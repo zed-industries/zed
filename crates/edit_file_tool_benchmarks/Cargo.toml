@@ -14,7 +14,7 @@ workspace = true
 
 [dev-dependencies]
 action_log.workspace = true
-agent = { workspace = true, features = ["test-support"] }
+agent = { workspace = true, features = ["benchmarks"] }
 agent_settings.workspace = true
 assets.workspace = true
 benchmarks.workspace = true

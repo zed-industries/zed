@@ -4992,6 +4992,19 @@ impl<T: DeserializeOwned> ToolInput<T> {
         (sender, input.cast())
     }
 
+    /// Constructs a channel-backed [`ToolInput`] through the exact same
+    /// [`ToolInputSender::channel`] production tools stream input through,
+    /// for production-rendering benchmarks that need to feed streamed input
+    /// without depending on the `test-support` feature (see this crate's
+    /// `benchmarks` feature). Behaves identically to [`Self::test`]; kept as
+    /// a separate, narrowly gated constructor so benchmark consumers never
+    /// need to enable `test-support` to reach it.
+    #[cfg(any(test, feature = "benchmarks"))]
+    pub fn for_benchmarks() -> (ToolInputSender, Self) {
+        let (sender, input) = ToolInputSender::channel();
+        (sender, input.cast())
+    }
+
     /// Wait for the final deserialized input, ignoring all partial updates.
     /// Non-streaming tools can use this to wait until the whole input is available.
     pub async fn recv(mut self) -> Result<T> {
@@ -5554,6 +5567,32 @@ impl ToolCallEventStream {
             ToolCallEventStreamReceiver(events_rx),
             cancellation_tx,
         )
+    }
+
+    /// Constructs a self-contained [`ToolCallEventStream`] through the exact
+    /// same [`ToolCallEventStream::new`] construction production tool calls
+    /// use, with its own throwaway channels and no owning [`Thread`], for
+    /// production-rendering benchmarks that need to run a tool without a live
+    /// thread (see this crate's `benchmarks` feature). Behaves identically to
+    /// [`Self::test`]; kept as a separate, narrowly gated constructor — rather
+    /// than widening `test`'s own `cfg` — so benchmark consumers never need to
+    /// enable `test-support` to reach it.
+    #[cfg(any(test, feature = "benchmarks"))]
+    pub fn for_benchmarks() -> (Self, ToolCallEventStreamReceiver) {
+        let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
+        let (_cancellation_tx, cancellation_rx) = watch::channel(false);
+
+        let stream = ToolCallEventStream::new(
+            "test_id".into(),
+            acp::ToolCallId::new("0:test_id"),
+            ThreadEventStream(events_tx),
+            None,
+            cancellation_rx,
+            Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            None,
+        );
+
+        (stream, ToolCallEventStreamReceiver(events_rx))
     }
 
     /// Signal cancellation for this event stream. Only available in tests.
@@ -6673,7 +6712,12 @@ impl ToolCallEventStream {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+// Also constructed by `ToolCallEventStream::for_benchmarks` under the
+// `benchmarks` feature, so `Deref`/`DerefMut` below (needed to read the
+// wrapped receiver at all) share that gate; the panic-based `expect_*`
+// assertion helpers stay `test-support`-only since benchmarks never need
+// them.
+#[cfg(any(test, feature = "test-support", feature = "benchmarks"))]
 pub struct ToolCallEventStreamReceiver(mpsc::UnboundedReceiver<Result<ThreadEvent>>);
 
 #[cfg(any(test, feature = "test-support"))]
@@ -6748,7 +6792,7 @@ impl ToolCallEventStreamReceiver {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "benchmarks"))]
 impl std::ops::Deref for ToolCallEventStreamReceiver {
     type Target = mpsc::UnboundedReceiver<Result<ThreadEvent>>;
 
@@ -6757,7 +6801,7 @@ impl std::ops::Deref for ToolCallEventStreamReceiver {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", feature = "benchmarks"))]
 impl std::ops::DerefMut for ToolCallEventStreamReceiver {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
@@ -6864,6 +6908,69 @@ mod tests {
     use serde_json::json;
     use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
+
+    /// Proves `ToolInput::for_benchmarks` feeds a consumer the exact same
+    /// sequence of partial/full payloads as `ToolInput::test`, rather than
+    /// merely compiling to the same type.
+    #[test]
+    fn tool_input_for_benchmarks_matches_test() {
+        fn drain(mut input: ToolInput<serde_json::Value>) -> Vec<serde_json::Value> {
+            let mut values = Vec::new();
+            loop {
+                match futures::executor::block_on(input.next()) {
+                    Ok(ToolInputPayload::Partial(value)) => values.push(value),
+                    Ok(ToolInputPayload::Full(value)) => {
+                        values.push(value);
+                        break;
+                    }
+                    Ok(ToolInputPayload::InvalidJson { .. }) | Err(_) => break,
+                }
+            }
+            values
+        }
+
+        let (mut benchmark_sender, benchmark_input) = ToolInput::for_benchmarks();
+        benchmark_sender.send_partial(json!({"a": 1}));
+        benchmark_sender.send_partial(json!({"a": 1, "b": 2}));
+        benchmark_sender.send_full(json!({"a": 1, "b": 2, "c": 3}));
+
+        let (mut test_sender, test_input) = ToolInput::test();
+        test_sender.send_partial(json!({"a": 1}));
+        test_sender.send_partial(json!({"a": 1, "b": 2}));
+        test_sender.send_full(json!({"a": 1, "b": 2, "c": 3}));
+
+        assert_eq!(drain(benchmark_input), drain(test_input));
+    }
+
+    /// Proves `ToolCallEventStream::for_benchmarks` delivers the same events
+    /// to its receiver, through the same `update_tool_call_fields` production
+    /// path, as `ToolCallEventStream::test` does.
+    #[test]
+    fn tool_call_event_stream_for_benchmarks_matches_test() {
+        let (benchmark_stream, mut benchmark_rx) = ToolCallEventStream::for_benchmarks();
+        let (test_stream, mut test_rx) = ToolCallEventStream::test();
+
+        let fields = acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress);
+        benchmark_stream.update_fields(fields.clone());
+        test_stream.update_fields(fields);
+
+        let benchmark_fields = futures::executor::block_on(benchmark_rx.expect_update_fields());
+        let test_fields = futures::executor::block_on(test_rx.expect_update_fields());
+        assert_eq!(benchmark_fields, test_fields);
+
+        // Neither stream is tied to a live thread, so cancellation never
+        // resolves on its own; this proves `for_benchmarks` shares that
+        // same never-cancelled-by-default watch-channel wiring rather than
+        // some other cancellation semantics.
+        use futures::FutureExt as _;
+        assert!(
+            benchmark_stream
+                .cancelled_by_user()
+                .now_or_never()
+                .is_none()
+        );
+        assert!(test_stream.cancelled_by_user().now_or_never().is_none());
+    }
 
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
         cx.update(|cx| {

@@ -335,13 +335,13 @@ fn init_context() -> TestAppContext {
 }
 
 fn run_streamed_edit(harness: &mut BenchmarkHarness) -> EditFileToolOutput {
-    let (mut sender, input): (_, ToolInput<EditFileToolInput>) = ToolInput::test();
+    let (mut sender, input): (_, ToolInput<EditFileToolInput>) = ToolInput::for_benchmarks();
     for payload in &harness.partial_payloads {
         sender.send_partial(payload.clone());
     }
     sender.send_full(harness.final_payload.clone());
 
-    let (event_stream, _event_rx) = ToolCallEventStream::test();
+    let (event_stream, _event_rx) = ToolCallEventStream::for_benchmarks();
     let cx = harness
         .cx
         .as_ref()
