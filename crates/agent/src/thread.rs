@@ -4602,6 +4602,9 @@ impl Thread {
             }
             // Retrying won't help for Payment Required errors.
             PaymentRequired => None,
+            // Retrying won't help until the usage window resets or the user
+            // purchases more usage.
+            UsageLimitReached { .. } => None,
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,
