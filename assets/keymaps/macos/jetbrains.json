@@ -69,6 +69,12 @@
     },
   },
   {
+    "context": "Editor && mode == full && !multibuffer",
+    "bindings": {
+      "cmd-up": "editor::OpenBreadcrumbNavigation",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "bindings": {
       "cmd-f12": "outline::Toggle",

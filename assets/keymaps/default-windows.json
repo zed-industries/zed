@@ -142,6 +142,8 @@
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
       "ctrl-alt-f": "text_finder::Toggle",
+      // Menu bindings live in keymaps/specific-overrides.json.
+      "ctrl-alt-shift-p": "editor::OpenBreadcrumbNavigation",
     },
   },
   {

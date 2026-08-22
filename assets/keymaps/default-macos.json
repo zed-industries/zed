@@ -167,6 +167,8 @@
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
       "alt-cmd-f": "text_finder::Toggle",
+      // Menu bindings live in keymaps/specific-overrides-macos.json.
+      "cmd-alt-shift-p": "editor::OpenBreadcrumbNavigation",
     },
   },
   {
