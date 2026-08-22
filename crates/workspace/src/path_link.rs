@@ -221,6 +221,8 @@ fn resolve_open_target_internal(
     let mut worktree_paths_to_check = Vec::new();
     let mut is_cwd_in_worktree = false;
     let mut open_target = None;
+    // Without a known cwd, a match found in one worktree can't be trusted if another also matches (zed-industries/zed#62513).
+    let mut unconfirmed_match_is_ambiguous = false;
     'worktree_loop: for worktree in &worktree_candidates {
         let worktree_root = worktree.read(cx).abs_path();
         let mut paths_to_check = Vec::with_capacity(potential_paths.len());
@@ -233,6 +235,8 @@ fn resolve_open_target_internal(
                     cwd_stripped
                 })
             });
+        // Gate on cwd being known at all, not `relative_cwd`, which is also `None` when cwd equals this worktree's root.
+        let cwd_is_known = cwd.is_some();
 
         for path_with_position in &potential_paths {
             let path_to_check = if worktree_root.ends_with(&path_with_position.path) {
@@ -292,7 +296,7 @@ fn resolve_open_target_internal(
                             .and_then(|path| worktree.read(cx).entry_for_path(path.as_ref()))
                     })
             {
-                open_target = Some(OpenTarget::Worktree(
+                let candidate = OpenTarget::Worktree(
                     PathWithPosition {
                         path: worktree.read(cx).absolutize(&entry.path),
                         row: path_to_check.row,
@@ -301,8 +305,19 @@ fn resolve_open_target_internal(
                     entry.clone(),
                     #[cfg(any(test, feature = "test-support"))]
                     OpenTargetFoundBy::WorktreeExact,
-                ));
-                break 'worktree_loop;
+                );
+                if cwd_is_known {
+                    open_target = Some(candidate);
+                    break 'worktree_loop;
+                } else if open_target.is_none() {
+                    // Keep scanning the remaining worktrees to check for ambiguity
+                    // instead of committing to the first unconfirmed guess.
+                    open_target = Some(candidate);
+                } else {
+                    unconfirmed_match_is_ambiguous = true;
+                    break 'worktree_loop;
+                }
+                break;
             }
 
             paths_to_check.push(path_to_check);
@@ -311,6 +326,10 @@ fn resolve_open_target_internal(
         if !paths_to_check.is_empty() {
             worktree_paths_to_check.push((worktree.clone(), paths_to_check));
         }
+    }
+
+    if unconfirmed_match_is_ambiguous {
+        return Task::ready(None);
     }
 
     if open_target.is_some() {
