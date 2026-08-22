@@ -25,6 +25,7 @@ pub struct CommitDetails {
     pub commit_time: OffsetDateTime,
     pub message: Option<ParsedCommitMessage>,
     pub tag_names: Vec<SharedString>,
+    pub boundary: bool,
 }
 
 const MAX_COMMIT_TOOLTIP_TAG_CHIPS: usize = 2;
@@ -242,6 +243,7 @@ impl CommitTooltip {
                 author_email: blame.author_mail.clone().unwrap_or("".to_string()).into(),
                 message: details,
                 tag_names,
+                boundary: blame.boundary,
             },
             repository,
             workspace,
@@ -381,6 +383,25 @@ impl Render for CommitTooltip {
                                 .overflow_y_scroll()
                                 .child(message),
                         )
+                        .when(self.commit.boundary, |this| {
+                            this.child(
+                                h_flex()
+                                    .pb_1p5()
+                                    .gap_1()
+                                    .child(
+                                        Icon::new(IconName::Warning)
+                                            .size(IconSize::Small)
+                                            .color(Color::Warning),
+                                    )
+                                    .child(
+                                        Label::new(
+                                            "Shallow clone boundary: earlier history is missing, so these lines may come from an older commit.",
+                                        )
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    ),
+                            )
+                        })
                         .child(
                             h_flex()
                                 .text_color(cx.theme().colors().text_muted)

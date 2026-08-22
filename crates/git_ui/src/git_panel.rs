@@ -8787,6 +8787,7 @@ impl GitPanelMessageTooltip {
                         provider_registry,
                     )),
                     tag_names: Vec::new(),
+                    boundary: false,
                 };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {
