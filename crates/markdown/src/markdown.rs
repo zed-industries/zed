@@ -112,6 +112,7 @@ pub struct MarkdownStyle {
     pub inline_code: TextStyleRefinement,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
+    pub strong: TextStyleRefinement,
     pub link_callback: Option<LinkStyleCallback>,
     pub rule_color: Hsla,
     pub block_quote_border_color: Hsla,
@@ -137,6 +138,10 @@ impl Default for MarkdownStyle {
             inline_code: Default::default(),
             block_quote: Default::default(),
             link: Default::default(),
+            strong: TextStyleRefinement {
+                font_weight: Some(FontWeight::BOLD),
+                ..Default::default()
+            },
             link_callback: None,
             rule_color: Default::default(),
             block_quote_border_color: Default::default(),
@@ -282,6 +287,11 @@ impl MarkdownStyle {
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
+                ..Default::default()
+            },
+            strong: TextStyleRefinement {
+                font_weight: Some(FontWeight::BOLD),
+                color: Some(colors.text),
                 ..Default::default()
             },
             link: TextStyleRefinement {
@@ -2759,11 +2769,7 @@ impl Element for MarkdownElement {
                             font_style: Some(FontStyle::Italic),
                             ..Default::default()
                         }),
-                        MarkdownTag::Strong => builder.push_text_style(TextStyleRefinement {
-                            font_weight: Some(FontWeight::BOLD),
-                            color: Some(cx.theme().colors().text),
-                            ..Default::default()
-                        }),
+                        MarkdownTag::Strong => builder.push_text_style(self.style.strong.clone()),
                         MarkdownTag::Strikethrough => {
                             builder.push_text_style(TextStyleRefinement {
                                 strikethrough: Some(StrikethroughStyle {
@@ -6414,6 +6420,37 @@ mod tests {
             assert!(markdown.context_menu_link().is_none());
             assert!(markdown.context_menu_selected_markdown().is_none());
             assert!(markdown.context_menu_selected_text().is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_strong_style_uses_overridden_theme_text_color(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+
+        cx.update(|window, cx| {
+            let mut colors = cx.theme().colors().clone();
+            let override_color: Hsla = gpui::rgba(0x123456ff).into();
+
+            assert_ne!(
+                override_color,
+                cx.theme().colors().text,
+                "test override color must differ from the active theme text color"
+            );
+
+            colors.text = override_color;
+            let syntax = cx.theme().syntax().clone();
+
+            let style = MarkdownStyle::themed_with_overrides(
+                MarkdownFont::Preview,
+                &colors,
+                &syntax,
+                window,
+                cx,
+            );
+
+            assert_eq!(style.strong.color, Some(override_color));
+            assert_eq!(style.strong.font_weight, Some(FontWeight::BOLD));
         });
     }
 
