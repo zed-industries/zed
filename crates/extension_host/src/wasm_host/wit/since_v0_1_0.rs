@@ -76,37 +76,15 @@ impl From<SettingsLocation> for latest::SettingsLocation {
     fn from(value: SettingsLocation) -> Self {
         Self {
             worktree_id: value.worktree_id,
-            // zed_extension_api 0.1 used the absolute worktree root here,
-            // while core settings locations are now worktree-relative.
+            // Passing the path here causes project settings reads to fail,
+            // since the extension passes the absolute path to the worktree,
+            // not a relative one like the settings API expects.
+            //
+            // This has been fixed in the API itself as of v0.2.0. Align the behavior
+            // here so that older extensions can also read project settings.
+
             path: String::new(),
         }
-    }
-}
-
-fn settings_location_from_legacy(
-    location: Option<&SettingsLocation>,
-) -> Option<::settings::SettingsLocation<'static>> {
-    location.map(|location| ::settings::SettingsLocation {
-        worktree_id: WorktreeId::from_proto(location.worktree_id),
-        path: RelPath::empty(),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn settings_location_targets_the_worktree_root() -> anyhow::Result<()> {
-        let location = settings_location_from_legacy(Some(&SettingsLocation {
-            worktree_id: 42,
-            path: "/absolute/worktree/root".to_string(),
-        }))
-        .ok_or_else(|| anyhow::anyhow!("legacy settings location was dropped"))?;
-
-        assert_eq!(location.worktree_id, WorktreeId::from_proto(42));
-        assert_eq!(location.path, RelPath::empty());
-        Ok(())
     }
 }
 
@@ -459,7 +437,16 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let location = settings_location_from_legacy(location.as_ref());
+                let path = location.as_ref().and_then(|location| {
+                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
+                });
+                let location = path
+                    .as_ref()
+                    .zip(location.as_ref())
+                    .map(|(path, location)| ::settings::SettingsLocation {
+                        worktree_id: WorktreeId::from_proto(location.worktree_id),
+                        path,
+                    });
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {
