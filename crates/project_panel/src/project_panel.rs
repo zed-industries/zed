@@ -1185,9 +1185,13 @@ impl ProjectPanel {
                             )
                             .when(has_git_repo, |menu| {
                                 menu.separator()
-                                    .when(!is_dir && self.has_git_changes(entry_id), |menu| {
+                                    .when(self.has_git_changes(entry_id), |menu| {
                                         menu.action(
-                                            "Restore File",
+                                            if is_dir {
+                                                "Restore Folder"
+                                            } else {
+                                                "Restore File"
+                                            },
                                             Box::new(git::RestoreFile { skip_prompt: false }),
                                         )
                                     })
@@ -2389,14 +2393,15 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        const MAX_LISTED_PATHS: usize = 5;
+
         maybe!({
             let selection = self.selection?;
             let project = self.project.read(cx);
+            let path_style = project.path_style(cx);
 
-            let (_worktree, entry) = self.selected_sub_entry(cx)?;
-            if entry.is_dir() {
-                return None;
-            }
+            let (worktree, entry) = self.selected_sub_entry(cx)?;
+            let is_dir = entry.is_dir();
 
             let project_path = project.path_for_entry(selection.entry_id, cx)?;
 
@@ -2406,16 +2411,85 @@ impl ProjectPanel {
                 .repository_and_path_for_project_path(&project_path, cx)?;
 
             let snapshot = repository.read(cx).snapshot();
-            let status = snapshot.status_for_path(&repo_path)?;
-            if !status.status.is_modified() && !status.status.is_deleted() {
+            let repo_paths = if is_dir {
+                snapshot
+                    .status()
+                    .filter(|status_entry| {
+                        status_entry.repo_path.starts_with(&repo_path)
+                            && (status_entry.status.is_modified()
+                                || status_entry.status.is_deleted())
+                    })
+                    .map(|status_entry| status_entry.repo_path)
+                    .collect::<Vec<_>>()
+            } else {
+                let status = snapshot.status_for_path(&repo_path)?;
+                if !status.status.is_modified() && !status.status.is_deleted() {
+                    return None;
+                }
+                vec![repo_path.clone()]
+            };
+            if repo_paths.is_empty() {
                 return None;
             }
 
-            let file_name = entry.path.file_name()?.to_string();
+            let entry_name = entry
+                .path
+                .file_name()
+                .unwrap_or_else(|| worktree.read(cx).root_name_str())
+                .to_string();
+
+            let restored_project_paths = repo_paths
+                .iter()
+                .filter_map(|repo_path| {
+                    repository.read(cx).repo_path_to_project_path(repo_path, cx)
+                })
+                .collect::<Vec<_>>();
 
             let answer = if !action.skip_prompt {
-                let prompt = format!("Discard changes to {}?", MarkdownInlineCode(&file_name));
-                Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
+                let (prompt, detail) = if is_dir {
+                    let mut detail = repo_paths
+                        .iter()
+                        .take(MAX_LISTED_PATHS)
+                        .map(|path| {
+                            path.strip_prefix(&repo_path)
+                                .unwrap_or(path)
+                                .display(path_style)
+                                .into_owned()
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if repo_paths.len() > MAX_LISTED_PATHS {
+                        detail.push_str(&format!(
+                            "\nand {} more…",
+                            repo_paths.len() - MAX_LISTED_PATHS
+                        ));
+                    }
+                    (
+                        format!(
+                            "Discard changes to {} {} in {}?",
+                            repo_paths.len(),
+                            if repo_paths.len() == 1 {
+                                "file"
+                            } else {
+                                "files"
+                            },
+                            MarkdownInlineCode(&entry_name)
+                        ),
+                        Some(detail),
+                    )
+                } else {
+                    (
+                        format!("Discard changes to {}?", MarkdownInlineCode(&entry_name)),
+                        None,
+                    )
+                };
+                Some(window.prompt(
+                    PromptLevel::Info,
+                    &prompt,
+                    detail.as_deref(),
+                    &["Restore", "Cancel"],
+                    cx,
+                ))
             } else {
                 None
             };
@@ -2428,15 +2502,13 @@ impl ProjectPanel {
                 }
 
                 let task = panel.update(cx, |_panel, cx| {
-                    repository.update(cx, |repo, cx| {
-                        repo.checkout_files("HEAD", vec![repo_path], cx)
-                    })
+                    repository.update(cx, |repo, cx| repo.checkout_files("HEAD", repo_paths, cx))
                 })?;
 
                 if let Err(e) = task.await {
                     panel
                         .update(cx, |panel, cx| {
-                            let message = format!("Failed to restore {}: {}", file_name, e);
+                            let message = format!("Failed to restore {}: {}", entry_name, e);
                             let toast = StatusToast::new(message, cx, |this, _| {
                                 this.icon(
                                     Icon::new(IconName::XCircle)
@@ -2458,12 +2530,15 @@ impl ProjectPanel {
                 panel
                     .update(cx, |panel, cx| {
                         panel.project.update(cx, |project, cx| {
-                            if let Some(buffer_id) = project
-                                .buffer_store()
-                                .read(cx)
-                                .buffer_id_for_project_path(&project_path)
-                            {
-                                if let Some(buffer) = project.buffer_for_id(*buffer_id, cx) {
+                            for project_path in &restored_project_paths {
+                                let buffer_id = project
+                                    .buffer_store()
+                                    .read(cx)
+                                    .buffer_id_for_project_path(project_path)
+                                    .copied();
+                                if let Some(buffer_id) = buffer_id
+                                    && let Some(buffer) = project.buffer_for_id(buffer_id, cx)
+                                {
                                     buffer.update(cx, |buffer, cx| {
                                         let _ = buffer.reload(cx);
                                     });
