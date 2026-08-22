@@ -1,7 +1,7 @@
 use gpui::{App, Context, Entity};
 use language::{self, Buffer, BufferEditSource, TransactionId};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     ops::Range,
     time::{Duration, Instant},
 };
@@ -403,21 +403,20 @@ impl MultiBuffer {
             && let Some(destination) = self.history.transaction_mut(destination)
         {
             for (buffer_id, buffer_transaction_id) in transaction.buffer_transactions {
-                if let Some(destination_buffer_transaction_id) =
-                    destination.buffer_transactions.get(&buffer_id)
-                {
-                    if let Some(state) = self.buffers.get(&buffer_id) {
-                        state.buffer.update(cx, |buffer, _| {
-                            buffer.merge_transactions(
-                                buffer_transaction_id,
-                                *destination_buffer_transaction_id,
-                            )
-                        });
+                match destination.buffer_transactions.entry(buffer_id) {
+                    Entry::Occupied(destination_buffer_transaction_id) => {
+                        if let Some(state) = self.buffers.get(&buffer_id) {
+                            state.buffer.update(cx, |buffer, _| {
+                                buffer.merge_transactions(
+                                    buffer_transaction_id,
+                                    *destination_buffer_transaction_id.get(),
+                                )
+                            });
+                        }
                     }
-                } else {
-                    destination
-                        .buffer_transactions
-                        .insert(buffer_id, buffer_transaction_id);
+                    Entry::Vacant(entry) => {
+                        entry.insert(buffer_transaction_id);
+                    }
                 }
             }
         }
