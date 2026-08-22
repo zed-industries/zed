@@ -4498,6 +4498,30 @@ impl Thread {
                                 })
                             });
                     }
+                    // `blocking` is required, not merely optional: the model must
+                    // state whether it is blocking or non-blocking on every call
+                    // instead of relying on the `true` default.
+                    let has_blocking_property = schema
+                        .get("properties")
+                        .and_then(|value| value.as_object())
+                        .is_some_and(|properties| {
+                            properties.contains_key(BLOCKING_INPUT_PROPERTY)
+                        });
+                    if has_blocking_property {
+                        if let Some(schema_object) = schema.as_object_mut() {
+                            let required = schema_object
+                                .entry("required".to_string())
+                                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                            if let Some(required) = required.as_array_mut() {
+                                let blocking = serde_json::Value::String(
+                                    BLOCKING_INPUT_PROPERTY.to_string(),
+                                );
+                                if !required.contains(&blocking) {
+                                    required.push(blocking);
+                                }
+                            }
+                        }
+                    }
                     Some(LanguageModelRequestTool::function(
                         tool_name.to_string(),
                         description,
