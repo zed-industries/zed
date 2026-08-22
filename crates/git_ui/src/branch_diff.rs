@@ -104,7 +104,7 @@ impl BranchDiff {
                 workspace.update_in(cx, |workspace, window, cx| {
                     let git_store = project.read(cx).git_store().clone();
                     let Some(base_ref) = base_ref else {
-                        ProjectDiff::deploy_at(workspace, None, window, cx);
+                        ProjectDiff::deploy_at(workspace, None, false, window, cx);
                         return;
                     };
                     let branch_diff =

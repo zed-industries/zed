@@ -77,7 +77,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(|workspace, _: &DiffHead, window, cx| {
-            Self::deploy_at(workspace, None, window, cx);
+            Self::deploy_at(workspace, None, false, window, cx);
         });
         workspace.register_action(|workspace, _: &ToggleDiffBase, _window, cx| {
             settings::update_settings_file(
@@ -94,21 +94,21 @@ impl ProjectDiff {
         });
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
-                Self::deploy_at(workspace, None, window, cx);
+                Self::deploy_at(workspace, None, false, window, cx);
             },
         );
         workspace.register_action(
             |workspace, _: &git_actions::ViewUnstagedChanges, window, cx| {
-                UnstagedDiff::deploy_at(workspace, None, window, cx);
+                UnstagedDiff::deploy_at(workspace, None, false, window, cx);
             },
         );
         workspace.register_action(
             |workspace, _: &git_actions::ViewStagedChanges, window, cx| {
-                StagedDiff::deploy_at(workspace, None, window, cx);
+                StagedDiff::deploy_at(workspace, None, false, window, cx);
             },
         );
         workspace.register_action(|workspace, _: &Add, window, cx| {
-            Self::deploy_at(workspace, None, window, cx);
+            Self::deploy_at(workspace, None, false, window, cx);
         });
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
@@ -124,12 +124,13 @@ impl ProjectDiff {
             BranchDiff::deploy_branch_diff(workspace, window, cx);
             return;
         }
-        Self::deploy_at(workspace, None, window, cx)
+        Self::deploy_at(workspace, None, false, window, cx)
     }
 
     pub fn deploy_at(
         workspace: &mut Workspace,
         entry: Option<GitStatusEntry>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -144,26 +145,22 @@ impl ProjectDiff {
         let intended_repo = workspace.project().read(cx).active_repository(cx);
 
         let existing = workspace.items_of_type::<Self>(cx).next();
-        let project_diff = if let Some(existing) = existing {
+        if let Some(existing) = &existing {
             existing.update(cx, |project_diff, cx| {
                 project_diff.move_to_beginning(window, cx);
             });
-
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } else {
-            let workspace_handle = cx.entity();
-            let project_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(
-                Box::new(project_diff.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            project_diff
-        };
+        }
+        let project_diff = crate::activate_or_add_with_preview(
+            workspace,
+            existing,
+            allow_preview,
+            window,
+            cx,
+            |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+            },
+        );
 
         if let Some(intended) = &intended_repo {
             let needs_switch = project_diff
