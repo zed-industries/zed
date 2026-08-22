@@ -1193,11 +1193,16 @@ impl HeadlessProject {
 
         let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
+        let path = if metadata.is_some() {
+            fs.canonicalize(&expanded).await?
+        } else {
+            expanded
+        };
 
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded.to_string_lossy().into_owned(),
+            path: path.to_string_lossy().into_owned(),
         })
     }
 
