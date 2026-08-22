@@ -78,6 +78,7 @@ pub(super) struct DynamicRegistrations {
     inlay_hint: CapabilityRegistrations<OneOf<bool, lsp::InlayHintServerCapabilities>>,
     code_lens: CapabilityRegistrations<lsp::CodeLensOptions>,
     document_symbol: CapabilityRegistrations<OneOf<bool, lsp::DocumentSymbolOptions>>,
+    call_hierarchy: CapabilityRegistrations<lsp::CallHierarchyServerCapability>,
 }
 
 impl LspStore {
@@ -433,6 +434,24 @@ impl LspStore {
                         cx,
                         |registrations| &mut registrations.code_action,
                         |capabilities| &mut capabilities.code_action_provider,
+                    )?;
+                }
+                "textDocument/prepareCallHierarchy" => {
+                    let options = parse_register_capabilities(reg.register_options)?;
+                    let provider = match options {
+                        OneOf::Left(value) => lsp::CallHierarchyServerCapability::Simple(value),
+                        OneOf::Right(options) => {
+                            lsp::CallHierarchyServerCapability::Options(options)
+                        }
+                    };
+                    self.register_dynamic_capability(
+                        &server,
+                        &reg.method,
+                        reg.id,
+                        provider,
+                        cx,
+                        |registrations| &mut registrations.call_hierarchy,
+                        |capabilities| &mut capabilities.call_hierarchy_provider,
                     )?;
                 }
                 "textDocument/definition" => {
@@ -827,6 +846,15 @@ impl LspStore {
                         cx,
                         |registrations| &mut registrations.code_action,
                         |capabilities| &mut capabilities.code_action_provider,
+                    )?;
+                }
+                "textDocument/prepareCallHierarchy" => {
+                    self.unregister_dynamic_capability(
+                        &server,
+                        unreg,
+                        cx,
+                        |registrations| &mut registrations.call_hierarchy,
+                        |capabilities| &mut capabilities.call_hierarchy_provider,
                     )?;
                 }
                 "textDocument/definition" => {

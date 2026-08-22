@@ -42,6 +42,10 @@ Jump to where a symbol is defined with {#kb editor::GoToDefinition} (or `Cmd+Cli
 - **Current file:** {#kb outline::Toggle} opens an outline of symbols in the active file
 - **Entire project:** {#kb project_symbols::Toggle} searches symbols across all files
 
+## Call Hierarchy
+
+With the cursor on a function, {#action call_hierarchy::ShowIncomingCalls} lists the functions that call it, and {#action call_hierarchy::ShowOutgoingCalls} lists the functions it calls. Both open a picker; selecting an entry jumps to the call site, and the secondary confirm opens it in an adjacent pane. This requires the language server to support call hierarchy.
+
 ## Outline Panel
 
 The Outline Panel ({#kb outline_panel::ToggleFocus}) shows a persistent tree view of symbols in the current file. It's especially useful with [multibuffers](./multibuffers.md) for navigating search results or diagnostics.

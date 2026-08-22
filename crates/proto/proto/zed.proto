@@ -507,7 +507,14 @@ message Envelope {
     RefreshFoldingRanges refresh_folding_ranges = 476;
     RefreshDocumentSymbols refresh_document_symbols = 477;
     BlameBufferAtRevision blame_buffer_at_revision = 478;
-    BlameBufferAtRevisionResponse blame_buffer_at_revision_response = 479; // current max
+    BlameBufferAtRevisionResponse blame_buffer_at_revision_response = 479;
+
+    PrepareCallHierarchy prepare_call_hierarchy = 480;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 481;
+    GetIncomingCalls get_incoming_calls = 482;
+    GetIncomingCallsResponse get_incoming_calls_response = 483;
+    GetOutgoingCalls get_outgoing_calls = 484;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 485; // current max
   }
 
   reserved 87 to 88;

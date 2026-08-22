@@ -5913,6 +5913,7 @@ mod tests {
                 "bedrock",
                 "branches",
                 "buffer_search",
+                "call_hierarchy",
                 "channel_modal",
                 "cli",
                 "client",
