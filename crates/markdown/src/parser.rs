@@ -22,6 +22,18 @@ pub const PARSE_OPTIONS: Options = Options::ENABLE_TABLES
     .union(Options::ENABLE_SUPERSCRIPT)
     .union(Options::ENABLE_SUBSCRIPT);
 
+/// The pulldown-cmark options used to parse markdown for a given configuration.
+///
+/// This must stay in sync with how the preview parses the document, so that
+/// HTML rendered for copying matches what the preview displays.
+pub(crate) fn parse_options(parse_metadata_blocks: bool) -> Options {
+    if parse_metadata_blocks {
+        PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
+    } else {
+        PARSE_OPTIONS
+    }
+}
+
 #[derive(Default)]
 struct ParseState {
     events: Vec<(Range<usize>, MarkdownEvent)>,
@@ -250,12 +262,8 @@ pub(crate) fn parse_markdown_with_options(
     let mut within_table = false;
     let mut current_metadata_block_start = None;
     let mut metadata_block_content_range: Option<Range<usize>> = None;
-    let parse_options = if parse_metadata_blocks {
-        PARSE_OPTIONS.union(Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
-    } else {
-        PARSE_OPTIONS
-    };
-    let parser = Parser::new_ext(text, parse_options);
+    let parse_options = parse_options(parse_metadata_blocks);
+    let mut parser = Parser::new_ext(text, parse_options);
     let mut link_definition_spans = parser
         .reference_definitions()
         .iter()
