@@ -917,10 +917,20 @@ impl App {
 
         platform.on_quit(Box::new({
             let cx = Rc::downgrade(&app);
+            let mut shutdown_completed = false;
             move || {
-                if let Some(cx) = cx.upgrade() {
-                    cx.borrow_mut().shutdown();
+                if shutdown_completed {
+                    return;
                 }
+                let Some(cx) = cx.upgrade() else {
+                    shutdown_completed = true;
+                    return;
+                };
+                let Ok(mut cx) = cx.try_borrow_mut() else {
+                    return;
+                };
+                cx.shutdown();
+                shutdown_completed = true;
             }
         }));
 
