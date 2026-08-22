@@ -10640,21 +10640,19 @@ pub fn is_submodule_git_dir(git_dir: &Path) -> bool {
 pub fn linked_worktree_short_name(
     main_worktree_path: &Path,
     linked_worktree_path: &Path,
+    path_style: PathStyle,
 ) -> Option<SharedString> {
     if main_worktree_path == linked_worktree_path {
         return None;
     }
 
-    let project_name = main_worktree_path.file_name()?.to_str()?;
-    let directory_name = linked_worktree_path.file_name()?.to_str()?;
+    let project_name = path_style.file_name(main_worktree_path)?;
+    let directory_name = path_style.file_name(linked_worktree_path)?;
     let name = if directory_name != project_name {
         directory_name.to_string()
     } else {
-        linked_worktree_path
-            .parent()?
-            .file_name()?
-            .to_str()?
-            .to_string()
+        let parent = path_style.parent(linked_worktree_path)?;
+        path_style.file_name(parent)?.to_string()
     };
     Some(name.into())
 }
