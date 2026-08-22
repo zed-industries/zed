@@ -216,7 +216,10 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         }
 
         if status == StatusCode::PAYMENT_REQUIRED {
-            return Err(LanguageModelCompletionError::PaymentRequired);
+            return Err(LanguageModelCompletionError::PaymentRequired {
+                provider: Some(PROVIDER_NAME),
+                message: None,
+            });
         }
 
         let mut body = String::new();

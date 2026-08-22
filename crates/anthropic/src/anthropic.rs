@@ -1334,7 +1334,7 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::PaymentRequired
+            language_model_core::LanguageModelCompletionError::PaymentRequired { .. }
         ));
     }
 

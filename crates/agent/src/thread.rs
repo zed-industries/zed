@@ -4546,7 +4546,7 @@ impl Thread {
                 })
             }
             // Retrying won't help for Payment Required errors.
-            PaymentRequired => None,
+            PaymentRequired { .. } => None,
             // Retrying won't help until the user consents to data retention
             // or switches models.
             DataRetentionConsentRequired { .. } => None,

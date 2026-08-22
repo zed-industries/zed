@@ -185,7 +185,10 @@ pub enum LanguageModelCompletionError {
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
     #[error("payment required to use this language model; please upgrade your account")]
-    PaymentRequired,
+    PaymentRequired {
+        provider: Option<LanguageModelProviderName>,
+        message: Option<String>,
+    },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -288,7 +291,10 @@ impl LanguageModelCompletionError {
             Some(StatusCode::UNAUTHORIZED) => Self::AuthenticationError { provider, message },
             Some(StatusCode::FORBIDDEN) => Self::PermissionError { provider, message },
             Some(StatusCode::NOT_FOUND) => Self::ApiEndpointNotFound { provider },
-            Some(StatusCode::PAYMENT_REQUIRED) => Self::PaymentRequired,
+            Some(StatusCode::PAYMENT_REQUIRED) => Self::PaymentRequired {
+                provider: Some(provider),
+                message: Some(message),
+            },
             Some(StatusCode::PAYLOAD_TOO_LARGE) => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(&message),
             },
