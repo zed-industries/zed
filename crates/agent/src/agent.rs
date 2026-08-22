@@ -817,6 +817,7 @@ impl NativeAgent {
         let subscriptions = vec![
             cx.subscribe(&thread_handle, Self::handle_thread_title_updated),
             cx.subscribe(&thread_handle, Self::handle_thread_token_usage_updated),
+            cx.subscribe(&thread_handle, Self::handle_thread_continuation_requested),
             cx.observe(&thread_handle, move |this, thread, cx| {
                 this.save_thread(thread, cx)
             }),
@@ -825,7 +826,7 @@ impl NativeAgent {
         self.sessions.insert(
             session_id,
             Session {
-                thread: thread_handle,
+                thread: thread_handle.clone(),
                 acp_thread: acp_thread.clone(),
                 project_id,
                 _subscriptions: subscriptions,
@@ -834,9 +835,33 @@ impl NativeAgent {
             },
         );
 
+        // A thread reopened with non-blocking tool calls that were in flight
+        // when last saved has synthetic results queued for them; deliver
+        // them via a continuation turn.
+        thread_handle.update(cx, |thread, cx| {
+            if thread.has_queued_non_blocking_results() {
+                cx.emit(ContinuationRequested);
+            }
+        });
+
         self.update_available_commands_for_project(project_id, cx);
 
         acp_thread
+    }
+
+    /// Resolves a short session alias (`s~…`, see [`session_alias`]) back to
+    /// the real session id. Unknown aliases and full session ids pass through
+    /// unchanged.
+    fn resolve_session_id(&self, session_id: &acp::SessionId) -> acp::SessionId {
+        let session_id_string = session_id.to_string();
+        if !session_id_string.starts_with("s~") {
+            return session_id.clone();
+        }
+        self.sessions
+            .keys()
+            .find(|id| session_alias(id).as_ref() == session_id_string)
+            .cloned()
+            .unwrap_or_else(|| session_id.clone())
     }
 
     pub fn models(&self) -> &LanguageModels {
@@ -1334,6 +1359,37 @@ impl NativeAgent {
         session.acp_thread.update(cx, |acp_thread, cx| {
             acp_thread.update_token_usage(usage.0.clone(), cx);
         });
+    }
+
+    /// A non-blocking tool call finished while the thread was idle: start a
+    /// continuation turn so its queued result is delivered to the model, and
+    /// forward the turn's events to the session's ACP thread so the activity
+    /// is visible (mirrors how MCP prompts drive thread turns).
+    fn handle_thread_continuation_requested(
+        &mut self,
+        thread: Entity<Thread>,
+        _: &ContinuationRequested,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = self.sessions.get(thread.read(cx).id()) else {
+            return;
+        };
+        let acp_thread = session.acp_thread.clone();
+        let response_stream = match thread.update(cx, |thread, cx| thread.send_existing(cx)) {
+            Ok(response_stream) => response_stream,
+            Err(error) => {
+                log::error!("Failed to start continuation turn: {error:?}");
+                return;
+            }
+        };
+        let connection = Some(NativeAgentConnection(cx.entity()));
+        NativeAgentConnection::handle_thread_events(
+            response_stream,
+            acp_thread.downgrade(),
+            connection,
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn handle_project_event(
@@ -3138,6 +3194,7 @@ impl NativeThreadEnvironment {
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let (subagent_thread, acp_thread) = self.agent.update(cx, |agent, _cx| {
+            let session_id = agent.resolve_session_id(&session_id);
             let session = agent
                 .sessions
                 .get(&session_id)
@@ -3295,6 +3352,39 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         self.resume_subagent_thread(session_id, cx)
     }
 
+    fn steer_subagent(
+        &self,
+        session_id: acp::SessionId,
+        message: String,
+        cx: &mut App,
+    ) -> Result<Option<usize>> {
+        let Some(parent_thread_entity) = self.thread.upgrade() else {
+            anyhow::bail!("Parent thread no longer exists".to_string());
+        };
+        let (subagent_thread, entry_count) = self.agent.update(cx, |agent, cx| {
+            let resolved_session_id = agent.resolve_session_id(&session_id);
+            let session = agent
+                .sessions
+                .get(&resolved_session_id)
+                .ok_or_else(|| anyhow!("No subagent session found with id {session_id}"))?;
+            let entry_count = session.acp_thread.read(cx).entries().len();
+            anyhow::Ok((session.thread.clone(), entry_count))
+        })??;
+
+        // Only direct children may be steered, so a session's behavior stays
+        // predictable for the thread that spawned it.
+        let is_direct_child = subagent_thread.read(cx).parent_thread_id().as_ref()
+            == Some(parent_thread_entity.read(cx).id());
+        if !is_direct_child {
+            anyhow::bail!("Session {session_id} is not a subagent of this thread");
+        }
+
+        let steered = subagent_thread.update(cx, |thread, cx| {
+            thread.steer(ClientUserMessageId::new(), [message], cx)
+        });
+        Ok(steered.then_some(entry_count))
+    }
+
     fn create_sibling_thread(
         &self,
         request: SiblingThreadRequest,
@@ -3439,26 +3529,49 @@ impl SubagentHandle for NativeSubagentHandle {
             });
 
             let result = match task.await {
-                SubagentPromptResult::Completed => thread.read_with(cx, |thread, _cx| {
-                    thread
-                        .last_message()
-                        .and_then(|message| {
-                            let content = message.as_agent_message()?
-                                .content
-                                .iter()
-                                .filter_map(|c| match c {
-                                    AgentMessageContent::Text(text) => Some(text.as_str()),
-                                    _ => None,
-                                })
-                                .join("\n\n");
-                            if content.is_empty() {
-                                None
-                            } else {
-                                Some( content)
-                            }
+                SubagentPromptResult::Completed => {
+                    // Non-blocking tool calls may still be executing when the
+                    // turn ends; their results steer continuation turns
+                    // (driven by the agent's ContinuationRequested handler).
+                    // Wait for the subagent to become quiescent so the parent
+                    // receives its truly final output rather than a summary
+                    // that predates those results.
+                    let (quiet_tx, mut quiet_rx) = mpsc::unbounded();
+                    let _subscription = cx.update(|cx| {
+                        cx.observe(&thread, move |_, _| {
+                            quiet_tx.unbounded_send(()).ok();
                         })
-                        .context("No response from subagent")
-                }),
+                    });
+                    loop {
+                        let quiescent = thread.read_with(cx, |thread, _| thread.is_quiescent());
+                        if quiescent {
+                            break;
+                        }
+                        if quiet_rx.next().await.is_none() {
+                            break;
+                        }
+                    }
+                    thread.read_with(cx, |thread, _cx| {
+                        thread
+                            .last_message()
+                            .and_then(|message| {
+                                let content = message.as_agent_message()?
+                                    .content
+                                    .iter()
+                                    .filter_map(|c| match c {
+                                        AgentMessageContent::Text(text) => Some(text.as_str()),
+                                        _ => None,
+                                    })
+                                    .join("\n\n");
+                                if content.is_empty() {
+                                    None
+                                } else {
+                                    Some( content)
+                                }
+                            })
+                            .context("No response from subagent")
+                    })
+                }
                 SubagentPromptResult::Cancelled => Err(anyhow!("User canceled")),
                 SubagentPromptResult::Error(message) => Err(anyhow!("{message}")),
                 SubagentPromptResult::ContextWindowWarning => {

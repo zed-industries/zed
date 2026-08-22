@@ -72,6 +72,10 @@ use uuid::Uuid;
 const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 const TOOL_CALL_INTERRUPTED_BY_FOLLOW_UP_MESSAGE: &str =
     "Permission denied: user sent a follow-up message instead of approving the tool call.";
+/// Tool input property the runtime injects into every tool schema so the
+/// model can run a call non-blockingly. Handled entirely by the agent
+/// runtime — tools (built-in, MCP, or future) never see it and never opt in.
+const BLOCKING_INPUT_PROPERTY: &str = "blocking";
 pub(crate) const FOLLOW_UP_PERMISSION_DENIED_OPTION_ID: &str = "follow_up_permission_denied";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
@@ -776,6 +780,20 @@ pub trait ThreadEnvironment {
         ))
     }
 
+    /// Steers a running subagent session with a follow-up message: the
+    /// message is incorporated at the session's next reasoning boundary and
+    /// no direct response is returned. Returns `Ok(Some(entry_count))` when
+    /// the session was running and thus steered, `Ok(None)` when it is idle
+    /// and should be resumed with a new turn instead.
+    fn steer_subagent(
+        &self,
+        _session_id: acp::SessionId,
+        _message: String,
+        _cx: &mut App,
+    ) -> Result<Option<usize>> {
+        Ok(None)
+    }
+
     /// Creates an independent sibling thread visible in the agent sidebar.
     /// Unlike subagents, sibling threads are first-class threads that persist
     /// and run in parallel without reporting results back to the parent.
@@ -1259,6 +1277,21 @@ pub struct Thread {
     /// running to completion. The UI sets this to deliver a "steering" queued
     /// message mid-task; by default queued messages wait for the turn to finish.
     end_turn_at_next_boundary: bool,
+    /// User messages appended mid-turn via [`Thread::steer`]. Held back until
+    /// the turn ends at the next reasoning boundary so they land after the
+    /// in-flight assistant message (with its tool uses and results) in the
+    /// conversation; the turn's outer loop then delivers them as a
+    /// continuation on the same event stream.
+    steered_messages: Vec<UserMessage>,
+    /// Tool calls the model chose to run non-blockingly (`"blocking": false`
+    /// in the tool input) that are still executing independently of any turn,
+    /// keyed by tool use id.
+    non_blocking_tool_calls: HashMap<LanguageModelToolUseId, NonBlockingToolCall>,
+    /// Results of non-blocking tool calls that finished but haven't been
+    /// delivered to the model. Drained into new user messages at the next
+    /// reasoning boundary; appended rather than patched in place so long
+    /// contexts stay friendly to prompt caching.
+    queued_non_blocking_results: Vec<FinishedNonBlockingToolCall>,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<ClientUserMessageId, language_model::TokenUsage>,
@@ -1403,6 +1436,9 @@ impl Thread {
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
+            steered_messages: Vec::new(),
+            non_blocking_tool_calls: HashMap::default(),
+            queued_non_blocking_results: Vec::new(),
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -1786,6 +1822,30 @@ impl Thread {
             user_store: project.read(cx).user_store(),
             running_turn: None,
             end_turn_at_next_boundary: false,
+            steered_messages: Vec::new(),
+            non_blocking_tool_calls: HashMap::default(),
+            // Non-blocking tool calls that were in flight when the thread was
+            // last saved ended with the app that ran them: queue a synthetic
+            // failure for each so the agent is told their results will never
+            // arrive (delivered via the usual drain/continuation path).
+            queued_non_blocking_results: db_thread
+                .pending_non_blocking_tool_calls
+                .into_iter()
+                .map(|call| FinishedNonBlockingToolCall {
+                    async_id: call.async_id,
+                    tool_call_id: scoped_tool_call_id(call.owning_message_ix, &call.tool_use_id),
+                    result: LanguageModelToolResult {
+                        tool_use_id: call.tool_use_id,
+                        tool_name: call.tool_name,
+                        is_error: true,
+                        content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                            "Zed was restarted before this tool call completed; \
+                             its result is unavailable.",
+                        ))],
+                        output: None,
+                    },
+                })
+                .collect(),
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1917,6 +1977,16 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            pending_non_blocking_tool_calls: self
+                .non_blocking_tool_calls
+                .iter()
+                .map(|(tool_use_id, call)| crate::db::DbNonBlockingToolCall {
+                    async_id: call.async_id.clone(),
+                    tool_use_id: tool_use_id.clone(),
+                    tool_name: call.tool_name.clone(),
+                    owning_message_ix: call.owning_message_ix,
+                })
+                .collect(),
         };
 
         cx.background_spawn(async move {
@@ -2269,13 +2339,24 @@ impl Thread {
         }
     }
 
+    /// Cancels the currently running turn and, recursively, every running
+    /// subagent. Used for explicit user stops (and truncates), where the
+    /// intent is to halt all work started on this thread's behalf.
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
         for subagent in self.running_subagents.drain(..) {
             if let Some(subagent) = subagent.upgrade() {
                 subagent.update(cx, |thread, cx| thread.cancel(cx)).detach();
             }
         }
+        self.cancel_turn(cx)
+    }
 
+    /// Cancels the currently running turn only; running subagents are left
+    /// alone. Used for turn handoffs (starting a new turn, compaction,
+    /// dispatching a queued message), where nobody asked to stop the
+    /// subagents — non-blocking tool calls are explicitly meant to survive
+    /// turn cancellation.
+    pub fn cancel_turn(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let Some(running_turn) = self.running_turn.take() else {
             self.flush_pending_message(cx);
             return Task::ready(());
@@ -2537,6 +2618,50 @@ impl Thread {
         self.run_turn(cx)
     }
 
+    /// Appends a user message that steers the currently running turn: the
+    /// turn ends at the next reasoning boundary and the message is processed
+    /// as a continuation on the same event stream, mirroring the UI's
+    /// steering flow. The message is held back from the conversation until
+    /// the boundary so it lands after the in-flight assistant message.
+    /// Returns `false` when no turn is running — callers should start a new
+    /// turn instead (e.g. resuming an idle subagent session).
+    pub fn steer<T>(
+        &mut self,
+        id: ClientUserMessageId,
+        content: impl IntoIterator<Item = T>,
+        cx: &mut Context<Self>,
+    ) -> bool
+    where
+        T: Into<UserMessageContent>,
+    {
+        if self.running_turn.is_none() {
+            return false;
+        }
+        self.steered_messages.push(UserMessage {
+            id,
+            content: content.into_iter().map(Into::into).collect::<Arc<_>>(),
+        });
+        self.end_turn_at_next_boundary = true;
+        cx.notify();
+        true
+    }
+
+    /// Whether the thread has no running turn and no non-blocking tool calls
+    /// still executing or awaiting delivery. Subagent drivers use this to
+    /// wait for a subagent's truly final output.
+    pub(crate) fn is_quiescent(&self) -> bool {
+        self.running_turn.is_none()
+            && self.non_blocking_tool_calls.is_empty()
+            && self.queued_non_blocking_results.is_empty()
+    }
+
+    /// Whether finished non-blocking tool results are waiting to be
+    /// delivered to the model (e.g. synthetic failures synthesized at load
+    /// for calls that were in flight when the thread was last saved).
+    pub(crate) fn has_queued_non_blocking_results(&self) -> bool {
+        !self.queued_non_blocking_results.is_empty()
+    }
+
     /// Force a manual context compaction using the summary strategy,
     /// regardless of the current token usage or context window size.
     pub fn compact(
@@ -2552,7 +2677,7 @@ impl Thread {
         // start, mirroring `run_turn` so a stray completion can't race with the
         // compaction we're about to perform.
         self.flush_pending_message(cx);
-        self.cancel(cx).detach();
+        self.cancel_turn(cx).detach();
 
         let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
             self.advance_prompt_id();
@@ -2676,7 +2801,7 @@ impl Thread {
         // to avoid a race where the detached cancel task might flush the NEW
         // turn's pending message instead of the old one.
         self.flush_pending_message(cx);
-        self.cancel(cx).detach();
+        self.cancel_turn(cx).detach();
 
         let (events_tx, events_rx) = mpsc::unbounded::<Result<ThreadEvent>>();
         let event_stream = ThreadEventStream(events_tx);
@@ -2689,16 +2814,63 @@ impl Thread {
             async move |this, cx| {
                 log::debug!("Starting agent turn execution");
 
-                let turn_result =
+                let mut turn_result =
                     Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
                         .await;
 
-                // Check if we were cancelled - if so, cancel() already took running_turn
-                // and we shouldn't touch it (it might be a NEW turn now)
-                let was_cancelled = *cancellation_rx.borrow();
-                if was_cancelled {
-                    log::debug!("Turn was cancelled, skipping cleanup");
-                    return;
+                // Non-blocking tool results that arrive as a turn winds down
+                // steer the conversation into a continuation on this same
+                // event stream, so the client observes one uninterrupted
+                // prompt.
+                loop {
+                    // Check if we were cancelled - if so, cancel() already took running_turn
+                    // and we shouldn't touch it (it might be a NEW turn now)
+                    let was_cancelled = *cancellation_rx.borrow();
+                    if was_cancelled {
+                        log::debug!("Turn was cancelled, skipping cleanup");
+                        return;
+                    }
+                    if turn_result.is_err() {
+                        break;
+                    }
+                    let continue_with_results = this
+                        .update(cx, |this, cx| {
+                            this.flush_pending_message(cx);
+                            let delivered_results =
+                                this.drain_finished_non_blocking_tool_calls(&event_stream, cx);
+                            let has_steered_messages = !this.steered_messages.is_empty();
+                            if delivered_results || has_steered_messages {
+                                if has_steered_messages {
+                                    // The steer flag ended the previous turn
+                                    // at this boundary; consume it so the
+                                    // continuation runs to completion.
+                                    this.end_turn_at_next_boundary = false;
+                                    for message in this.steered_messages.drain(..) {
+                                        event_stream.send_user_message(&message);
+                                        this.messages.push(Arc::new(Message::User(message)));
+                                    }
+                                    this.updated_at = Utc::now();
+                                    this.clear_summary();
+                                    cx.notify();
+                                }
+                                true
+                            } else {
+                                // Mark the thread idle in the same update that
+                                // finds the queue empty, so a result arriving
+                                // right now takes the continuation-request path
+                                // instead of being stranded in the queue.
+                                this.running_turn.take();
+                                cx.notify();
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
+                    if !continue_with_results {
+                        break;
+                    }
+                    turn_result =
+                        Self::run_turn_internal(&this, &event_stream, cancellation_rx.clone(), cx)
+                            .await;
                 }
 
                 _ = this.update(cx, |this, cx| this.flush_pending_message(cx));
@@ -2743,6 +2915,14 @@ impl Thread {
         // Set when a refusal fallback occurs so subsequent iterations use the fallback model.
         let mut refusal_fallback_model: Option<Arc<dyn LanguageModel>> = None;
         loop {
+            // Non-blocking tool results that finished since the previous
+            // iteration are delivered here, at a reasoning boundary.
+            let delivered = this.update(cx, |this, cx| {
+                this.drain_finished_non_blocking_tool_calls(event_stream, cx)
+            })?;
+            if delivered {
+                intent = CompletionIntent::UserPrompt;
+            }
             match Self::perform_compaction_if_needed(
                 this,
                 event_stream,
@@ -3265,17 +3445,28 @@ impl Thread {
     ) -> Result<(), anyhow::Error> {
         log::debug!("Tool finished {:?}", tool_result);
 
-        event_stream.update_tool_call_fields(
-            &scoped_tool_call_id(owning_message_ix, &tool_result.tool_use_id),
-            acp::ToolCallUpdateFields::new()
-                .status(if tool_result.is_error {
-                    acp::ToolCallStatus::Failed
-                } else {
-                    acp::ToolCallStatus::Completed
-                })
-                .raw_output(tool_result.output.clone()),
-            None,
-        );
+        // A non-blocking call's placeholder result flows through this same
+        // path; its UI entry stays in progress until the real result is
+        // delivered (see `drain_finished_non_blocking_tool_calls`).
+        let is_non_blocking_placeholder = this
+            .read_with(cx, |this, _| {
+                this.non_blocking_tool_calls
+                    .contains_key(&tool_result.tool_use_id)
+            })
+            .unwrap_or(false);
+        if !is_non_blocking_placeholder {
+            event_stream.update_tool_call_fields(
+                &scoped_tool_call_id(owning_message_ix, &tool_result.tool_use_id),
+                acp::ToolCallUpdateFields::new()
+                    .status(if tool_result.is_error {
+                        acp::ToolCallStatus::Failed
+                    } else {
+                        acp::ToolCallStatus::Completed
+                    })
+                    .raw_output(tool_result.output.clone()),
+                None,
+            );
+        }
         this.update(cx, |this, _cx| {
             this.pending_message()
                 .tool_results
@@ -3522,6 +3713,10 @@ impl Thread {
                 )));
             }
         };
+        // `blocking` is a runtime-level concern (see
+        // `build_completion_request`); strip it so tools never have to know
+        // it exists. Absent or malformed values default to blocking.
+        let (input, blocking) = split_blocking_flag(input);
 
         if !tool_use.is_input_complete {
             if tool.supports_input_streaming() {
@@ -3547,6 +3742,7 @@ impl Thread {
                     owning_message_ix,
                     event_stream,
                     cancellation_rx,
+                    None,
                     cx,
                 ));
             } else {
@@ -3564,6 +3760,19 @@ impl Thread {
             return None;
         }
 
+        if !blocking {
+            log::debug!("Running tool {} non-blockingly", tool_use.name);
+            return Some(self.run_tool_non_blocking(
+                tool,
+                input,
+                tool_use.id,
+                tool_use.name,
+                owning_message_ix,
+                event_stream,
+                cx,
+            ));
+        }
+
         log::debug!("Running tool {}", tool_use.name);
         let tool_input = ToolInput::ready(input);
         Some(self.run_tool(
@@ -3574,6 +3783,7 @@ impl Thread {
             owning_message_ix,
             event_stream,
             cancellation_rx,
+            None,
             cx,
         ))
     }
@@ -3587,6 +3797,7 @@ impl Thread {
         owning_message_ix: usize,
         event_stream: &ThreadEventStream,
         cancellation_rx: watch::Receiver<bool>,
+        non_blocking_identity_tx: Option<oneshot::Sender<serde_json::Value>>,
         cx: &mut Context<Self>,
     ) -> Task<(usize, LanguageModelToolResult)> {
         // A workspace can become restricted after a thread has already started.
@@ -3623,6 +3834,7 @@ impl Thread {
             self.sandbox_grants.clone(),
             Some(cx.weak_entity()),
         );
+        *tool_event_stream.non_blocking_identity_tx.borrow_mut() = non_blocking_identity_tx;
         tool_event_stream.update_fields(
             acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
         );
@@ -3683,6 +3895,190 @@ impl Thread {
                 },
             )
         })
+    }
+
+    /// Runs a tool without blocking the reasoning loop: the tool executes
+    /// independently of the turn, the model immediately receives a
+    /// placeholder result carrying an `async_tool_call_id`, and the real
+    /// result is delivered later as a new user message (see
+    /// [`Thread::drain_finished_non_blocking_tool_calls`]). Tools that opt in
+    /// via [`AgentTool::provides_non_blocking_identity`] can additionally
+    /// patch identity metadata (e.g. a new session id) into the placeholder.
+    fn run_tool_non_blocking(
+        &mut self,
+        tool: Arc<dyn AnyAgentTool>,
+        input: serde_json::Value,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        owning_message_ix: usize,
+        event_stream: &ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) -> Task<(usize, LanguageModelToolResult)> {
+        let async_id = self.fresh_async_tool_call_id();
+        // A dedicated cancellation channel keeps the tool running across
+        // turn cancellations: the model was told the call runs independently.
+        let (cancellation_tx, cancellation_rx) = watch::channel(false);
+        let (identity_tx, identity_rx) = if tool.provides_non_blocking_identity() {
+            let (identity_tx, identity_rx) = oneshot::channel();
+            (Some(identity_tx), Some(identity_rx))
+        } else {
+            (None, None)
+        };
+        let tool_task = self.run_tool(
+            tool,
+            ToolInput::ready(input),
+            tool_use_id.clone(),
+            tool_name.clone(),
+            owning_message_ix,
+            event_stream,
+            cancellation_rx,
+            identity_tx,
+            cx,
+        );
+        self.non_blocking_tool_calls.insert(
+            tool_use_id.clone(),
+            NonBlockingToolCall {
+                async_id: async_id.clone(),
+                tool_name: tool_name.clone(),
+                owning_message_ix,
+                _cancellation_tx: cancellation_tx,
+            },
+        );
+        cx.spawn({
+            let tool_use_id = tool_use_id.clone();
+            async move |this, cx| {
+                let (_, result) = tool_task.await;
+                this.update(cx, |this, cx| {
+                    this.complete_non_blocking_tool_call(tool_use_id, result, cx)
+                })
+                .log_err();
+            }
+        })
+        .detach();
+
+        cx.foreground_executor().spawn(async move {
+            // When the tool reports identity metadata it arrives right after
+            // startup; a dropped sender (tool finished or failed before
+            // reporting) falls back to the generic placeholder.
+            let identity = match identity_rx {
+                Some(identity_rx) => identity_rx.await.ok(),
+                None => None,
+            };
+            let mut envelope = serde_json::json!({
+                "async_tool_call_id": async_id.as_ref(),
+                "status": "running",
+                "note": concat!(
+                    "This tool call is running non-blockingly. Its result will ",
+                    "arrive later as a user message with the same async_tool_call_id. ",
+                    "Do not wait for it; continue with other work."
+                ),
+            });
+            if let (Some(envelope_object), Some(serde_json::Value::Object(identity))) =
+                (envelope.as_object_mut(), identity)
+            {
+                envelope_object.extend(identity);
+            }
+            (
+                owning_message_ix,
+                LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name,
+                    is_error: false,
+                    content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                        envelope.to_string(),
+                    ))],
+                    output: None,
+                },
+            )
+        })
+    }
+
+    /// Short, distinctive id for a non-blocking tool call (e.g. "a~K4u"): a
+    /// fixed prefix and a random-looking suffix, so it stands out in the
+    /// model's context and is unlikely to collide with anything else in it.
+    fn fresh_async_tool_call_id(&self) -> SharedString {
+        loop {
+            let bytes = Uuid::new_v4().into_bytes();
+            let suffix: String = bytes[..3]
+                .iter()
+                .map(|byte| SHORT_ID_CHARSET[*byte as usize % SHORT_ID_CHARSET.len()] as char)
+                .collect();
+            let id = SharedString::from(format!("a~{suffix}"));
+            let in_flight = self
+                .non_blocking_tool_calls
+                .values()
+                .any(|call| call.async_id == id);
+            let queued = self
+                .queued_non_blocking_results
+                .iter()
+                .any(|result| result.async_id == id);
+            if !in_flight && !queued {
+                return id;
+            }
+        }
+    }
+
+    /// Called when a non-blocking tool call finishes. The result is queued
+    /// for delivery at the next reasoning boundary; if no turn is running, a
+    /// continuation turn is requested so the result still reaches the model.
+    fn complete_non_blocking_tool_call(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        result: LanguageModelToolResult,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(call) = self.non_blocking_tool_calls.remove(&tool_use_id) else {
+            return;
+        };
+        self.queued_non_blocking_results
+            .push(FinishedNonBlockingToolCall {
+                async_id: call.async_id,
+                tool_call_id: scoped_tool_call_id(call.owning_message_ix, &tool_use_id),
+                result,
+            });
+        if self.running_turn.is_none() {
+            cx.emit(ContinuationRequested);
+        }
+        cx.notify();
+    }
+
+    /// Delivers finished non-blocking tool results as new user messages at a
+    /// reasoning boundary, and reports their final status to the UI. Results
+    /// are appended as new messages rather than patched into the originating
+    /// assistant message so long contexts stay friendly to prompt caching.
+    /// Returns whether anything was delivered.
+    fn drain_finished_non_blocking_tool_calls(
+        &mut self,
+        event_stream: &ThreadEventStream,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.queued_non_blocking_results.is_empty() {
+            return false;
+        }
+        for finished in self.queued_non_blocking_results.drain(..) {
+            event_stream.update_tool_call_fields(
+                &finished.tool_call_id,
+                acp::ToolCallUpdateFields::new()
+                    .status(if finished.result.is_error {
+                        acp::ToolCallStatus::Failed
+                    } else {
+                        acp::ToolCallStatus::Completed
+                    })
+                    .raw_output(finished.result.output.clone()),
+                None,
+            );
+            let message = UserMessage {
+                id: ClientUserMessageId::new(),
+                content: non_blocking_result_message_content(&finished.async_id, &finished.result)
+                    .into(),
+            };
+            event_stream.send_user_message(&message);
+            self.messages.push(Arc::new(Message::User(message)));
+        }
+        self.updated_at = Utc::now();
+        self.clear_summary();
+        cx.notify();
+        true
     }
 
     fn handle_tool_use_json_parse_error_event(
@@ -3751,6 +4147,7 @@ impl Thread {
             owning_message_ix,
             event_stream,
             cancellation_rx,
+            None,
             cx,
         ))
     }
@@ -4072,6 +4469,56 @@ impl Thread {
                                 .and_then(|value| value.as_object_mut())
                             {
                                 properties.remove("reason");
+                            }
+                        }
+                    }
+                    // The `blocking` property is offered on every tool
+                    // without tool authors opting in; the runtime strips it
+                    // from the input before the tool runs (see
+                    // `handle_tool_use_event`).
+                    if let Some(properties) = schema
+                        .get_mut("properties")
+                        .and_then(|value| value.as_object_mut())
+                    {
+                        properties
+                            .entry(BLOCKING_INPUT_PROPERTY.to_string())
+                            .or_insert_with(|| {
+                                serde_json::json!({
+                                    "type": "boolean",
+                                    "default": true,
+                                    "description": concat!(
+                                        "Whether the agent waits for this tool call's result ",
+                                        "before continuing (default true). Set to false for ",
+                                        "long-running work whose result is not needed for the ",
+                                        "current reasoning step: the tool keeps running ",
+                                        "independently, the call immediately returns an ",
+                                        "async_tool_call_id, and the real result is delivered ",
+                                        "later as a user message carrying the same id."
+                                    ),
+                                })
+                            });
+                    }
+                    // `blocking` is required, not merely optional: the model must
+                    // state whether it is blocking or non-blocking on every call
+                    // instead of relying on the `true` default.
+                    let has_blocking_property = schema
+                        .get("properties")
+                        .and_then(|value| value.as_object())
+                        .is_some_and(|properties| {
+                            properties.contains_key(BLOCKING_INPUT_PROPERTY)
+                        });
+                    if has_blocking_property {
+                        if let Some(schema_object) = schema.as_object_mut() {
+                            let required = schema_object
+                                .entry("required".to_string())
+                                .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                            if let Some(required) = required.as_array_mut() {
+                                let blocking = serde_json::Value::String(
+                                    BLOCKING_INPUT_PROPERTY.to_string(),
+                                );
+                                if !required.contains(&blocking) {
+                                    required.push(blocking);
+                                }
                             }
                         }
                     }
@@ -4771,6 +5218,93 @@ enum CompactionInsertion {
     Manual { marker_id: ClientUserMessageId },
 }
 
+/// Charset for short, distinctive runtime ids (e.g. `a~K4u`, `s~t93`).
+const SHORT_ID_CHARSET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+/// Splits the runtime-managed `blocking` flag out of a tool call's input.
+/// Tools never see the property; absent or malformed values mean blocking.
+fn split_blocking_flag(mut input: serde_json::Value) -> (serde_json::Value, bool) {
+    let blocking = input
+        .as_object_mut()
+        .and_then(|object| object.remove(BLOCKING_INPUT_PROPERTY))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    (input, blocking)
+}
+
+/// Short, token-efficient alias for a subagent session id (e.g. `s~t93`),
+/// deterministically derived from the session id (FNV-1a) so it needs no
+/// mapping table and stays stable across restarts. Presented to the model
+/// wherever a session reference is useful (non-blocking spawn placeholders,
+/// spawn_agent output); resolved back to the real session id wherever a
+/// `session_id` is accepted.
+pub(crate) fn session_alias(session_id: &acp::SessionId) -> SharedString {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+    let mut hash = FNV_OFFSET;
+    for byte in session_id.to_string().bytes() {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    let mut alias = String::from("s~");
+    for _ in 0..3 {
+        alias.push(SHORT_ID_CHARSET[(hash % SHORT_ID_CHARSET.len() as u64) as usize] as char);
+        hash /= SHORT_ID_CHARSET.len() as u64;
+    }
+    SharedString::from(alias)
+}
+
+/// Builds the user message content carrying a finished non-blocking tool
+/// call's result: a JSON envelope tagged with the call's
+/// `async_tool_call_id`, followed by any images the tool produced.
+fn non_blocking_result_message_content(
+    async_id: &str,
+    result: &LanguageModelToolResult,
+) -> Vec<UserMessageContent> {
+    let mut text = String::new();
+    let mut images = Vec::new();
+    for part in &result.content {
+        match part {
+            LanguageModelToolResultContent::Text(part_text) => {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(part_text);
+            }
+            LanguageModelToolResultContent::Image(image) => images.push(image.clone()),
+        }
+    }
+    let envelope = serde_json::json!({
+        "async_tool_call_id": async_id,
+        "tool_name": result.tool_name,
+        "status": if result.is_error { "failed" } else { "completed" },
+        "result": text,
+    });
+    let mut content = vec![UserMessageContent::Text(envelope.to_string())];
+    content.extend(images.into_iter().map(UserMessageContent::Image));
+    content
+}
+
+/// A tool call the model chose to run non-blockingly (see
+/// [`Thread::run_tool_non_blocking`]). Held until the call finishes so the
+/// result can be matched back to its model-facing async id and ACP tool call.
+struct NonBlockingToolCall {
+    async_id: SharedString,
+    tool_name: Arc<str>,
+    owning_message_ix: usize,
+    /// Kept so the tool's cancellation channel stays open for the life of the
+    /// call — non-blocking calls outlive individual turns.
+    _cancellation_tx: watch::Sender<bool>,
+}
+
+/// A non-blocking tool call that finished and is waiting to be delivered to
+/// the model at the next reasoning boundary.
+struct FinishedNonBlockingToolCall {
+    async_id: SharedString,
+    tool_call_id: acp::ToolCallId,
+    result: LanguageModelToolResult,
+}
+
 struct RunningTurn {
     /// Holds the task that handles agent interaction until the end of the turn.
     /// Survives across multiple requests as the model performs tool calls and
@@ -4941,6 +5475,13 @@ pub async fn stream_thread_title(
 pub struct TokenUsageUpdated(pub Option<acp_thread::TokenUsage>);
 
 impl EventEmitter<TokenUsageUpdated> for Thread {}
+
+/// Emitted when a non-blocking tool call finished while no turn was running.
+/// Whoever drives this thread (e.g. `NativeAgent`) should start a
+/// continuation turn so the queued result reaches the model.
+pub struct ContinuationRequested;
+
+impl EventEmitter<ContinuationRequested> for Thread {}
 
 pub struct TitleUpdated;
 
@@ -5119,6 +5660,14 @@ where
         false
     }
 
+    /// Whether the tool reports identity metadata for a non-blocking call's
+    /// immediate response (via
+    /// [`ToolCallEventStream::report_non_blocking_identity`]). Runtime-only
+    /// opt-in; tools that don't override it get the generic placeholder.
+    fn provides_non_blocking_identity() -> bool {
+        false
+    }
+
     /// Some tools rely on a provider for the underlying billing or other reasons.
     /// Allow the tool to check if they are compatible, or should be filtered out.
     fn supports_provider(_provider: &LanguageModelProviderId) -> bool {
@@ -5193,6 +5742,10 @@ pub trait AnyAgentTool {
     fn supports_input_streaming(&self) -> bool {
         false
     }
+    /// See [`AgentTool::provides_non_blocking_identity`].
+    fn provides_non_blocking_identity(&self) -> bool {
+        false
+    }
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
@@ -5233,6 +5786,10 @@ where
 
     fn supports_input_streaming(&self) -> bool {
         T::supports_input_streaming()
+    }
+
+    fn provides_non_blocking_identity(&self) -> bool {
+        T::provides_non_blocking_identity()
     }
 
     fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
@@ -5495,6 +6052,10 @@ pub struct ToolCallEventStream {
     /// sandbox grant is recorded so it survives reopening. `None` in tests and
     /// for streams not tied to a live thread.
     thread: Option<WeakEntity<Thread>>,
+    /// Channel for a tool to contribute identity metadata to a non-blocking
+    /// call's immediate response (see [`AgentTool::provides_non_blocking_identity`]).
+    /// `None` when the call is blocking.
+    non_blocking_identity_tx: Rc<RefCell<Option<oneshot::Sender<serde_json::Value>>>>,
 }
 
 impl ToolCallEventStream {
@@ -5579,6 +6140,17 @@ impl ToolCallEventStream {
             cancellation_rx,
             sandbox_grants,
             thread,
+            non_blocking_identity_tx: Rc::new(RefCell::new(None)),
+        }
+    }
+
+    /// Reports identity metadata for a non-blocking call's immediate response
+    /// (e.g. `spawn_agent` reports the new session id so the parent can
+    /// reference the session before it finishes). No-op when the call is
+    /// blocking — the final result already carries everything the model needs.
+    pub fn report_non_blocking_identity(&self, metadata: serde_json::Value) {
+        if let Some(sender) = self.non_blocking_identity_tx.borrow_mut().take() {
+            sender.send(metadata).ok();
         }
     }
 

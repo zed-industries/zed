@@ -86,6 +86,23 @@ pub struct DbThread {
     /// [`crate::sandboxing::ThreadSandboxGrants`].
     #[serde(default)]
     pub sandbox_grants: DbSandboxGrants,
+    /// Non-blocking tool calls still executing when the thread was saved.
+    /// Rewritten in place on every save (not incremental like the message
+    /// history): on load, any entry here means the call ended without
+    /// delivering its result (e.g. the app was restarted), and a synthetic
+    /// result is queued for delivery to the agent.
+    #[serde(default)]
+    pub pending_non_blocking_tool_calls: Vec<DbNonBlockingToolCall>,
+}
+
+/// A non-blocking tool call that was in flight when the thread was saved
+/// (see [`DbThread::pending_non_blocking_tool_calls`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbNonBlockingToolCall {
+    pub async_id: SharedString,
+    pub tool_use_id: language_model::LanguageModelToolUseId,
+    pub tool_name: Arc<str>,
+    pub owning_message_ix: usize,
 }
 
 /// Serialized form of the sandbox permissions the user granted "for the rest of
@@ -169,6 +186,7 @@ impl SharedThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            pending_non_blocking_tool_calls: Vec::new(),
         }
     }
 
@@ -355,6 +373,7 @@ impl DbThread {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            pending_non_blocking_tool_calls: Vec::new(),
         })
     }
 }
@@ -806,6 +825,7 @@ mod tests {
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: DbSandboxGrants::default(),
+            pending_non_blocking_tool_calls: Vec::new(),
         }
     }
 

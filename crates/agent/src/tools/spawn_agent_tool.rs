@@ -8,7 +8,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, session_alias};
 
 /// Spawn a sub-agent for a well-scoped task.
 ///
@@ -34,6 +34,7 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.
 /// - Error results may also include a session_id if a session was already created.
+/// - Resuming (via `session_id`) a session that is still running steers it instead: your message is incorporated at that agent's next reasoning boundary, and this call returns immediately with an acknowledgment rather than the agent's output. The running call that is driving the session (a spawn_agent call, yours or a previous one) still receives its final output.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SpawnAgentToolInput {
@@ -92,7 +93,7 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
                 output,
                 session_info: _, // Don't show this to the model
             } => serde_json::to_string(
-                &serde_json::json!({ "session_id": session_id, "output": output }),
+                &serde_json::json!({ "session_id": session_alias(&session_id), "output": output }),
             )
             .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
             .into(),
@@ -101,7 +102,7 @@ impl From<SpawnAgentToolOutput> for LanguageModelToolResultContent {
                 error,
                 session_info: _, // Don't show this to the model
             } => serde_json::to_string(
-                &serde_json::json!({ "session_id": session_id, "error": error }),
+                &serde_json::json!({ "session_id": session_id.as_ref().map(session_alias), "error": error }),
             )
             .unwrap_or_else(|e| format!("Failed to serialize spawn_agent output: {e}"))
             .into(),
@@ -128,6 +129,10 @@ impl AgentTool for SpawnAgentTool {
 
     fn kind() -> acp::ToolKind {
         acp::ToolKind::Other
+    }
+
+    fn provides_non_blocking_identity() -> bool {
+        true
     }
 
     fn initial_title(
@@ -161,6 +166,51 @@ impl AgentTool for SpawnAgentTool {
                     session_info: None,
                 })?;
 
+            // Resuming a session that is still running steers it: the
+            // message joins the running turn at its next reasoning boundary
+            // and this call returns an acknowledgment instead of awaiting
+            // the session's output.
+            if let Some(session_id) = input.session_id.clone() {
+                let steered = cx
+                    .update(|cx| {
+                        self.environment.steer_subagent(
+                            session_id.clone(),
+                            input.message.clone(),
+                            cx,
+                        )
+                    })
+                    .map_err(|error| SpawnAgentToolOutput::Error {
+                        session_id: Some(session_id.clone()),
+                        error: error.to_string(),
+                        session_info: None,
+                    })?;
+                if let Some(message_start_index) = steered {
+                    let session_info = SubagentSessionInfo {
+                        session_id: session_id.clone(),
+                        message_start_index,
+                        message_end_index: None,
+                    };
+                    let output = format!(
+                        "Steered the running agent session {session_id}: the message will be \
+                         incorporated at its next reasoning boundary. No direct response is \
+                         returned; the session's output arrives as the result of the spawn_agent \
+                         call that is driving it."
+                    );
+                    event_stream.update_fields_with_meta(
+                        acp::ToolCallUpdateFields::new().content(vec![output.clone().into()]),
+                        Some(acp::Meta::from_iter([(
+                            SUBAGENT_SESSION_INFO_META_KEY.into(),
+                            serde_json::json!(&session_info),
+                        )])),
+                    );
+                    return Ok(SpawnAgentToolOutput::Success {
+                        session_id,
+                        output,
+                        session_info,
+                    });
+                }
+            }
+
             let (subagent, mut session_info) = cx.update(|cx| {
                 let subagent = if let Some(session_id) = input.session_id {
                     self.environment.resume_subagent(session_id, cx)
@@ -189,6 +239,10 @@ impl AgentTool for SpawnAgentTool {
 
                 Ok((subagent, session_info))
             })?;
+
+            event_stream.report_non_blocking_identity(serde_json::json!({
+                "session_id": session_alias(&session_info.session_id),
+            }));
 
             let send_result = subagent.send(input.message, cx).await;
 
