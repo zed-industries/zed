@@ -5,7 +5,7 @@ use agent_ui::{
     terminal_thread_metadata_store::TerminalThreadMetadata, thread_metadata_store::ThreadMetadata,
 };
 use gpui::{
-    Action as _, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
+    ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Modifiers,
     ModifiersChangedEvent, Render, ScrollHandle, SharedString, prelude::*,
 };
 use ui::{AgentThreadStatus, ThreadItem, ThreadItemWorktreeInfo, WithScrollbar, prelude::*};
@@ -73,7 +73,7 @@ impl ThreadSwitcherEntry {
         }
     }
 
-    fn element_id(&self) -> SharedString {
+    pub(crate) fn element_id(&self) -> SharedString {
         match self {
             Self::Thread(entry) => SharedString::from(format!(
                 "thread-switcher-thread-{:?}",
@@ -325,7 +325,7 @@ impl ThreadSwitcher {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        window: &mut gpui::Window,
+        _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
         let Some(init_modifiers) = self.init_modifiers else {
@@ -336,7 +336,7 @@ impl ThreadSwitcher {
             if self.entries.is_empty() {
                 cx.emit(DismissEvent);
             } else {
-                window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                self.confirm_selected(cx);
             }
         }
     }
@@ -407,9 +407,13 @@ impl Render for ThreadSwitcher {
                                     this.select_index(ix, cx);
                                 }
                             }))
-                            // TODO: This is not properly propagating to the tread item.
-                            .on_click(cx.listener(
-                                move |this, _event: &gpui::ClickEvent, _window, cx| {
+                            .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
+                                this.select_and_confirm(ix, cx);
+                            }))
+                            // macOS reports ctrl+left clicks as right-button, and the
+                            // switcher is usually open while ctrl is held.
+                            .on_aux_click(cx.listener(
+                                move |this, _event: &ClickEvent, _window, cx| {
                                     this.select_and_confirm(ix, cx);
                                 },
                             ))
