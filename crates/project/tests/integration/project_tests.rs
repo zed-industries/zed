@@ -63,6 +63,7 @@ use project::{
     git_store::{GitStoreEvent, Repository, RepositoryEvent, StatusEntry, pending_op},
     search::{SearchQuery, SearchResult},
     task_store::{TaskSettingsLocation, TaskStore},
+    toolchain_store::ToolchainStoreEvent,
     *,
 };
 use rand::{Rng as _, rngs::StdRng};
@@ -1536,19 +1537,20 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         .await;
 
     assert!(currently_active_toolchain.is_none());
+    let selected_toolchain = available_toolchains_for_b
+        .toolchains
+        .into_iter()
+        .next()
+        .unwrap();
     let _ = project
         .update(cx, |this, cx| {
             let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
             this.activate_toolchain(
                 ProjectPath {
                     worktree_id,
-                    path: root_path,
+                    path: root_path.clone(),
                 },
-                available_toolchains_for_b
-                    .toolchains
-                    .into_iter()
-                    .next()
-                    .unwrap(),
+                selected_toolchain.clone(),
                 cx,
             )
         })
@@ -1570,6 +1572,42 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     assert_eq!(adapter.name(), LanguageServerName::new_static("ty"));
     // There's a new language server in town.
     assert_eq!(server.server_id(), LanguageServerId(1));
+
+    // Re-activating the same toolchain must not re-emit ToolchainActivated (zed-industries/zed#60472).
+    let toolchain_store = project
+        .read_with(cx, |project, _| project.toolchain_store())
+        .unwrap();
+    let activation_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _subscription = project.update(cx, |_, cx| {
+        cx.subscribe(&toolchain_store, {
+            let activation_count = activation_count.clone();
+            move |_, _, event, _| {
+                if let ToolchainStoreEvent::ToolchainActivated = event {
+                    activation_count.fetch_add(1, atomic::Ordering::SeqCst);
+                }
+            }
+        })
+    });
+    let _ = project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.activate_toolchain(
+                ProjectPath {
+                    worktree_id,
+                    path: root_path,
+                },
+                selected_toolchain,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        activation_count.load(atomic::Ordering::SeqCst),
+        0,
+        "re-activating the already-active toolchain must not re-emit ToolchainActivated"
+    );
 }
 
 #[gpui::test]

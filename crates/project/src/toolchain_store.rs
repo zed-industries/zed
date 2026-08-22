@@ -486,11 +486,15 @@ impl LocalToolchainStore {
     ) -> Task<Option<()>> {
         cx.spawn(async move |this, cx| {
             this.update(cx, |this, cx| {
-                this.active_toolchains
+                let old_toolchain = this
+                    .active_toolchains
                     .entry((path.worktree_id, toolchain.language_name.clone()))
                     .or_default()
                     .insert(path.path, toolchain.clone());
-                cx.emit(ToolchainStoreEvent::ToolchainActivated);
+                // An unconditional emit here loops ActiveToolchain forever (zed-industries/zed#60472).
+                if old_toolchain.as_ref() != Some(&toolchain) {
+                    cx.emit(ToolchainStoreEvent::ToolchainActivated);
+                }
             })
             .ok();
             Some(())
