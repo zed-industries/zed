@@ -80,6 +80,7 @@ pub struct FakeGitRepositoryState {
     pub graph_commits: Vec<Arc<InitialGraphCommitData>>,
     pub commit_data: HashMap<Oid, FakeCommitDataEntry>,
     pub stash_entries: GitStash,
+    pub fetch_count: Arc<std::sync::atomic::AtomicUsize>,
     pub commit_template: Option<GitCommitTemplate>,
 }
 
@@ -107,6 +108,7 @@ impl FakeGitRepositoryState {
             commit_data: Default::default(),
             commit_history: Vec::new(),
             stash_entries: Default::default(),
+            fetch_count: Arc::default(),
             commit_template: None,
         }
     }
@@ -1172,7 +1174,15 @@ impl GitRepository for FakeGitRepository {
         _env: Arc<HashMap<String, String>>,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::RemoteCommandOutput>> {
-        unimplemented!()
+        self.with_state_async(true, |state| {
+            state
+                .fetch_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(git::repository::RemoteCommandOutput {
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        })
     }
 
     fn get_all_remotes(&self) -> BoxFuture<'_, Result<Vec<Remote>>> {
