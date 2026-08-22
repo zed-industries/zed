@@ -4945,6 +4945,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        self.unfold_buffers_with_selections(cx);
         self.transact(window, cx, |this, window, cx| {
             this.select_autoclose_pair(window, cx);
 
@@ -5003,6 +5004,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        self.unfold_buffers_with_selections(cx);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
@@ -5423,6 +5425,7 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        self.unfold_buffers_with_selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(&display_map);
 
