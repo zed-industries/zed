@@ -2174,6 +2174,15 @@ impl Editor {
                     _ => {}
                 },
             ));
+            // Bookmark gutter indicators are queried from the store during
+            // rendering, so any store mutation (e.g. `workspace::ClearBookmarks`,
+            // or a toggle made in another pane) must repaint this editor.
+            project_subscriptions.push(cx.observe(
+                &project.read(cx).bookmark_store(),
+                |_, _, cx| {
+                    cx.notify();
+                },
+            ));
             let git_store = project.read(cx).git_store().clone();
             let project = project.clone();
             project_subscriptions.push(cx.subscribe(
