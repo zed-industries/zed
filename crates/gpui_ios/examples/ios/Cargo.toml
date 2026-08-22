@@ -1,0 +1,18 @@
+[package]
+name = "gpui_ios_example"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_ios_example.rs"
+crate-type = ["staticlib"]
+
+[target.'cfg(target_os = "ios")'.dependencies]
+gpui.workspace = true
+gpui_ios.workspace = true
+log.workspace = true
