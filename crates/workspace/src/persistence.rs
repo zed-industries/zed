@@ -1491,6 +1491,57 @@ impl WorkspaceDb {
         ret
     }
 
+    /// Removes a single user-added toolchain. `save_workspace` only rewrites the rows
+    /// belonging to a given workspace, and globally-scoped toolchains are stored under a
+    /// sentinel workspace id shared by every workspace, so they would otherwise survive
+    /// their removal and reappear on the next launch.
+    pub(crate) async fn delete_user_toolchain(
+        &self,
+        workspace_id: WorkspaceId,
+        location: SerializedWorkspaceLocation,
+        scope: ToolchainScope,
+        toolchain: Toolchain,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            let remote_connection_id = match location {
+                SerializedWorkspaceLocation::Local => None,
+                SerializedWorkspaceLocation::Remote(connection_options) => Some(
+                    Self::get_or_create_remote_connection_internal(conn, connection_options)?.0,
+                ),
+            };
+            let (workspace_id, worktree_root_path, relative_worktree_path) = match scope {
+                ToolchainScope::Subproject(worktree_root_path, relative_worktree_path) => (
+                    workspace_id,
+                    worktree_root_path.to_string_lossy().into_owned(),
+                    relative_worktree_path.as_unix_str().to_owned(),
+                ),
+                ToolchainScope::Project => (workspace_id, String::default(), String::default()),
+                ToolchainScope::Global => (WorkspaceId(0), String::default(), String::default()),
+            };
+            // `raw_json` is deliberately not matched on, mirroring `Toolchain`'s own notion of
+            // equality: two entries that look identical in the UI are the same toolchain.
+            conn.exec_bound(sql!(
+                DELETE FROM user_toolchains
+                WHERE remote_connection_id IS ?1
+                    AND workspace_id = ?2
+                    AND worktree_root_path = ?3
+                    AND relative_worktree_path = ?4
+                    AND language_name = ?5
+                    AND name = ?6
+                    AND path = ?7
+            ))?((
+                remote_connection_id,
+                workspace_id,
+                worktree_root_path,
+                relative_worktree_path,
+                toolchain.language_name.as_ref().to_owned(),
+                toolchain.name.to_string(),
+                toolchain.path.to_string(),
+            ))
+        })
+        .await
+    }
+
     pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
         let paths = workspace.paths.serialize();
         let identity_paths = workspace.identity_paths.map(|paths| paths.serialize());
@@ -3338,6 +3389,74 @@ mod tests {
             flexes: None,
             children,
         }
+    }
+
+    #[gpui::test]
+    async fn test_deleting_globally_scoped_user_toolchain() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_deleting_globally_scoped_user_toolchain").await;
+
+        let toolchain = Toolchain {
+            language_name: LanguageName::new_static("Python"),
+            name: "Global Venv".into(),
+            path: "/home/user/global-venv/bin/python".into(),
+            as_json: json!({ "kind": "venv" }),
+        };
+        let user_toolchains = BTreeMap::from_iter([(
+            ToolchainScope::Global,
+            IndexSet::from_iter([toolchain.clone()]),
+        )]);
+        let workspace = SerializedWorkspace {
+            id: WorkspaceId(7),
+            paths: PathList::new(&["/tmp"]),
+            identity_paths: None,
+            location: SerializedWorkspaceLocation::Local,
+            center_group: SerializedPaneGroup::Pane(SerializedPane::new(vec![], false, 0)),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            bookmarks: Default::default(),
+            breakpoints: Default::default(),
+            centered_layout: false,
+            session_id: None,
+            window_id: None,
+            user_toolchains: user_toolchains.clone(),
+        };
+
+        db.save_workspace(workspace.clone()).await;
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp"]).unwrap().user_toolchains,
+            user_toolchains
+        );
+
+        // Globally scoped toolchains are shared between workspaces, so rewriting a workspace
+        // that no longer knows about one must not be what removes it.
+        db.save_workspace(SerializedWorkspace {
+            user_toolchains: Default::default(),
+            ..workspace.clone()
+        })
+        .await;
+        assert_eq!(
+            db.workspace_for_roots(&["/tmp"]).unwrap().user_toolchains,
+            user_toolchains
+        );
+
+        db.delete_user_toolchain(
+            workspace.id,
+            SerializedWorkspaceLocation::Local,
+            ToolchainScope::Global,
+            toolchain,
+        )
+        .await
+        .unwrap();
+        assert!(
+            db.workspace_for_roots(&["/tmp"])
+                .unwrap()
+                .user_toolchains
+                .values()
+                .all(IndexSet::is_empty)
+        );
     }
 
     #[gpui::test]

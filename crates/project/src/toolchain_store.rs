@@ -142,10 +142,12 @@ impl ToolchainStore {
     ) {
         let mut did_remove = false;
         self.user_toolchains
-            .entry(scope)
+            .entry(scope.clone())
             .and_modify(|toolchains| did_remove = toolchains.shift_remove(&toolchain));
         if did_remove {
-            cx.emit(ToolchainStoreEvent::CustomToolchainsModified);
+            cx.emit(ToolchainStoreEvent::CustomToolchainRemoved(
+                scope, toolchain,
+            ));
         }
     }
 
@@ -473,6 +475,9 @@ struct RemoteStore(WeakEntity<RemoteToolchainStore>);
 pub enum ToolchainStoreEvent {
     ToolchainActivated,
     CustomToolchainsModified,
+    /// Serializing the workspace only rewrites the rows it owns, so globally-scoped
+    /// toolchains have to be deleted from the database explicitly.
+    CustomToolchainRemoved(ToolchainScope, Toolchain),
 }
 
 impl EventEmitter<ToolchainStoreEvent> for LocalToolchainStore {}
