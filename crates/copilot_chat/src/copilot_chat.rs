@@ -38,6 +38,18 @@ impl CopilotChatConfiguration {
         }
     }
 
+    /// The OAuth client ID to use for the device-code flow.
+    ///
+    /// Switches to the default GitHub Copilot client ID if an enterprise URI is configured, 
+    /// since GitHub federates that ID to enterprise instances.
+    pub fn oauth_client_id(&self) -> &'static str {
+        if self.enterprise_uri.is_some() {
+            copilot_oauth::GITHUB_COPILOT_CLIENT_ID
+        } else {
+            copilot_oauth::ZED_COPILOT_CLIENT_ID
+        }
+    }
+
     pub fn graphql_url(&self) -> String {
         if let Some(enterprise_uri) = &self.enterprise_uri {
             let domain = Self::parse_domain(enterprise_uri);
