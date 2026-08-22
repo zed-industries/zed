@@ -2002,15 +2002,13 @@ impl GitGraph {
         let row_height = Self::row_height(window, cx);
 
         let remote = repository.as_ref().and_then(|repository| {
-            repository.update(cx, |repo, cx| {
-                let remote_url = repo.default_remote_url()?;
-                let provider_registry = GitHostingProviderRegistry::default_global(cx);
-                let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
-                Some(GitRemote {
-                    host: provider,
-                    owner: parsed.owner.into(),
-                    repo: parsed.repo.into(),
-                })
+            let remote_url = repository.read(cx).default_remote_url()?;
+            let provider_registry = GitHostingProviderRegistry::default_global(cx);
+            let (provider, parsed) = parse_git_remote_url(provider_registry, &remote_url)?;
+            Some(GitRemote {
+                host: provider,
+                owner: parsed.owner.into(),
+                repo: parsed.repo.into(),
             })
         });
 
