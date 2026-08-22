@@ -1804,31 +1804,6 @@ impl LinuxClient for X11Client {
         event_loop.run(None, &mut self.clone(), |_| {}).log_err();
     }
 
-    fn pump_events(&self) -> bool {
-        let mut state = self.0.borrow_mut();
-        state.common.assert_main_thread("X11Client::pump_events");
-        if state.common.event_loop_stopped() {
-            return false;
-        }
-        let mut event_loop = state
-            .event_loop
-            .take()
-            .expect("X11Client::pump_events called re-entrantly or while the loop is blocking");
-        drop(state);
-
-        // One zero-time call dispatches the current readiness batch and queued idles.
-        let result = event_loop.dispatch(Some(Duration::ZERO), &mut self.clone());
-
-        let mut state = self.0.borrow_mut();
-        state.event_loop = Some(event_loop);
-        if let Err(error) = result {
-            log::error!("X11 embedded event dispatch failed: {error:?}");
-            state.common.stop_event_loop();
-            return false;
-        }
-        !state.common.event_loop_stopped()
-    }
-
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let state = self.0.borrow();
         state.keyboard_focused_window.and_then(|focused_window| {

@@ -26,50 +26,33 @@ pub(crate) use x11::*;
 
 use std::rc::Rc;
 
-#[cfg(any(feature = "wayland", feature = "x11"))]
-use anyhow::Context as _;
-use anyhow::anyhow;
-
 /// Returns the default platform implementation for the current OS.
 pub fn current_platform(headless: bool) -> Rc<dyn gpui::Platform> {
+    #[cfg(feature = "x11")]
+    use anyhow::Context as _;
+
     if headless {
-        return Rc::new(LinuxPlatform::new(HeadlessClient::new()));
+        return Rc::new(LinuxPlatform {
+            inner: HeadlessClient::new(),
+        });
     }
 
     match gpui::guess_compositor() {
         #[cfg(feature = "wayland")]
-        "Wayland" => Rc::new(LinuxPlatform::new(WaylandClient::new())),
+        "Wayland" => Rc::new(LinuxPlatform {
+            inner: WaylandClient::new(),
+        }),
 
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(LinuxPlatform::new(
-            X11Client::new()
+        "X11" => Rc::new(LinuxPlatform {
+            inner: X11Client::new()
                 .context("Failed to initialize X11 client.")
                 .unwrap(),
-        )),
+        }),
 
-        "Headless" => Rc::new(LinuxPlatform::new(HeadlessClient::new())),
-        _ => unreachable!(
-            r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
-        ),
-    }
-}
-
-/// Returns the native X11 or Wayland platform with a non-blocking event pump.
-pub fn embedded_platform() -> anyhow::Result<Rc<dyn gpui::EmbeddedPlatform>> {
-    match gpui::guess_compositor() {
-        #[cfg(feature = "wayland")]
-        "Wayland" => Ok(Rc::new(LinuxPlatform::new_embedded(
-            WaylandClient::try_new().context("Failed to initialize Wayland client.")?,
-        ))),
-
-        #[cfg(feature = "x11")]
-        "X11" => Ok(Rc::new(LinuxPlatform::new_embedded(
-            X11Client::new().context("Failed to initialize X11 client.")?,
-        ))),
-
-        "Headless" => Err(anyhow!(
-            "embedded Linux platforms require an X11 or Wayland display"
-        )),
+        "Headless" => Rc::new(LinuxPlatform {
+            inner: HeadlessClient::new(),
+        }),
         _ => unreachable!(
             r#"At least one of the "wayland" or "x11" features must be enabled on gpui_linux or gpui_platform."#
         ),

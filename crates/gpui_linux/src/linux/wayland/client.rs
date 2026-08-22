@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
 use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle,
@@ -702,16 +701,10 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
-        Self::try_new()
-            .context("Failed to initialize Wayland client")
-            .unwrap()
-    }
-
-    pub(crate) fn try_new() -> anyhow::Result<Self> {
         let startup_activation_token = take_startup_activation_token_from_environment();
-        let conn = Connection::connect_to_env()?;
+        let conn = Connection::connect_to_env().unwrap();
 
-        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn)?;
+        let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
         let qh = event_queue.handle();
 
         let mut seat: Option<wl_seat::WlSeat> = None;
@@ -745,7 +738,7 @@ impl WaylandClient {
             }
         });
 
-        let event_loop = EventLoop::<WaylandClientStatePtr>::try_new()?;
+        let event_loop = EventLoop::<WaylandClientStatePtr>::try_new().unwrap();
 
         let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
 
@@ -765,9 +758,7 @@ impl WaylandClient {
                     }
                 }
             })
-            .map_err(|error| {
-                anyhow::anyhow!("failed to initialize foreground task source: {error:?}")
-            })?;
+            .unwrap();
 
         handle
             .insert_source(
@@ -778,14 +769,12 @@ impl WaylandClient {
                     }
                 },
             )
-            .map_err(|error| {
-                anyhow::anyhow!("failed to initialize system wake source: {error:?}")
-            })?;
+            .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
 
-        let seat = seat.context("Wayland compositor did not advertise a seat")?;
+        let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
             common.foreground_executor.clone(),
@@ -846,9 +835,7 @@ impl WaylandClient {
                     }
                 }
             })
-            .map_err(|error| {
-                anyhow::anyhow!("failed to initialize desktop portal source: {error:?}")
-            })?;
+            .unwrap();
 
         let state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
@@ -928,11 +915,9 @@ impl WaylandClient {
 
         WaylandSource::new(conn, event_queue)
             .insert(handle)
-            .map_err(|error| {
-                anyhow::anyhow!("failed to initialize Wayland event source: {error:?}")
-            })?;
+            .unwrap();
 
-        Ok(Self(state))
+        Self(state)
     }
 }
 
@@ -1162,36 +1147,6 @@ impl LinuxClient for WaylandClient {
                 |_| {},
             )
             .log_err();
-    }
-
-    fn pump_events(&self) -> bool {
-        let mut state = self.0.borrow_mut();
-        state
-            .common
-            .assert_main_thread("WaylandClient::pump_events");
-        if state.common.event_loop_stopped() {
-            return false;
-        }
-        let mut event_loop = state
-            .event_loop
-            .take()
-            .expect("WaylandClient::pump_events called re-entrantly or while the loop is blocking");
-        drop(state);
-
-        // WaylandSource dispatches every pending queue event and flushes in this call.
-        let result = event_loop.dispatch(
-            Some(Duration::ZERO),
-            &mut WaylandClientStatePtr(Rc::downgrade(&self.0)),
-        );
-
-        let mut state = self.0.borrow_mut();
-        state.event_loop = Some(event_loop);
-        if let Err(error) = result {
-            log::error!("Wayland embedded event dispatch failed: {error:?}");
-            state.common.stop_event_loop();
-            return false;
-        }
-        !state.common.event_loop_stopped()
     }
 
     fn write_to_primary(&self, item: gpui::ClipboardItem) {

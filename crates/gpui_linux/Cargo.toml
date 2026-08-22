@@ -33,7 +33,6 @@ wayland = [
 ]
 x11 = [
     "gpui_wgpu",
-    "gpui/x11",
     "ashpd",
 
     "as-raw-xcb-connection",
