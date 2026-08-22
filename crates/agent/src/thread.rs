@@ -1300,6 +1300,9 @@ pub struct Thread {
     /// already-granted permissions skip the approval prompt.
     /// Never persisted — lives and dies with this thread.
     sandbox_grants: Rc<RefCell<ThreadSandboxGrants>>,
+    /// Background task restoring tracked buffers from a persisted thread.
+    /// Cancelled automatically if the thread is dropped before it finishes.
+    _restore_tracked_buffers: Option<Task<()>>,
 }
 
 impl Thread {
@@ -1436,6 +1439,7 @@ impl Thread {
             inherits_parent_model_settings: true,
             sandboxed_terminal_temp_dir: None,
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::default())),
+            _restore_tracked_buffers: None,
         }
     }
 
@@ -1770,6 +1774,61 @@ impl Thread {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
+        let _restore_tracked_buffers = if db_thread.tracked_buffers.is_empty() {
+            None
+        } else {
+            let restored_buffers = db_thread.tracked_buffers.clone();
+            let project = project.clone();
+            Some(cx.spawn(|thread: WeakEntity<Thread>, cx: &mut AsyncApp| {
+                let cx = cx.clone();
+                async move {
+                    for serialized in restored_buffers {
+                        let worktree_id = settings::WorktreeId::from_proto(serialized.worktree_id);
+                        let rel_path =
+                            match util::rel_path::RelPath::from_unix_str(&serialized.path) {
+                                Ok(p) => p.into(),
+                                Err(e) => {
+                                    log::error!("failed to deserialize relative path: {e}");
+                                    continue;
+                                }
+                            };
+                        let project_path = project::ProjectPath {
+                            worktree_id,
+                            path: rel_path,
+                        };
+
+                        let open_task = cx.update(|cx: &mut App| {
+                            project.update(cx, |project, cx| project.open_buffer(project_path, cx))
+                        });
+
+                        let buffer = match open_task.await {
+                            Ok(buffer) => buffer,
+                            Err(e) => {
+                                log::error!("failed to open buffer for restoring agent edits: {e}");
+                                continue;
+                            }
+                        };
+
+                        let diff_base = text::Rope::from(serialized.diff_base);
+                        let status = serialized.status.into();
+
+                        let result = cx.update(|cx: &mut App| {
+                            thread.update(cx, |thread, cx| {
+                                thread.action_log.update(cx, |action_log, cx| {
+                                    action_log
+                                        .restore_tracked_buffer(buffer, diff_base, status, cx);
+                                });
+                            })
+                        });
+                        if result.is_err() {
+                            log::warn!("Thread dropped during tracked buffer restoration");
+                            break;
+                        }
+                    }
+                }
+            }))
+        };
+
         Self {
             id,
             prompt_id: PromptId::new(),
@@ -1820,6 +1879,7 @@ impl Thread {
             sandbox_grants: Rc::new(RefCell::new(ThreadSandboxGrants::from_db(
                 &db_thread.sandbox_grants,
             ))),
+            _restore_tracked_buffers,
         }
     }
 
@@ -1894,6 +1954,18 @@ impl Thread {
 
     pub fn to_db(&self, cx: &App) -> Task<DbThread> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
+        let action_log = self.action_log.read(cx);
+        let tracked_buffers = action_log
+            .tracked_buffer_snapshots(cx)
+            .into_iter()
+            .map(|snapshot| crate::db::SerializedTrackedBuffer {
+                worktree_id: snapshot.project_path.worktree_id.to_proto(),
+                path: snapshot.project_path.path.as_unix_str().to_string(),
+                diff_base: snapshot.diff_base.to_string(),
+                status: snapshot.status.into(),
+            })
+            .collect();
+
         let mut thread = DbThread {
             title: self.title().unwrap_or_default(),
             messages: self.messages.clone(),
@@ -1917,6 +1989,7 @@ impl Thread {
             }),
             sandboxed_terminal_temp_dir: self.sandboxed_terminal_temp_dir.clone(),
             sandbox_grants: self.sandbox_grants.borrow().to_db(),
+            tracked_buffers,
         };
 
         cx.background_spawn(async move {
