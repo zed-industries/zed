@@ -16,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
-use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
@@ -77,8 +76,36 @@ impl From<SettingsLocation> for latest::SettingsLocation {
     fn from(value: SettingsLocation) -> Self {
         Self {
             worktree_id: value.worktree_id,
-            path: value.path,
+            // zed_extension_api 0.1 used the absolute worktree root here,
+            // while core settings locations are now worktree-relative.
+            path: String::new(),
         }
+    }
+}
+
+fn settings_location_from_legacy(
+    location: Option<&SettingsLocation>,
+) -> Option<::settings::SettingsLocation<'static>> {
+    location.map(|location| ::settings::SettingsLocation {
+        worktree_id: WorktreeId::from_proto(location.worktree_id),
+        path: RelPath::empty(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_location_targets_the_worktree_root() {
+        let location = settings_location_from_legacy(Some(&SettingsLocation {
+            worktree_id: 42,
+            path: "/absolute/worktree/root".to_string(),
+        }))
+        .unwrap();
+
+        assert_eq!(location.worktree_id, WorktreeId::from_proto(42));
+        assert_eq!(location.path, RelPath::empty());
     }
 }
 
@@ -431,16 +458,7 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let path = location.as_ref().and_then(|location| {
-                    RelPath::new(Path::new(&location.path), PathStyle::Unix).ok()
-                });
-                let location = path
-                    .as_ref()
-                    .zip(location.as_ref())
-                    .map(|(path, location)| ::settings::SettingsLocation {
-                        worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path,
-                    });
+                let location = settings_location_from_legacy(location.as_ref());
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {

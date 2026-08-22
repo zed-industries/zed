@@ -56,8 +56,27 @@ impl From<SettingsLocation> for latest::SettingsLocation {
     fn from(value: SettingsLocation) -> Self {
         Self {
             worktree_id: value.worktree_id,
-            path: value.path,
+            // zed_extension_api 0.0.6 used the absolute worktree root here,
+            // while core settings locations are now worktree-relative.
+            path: String::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_location_targets_the_worktree_root() {
+        let location: latest::SettingsLocation = SettingsLocation {
+            worktree_id: 42,
+            path: "/absolute/worktree/root".to_string(),
+        }
+        .into();
+
+        assert_eq!(location.worktree_id, 42);
+        assert!(location.path.is_empty());
     }
 }
 
