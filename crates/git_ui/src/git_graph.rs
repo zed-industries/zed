@@ -1938,7 +1938,11 @@ impl GitGraph {
         commit_idx: usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let hidden_refs_text = hidden_refs.join("\n");
+        let hidden_refs_text = hidden_refs
+            .iter()
+            .map(|ref_name| format!("- {ref_name}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let chip_id = SharedString::from(format!("git-graph-ref-count-chip-{commit_idx}"));
 
         div()
