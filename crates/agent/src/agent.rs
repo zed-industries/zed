@@ -835,15 +835,6 @@ impl NativeAgent {
             },
         );
 
-        // A thread reopened with non-blocking tool calls that were in flight
-        // when last saved has synthetic results queued for them; deliver
-        // them via a continuation turn.
-        thread_handle.update(cx, |thread, cx| {
-            if thread.has_queued_non_blocking_results() {
-                cx.emit(ContinuationRequested);
-            }
-        });
-
         self.update_available_commands_for_project(project_id, cx);
 
         acp_thread
@@ -1714,6 +1705,19 @@ impl NativeAgent {
                     })
                     .await
                     .map_err(Arc::new)?;
+                    // A reopened thread may have synthetic results queued for
+                    // non-blocking tool calls that were in flight when it was
+                    // last saved; deliver them via a continuation turn. The
+                    // continuation's events are forwarded to the same ACP
+                    // thread the replay above just populated, so this must not
+                    // start before the replay has been fully applied —
+                    // otherwise the two interleave and scramble the rendered
+                    // entry order.
+                    thread.update(cx, |thread, cx| {
+                        if thread.has_queued_non_blocking_results() {
+                            cx.emit(ContinuationRequested);
+                        }
+                    });
                     acp_thread.update(cx, |thread, cx| {
                         thread.snapshot_completed_plan(cx);
                     });
