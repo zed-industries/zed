@@ -9,8 +9,8 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{FutureExt, future::join_all, lock::OwnedMutexGuard};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName,
-    LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
+    BinaryStatus, BinaryStatusUpdate, CodeLabel, DynLspInstaller, HighlightId, Language,
+    LanguageName, LanguageServerBinaryLocations, LspAdapter, LspAdapterDelegate, Toolchain,
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
@@ -18,6 +18,7 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
+use settings::WorktreeId;
 use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
@@ -123,6 +124,7 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
     fn update_language_server_status(
         &self,
         language_server_id: LanguageServerName,
+        worktree_id: Option<u64>,
         status: BinaryStatus,
     ) {
         log::debug!(
@@ -130,8 +132,15 @@ impl ExtensionLanguageServerProxy for LanguageServerRegistryProxy {
             language_server_id,
             status
         );
+        let worktree_id = WorktreeId::from_proto(
+            worktree_id.expect("worktree_id is set before calling update_language_server_status"),
+        );
         self.language_registry
-            .update_lsp_binary_status(language_server_id, status);
+            .update_lsp_binary_status(BinaryStatusUpdate {
+                name: language_server_id,
+                worktree_id: worktree_id,
+                binary_status: status,
+            });
     }
 }
 

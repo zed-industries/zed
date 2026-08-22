@@ -11,7 +11,7 @@ pub use language_core::{
     BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate, QueryFile,
     QueryFileContents, QueryFiles, ServerHealth,
 };
-use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent, WorktreeId};
 
 use futures::{
     Future,
@@ -91,7 +91,14 @@ impl std::fmt::Display for LanguageNotFound {
 
 #[derive(Clone, Default)]
 struct ServerStatusSender {
-    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, BinaryStatus)>>>>,
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<BinaryStatusUpdate>>>>,
+}
+
+#[derive(Clone)]
+pub struct BinaryStatusUpdate {
+    pub name: LanguageServerName,
+    pub worktree_id: WorktreeId,
+    pub binary_status: BinaryStatus,
 }
 
 pub struct LoadedLanguage {
@@ -810,8 +817,8 @@ impl LanguageRegistry {
         self.state.read().all_lsp_adapters.get(name).cloned()
     }
 
-    pub fn update_lsp_binary_status(&self, server_name: LanguageServerName, status: BinaryStatus) {
-        self.lsp_binary_status_tx.send(server_name, status);
+    pub fn update_lsp_binary_status(&self, binary_update_info: BinaryStatusUpdate) {
+        self.lsp_binary_status_tx.send(binary_update_info);
     }
 
     pub fn next_language_server_id(&self) -> LanguageServerId {
@@ -855,9 +862,7 @@ impl LanguageRegistry {
         Some(server)
     }
 
-    pub fn language_server_binary_statuses(
-        &self,
-    ) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    pub fn language_server_binary_statuses(&self) -> mpsc::UnboundedReceiver<BinaryStatusUpdate> {
         self.lsp_binary_status_tx.subscribe()
     }
 }
@@ -951,14 +956,14 @@ impl LanguageRegistryState {
 }
 
 impl ServerStatusSender {
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<(LanguageServerName, BinaryStatus)> {
+    fn subscribe(&self) -> mpsc::UnboundedReceiver<BinaryStatusUpdate> {
         let (tx, rx) = mpsc::unbounded();
         self.txs.lock().push(tx);
         rx
     }
 
-    fn send(&self, name: LanguageServerName, status: BinaryStatus) {
+    fn send(&self, binary_status_update: BinaryStatusUpdate) {
         let mut txs = self.txs.lock();
-        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
+        txs.retain(|tx| tx.unbounded_send(binary_status_update.clone()).is_ok());
     }
 }

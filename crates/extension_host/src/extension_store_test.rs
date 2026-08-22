@@ -800,6 +800,14 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     )
     .await;
 
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have a worktree")
+            .read(cx)
+            .id()
+    });
     let proxy = Arc::new(ExtensionHostProxy::new());
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
@@ -1040,7 +1048,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 &executor,
                 "awaiting status_updates #1",
                 5,
-                status_updates.next()
+                status_updates.next().map(|update| {
+                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                })
             )
             .await
             .unwrap(),
@@ -1048,7 +1058,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 &executor,
                 "awaiting status_updates #2",
                 5,
-                status_updates.next()
+                status_updates.next().map(|update| {
+                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                })
             )
             .await
             .unwrap(),
@@ -1056,7 +1068,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 &executor,
                 "awaiting status_updates #3",
                 5,
-                status_updates.next()
+                status_updates.next().map(|update| {
+                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                })
             )
             .await
             .unwrap(),
@@ -1064,7 +1078,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                 &executor,
                 "awaiting status_updates #4",
                 5,
-                status_updates.next()
+                status_updates.next().map(|update| {
+                    update.map(|update| (update.name, update.worktree_id, update.binary_status))
+                })
             )
             .await
             .unwrap(),
@@ -1072,17 +1088,24 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         [
             (
                 LanguageServerName::new_static("gleam"),
+                worktree_id,
                 BinaryStatus::Starting
             ),
             (
                 LanguageServerName::new_static("gleam"),
+                worktree_id,
                 BinaryStatus::CheckingForUpdate
             ),
             (
                 LanguageServerName::new_static("gleam"),
+                worktree_id,
                 BinaryStatus::Downloading
             ),
-            (LanguageServerName::new_static("gleam"), BinaryStatus::None)
+            (
+                LanguageServerName::new_static("gleam"),
+                worktree_id,
+                BinaryStatus::None
+            )
         ]
     );
 
