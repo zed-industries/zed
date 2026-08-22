@@ -34609,9 +34609,6 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     init_test(cx, |_| {});
     update_test_editor_settings(cx, &|settings| {
         settings.code_lens = Some(settings::CodeLens::Menu);
-        let capability = workspace.project().read(cx).capability();
-        let excerpt_buffer =
-            cx.new(|_cx| MultiBuffer::new(capability).with_title("Bookm
     });
 
     let fs = FakeFs::new(cx.executor());
