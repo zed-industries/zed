@@ -354,14 +354,15 @@ impl DockerClient for Docker {
 
         Ok(())
     }
-    async fn run_docker_exec(
+
+    async fn run_docker_exec_status(
         &self,
         container_id: &str,
         remote_folder: &str,
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError> {
+    ) -> Result<(bool, String), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
 
         command.args(&["exec", "-w", remote_folder, "-u", user]);
@@ -374,7 +375,7 @@ impl DockerClient for Docker {
 
         command.arg(container_id);
 
-        // Kept as separate argv entries so a `-c` script containing spaces isn't word-split.
+        // Kept separate to avoid word-splitting a multi-word script argument.
         command.arg(inner_command.get_program());
         command.args(inner_command.get_args());
 
@@ -382,16 +383,13 @@ impl DockerClient for Docker {
             log::error!("Error running command {e} in container exec");
             DevContainerError::ContainerNotValid(container_id.to_string())
         })?;
+
         let std_out = String::from_utf8_lossy(&output.stdout);
         log::debug!("Command output:\n {std_out}");
-        if !output.status.success() {
-            let std_err = String::from_utf8_lossy(&output.stderr);
-            log::error!("Command produced a non-successful output. StdErr: {std_err}");
-            return Err(DevContainerError::DevContainerScriptsFailed);
-        }
-
-        Ok(())
+        let std_err = String::from_utf8_lossy(&output.stderr).into_owned();
+        Ok((output.status.success(), std_err))
     }
+
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError> {
         let mut command = Command::new(&self.docker_cli);
 
@@ -478,7 +476,7 @@ fn parse_find_process_output(raw: &str) -> Result<Option<DockerPs>, DevContainer
 }
 
 #[async_trait]
-pub(crate) trait DockerClient {
+pub(crate) trait DockerClient: Send + Sync {
     async fn inspect(&self, id: &String) -> Result<DockerInspect, DevContainerError>;
     async fn get_docker_compose_config(
         &self,
@@ -490,6 +488,13 @@ pub(crate) trait DockerClient {
         project_name: &str,
         services: Option<&Vec<String>>,
     ) -> Result<(), DevContainerError>;
+
+    /// Runs `inner_command` in the container, returning `Ok(())` only if it
+    /// exits successfully.
+    ///
+    /// A non-zero exit is logged and returned as `Err(DevContainerScriptsFailed)`.
+    /// `Err` is also returned, unchanged, if `run_docker_exec_status` itself
+    /// fails to run the command at all (e.g. the container is gone).
     async fn run_docker_exec(
         &self,
         container_id: &str,
@@ -497,7 +502,32 @@ pub(crate) trait DockerClient {
         user: &str,
         env: &HashMap<String, String>,
         inner_command: Command,
-    ) -> Result<(), DevContainerError>;
+    ) -> Result<(), DevContainerError> {
+        let (success, stderr) = self
+            .run_docker_exec_status(container_id, remote_folder, user, env, inner_command)
+            .await?;
+        if !success {
+            log::error!("Command produced a non-successful output. StdErr: {stderr}");
+            return Err(DevContainerError::DevContainerScriptsFailed);
+        }
+        Ok(())
+    }
+
+    /// Runs `inner_command` in the container and reports its exit outcome as
+    /// `Ok((success, stderr))`.
+    ///
+    /// `Err` is returned only if the exec mechanism itself fails to run the
+    /// command (e.g. the container is gone), a non-zero exit is not
+    /// treated as an error, it's reported as `Ok((false, stderr))`.
+    async fn run_docker_exec_status(
+        &self,
+        container_id: &str,
+        remote_folder: &str,
+        user: &str,
+        env: &HashMap<String, String>,
+        inner_command: Command,
+    ) -> Result<(bool, String), DevContainerError>;
+
     async fn start_container(&self, id: &str) -> Result<(), DevContainerError>;
     async fn find_process_by_filters(
         &self,
@@ -906,8 +936,8 @@ mod test {
     }
 
     // Regression test: `run_docker_exec` used to re-flatten the command through a second `sh -c` that word-split it on whitespace, e.g. postCreateCommand:
-    // - `"bash .devcontainer/post-create.sh"` silently dropped everything after `bash`
     // - `"npm install"` silently ran bare `npm` and did nothing
+    // - `"bash .devcontainer/post-create.sh"` silently dropped everything after `bash`
     // - `"echo hi && echo bye"` let the outer shell reinterpret `&&`, running two unrelated commands instead of one
     #[cfg(not(target_os = "windows"))]
     #[test]
@@ -936,7 +966,7 @@ mod test {
         };
 
         let mut inner_command = Command::new("/bin/sh");
-        inner_command.args(&["-c", "bash .devcontainer/post-create.sh"]);
+        inner_command.args(&["-c", "npm install"]);
 
         let result = gpui::block_on(docker.run_docker_exec(
             "container",
@@ -951,8 +981,15 @@ mod test {
         assert_eq!(
             received_args.lines().collect::<Vec<_>>(),
             vec![
-                "exec", "-w", "/workspace", "-u", "root", "container", "/bin/sh", "-c",
-                "bash .devcontainer/post-create.sh",
+                "exec",
+                "-w",
+                "/workspace",
+                "-u",
+                "root",
+                "container",
+                "/bin/sh",
+                "-c",
+                "npm install",
             ],
             "the script must arrive as one argv entry, not be word-split"
         );
