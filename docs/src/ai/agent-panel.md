@@ -140,6 +140,8 @@ To paste content without this automatic formatting, use {#kb agent::PasteRaw} to
 
 Additionally, you can also select text in a buffer or terminal and add it as context by using the {#kb agent::AddSelectionToThread} keybinding, running the {#action agent::AddSelectionToThread} action, or choosing the "Selection" item in the `+` menu in the message editor.
 
+To start a new thread with the selection, you can run the {#action agent::NewThreadWithSelection} action.
+
 ### Images as Context
 
 It's also possible to attach images in your prompt for providers that support vision models.

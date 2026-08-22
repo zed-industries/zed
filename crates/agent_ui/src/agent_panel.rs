@@ -49,9 +49,9 @@ use crate::{
 };
 use crate::{
     AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow, LoadThreadFromClipboard,
-    NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, ResetFastModeWarnings,
-    ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
-    ToggleNewThreadMenu, ToggleOptionsMenu,
+    NewTerminalThread, NewThread, NewThreadWithSelection, OpenActiveThreadAsMarkdown,
+    OpenAgentDiff, ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell,
+    ShowAllSidebarThreadMetadata, ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
@@ -82,12 +82,13 @@ use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
 use project::{Project, ProjectPath, Worktree};
-use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
-use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use terminal::Event as TerminalEvent;
+#[cfg(any(test, feature = "test-support"))]
+use terminal::terminal_settings::TerminalSettings;
+use terminal_view::TerminalView;
 use text::OffsetRangeExt;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -380,6 +381,25 @@ pub fn init(cx: &mut App) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                     }
                 })
+                .register_action(|workspace, _: &NewThreadWithSelection, window, cx| {
+                    let Some(panel) = workspace.panel::<AgentPanel>(cx) else {
+                        return;
+                    };
+
+                    // Resolve before focusing the panel: `from_focused` reports
+                    // nothing once the panel holds focus.
+                    let cached_source = panel.read(cx).last_context_source.clone();
+                    let selection = resolve_context_selection(workspace, window, cached_source, cx);
+
+                    panel.update(cx, |panel, cx| {
+                        let selection = selection.map(|(source, selection)| {
+                            panel.last_context_source = Some(source);
+                            selection
+                        });
+                        panel.new_thread_with_selection(selection, window, cx)
+                    });
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                })
                 .register_action(|workspace, _: &NewTerminalThread, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         panel.update(cx, |panel, cx| {
@@ -641,65 +661,14 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(
                     |workspace: &mut Workspace, _: &AddSelectionToThread, window, cx| {
-                        let active_editor = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx));
-                        let has_editor_selection = active_editor.is_some_and(|editor| {
-                            editor.update(cx, |editor, cx| {
-                                editor.has_non_empty_selection(&editor.display_snapshot(cx))
-                            })
-                        });
-
-                        let has_terminal_selection = workspace
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<TerminalView>(cx))
-                            .is_some_and(|terminal_view| {
-                                terminal_view
-                                    .read(cx)
-                                    .terminal()
-                                    .read(cx)
-                                    .last_content
-                                    .selection_text
-                                    .as_ref()
-                                    .is_some_and(|text| !text.is_empty())
-                            });
-
-                        let has_terminal_panel_selection =
-                            workspace.panel::<TerminalPanel>(cx).is_some_and(|panel| {
-                                let position = match TerminalSettings::get_global(cx).dock {
-                                    TerminalDockPosition::Left => DockPosition::Left,
-                                    TerminalDockPosition::Bottom => DockPosition::Bottom,
-                                    TerminalDockPosition::Right => DockPosition::Right,
-                                };
-                                let dock_is_open =
-                                    workspace.dock_at_position(position).read(cx).is_open();
-                                dock_is_open && !panel.read(cx).terminal_selections(cx).is_empty()
-                            });
-
-                        if !has_editor_selection
-                            && !has_terminal_selection
-                            && !has_terminal_panel_selection
-                        {
-                            return;
-                        }
-
                         let Some(agent_panel) = workspace.panel::<AgentPanel>(cx) else {
                             return;
                         };
 
-                        let source = AgentContextSource::from_focused(workspace, window, cx);
-                        let source = source.or_else(|| {
-                            let cached = agent_panel.read(cx).last_context_source.clone()?;
-                            cached.exists(workspace, cx).then_some(cached)
-                        });
-                        let source =
-                            source.or_else(|| AgentContextSource::from_active(workspace, cx));
-
-                        let Some(source) = source else {
-                            return;
-                        };
-
-                        let Some(selection) = source.read_selection(workspace, true, cx) else {
+                        let cached_source = agent_panel.read(cx).last_context_source.clone();
+                        let Some((source, selection)) =
+                            resolve_context_selection(workspace, window, cached_source, cx)
+                        else {
                             return;
                         };
 
@@ -758,6 +727,31 @@ pub fn init(cx: &mut App) {
         },
     )
     .detach();
+}
+
+fn resolve_context_selection(
+    workspace: &Workspace,
+    window: &Window,
+    cached_source: Option<AgentContextSource>,
+    cx: &mut App,
+) -> Option<(AgentContextSource, AgentContextSelection)> {
+    let mut sources = Vec::with_capacity(4);
+    sources.extend(AgentContextSource::from_focused(workspace, window, cx));
+    sources.extend(cached_source);
+    sources.extend(AgentContextSource::from_active(workspace, cx));
+    sources.push(AgentContextSource::TerminalPanel);
+
+    sources.into_iter().find_map(|source| {
+        if !source.exists(workspace, cx) {
+            return None;
+        }
+
+        // Requiring a selection without current-line expansion prevents an
+        // unrelated editor cursor from satisfying another source's selection.
+        source.read_selection(workspace, false, cx)?;
+        let selection = source.read_selection(workspace, true, cx)?;
+        Some((source, selection))
+    })
 }
 
 fn format_selection_for_terminal(
@@ -1751,6 +1745,48 @@ impl AgentPanel {
         }
 
         self.new_thread_with_workspace(None, window, cx);
+    }
+
+    /// Creates a thread that already carries `selection`, handing it to the
+    /// thread at construction so it does not depend on the agent connection
+    /// having resolved. Without a selection this degrades to a plain new
+    /// thread, so the action always has a visible effect.
+    ///
+    /// This always produces a thread, never a terminal. The panel's
+    /// last-created-entry preference deliberately does not apply to an action
+    /// whose purpose is to carry a selection, which a terminal cannot receive
+    /// through this path.
+    fn new_thread_with_selection(
+        &mut self,
+        selection: Option<AgentContextSelection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.has_open_project(cx) {
+            return;
+        }
+
+        let Some(selection) = selection else {
+            self.activate_new_thread(true, AgentThreadSource::AgentPanel, window, cx);
+            return;
+        };
+
+        // `external_thread` does not record the entry kind the way
+        // `activate_new_thread` and `new_terminal` do, so without this a seeded
+        // thread would leave a stale `Terminal` preference in place.
+        self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
+
+        self.external_thread(
+            None,
+            None,
+            None,
+            None,
+            Some(AgentInitialContent::Selection(selection)),
+            true,
+            AgentThreadSource::AgentPanel,
+            window,
+            cx,
+        );
     }
 
     fn new_thread_with_workspace(
@@ -9138,6 +9174,305 @@ mod tests {
                 "empty workspace actions should not start the native agent connection"
             );
         });
+    }
+
+    #[test]
+    fn test_new_thread_with_selection_action_name() {
+        // The keymap-facing name is public API.
+        assert_eq!(
+            <NewThreadWithSelection as gpui::Action>::name_for_type(),
+            "agent::NewThreadWithSelection"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_new_thread_with_selection_seeds_the_new_thread(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
+        });
+
+        fs.insert_tree(
+            "/project",
+            json!({ "first.rs": "first one\nfirst two\nfirst three\n" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        workspace.update(cx, |workspace, _cx| {
+            workspace.set_random_database_id();
+        });
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_agent = Agent::Stub;
+            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Give the starting thread content so it is parked rather than reused,
+        // making the new thread observable.
+        let starting_thread = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        panel
+            .read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap())
+            .update_in(cx, |thread_view, window, cx| {
+                thread_view.message_editor.update(cx, |editor, cx| {
+                    editor.set_text("existing draft", window, cx);
+                });
+            });
+        cx.run_until_parked();
+
+        // The panel's new-entry preference must not divert this action into
+        // creating a terminal, which cannot receive a selection this way.
+        panel.update(cx, |panel, _cx| {
+            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+        });
+
+        let editor = open_editor_and_select_second_line(&workspace, "first.rs", cx).await;
+
+        workspace.update_in(cx, |_workspace, window, cx| {
+            window.dispatch_action(Box::new(NewThreadWithSelection), cx);
+        });
+        cx.run_until_parked();
+
+        let seeded_thread = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        assert_ne!(
+            starting_thread, seeded_thread,
+            "a new thread should have been created"
+        );
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.active_terminal_id().is_none(),
+                "a selection invocation should produce a thread, not a terminal"
+            );
+            assert_eq!(
+                panel.last_created_entry_kind,
+                AgentPanelEntryKind::Thread,
+                "creating a seeded thread should record Thread as the last entry kind"
+            );
+        });
+
+        // An editor-selection mention renders as the `selection` keyword; the
+        // buffer and range live in the mention set, not in the editor text.
+        let seeded_text = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .unwrap()
+                .read(cx)
+                .message_editor
+                .read(cx)
+                .text(cx)
+        });
+        assert_eq!(
+            seeded_text, "selection ",
+            "the new thread should carry the selection"
+        );
+
+        // The editor text alone cannot tell a registered mention from a dropped
+        // one: `insert_selections` writes the placeholder before the deferred
+        // confirm registers the mention, so a silent drop would still leave the
+        // word behind. Assert on the resolved draft instead.
+        let seeded_blocks = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .unwrap()
+                .read(cx)
+                .message_editor
+                .read(cx)
+                .draft_content_blocks_snapshot(cx)
+        });
+        let seeded_resources: Vec<(&str, &str)> =
+            seeded_blocks
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Resource(acp::EmbeddedResource {
+                        resource:
+                            acp::EmbeddedResourceResource::TextResourceContents(
+                                acp::TextResourceContents { uri, text, .. },
+                            ),
+                        ..
+                    }) => Some((uri.as_str(), text.as_str())),
+                    _ => None,
+                })
+                .collect();
+        assert_eq!(
+            seeded_resources,
+            vec![("file:///project/first.rs#L2:2", "first")],
+            "the selection should resolve to its buffer and range, not a bare placeholder; got {seeded_blocks:#?}"
+        );
+
+        assert_eq!(
+            panel.read_with(cx, |panel, cx| panel.editor_text(starting_thread, cx)),
+            Some("existing draft".to_string()),
+            "the previous thread should be untouched"
+        );
+
+        // With nothing selected the action still produces a thread, just an
+        // empty one — again regardless of the new-entry preference.
+        panel.update(cx, |panel, _cx| {
+            panel.last_created_entry_kind = AgentPanelEntryKind::Terminal;
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(0, 0)..text::Point::new(0, 0)]);
+            });
+        });
+        cx.focus(&editor);
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |_workspace, window, cx| {
+            window.dispatch_action(Box::new(NewThreadWithSelection), cx);
+        });
+        cx.run_until_parked();
+
+        let empty_thread = panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        assert_ne!(
+            seeded_thread, empty_thread,
+            "a thread should be created even without a selection"
+        );
+        panel.read_with(cx, |panel, _cx| {
+            assert!(
+                panel.active_terminal_id().is_none(),
+                "an unselected invocation should produce a thread, not a terminal"
+            );
+        });
+        let empty_text = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .unwrap()
+                .read(cx)
+                .message_editor
+                .read(cx)
+                .text(cx)
+        });
+        assert_eq!(
+            empty_text, "",
+            "an unselected invocation should seed nothing"
+        );
+
+        // A terminal selection can remain cached after focus moves to the Agent Panel.
+        // A bare cursor in the active editor must not override that source.
+        let terminal_selection = "selected terminal output";
+        let terminal_view =
+            display_only_terminal_view_with_selection(&workspace, &project, terminal_selection, cx);
+        panel.update(cx, |panel, _cx| {
+            panel.last_context_source =
+                Some(AgentContextSource::TerminalView(terminal_view.downgrade()));
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.focus_panel::<AgentPanel>(window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |_workspace, window, cx| {
+            window.dispatch_action(Box::new(NewThreadWithSelection), cx);
+        });
+        cx.run_until_parked();
+
+        let terminal_seeded_thread =
+            panel.read_with(cx, |panel, cx| panel.active_thread_id(cx).unwrap());
+        assert_ne!(
+            empty_thread, terminal_seeded_thread,
+            "the cached terminal selection should create a new thread"
+        );
+        let terminal_seeded_text = panel.read_with(cx, |panel, cx| {
+            panel
+                .active_thread_view(cx)
+                .unwrap()
+                .read(cx)
+                .message_editor
+                .read(cx)
+                .text(cx)
+        });
+        assert_eq!(
+            terminal_seeded_text, "terminal ",
+            "the cached terminal selection should win over the active editor cursor"
+        );
+    }
+
+    async fn open_editor_and_select_second_line(
+        workspace: &Entity<Workspace>,
+        file_name: &str,
+        cx: &mut VisualTestContext,
+    ) -> Entity<Editor> {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![PathBuf::from(format!("/project/{file_name}"))],
+                    workspace::OpenOptions::default(),
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.run_until_parked();
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .expect("opened file should be an editor")
+        });
+        cx.focus(&editor);
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 0)..text::Point::new(1, 5)]);
+            });
+        });
+        cx.run_until_parked();
+        editor
+    }
+
+    fn display_only_terminal_view_with_selection(
+        workspace: &Entity<Workspace>,
+        project: &Entity<Project>,
+        selection: &str,
+        cx: &mut VisualTestContext,
+    ) -> Entity<TerminalView> {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let settings = TerminalSettings::get_global(cx).clone();
+            let path_style = project.read(cx).path_style(cx);
+            let builder = terminal::TerminalBuilder::new_display_only(
+                settings.cursor_shape,
+                settings.alternate_scroll,
+                settings.max_scroll_history_lines,
+                cx.entity_id().as_u64(),
+                cx.background_executor(),
+                path_style,
+            );
+            let terminal = cx.new(|cx| builder.subscribe(cx));
+            terminal.update(cx, |terminal, _cx| {
+                terminal.last_content.selection_text = Some(selection.to_string());
+            });
+            cx.new(|cx| {
+                TerminalView::new(
+                    terminal,
+                    workspace.weak_handle(),
+                    workspace.database_id(),
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+        })
     }
 
     #[gpui::test]
