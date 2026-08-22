@@ -315,6 +315,17 @@ pub struct ServerStatusChangedEvent {
 
 impl EventEmitter<ServerStatusChangedEvent> for ContextServerStore {}
 
+/// RFC 6749 §5.2 error codes that mean "the authorization server rejected the
+/// client itself", as opposed to rejecting the code, scope or grant.
+///
+/// `invalid_client` is the spec's client-authentication failure. `unauthorized_client`
+/// is emitted by servers that treat a missing/blank secret as the client not being
+/// permitted to use the grant — authentik and Keycloak both do this — so both must map
+/// to "you probably need a secret" rather than to a generic error.
+fn is_client_authentication_error(code: &str) -> bool {
+    matches!(code, "invalid_client" | "unauthorized_client")
+}
+
 impl ContextServerStore {
     pub fn local(
         worktree_store: Entity<WorktreeStore>,
@@ -1227,12 +1238,41 @@ impl ContextServerStore {
             _ => anyhow::bail!("Server is not in AuthRequired state"),
         };
 
+        // A statically pre-registered client with no configured secret is not
+        // automatically a confidential client. If the authorization server accepts
+        // public clients — either by advertising `none`, or by advertising S256, which
+        // RFC 7636 defines as the public-client replacement for a secret — then the
+        // authorization code + PKCE flow can proceed with no secret at all, and
+        // demanding one here makes pre-registration unusable against every server that
+        // lacks DCR/CIMD (self-hosted authentik, Authelia, older Keycloak).
+        //
+        // See zed-industries/zed#62637. This only skips the PRE-EMPTIVE block: if the
+        // server rejects the client instead, the error path below maps that back to
+        // `ClientSecretRequired`, so the prompt is deferred rather than removed.
+        let has_configured_secret = matches!(
+            configuration.as_ref(),
+            ContextServerConfiguration::Http {
+                oauth: Some(oauth_settings),
+                ..
+            } if oauth_settings.client_secret.is_some()
+        );
+
+        // True when we are skipping the pre-emptive secret prompt purely because the
+        // authorization server looks willing to accept a public client. If that guess
+        // turns out to be wrong, the error path below must still offer the prompt.
+        let assumed_public_client =
+            !has_configured_secret && discovery.auth_server_metadata.may_accept_public_client();
+
         let needs_keychain_check = match configuration.as_ref() {
             ContextServerConfiguration::Http {
                 url,
                 oauth: Some(oauth_settings),
                 ..
-            } if oauth_settings.client_secret.is_none() => Some(url.clone()),
+            } if oauth_settings.client_secret.is_none()
+                && !discovery.auth_server_metadata.may_accept_public_client() =>
+            {
+                Some(url.clone())
+            }
             _ => None,
         };
 
@@ -1282,16 +1322,33 @@ impl ContextServerStore {
 
                 if let Err(err) = &result {
                     log::error!("{} OAuth authentication failed: {:?}", id, err);
+
+                    // We may have skipped the secret prompt on the assumption that the
+                    // authorization server accepts public clients. If it rejected the
+                    // client instead, that assumption was wrong — fall back to asking
+                    // for a secret rather than reporting a generic failure the user
+                    // cannot act on. Mirrors the handling in `submit_client_secret`.
+                    let rejected_client_auth = assumed_public_client
+                        && err
+                            .downcast_ref::<oauth::OAuthTokenError>()
+                            .is_some_and(|e| is_client_authentication_error(&e.error));
+
                     this.update(cx, |this, cx| {
-                        this.update_server_state(
-                            id.clone(),
+                        let state = if rejected_client_auth {
+                            ContextServerState::ClientSecretRequired {
+                                server,
+                                configuration,
+                                discovery,
+                                error: Some(format!("{err:#}").into()),
+                            }
+                        } else {
                             ContextServerState::Error {
                                 server,
                                 configuration,
                                 error: format!("{err:#}").into(),
-                            },
-                            cx,
-                        )
+                            }
+                        };
+                        this.update_server_state(id.clone(), state, cx)
                     })
                     .log_err();
                 }
@@ -2035,6 +2092,39 @@ async fn resolve_auth_required(
                 server,
                 error: format!("OAuth discovery failed: {discovery_err}").into(),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod s62637_tests {
+    use super::is_client_authentication_error;
+
+    #[test]
+    fn client_auth_errors_map_to_secret_prompt() {
+        // RFC 6749 5.2 client-authentication failure.
+        assert!(is_client_authentication_error("invalid_client"));
+        // Emitted instead by authentik/Keycloak when a secret is missing or blank;
+        // the pre-existing submit_client_secret path already keys on this one.
+        assert!(is_client_authentication_error("unauthorized_client"));
+    }
+
+    #[test]
+    fn non_client_auth_errors_do_not_map_to_secret_prompt() {
+        // These are code/grant/scope failures. Prompting for a secret would be wrong
+        // and would hide the real cause.
+        for code in [
+            "invalid_grant",
+            "invalid_request",
+            "invalid_scope",
+            "unsupported_grant_type",
+            "server_error",
+            "",
+        ] {
+            assert!(
+                !is_client_authentication_error(code),
+                "{code} must not be treated as a client-authentication failure"
+            );
         }
     }
 }
