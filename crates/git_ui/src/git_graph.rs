@@ -58,7 +58,7 @@ use ui::{
 };
 use util::{ResultExt, debug_panic};
 use workspace::{
-    ModalView, Workspace,
+    ModalView, SaveIntent, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
 };
 
@@ -575,8 +575,9 @@ impl SplitState {
 actions!(
     git_graph,
     [
-        /// Opens the Git Graph Tab.
-        Open,
+        /// Opens the Git Graph Tab, or closes it if it is already open.
+        #[action(deprecated_aliases = ["git_graph::Open"])]
+        Toggle,
         /// Focuses the search field.
         FocusSearch,
         /// Focuses the next git graph tab stop.
@@ -1083,27 +1084,12 @@ pub fn init(cx: &mut App) {
 
                     div.on_action({
                         let workspace = workspace.clone();
-                        move |_: &Open, window, cx| {
+                        move |_: &Toggle, window, cx| {
                             workspace
                                 .update(cx, |workspace, cx| {
-                                    let Some(repo) =
-                                        workspace.project().read(cx).active_repository(cx)
-                                    else {
-                                        return;
-                                    };
-                                    let selected_repo_id = repo.read(cx).id;
-
-                                    let git_store =
-                                        workspace.project().read(cx).git_store().clone();
-                                    open_or_reuse_graph(
-                                        workspace,
-                                        selected_repo_id,
-                                        git_store,
-                                        LogSource::All,
-                                        None,
-                                        window,
-                                        cx,
-                                    );
+                                    if !toggle_open_graph(workspace, window, cx) {
+                                        open_active_repository_graph(workspace, None, window, cx);
+                                    }
                                 })
                                 .ok();
                         }
@@ -1112,22 +1098,7 @@ pub fn init(cx: &mut App) {
                         let sha = action.sha.clone();
                         workspace
                             .update(cx, |workspace, cx| {
-                                let Some(repo) = workspace.project().read(cx).active_repository(cx)
-                                else {
-                                    return;
-                                };
-                                let selected_repo_id = repo.read(cx).id;
-
-                                let git_store = workspace.project().read(cx).git_store().clone();
-                                open_or_reuse_graph(
-                                    workspace,
-                                    selected_repo_id,
-                                    git_store,
-                                    LogSource::All,
-                                    Some(sha),
-                                    window,
-                                    cx,
-                                );
+                                open_active_repository_graph(workspace, Some(sha), window, cx);
                             })
                             .ok();
                     })
@@ -1185,6 +1156,60 @@ fn resolve_file_history_target(
         .read(cx)
         .repository_and_path_for_project_path(&project_path, cx)?;
     Some((repo.read(cx).id, LogSource::Path(repo_path)))
+}
+
+fn open_active_repository_graph(
+    workspace: &mut Workspace,
+    sha: Option<String>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(repo) = workspace.project().read(cx).active_repository(cx) else {
+        return;
+    };
+    let repo_id = repo.read(cx).id;
+    let git_store = workspace.project().read(cx).git_store().clone();
+    open_or_reuse_graph(
+        workspace,
+        repo_id,
+        git_store,
+        LogSource::All,
+        sha,
+        window,
+        cx,
+    );
+}
+
+/// Closes the full Git Graph tab if it is the active item, or activates it if
+/// it is open in the background. Returns whether such a tab was found.
+///
+/// File history tabs (`LogSource::Path`) are ignored — the panel button only
+/// toggles the full graph.
+fn toggle_open_graph(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) -> bool {
+    let Some(graph) = workspace
+        .items_of_type::<GitGraph>(cx)
+        .find(|graph| graph.read(cx).log_source == LogSource::All)
+    else {
+        return false;
+    };
+    let graph_id = graph.entity_id();
+    let Some(pane) = workspace.pane_for_item_id(graph_id) else {
+        return false;
+    };
+    let is_active = pane.read(cx).active_item().map(|item| item.item_id()) == Some(graph_id);
+    if is_active {
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(graph_id, SaveIntent::Skip, window, cx)
+        })
+        .detach_and_log_err(cx);
+    } else {
+        workspace.activate_item(&graph, true, true, window, cx);
+    }
+    true
 }
 
 pub fn open_or_reuse_graph(
@@ -5839,6 +5864,181 @@ mod tests {
             assert_eq!(
                 latest.read(cx).log_source,
                 LogSource::Path(tracked2_repo_path)
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_action_toggles_full_graph_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new(util::path!("/project")),
+            json!({
+                ".git": {},
+                "tracked1.txt": "tracked 1",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(util::path!("/project/.git")),
+            &[("tracked1.txt", StatusCode::Modified.worktree())],
+        );
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: Oid::from_bytes(&[1; 20]).unwrap(),
+            parents: smallvec![],
+            ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+        })];
+        fs.set_graph_commits(Path::new(util::path!("/project/.git")), commits);
+
+        let project = Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have active repository")
+        });
+        let tracked1_repo_path = RepoPath::new(&"tracked1.txt").unwrap();
+        let tracked1 = repository
+            .read_with(cx, |repository, cx| {
+                repository.repo_path_to_project_path(&tracked1_repo_path, cx)
+            })
+            .expect("tracked1 should resolve to project path");
+
+        let workspace_window = cx.add_window(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = workspace_window
+            .read_with(cx, |multi, _| multi.workspace().clone())
+            .expect("workspace should exist");
+
+        let (weak_workspace, async_window_cx) = workspace_window
+            .update(cx, |multi, window, cx| {
+                (multi.workspace().downgrade(), window.to_async(cx))
+            })
+            .expect("window should be available");
+        cx.background_executor.allow_parking();
+        let git_panel = cx
+            .foreground_executor()
+            .clone()
+            .block_test(crate::git_panel::GitPanel::load(
+                weak_workspace,
+                async_window_cx,
+            ))
+            .expect("git panel should load");
+        cx.background_executor.forbid_parking();
+
+        workspace_window
+            .update(cx, |multi, window, cx| {
+                let workspace = multi.workspace();
+                workspace.update(cx, |workspace, cx| {
+                    workspace.add_panel(git_panel.clone(), window, cx);
+                });
+            })
+            .expect("workspace window should be available");
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+
+        workspace_window
+            .update(cx, |_, window, cx| {
+                git_panel.update(cx, |panel, cx| {
+                    panel.focus_handle(cx).focus(window, cx);
+                });
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+
+        // Toggle with no graph open: opens the full graph.
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Toggle), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
+            assert_eq!(graphs.len(), 1);
+            assert_eq!(graphs[0].read(cx).log_source, LogSource::All);
+        });
+
+        // Toggle with the graph as the active item: closes it.
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Toggle), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.items_of_type::<GitGraph>(cx).count(), 0);
+        });
+
+        // Reopen the full graph.
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Toggle), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+
+        // Open a file history tab; it becomes the active item.
+        workspace_window
+            .update(cx, |_, window, cx| {
+                git_panel.update(cx, |panel, cx| {
+                    panel.select_entry_by_path(tracked1.clone(), window, cx);
+                });
+                git_panel.update(cx, |panel, cx| {
+                    panel.focus_handle(cx).focus(window, cx);
+                });
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(git::FileHistory), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+
+        let full_graph = workspace.read_with(cx, |workspace, cx| {
+            let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
+            assert_eq!(graphs.len(), 2);
+            graphs
+                .into_iter()
+                .find(|graph| graph.read(cx).log_source == LogSource::All)
+                .expect("full graph should still be open")
+        });
+
+        // Toggle with the full graph open in the background: activates it
+        // instead of closing it, and leaves the file history tab alone.
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Toggle), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(workspace.items_of_type::<GitGraph>(cx).count(), 2);
+            let active = workspace
+                .active_item(cx)
+                .expect("workspace should have an active item");
+            assert_eq!(active.item_id(), full_graph.entity_id());
+        });
+
+        // Toggle with the full graph active: closes it, file history remains.
+        workspace_window
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(Toggle), cx);
+            })
+            .expect("workspace window should be available");
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let graphs = workspace.items_of_type::<GitGraph>(cx).collect::<Vec<_>>();
+            assert_eq!(graphs.len(), 1);
+            assert_eq!(
+                graphs[0].read(cx).log_source,
+                LogSource::Path(tracked1_repo_path.clone())
             );
         });
     }
