@@ -58,6 +58,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: existing_window
     pub default_open_behavior: Option<DefaultOpenBehavior>,
+    /// Whether to delete inaccessible local projects.
+    ///
+    /// Default: true (auto delete after 14 days)
+    pub delete_inaccessible_projects: Option<bool>,
     /// Whether to attempt to restore previous file's state when opening it again.
     /// The state is stored per pane.
     /// When disabled, defaults are applied instead of the state restoration.
