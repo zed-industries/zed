@@ -3456,6 +3456,7 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
     let syntax_theme = SyntaxTheme::new([
         ("comment".to_string(), gpui::rgba(0xffffffff).into()),
         ("tag".to_string(), gpui::rgba(0xff0000ff).into()),
+        ("string.special".to_string(), gpui::rgba(0xff0000ff).into()),
     ]);
     markdown_language.set_theme(&syntax_theme);
     markdown_inline_language.set_theme(&syntax_theme);
@@ -3468,7 +3469,8 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
     let text = "<!--Annotation from the start is OK-->\n\n\
         Annotation in the middle <!--is rendered badly.-->\n\n\
         An inline comment can span <!--multiple\nlines--> within a paragraph.\n\n\
-        Ordinary inline HTML: <em>emphasized</em>.";
+        Ordinary inline HTML: <em>emphasized</em>.\n\n\
+        Entities like &lt; &gt; &amp; &nbsp; &#169; are highlighted.";
     let buffer = cx.new(|cx| {
         let mut buffer = Buffer::local(text, cx);
         buffer.set_language_registry(language_registry);
@@ -3516,6 +3518,10 @@ async fn test_markdown_inline_html_highlighting(cx: &mut TestAppContext) {
             ]
         );
         assert_eq!(highlighted_text("tag"), vec!["em", "em"]);
+        assert_eq!(
+            highlighted_text("string.special"),
+            vec!["&lt;", "&gt;", "&amp;", "&nbsp;", "&#169;"]
+        );
     });
 }
 
