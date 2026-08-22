@@ -19,12 +19,12 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, CompactionResult, DisabledReason,
-    GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID,
-    OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, BASETEN_PROVIDER_ID, BASETEN_PROVIDER_NAME,
+    CompactionResult, DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
     ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
@@ -170,6 +170,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         let url = http_client
             .build_zed_llm_url(path, &[])
             .map_err(LanguageModelCompletionError::Other)?;
+        let host = url.host_str().unwrap_or(url.as_str()).to_owned();
         let body = serde_json::to_string(&body).map_err(|error| {
             LanguageModelCompletionError::SerializeRequest {
                 provider: PROVIDER_NAME,
@@ -196,6 +197,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
             .await
             .map_err(|error| LanguageModelCompletionError::HttpSend {
                 provider: PROVIDER_NAME,
+                host,
                 error,
             })?;
 
@@ -504,6 +506,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => ANTHROPIC_PROVIDER_ID,
+            Baseten => BASETEN_PROVIDER_ID,
             OpenAi => OPEN_AI_PROVIDER_ID,
             Google => GOOGLE_PROVIDER_ID,
             XAi => X_AI_PROVIDER_ID,
@@ -514,6 +517,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         use cloud_llm_client::LanguageModelProvider::*;
         match self.model.provider {
             Anthropic => ANTHROPIC_PROVIDER_NAME,
+            Baseten => BASETEN_PROVIDER_NAME,
             OpenAi => OPEN_AI_PROVIDER_NAME,
             Google => GOOGLE_PROVIDER_NAME,
             XAi => X_AI_PROVIDER_NAME,
@@ -613,7 +617,8 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             // Unreachable while the `supports_explicit_compaction` guard
             // above holds, but a provider mismatch should degrade to the
             // same unsupported error rather than panic.
-            cloud_llm_client::LanguageModelProvider::Google
+            cloud_llm_client::LanguageModelProvider::Baseten
+            | cloud_llm_client::LanguageModelProvider::Google
             | cloud_llm_client::LanguageModelProvider::XAi => async {
                 Err(LanguageModelCompletionError::Other(anyhow::anyhow!(
                     "this cloud model does not support explicit compaction"
@@ -649,7 +654,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn supports_split_token_display(&self) -> bool {
         use cloud_llm_client::LanguageModelProvider::*;
-        matches!(self.model.provider, OpenAi | XAi)
+        matches!(self.model.provider, Baseten | OpenAi | XAi)
     }
 
     fn telemetry_id(&self) -> String {
@@ -659,6 +664,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.provider {
             cloud_llm_client::LanguageModelProvider::Anthropic
+            | cloud_llm_client::LanguageModelProvider::Baseten
             | cloud_llm_client::LanguageModelProvider::OpenAi => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
@@ -848,7 +854,8 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            cloud_llm_client::LanguageModelProvider::XAi => {
+            provider @ (cloud_llm_client::LanguageModelProvider::Baseten
+            | cloud_llm_client::LanguageModelProvider::XAi) => {
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let request = match into_open_ai(
@@ -877,7 +884,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            provider: cloud_llm_client::LanguageModelProvider::XAi,
+                            provider,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request).map_err(|error| {
                                 LanguageModelCompletionError::SerializeRequest {
@@ -1161,6 +1168,7 @@ pub fn provider_name(
 ) -> LanguageModelProviderName {
     match provider {
         cloud_llm_client::LanguageModelProvider::Anthropic => ANTHROPIC_PROVIDER_NAME,
+        cloud_llm_client::LanguageModelProvider::Baseten => BASETEN_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::OpenAi => OPEN_AI_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::Google => GOOGLE_PROVIDER_NAME,
         cloud_llm_client::LanguageModelProvider::XAi => X_AI_PROVIDER_NAME,
@@ -1675,6 +1683,27 @@ mod tests {
                 completion_error
             ),
         }
+    }
+
+    #[gpui::test]
+    async fn cloud_transport_errors_include_hostname(cx: &mut gpui::TestAppContext) {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+        let model = cloud_test_model(http_client);
+
+        let error = model
+            .compact(compact_test_request(), &cx.to_async())
+            .await
+            .expect_err("request should fail");
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::HttpSend {
+                host,
+                error,
+                ..
+            } if host == "test.example" && error.to_string() == "DNS lookup failed"
+        ));
     }
 
     #[test]
