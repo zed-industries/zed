@@ -2313,14 +2313,12 @@ impl Sidebar {
 
         let base_bg = color.background.blend(sidebar_base_bg);
 
-        let hover_base = color
-            .element_active
-            .blend(color.element_background.opacity(0.2));
-        let hover_solid = base_bg.blend(hover_base);
+        let hover_solid = base_bg.blend(color.ghost_element_hover);
+        let active_solid = base_bg.blend(color.ghost_element_active);
 
         let group_name_for_gradient = group_name.clone();
         let gradient_overlay = move || {
-            GradientFade::new(base_bg, hover_solid, hover_solid)
+            GradientFade::new(base_bg, hover_solid, active_solid)
                 .width(px(92.0))
                 .right(px(-2.0))
                 .gradient_stop(0.7)
@@ -2347,7 +2345,10 @@ impl Sidebar {
                     this.border_color(gpui::transparent_black())
                 }
             })
-            .when(!has_filter, |this| this.hover(|s| s.bg(hover_solid)))
+            .when(!has_filter, |this| {
+                this.hover(|s| s.bg(hover_solid))
+                    .group_active(&group_name, |s| s.bg(active_solid))
+            })
             .child(
                 h_flex()
                     .relative()
