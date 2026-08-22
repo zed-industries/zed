@@ -90,6 +90,31 @@ In long conversations, use the scroll arrow buttons at the bottom of the panel t
 
 When focus is in the message editor, you can also use {#kb agent::ScrollOutputPageUp}, {#kb agent::ScrollOutputPageDown}, {#kb agent::ScrollOutputToTop}, {#kb agent::ScrollOutputToBottom}, {#kb agent::ScrollOutputLineUp}, and {#kb agent::ScrollOutputLineDown} to navigate the thread, or {#kb agent::ScrollOutputToPreviousMessage} and {#kb agent::ScrollOutputToNextMessage} to jump between your prompts.
 
+#### Reusing Previous Prompts {#prompt-history-navigation}
+
+In a top-level agent thread, focus the empty message editor and press
+{#kb editor::MoveUp} to open prompts that you previously submitted in that
+thread. Use {#kb menu::SelectPrevious} and {#kb menu::SelectNext} to move through
+the list. Press {#kb menu::Confirm} to restore the selected prompt without
+sending it, or {#kb menu::Cancel} to close the list and leave the editor empty.
+You can also click a prompt to restore it.
+
+Prompt history preserves supported context in the original prompt, including
+resource links, embedded text resources, and images. Repeated prompts appear at
+the position of their latest occurrence.
+
+Arrow behavior depends on focus and editor state:
+
+- When the message editor contains a draft, arrow keys move the cursor normally.
+- When a queued prompt is available, {#kb editor::MoveUp} restores the most
+  recently queued prompt before opening history.
+- When the thread pane is focused, arrow keys scroll the conversation.
+- Subagent views do not open prompt history.
+
+Prompt history navigation is enabled by default. You can change it with the
+[`agent.message_history_navigation`](./agent-settings.md#prompt-history-navigation)
+setting.
+
 ### Thread titles {#thread-titles}
 
 Thread titles are auto-generated based on the content of the conversation.

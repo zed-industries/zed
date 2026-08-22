@@ -237,6 +237,7 @@ pub struct AgentSettings {
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
+    pub message_history_navigation: bool,
     pub message_editor_min_lines: usize,
     pub show_turn_stats: bool,
     pub show_merge_conflict_indicator: bool,
@@ -813,6 +814,7 @@ impl Settings for AgentSettings {
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
+            message_history_navigation: agent.message_history_navigation.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
             show_turn_stats: agent.show_turn_stats.unwrap(),
             show_merge_conflict_indicator: agent.show_merge_conflict_indicator.unwrap(),
@@ -1060,6 +1062,27 @@ mod tests {
     fn test_invalid_regex_returns_none() {
         let result = CompiledRegex::new("[invalid(regex", false);
         assert!(result.is_none());
+    }
+
+    #[gpui::test]
+    fn test_message_history_navigation_setting(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        assert!(AgentSettings::get_global(cx).message_history_navigation);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(
+                    r#"{ "agent": { "message_history_navigation": false } }"#,
+                    cx,
+                )
+                .unwrap();
+        });
+
+        assert!(!AgentSettings::get_global(cx).message_history_navigation);
     }
 
     #[gpui::test]

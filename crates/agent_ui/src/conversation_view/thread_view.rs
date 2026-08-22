@@ -51,6 +51,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
+use super::prompt_history::{PromptHistoryPopover, PromptHistoryPopoverEvent};
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
@@ -621,6 +622,8 @@ pub struct ThreadView {
     pub in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     pub _subscriptions: Vec<Subscription>,
     pub message_editor: Entity<MessageEditor>,
+    prompt_history_popover: Option<Entity<PromptHistoryPopover>>,
+    _prompt_history_subscription: Option<Subscription>,
     pub add_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub thinking_effort_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub fast_mode_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -770,6 +773,121 @@ pub fn open_markdown_in_workspace(
         })?;
         anyhow::Ok(())
     })
+}
+
+pub(super) struct PromptHistoryEntry {
+    chunks: Vec<acp::ContentBlock>,
+    preview: SharedString,
+}
+
+impl PromptHistoryEntry {
+    fn new(chunks: Vec<acp::ContentBlock>) -> Self {
+        let preview = prompt_history_preview(&chunks);
+        Self { chunks, preview }
+    }
+
+    pub(super) fn preview(&self) -> &SharedString {
+        &self.preview
+    }
+}
+
+fn prompt_history_preview(chunks: &[acp::ContentBlock]) -> SharedString {
+    let mut preview = String::new();
+    let mut append = |text: &str| {
+        for word in text.split_whitespace() {
+            if !preview.is_empty() {
+                preview.push(' ');
+            }
+            preview.push_str(word);
+        }
+    };
+
+    for chunk in chunks {
+        match chunk {
+            acp::ContentBlock::Text(text) => append(&text.text),
+            acp::ContentBlock::ResourceLink(resource) => append(&resource.name),
+            acp::ContentBlock::Resource(resource) => match &resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+                    append(&resource.uri)
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(resource) => {
+                    append(&resource.uri)
+                }
+                _ => {}
+            },
+            acp::ContentBlock::Image(_) => append("Image"),
+            acp::ContentBlock::Audio(_) => append("Audio"),
+            _ => {}
+        }
+    }
+
+    preview.into()
+}
+
+pub(super) struct PromptHistory {
+    entries: Vec<PromptHistoryEntry>,
+    selected_index: usize,
+}
+
+impl PromptHistory {
+    fn from_prompts(prompts: impl IntoIterator<Item = Vec<acp::ContentBlock>>) -> Option<Self> {
+        let mut entries: Vec<PromptHistoryEntry> = Vec::new();
+        for chunks in prompts {
+            entries.retain(|entry| entry.chunks != chunks);
+            entries.push(PromptHistoryEntry::new(chunks));
+        }
+        let selected_index = entries.len().checked_sub(1)?;
+        Some(Self {
+            entries,
+            selected_index,
+        })
+    }
+
+    fn from_thread_entries(entries: &[AgentThreadEntry]) -> Option<Self> {
+        Self::from_prompts(entries.iter().filter_map(|entry| {
+            let AgentThreadEntry::UserMessage(message) = entry else {
+                return None;
+            };
+            (!message.indented).then(|| message.chunks.clone())
+        }))
+    }
+
+    pub(super) fn entries(&self) -> &[PromptHistoryEntry] {
+        &self.entries
+    }
+
+    pub(super) fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    pub(super) fn selected_chunks(&self) -> Option<&[acp::ContentBlock]> {
+        self.entries
+            .get(self.selected_index)
+            .map(|entry| entry.chunks.as_slice())
+    }
+
+    #[cfg(test)]
+    pub(super) fn selected_preview(&self) -> Option<&SharedString> {
+        self.entries
+            .get(self.selected_index)
+            .map(PromptHistoryEntry::preview)
+    }
+
+    pub(super) fn select_previous(&mut self) {
+        self.selected_index = self.selected_index.saturating_sub(1);
+    }
+
+    pub(super) fn select_next(&mut self) {
+        if let Some(last_index) = self.entries.len().checked_sub(1) {
+            self.selected_index = self.selected_index.saturating_add(1).min(last_index);
+        }
+    }
+
+    pub(super) fn select(&mut self, index: usize) {
+        if self.entries.get(index).is_some() {
+            self.selected_index = index;
+        }
+    }
 }
 
 impl ThreadView {
@@ -1034,6 +1152,8 @@ impl ThreadView {
             hovered_edited_file_buttons: None,
             in_flight_prompt: None,
             message_editor,
+            prompt_history_popover: None,
+            _prompt_history_subscription: None,
             add_context_menu_handle: PopoverMenuHandle::default(),
             thinking_effort_menu_handle: PopoverMenuHandle::default(),
             fast_mode_menu_handle: PopoverMenuHandle::default(),
@@ -1253,6 +1373,32 @@ impl ThreadView {
 
     pub fn has_queued_messages(&self) -> bool {
         !self.message_queue.is_empty()
+    }
+
+    pub(super) fn prompt_history(&self, cx: &App) -> Option<PromptHistory> {
+        PromptHistory::from_thread_entries(self.thread.read(cx).entries())
+    }
+
+    #[cfg(test)]
+    pub(super) fn selected_prompt_history_preview(&self, cx: &App) -> Option<String> {
+        self.prompt_history_popover
+            .as_ref()?
+            .read(cx)
+            .selected_preview()
+            .map(str::to_owned)
+    }
+
+    #[cfg(test)]
+    pub(super) fn prompt_history_horizontal_scroll_state(
+        &self,
+        cx: &App,
+    ) -> Option<(Pixels, Pixels)> {
+        Some(
+            self.prompt_history_popover
+                .as_ref()?
+                .read(cx)
+                .horizontal_scroll_state(),
+        )
     }
 
     // events
@@ -2365,11 +2511,69 @@ impl ThreadView {
             cx.propagate();
             return;
         }
-        let Some(last_id) = self.message_queue.last_id() else {
-            cx.propagate();
+
+        if let Some(last_id) = self.message_queue.last_id() {
+            self.move_queued_message_to_main_editor(last_id, None, None, window, cx);
             return;
+        }
+
+        if !self.open_prompt_history(window, cx) {
+            cx.propagate();
+        }
+    }
+
+    fn open_prompt_history(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.is_subagent()
+            || !AgentSettings::get_global(cx).message_history_navigation
+            || !self.message_editor.focus_handle(cx).is_focused(window)
+            || !self.message_editor.read(cx).is_empty(cx)
+        {
+            return false;
+        }
+
+        let Some(history) = self.prompt_history(cx) else {
+            return false;
         };
-        self.move_queued_message_to_main_editor(last_id, None, None, window, cx);
+        let popover = cx.new(|cx| PromptHistoryPopover::new(history, cx));
+        let subscription = cx.subscribe_in(
+            &popover,
+            window,
+            |this, _popover, event, window, cx| match event {
+                PromptHistoryPopoverEvent::Accepted(chunks) => {
+                    this.accept_prompt_history(chunks.clone(), window, cx);
+                }
+                PromptHistoryPopoverEvent::Dismissed => {
+                    this.dismiss_prompt_history(window, cx);
+                }
+            },
+        );
+        let focus_handle = popover.focus_handle(cx);
+        self.prompt_history_popover = Some(popover);
+        self._prompt_history_subscription = Some(subscription);
+        focus_handle.focus(window, cx);
+        cx.notify();
+        true
+    }
+
+    fn accept_prompt_history(
+        &mut self,
+        chunks: Vec<acp::ContentBlock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.message_editor.update(cx, |editor, cx| {
+            editor.set_message(chunks, window, cx);
+            let cursor_offset = editor.text(cx).len();
+            editor.set_cursor_offset(cursor_offset, window, cx);
+        });
+        self.dismiss_prompt_history(window, cx);
+    }
+
+    fn dismiss_prompt_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_history_popover = None;
+        self._prompt_history_subscription = None;
+        self.message_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
     }
 
     // editor methods
@@ -4354,6 +4558,8 @@ impl ThreadView {
         let fills_container = !has_messages || editor_expanded;
 
         h_flex()
+            .w_full()
+            .min_w_0()
             .py_2()
             .bg(editor_bg_color)
             .justify_center()
@@ -4370,6 +4576,7 @@ impl ThreadView {
             })
             .child(
                 v_flex()
+                    .min_w_0()
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
                     .min_w_0()
@@ -4383,10 +4590,12 @@ impl ThreadView {
                         v_flex()
                             .relative()
                             .w_full()
+                            .min_w_0()
                             .min_h_0()
                             .when(fills_container, |this| this.flex_1())
                             .pt_1()
                             .pr_2p5()
+                            .children(self.prompt_history_popover.clone())
                             .child(self.message_editor.clone())
                             .when(has_messages, |this| {
                                 this.child(
@@ -12738,6 +12947,146 @@ mod tests {
         );
         // No matching prefix: returns the trimmed input unchanged.
         assert_eq!(strip_leading_command("hello", "compact"), "hello");
+    }
+
+    #[test]
+    fn test_prompt_history_keeps_latest_occurrence_selected() {
+        fn prompt_text(chunks: &[acp::ContentBlock]) -> Option<&str> {
+            let acp::ContentBlock::Text(text) = chunks.first()? else {
+                return None;
+            };
+            Some(text.text.as_str())
+        }
+
+        let prompt = |text| vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
+
+        let history = PromptHistory::from_prompts([
+            prompt("First\n prompt"),
+            prompt("Second"),
+            prompt("First\n prompt"),
+        ])
+        .expect("history should contain unique prompts");
+
+        let prompt_texts = history
+            .entries
+            .iter()
+            .filter_map(|entry| prompt_text(&entry.chunks))
+            .collect::<Vec<_>>();
+
+        assert_eq!(prompt_texts, vec!["Second", "First\n prompt"]);
+        assert_eq!(
+            history.selected_chunks().and_then(prompt_text),
+            Some("First\n prompt")
+        );
+        assert_eq!(
+            history.selected_preview().map(SharedString::as_ref),
+            Some("First prompt")
+        );
+        assert!(PromptHistory::from_prompts([]).is_none());
+    }
+
+    #[test]
+    fn test_prompt_history_deduplicates_complete_structured_content_by_latest_occurrence() {
+        let resource_link = |uri| {
+            vec![
+                acp::ContentBlock::Text(acp::TextContent::new("Review:")),
+                acp::ContentBlock::ResourceLink(acp::ResourceLink::new("same.rs", uri)),
+            ]
+        };
+        let embedded_resource = |content| {
+            vec![
+                acp::ContentBlock::Text(acp::TextContent::new("Review:")),
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new(content, "file:///project/same.rs"),
+                    ),
+                )),
+            ]
+        };
+        let image = |data| {
+            vec![
+                acp::ContentBlock::Text(acp::TextContent::new("Review:")),
+                acp::ContentBlock::Image(
+                    acp::ImageContent::new(data, "image/png")
+                        .uri(Some("zed:///agent/pasted-image?name=Same".to_string())),
+                ),
+            ]
+        };
+
+        let link_a = resource_link("file:///project/a/same.rs");
+        let link_b = resource_link("file:///project/b/same.rs");
+        let resource_a = embedded_resource("first contents");
+        let resource_b = embedded_resource("second contents");
+        let image_a = image("first-image-data");
+        let image_b = image("second-image-data");
+
+        assert_eq!(
+            prompt_history_preview(&link_a),
+            prompt_history_preview(&link_b)
+        );
+        assert_eq!(
+            prompt_history_preview(&resource_a),
+            prompt_history_preview(&resource_b)
+        );
+        assert_eq!(
+            prompt_history_preview(&image_a),
+            prompt_history_preview(&image_b)
+        );
+
+        let history = PromptHistory::from_prompts([
+            link_a.clone(),
+            resource_a.clone(),
+            image_a.clone(),
+            link_b.clone(),
+            resource_b.clone(),
+            image_b.clone(),
+            link_a.clone(),
+            resource_a.clone(),
+            image_a.clone(),
+        ])
+        .expect("history should contain structured prompts");
+
+        let prompts = history
+            .entries()
+            .iter()
+            .map(|entry| entry.chunks.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            prompts,
+            vec![link_b, resource_b, image_b, link_a, resource_a, image_a]
+        );
+        assert_eq!(history.selected_index(), prompts.len() - 1);
+    }
+
+    #[test]
+    fn test_prompt_history_navigation_clamps_at_boundaries() {
+        fn selected_text(history: &PromptHistory) -> Option<&str> {
+            let acp::ContentBlock::Text(text) = history.selected_chunks()?.first()? else {
+                return None;
+            };
+            Some(text.text.as_str())
+        }
+
+        let prompt = |text| vec![acp::ContentBlock::Text(acp::TextContent::new(text))];
+        let mut history =
+            PromptHistory::from_prompts([prompt("First"), prompt("Second"), prompt("Third")])
+                .expect("history should contain prompts");
+
+        assert_eq!(selected_text(&history), Some("Third"));
+
+        history.select_previous();
+        assert_eq!(selected_text(&history), Some("Second"));
+        history.select_previous();
+        assert_eq!(selected_text(&history), Some("First"));
+        history.select_previous();
+        assert_eq!(selected_text(&history), Some("First"));
+
+        history.select_next();
+        assert_eq!(selected_text(&history), Some("Second"));
+        history.select_next();
+        assert_eq!(selected_text(&history), Some("Third"));
+        history.select_next();
+        assert_eq!(selected_text(&history), Some("Third"));
     }
 
     #[gpui::test]
