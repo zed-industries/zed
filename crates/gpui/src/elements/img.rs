@@ -347,7 +347,9 @@ impl Element for Img {
 
                             let image_size = data.render_size(frame_index);
 
-                            if style.aspect_ratio.is_none() {
+                            let sized = matches!(style.size.width, Length::Definite(_))
+                                && matches!(style.size.height, Length::Definite(_));
+                            if style.aspect_ratio.is_none() && !sized {
                                 style.aspect_ratio = Some(image_size.width / image_size.height);
                             }
 
@@ -841,6 +843,61 @@ mod tests {
             .draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
                 img(ImageSource::Render(test_image(0))).into_any_element()
             });
+    }
+
+    #[gpui::test]
+    fn image_object_fit_cover_crops_portrait_to_fixed_element_bounds(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+        let image = test_image_with_size(100, 200);
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(image.clone()))
+                .size(px(100.))
+                .object_fit(ObjectFit::Fill)
+                .into_any_element()
+        });
+        let full_tile_bounds = window.update(|window, _| {
+            window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("fill image should paint a sprite")
+                .tile
+                .bounds
+        });
+
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            img(ImageSource::Render(image))
+                .size(px(100.))
+                .object_fit(ObjectFit::Cover)
+                .into_any_element()
+        });
+
+        let (rendered_bounds, rendered_tile_bounds, scale_factor) = window.update(|window, _| {
+            let sprite = window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("cover image should paint a sprite");
+            (sprite.bounds, sprite.tile.bounds, window.scale_factor())
+        });
+        assert_eq!(
+            rendered_bounds,
+            Bounds {
+                origin: point(px(0.).scale(scale_factor), px(0.).scale(scale_factor)),
+                size: size(px(100.).scale(scale_factor), px(100.).scale(scale_factor)),
+            }
+        );
+        assert_eq!(
+            (
+                rendered_tile_bounds.origin.x.0 - full_tile_bounds.origin.x.0,
+                rendered_tile_bounds.origin.y.0 - full_tile_bounds.origin.y.0,
+                rendered_tile_bounds.size.width.0,
+                rendered_tile_bounds.size.height.0,
+            ),
+            (0, 50, 100, 100),
+        );
     }
 
     #[gpui::test]
