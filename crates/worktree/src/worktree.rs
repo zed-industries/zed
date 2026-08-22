@@ -1399,6 +1399,7 @@ impl LocalWorktree {
             }
         });
         let scan_state_updater = cx.spawn(async move |this, cx| {
+            // Yield after each message so a big backlog can't block the UI thread (#62545).
             while let Some((state, this)) = scan_states_rx.next().await.zip(this.upgrade()) {
                 this.update(cx, |this, cx| {
                     let this = this.as_local_mut().unwrap();
@@ -1428,6 +1429,8 @@ impl LocalWorktree {
                         }
                     }
                 });
+
+                yield_now().await;
             }
         });
         self._background_scanner_tasks = vec![background_scanner, scan_state_updater];
