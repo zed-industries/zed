@@ -102,7 +102,7 @@ impl DivInspector {
 
                             // Initialize editors immediately instead of waiting for
                             // `update_inspected_element`. This avoids continuing to show
-                            // "Loading..." until the user moves the mouse to a different element.
+                            // "Loading…" until the user moves the mouse to a different element.
                             if let Some(id) = this.inspector_id.take() {
                                 let inspector_state =
                                     window.with_inspector_state(Some(&id), cx, |state, _window| {
@@ -522,9 +522,7 @@ impl Render for DivInspector {
                 )
             })
             .map(|this| match &self.state {
-                State::Loading | State::BuffersLoaded { .. } => {
-                    this.child(Label::new("Loading..."))
-                }
+                State::Loading | State::BuffersLoaded { .. } => this.child(Label::new("Loading…")),
                 State::LoadError { message } => this.child(
                     div()
                         .w_full()

@@ -753,7 +753,7 @@ impl ExecutionView {
 impl Render for ExecutionView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let status = match &self.status {
-            ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel...")
+            ExecutionStatus::ConnectingToKernel => Label::new("Connecting to kernel…")
                 .color(Color::Muted)
                 .into_any_element(),
             ExecutionStatus::Executing => h_flex()
@@ -764,7 +764,7 @@ impl Render for ExecutionView {
                         .color(Color::Muted)
                         .with_rotate_animation(3),
                 )
-                .child(Label::new("Executing...").color(Color::Muted))
+                .child(Label::new("Executing…").color(Color::Muted))
                 .into_any_element(),
             ExecutionStatus::Finished => Icon::new(IconName::Check)
                 .size(IconSize::Small)
@@ -772,18 +772,16 @@ impl Render for ExecutionView {
             ExecutionStatus::Unknown => Label::new("Unknown status")
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down...")
+            ExecutionStatus::ShuttingDown => Label::new("Kernel shutting down…")
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::Restarting => Label::new("Kernel restarting...")
+            ExecutionStatus::Restarting => Label::new("Kernel restarting…")
                 .color(Color::Muted)
                 .into_any_element(),
             ExecutionStatus::Shutdown => Label::new("Kernel shutdown")
                 .color(Color::Muted)
                 .into_any_element(),
-            ExecutionStatus::Queued => Label::new("Queued...")
-                .color(Color::Muted)
-                .into_any_element(),
+            ExecutionStatus::Queued => Label::new("Queued…").color(Color::Muted).into_any_element(),
             ExecutionStatus::KernelErrored(error) => Label::new(format!("Kernel error: {}", error))
                 .color(Color::Error)
                 .into_any_element(),

@@ -1799,7 +1799,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search project files...".into()
+        "Search project files…".into()
     }
 
     fn searchbar_trailer(

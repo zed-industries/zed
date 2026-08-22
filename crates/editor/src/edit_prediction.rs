@@ -1334,11 +1334,11 @@ impl Editor {
                 )?,
 
                 None => pending_completion_container(icons.base)
-                    .child(Label::new("...").size(LabelSize::Small)),
+                    .child(Label::new("…").size(LabelSize::Small)),
             },
 
             None => pending_completion_container(icons.base)
-                .child(Label::new("...").size(LabelSize::Small)),
+                .child(Label::new("…").size(LabelSize::Small)),
         };
 
         let completion = if is_refreshing || self.active_edit_prediction.is_none() {

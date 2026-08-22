@@ -714,7 +714,7 @@ pub(crate) fn render_mermaid_diagram(
                     .child(render_mermaid_code_view(&parsed.contents.contents))
                     .child(
                         div().absolute().top_1().right_2().child(
-                            Label::new("Rendering...")
+                            Label::new("Rendering…")
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted)
                                 .with_animation(

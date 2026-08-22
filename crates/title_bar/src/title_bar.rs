@@ -618,11 +618,11 @@ impl TitleBar {
             remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
             remote::ConnectionState::HeartbeatMissed => (
                 Color::Warning,
-                format!("Connection attempt to {host} missed. Retrying..."),
+                format!("Connection attempt to {host} missed. Retrying…"),
             ),
             remote::ConnectionState::Reconnecting => (
                 Color::Warning,
-                format!("Lost connection to {host}. Reconnecting..."),
+                format!("Lost connection to {host}. Reconnecting…"),
             ),
             remote::ConnectionState::Disconnected => {
                 (Color::Error, format!("Disconnected from {host}"))
@@ -1153,7 +1153,7 @@ impl TitleBar {
                     Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
-                    | Some(AutoUpdateStatus::Checking) => "Updating...",
+                    | Some(AutoUpdateStatus::Checking) => "Updating…",
                     Some(AutoUpdateStatus::Idle)
                     | Some(AutoUpdateStatus::Errored { .. })
                     | None => "Please update Zed to Collaborate",

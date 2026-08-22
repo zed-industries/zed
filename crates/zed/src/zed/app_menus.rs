@@ -78,11 +78,11 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     MenuItem::action("Open Default Key Bindings", zed_actions::OpenDefaultKeymap),
                     MenuItem::separator(),
                     MenuItem::action(
-                        "Select Theme...",
+                        "Select Theme…",
                         zed_actions::theme_selector::Toggle::default(),
                     ),
                     MenuItem::action(
-                        "Select Icon Theme...",
+                        "Select Icon Theme…",
                         zed_actions::icon_theme_selector::Toggle::default(),
                     ),
                 ])),
@@ -112,10 +112,10 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("New Window", workspace::NewWindow),
                 MenuItem::separator(),
                 #[cfg(not(target_os = "macos"))]
-                MenuItem::action("Open File...", workspace::OpenFiles),
+                MenuItem::action("Open File…", workspace::OpenFiles),
                 MenuItem::action(
                     if cfg!(not(target_os = "macos")) {
-                        "Open Folder..."
+                        "Open Folder…"
                     } else {
                         "Open…"
                     },
@@ -222,15 +222,15 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("Back", workspace::GoBack),
                 MenuItem::action("Forward", workspace::GoForward),
                 MenuItem::separator(),
-                MenuItem::action("Command Palette...", zed_actions::command_palette::Toggle),
+                MenuItem::action("Command Palette…", zed_actions::command_palette::Toggle),
                 MenuItem::separator(),
-                MenuItem::action("Go to File...", workspace::ToggleFileFinder::default()),
+                MenuItem::action("Go to File…", workspace::ToggleFileFinder::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
                 MenuItem::action(
-                    "Go to Symbol in Editor...",
+                    "Go to Symbol in Editor…",
                     zed_actions::outline::ToggleOutline,
                 ),
-                MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
+                MenuItem::action("Go to Line/Column…", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Go to Definition",
@@ -302,9 +302,9 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", onboarding::ShowWelcome),
                 MenuItem::separator(),
-                MenuItem::action("File Bug Report...", zed_actions::feedback::FileBugReport),
-                MenuItem::action("Request Feature...", zed_actions::feedback::RequestFeature),
-                MenuItem::action("Email Us...", zed_actions::feedback::EmailZed),
+                MenuItem::action("File Bug Report…", zed_actions::feedback::FileBugReport),
+                MenuItem::action("Request Feature…", zed_actions::feedback::RequestFeature),
+                MenuItem::action("Email Us…", zed_actions::feedback::EmailZed),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",
