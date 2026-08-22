@@ -949,6 +949,90 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.diff_hunk.deleted.hollow_border")]
     pub editor_diff_hunk_deleted_hollow_border: Option<ThemeColor>,
 
+    /// Background color for code blocks in the agent panel.
+    ///
+    /// Falls back to `editor.background` when unset.
+    #[serde(rename = "agent_panel.code_block.background")]
+    pub agent_panel_code_block_background: Option<ThemeColor>,
+
+    /// Border color for code blocks in the agent panel.
+    ///
+    /// Falls back to `border.variant` when unset.
+    #[serde(rename = "agent_panel.code_block.border")]
+    pub agent_panel_code_block_border: Option<ThemeColor>,
+
+    /// Foreground color for code blocks in the agent panel.
+    ///
+    /// Falls back to `text` when unset.
+    #[serde(rename = "agent_panel.code_block.foreground")]
+    pub agent_panel_code_block_foreground: Option<ThemeColor>,
+
+    /// Background color for inline code in the agent panel.
+    ///
+    /// Falls back to `editor.foreground` at 8% opacity when unset.
+    #[serde(rename = "agent_panel.inline_code.background")]
+    pub agent_panel_inline_code_background: Option<ThemeColor>,
+
+    /// Foreground color for inline code in the agent panel.
+    ///
+    /// Falls back to `text` when unset.
+    #[serde(rename = "agent_panel.inline_code.foreground")]
+    pub agent_panel_inline_code_foreground: Option<ThemeColor>,
+
+    /// Background color for user messages in the agent panel.
+    ///
+    /// Falls back to `editor.background` when unset.
+    #[serde(rename = "agent_panel.user_message.background")]
+    pub agent_panel_user_message_background: Option<ThemeColor>,
+
+    /// Border color for user messages in the agent panel.
+    ///
+    /// Falls back to `border` when unset.
+    #[serde(rename = "agent_panel.user_message.border")]
+    pub agent_panel_user_message_border: Option<ThemeColor>,
+
+    /// Foreground color for user messages in the agent panel.
+    ///
+    /// Falls back to `text` when unset.
+    #[serde(rename = "agent_panel.user_message.foreground")]
+    pub agent_panel_user_message_foreground: Option<ThemeColor>,
+
+    /// Foreground color for body text in the agent panel.
+    ///
+    /// Falls back to `text` when unset.
+    #[serde(rename = "agent_panel.text.foreground")]
+    pub agent_panel_text_foreground: Option<ThemeColor>,
+
+    /// Foreground color for muted text in the agent panel.
+    ///
+    /// Falls back to `text.muted` when unset.
+    #[serde(rename = "agent_panel.muted_text.foreground")]
+    pub agent_panel_muted_text_foreground: Option<ThemeColor>,
+
+    /// Foreground color for links in the agent panel.
+    ///
+    /// Falls back to `text.accent` when unset.
+    #[serde(rename = "agent_panel.link.foreground")]
+    pub agent_panel_link_foreground: Option<ThemeColor>,
+
+    /// Background color for links in the agent panel.
+    ///
+    /// Falls back to `editor.foreground` at 2.5% opacity when unset.
+    #[serde(rename = "agent_panel.link.background")]
+    pub agent_panel_link_background: Option<ThemeColor>,
+
+    /// Underline color for links in the agent panel.
+    ///
+    /// Falls back to `text.accent` at 50% opacity when unset.
+    #[serde(rename = "agent_panel.link.underline")]
+    pub agent_panel_link_underline: Option<ThemeColor>,
+
+    /// Color for horizontal rules in the agent panel.
+    ///
+    /// Falls back to `border` when unset.
+    #[serde(rename = "agent_panel.rule")]
+    pub agent_panel_rule: Option<ThemeColor>,
+
     /// Terminal background color.
     #[serde(rename = "terminal.background")]
     pub terminal_background: Option<ThemeColor>,

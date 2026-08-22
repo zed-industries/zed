@@ -268,6 +268,7 @@ impl EntryViewState {
                         if !can_rewind || !has_client_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
+                        editor.set_use_user_message_foreground(true);
                         editor.set_message(chunks, window, cx);
                         editor
                     });

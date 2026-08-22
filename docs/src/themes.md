@@ -111,6 +111,25 @@ To see a comprehensive list of captures (like `comment` and `comment.doc`) see [
 To see a list of available theme attributes look at the JSON file for your theme.
 For example, [assets/themes/one/one.json](https://github.com/zed-industries/zed/blob/main/assets/themes/one/one.json) for the default One Dark and One Light themes.
 
+Agent panel colors can be customized independently of `editor.background`:
+
+- `agent_panel.code_block.background`
+- `agent_panel.code_block.foreground`
+- `agent_panel.code_block.border`
+- `agent_panel.inline_code.background`
+- `agent_panel.inline_code.foreground`
+- `agent_panel.text.foreground`
+- `agent_panel.muted_text.foreground`
+- `agent_panel.link.foreground`
+- `agent_panel.link.background`
+- `agent_panel.link.underline`
+- `agent_panel.rule`
+- `agent_panel.user_message.background`
+- `agent_panel.user_message.foreground`
+- `agent_panel.user_message.border`
+
+Each key falls back to the equivalent editor or border color when unset.
+
 ## Local Themes {#local-themes}
 
 Store new themes locally by placing them in the `~/.config/zed/themes` directory (macOS and Linux) or `%USERPROFILE%\AppData\Roaming\Zed\themes\` (Windows).

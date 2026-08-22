@@ -6208,14 +6208,14 @@ impl ThreadView {
                                     .py_3()
                                     .px_2()
                                     .rounded_md()
-                                    .bg(cx.theme().colors().editor_background)
+                                    .bg(cx.theme().colors().agent_panel_user_message_background)
                                     .border_1()
                                     .when(is_indented, |this| {
                                         this.py_2().px_2().when(opaque_window, |this| {
                                             this.shadow_sm()
                                         })
                                     })
-                                    .border_color(cx.theme().colors().border)
+                                    .border_color(cx.theme().colors().agent_panel_user_message_border)
                                     .map(|this| {
                                         if !is_editable {
                                             if is_subagent {
@@ -6245,8 +6245,8 @@ impl ThreadView {
                                     .gap_1()
                                     .rounded_sm()
                                     .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(cx.theme().colors().editor_background)
+                                    .border_color(cx.theme().colors().agent_panel_user_message_border)
+                                    .bg(cx.theme().colors().agent_panel_user_message_background)
                                     .overflow_hidden();
 
                                 let is_loading_contents = self.is_loading_contents;
