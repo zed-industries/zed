@@ -435,6 +435,15 @@ pub fn embeddings_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the checkpoints directory.
+///
+/// This is where Zed stores git directories used to snapshot and restore the
+/// agent's edits in projects that are not themselves under version control.
+pub fn checkpoints_dir() -> &'static PathBuf {
+    static CHECKPOINTS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    CHECKPOINTS_DIR.get_or_init(|| data_dir().join("checkpoints"))
+}
+
 /// Returns the path to the languages directory.
 ///
 /// This is where language servers are downloaded to for languages built-in to Zed.
