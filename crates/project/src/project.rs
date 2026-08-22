@@ -412,6 +412,9 @@ pub enum Event {
     RefreshDocumentLinks {
         server_id: Option<LanguageServerId>,
     },
+    RefreshDocumentHighlights {
+        server_id: LanguageServerId,
+    },
     RefreshFoldingRanges {
         server_id: Option<LanguageServerId>,
     },
@@ -3769,12 +3772,21 @@ impl Project {
 
                 match message {
                     proto::update_language_server::Variant::MetadataUpdated(update) => {
+                        let mut document_highlights_changed = false;
                         self.lsp_store.update(cx, |lsp_store, _| {
-                            if let Some(capabilities) = update
-                                .capabilities
-                                .as_ref()
-                                .and_then(|capabilities| serde_json::from_str(capabilities).ok())
+                            if let Some(capabilities) =
+                                update.capabilities.as_ref().and_then(|capabilities| {
+                                    serde_json::from_str::<lsp::ServerCapabilities>(capabilities)
+                                        .ok()
+                                })
                             {
+                                document_highlights_changed = lsp_store
+                                    .lsp_server_capabilities
+                                    .get(language_server_id)
+                                    .is_none_or(|previous_capabilities| {
+                                        previous_capabilities.document_highlight_provider
+                                            != capabilities.document_highlight_provider
+                                    });
                                 lsp_store
                                     .lsp_server_capabilities
                                     .insert(*language_server_id, capabilities);
@@ -3808,6 +3820,11 @@ impl Project {
                                     .collect();
                             }
                         });
+                        if document_highlights_changed {
+                            cx.emit(Event::RefreshDocumentHighlights {
+                                server_id: *language_server_id,
+                            });
+                        }
                     }
                     proto::update_language_server::Variant::RegisteredForBuffer(update) => {
                         if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
