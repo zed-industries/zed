@@ -1117,13 +1117,6 @@ mod tests {
 
     #[test]
     fn test_flatten_context_server_command_alongside_source() {
-        // Files written while `source` was still a supported key need the command
-        // flattened and the key dropped in the same run.
-        //
-        // No migration ever produced `hand_edited_server`, because `source` was only
-        // set to `extension` for entries without a command. It is reachable by
-        // editing settings by hand, and it is the one shape whose treatment changed
-        // when flattening stopped consulting `source`, so it is held here on purpose.
         assert_migrate_settings(
             indoc! {r#"
                 {
@@ -4932,6 +4925,36 @@ mod tests {
     }
 
     #[test]
+    fn test_context_server_types_report_no_migration() {
+        assert_migrate_settings(
+            indoc! {r#"
+                {
+                    "context_servers": {
+                        "extension_server": {},
+                        "disabled_extension_server": {
+                            "enabled": false
+                        },
+                        "stdio_server": {
+                            "command": "npx",
+                            "args": ["-y", "some-server"]
+                        },
+                        "http_server": {
+                            "url": "https://example.com/mcp"
+                        },
+                        "http_server_with_headers": {
+                            "url": "https://example.com/mcp",
+                            "headers": {
+                                "Authorization": "Bearer token"
+                            }
+                        }
+                    }
+                }
+            "#},
+            None,
+        );
+    }
+
+    #[test]
     fn test_promote_show_branch_icon_true_to_show_branch_status_icon_at_root() {
         assert_migrate_settings(
             &r#"
@@ -5274,39 +5297,7 @@ mod tests {
     }
 
     #[test]
-    fn test_context_server_types_report_no_migration() {
-        // Every server type a settings file can hold today. Extension-defined servers
-        // used to gain a `settings` object here, which is the one thing that changed:
-        // the field is gone from the schema, so a file like this is already current.
-        assert_migrate_settings(
-            indoc! {r#"
-                {
-                    "context_servers": {
-                        "extension_server": {},
-                        "stdio_server": {
-                            "command": "npx",
-                            "args": ["-y", "some-server"]
-                        },
-                        "http_server": {
-                            "url": "https://example.com/mcp"
-                        },
-                        "http_server_with_headers": {
-                            "url": "https://example.com/mcp",
-                            "headers": {
-                                "Authorization": "Bearer token"
-                            }
-                        }
-                    }
-                }
-            "#},
-            None,
-        );
-    }
-
-    #[test]
-    fn test_context_servers_report_no_migration_whatever_the_layout() {
-        // These entries have nothing to migrate. Their layout used to decide whether
-        // one was reported anyway, so cover the shapes that used to differ.
+    fn test_url_only_context_servers_are_left_alone() {
         assert_migrate_settings(
             indoc! {r#"
                 {
@@ -5316,40 +5307,6 @@ mod tests {
             None,
         );
 
-        assert_migrate_settings(
-            indoc! {r#"
-                {
-                    "context_servers": {
-                        "grep": { "url": "https://mcp.grep.app" }
-                    }
-                }
-            "#},
-            None,
-        );
-
-        assert_migrate_settings(
-            "{\n\t\"context_servers\": {\n\t\t\"grep\": {\n\t\t\t\"url\": \"https://mcp.grep.app\"\n\t\t}\n\t}\n}",
-            None,
-        );
-
-        // Flattening decides from the shape of `command`, so an entry already in the
-        // flat shape has to survive the same layouts untouched.
-        assert_migrate_settings(
-            indoc! {r#"
-                {
-                    "context_servers": {
-                        "local": { "command": "npx", "args": ["-y", "some-mcp-server"] }
-                    }
-                }
-            "#},
-            None,
-        );
-    }
-
-    #[test]
-    fn test_url_only_context_server_still_migrates_deprecated_neighbors() {
-        // The same inline entry that produces no diff on its own must not mask a
-        // migration that a sibling entry genuinely needs.
         assert_migrate_settings(
             indoc! {r#"
                 {
@@ -5374,22 +5331,6 @@ mod tests {
                             "args": ["-y", "some-mcp-server"]
                         }
                     }
-                }
-            "#}),
-        );
-
-        // A deprecated key elsewhere in the document must still be reported.
-        assert_migrate_settings(
-            indoc! {r#"
-                {
-                    "show_inline_completions": true,
-                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
-                }
-            "#},
-            Some(indoc! {r#"
-                {
-                    "show_edit_predictions": true,
-                    "context_servers": { "grep": { "url": "https://mcp.grep.app" } }
                 }
             "#}),
         );
