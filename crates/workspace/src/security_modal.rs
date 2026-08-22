@@ -91,6 +91,7 @@ impl Render for SecurityModal {
         };
 
         let trust_label = self.build_trust_label();
+        let path_style = self.path_style(cx);
 
         // The editable trust-scope field is shown only when a single project is
         // being prompted for (Delta opens one worktree per thread).
@@ -138,7 +139,7 @@ impl Render for SecurityModal {
                                         self.restricted_paths.values().filter_map(
                                             |restricted_path| {
                                                 let abs_path = if restricted_path.is_file {
-                                                    restricted_path.abs_path.parent()
+                                                    path_style.parent(&restricted_path.abs_path)
                                                 } else {
                                                     Some(restricted_path.abs_path.as_ref())
                                                 }?;
@@ -329,7 +330,11 @@ impl SecurityModal {
         // Pre-fill with the single project's parent folder (today's static
         // scope), read-only until the checkbox is ticked.
         if let Some(project) = this.single_trustable_path() {
-            let default_scope = project.parent().unwrap_or(&project).to_path_buf();
+            let path_style = this.path_style(cx);
+            let default_scope = path_style
+                .parent(&project)
+                .unwrap_or(&project)
+                .to_path_buf();
             this.trust_path_input.update(cx, |field, cx| {
                 field.set_text(&default_scope.to_string_lossy(), window, cx);
             });
@@ -367,6 +372,13 @@ impl SecurityModal {
         }
     }
 
+    fn path_style(&self, cx: &App) -> PathStyle {
+        self.worktree_store
+            .upgrade()
+            .map(|store| store.read(cx).path_style())
+            .unwrap_or_else(PathStyle::local)
+    }
+
     fn shorten_path<'a>(&self, path: &'a Path) -> Cow<'a, Path> {
         match &self.home_dir {
             Some(home_dir) => path
@@ -389,11 +401,7 @@ impl SecurityModal {
             return Ok(None);
         };
         let typed = self.trust_path_input.read(cx).text(cx);
-        let path_style = self
-            .worktree_store
-            .upgrade()
-            .map(|store| store.read(cx).path_style())
-            .unwrap_or_else(PathStyle::local);
+        let path_style = self.path_style(cx);
         validate_trust_scope(&typed, &project, self.home_dir.as_deref(), path_style).map(Some)
     }
 
@@ -422,13 +430,15 @@ impl SecurityModal {
                     if let Some(scope) = scope_override {
                         paths_to_trust.insert(PathTrust::AbsPath(scope));
                     } else {
+                        let path_style = self.path_style(cx);
                         paths_to_trust.extend(self.restricted_paths.values().filter_map(
                             |restricted_paths| {
                                 if restricted_paths.is_file {
                                     None
                                 } else {
-                                    let parent_abs_path =
-                                        restricted_paths.abs_path.parent()?.to_owned();
+                                    let parent_abs_path = path_style
+                                        .parent(&restricted_paths.abs_path)?
+                                        .to_path_buf();
                                     Some(PathTrust::AbsPath(parent_abs_path))
                                 }
                             },
@@ -521,7 +531,7 @@ fn validate_trust_scope(
     if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
         return Err("Enter an absolute folder path".into());
     }
-    if !project.starts_with(&expanded) {
+    if path_style.strip_prefix(&project, &expanded).is_none() {
         return Err("Must be a parent folder of the project".into());
     }
     Ok(expanded)
