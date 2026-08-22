@@ -406,6 +406,10 @@ pub(crate) enum RunContext {
     Extension,
 }
 
+fn run_cargo_sort() -> Step<Run> {
+    named::bash("cargo sort --check --workspace .")
+}
+
 pub(crate) fn run_ts_query_ls(context: RunContext) -> Step<Run> {
     named::bash(formatdoc!(
         r#"tar -xf "$GITHUB_WORKSPACE/{TS_QUERY_LS_FILE}" -C "$GITHUB_WORKSPACE"
@@ -444,6 +448,8 @@ fn check_style() -> NamedJob {
             .add_step(steps::script("./script/check-todos"))
             .add_step(steps::script("./script/check-keymaps"))
             .add_step(check_for_typos())
+            .add_step(steps::install_cargo_sort())
+            .add_step(run_cargo_sort())
             .add_step(fetch_ts_query_ls())
             .add_step(run_ts_query_ls(RunContext::ZedRepository)),
     )
@@ -452,10 +458,6 @@ fn check_style() -> NamedJob {
 fn check_dependencies() -> NamedJob {
     fn run_cargo_shear() -> Step<Run> {
         named::bash("cargo shear --locked --deny-warnings")
-    }
-
-    fn run_cargo_sort() -> Step<Run> {
-        named::bash("cargo sort --check --workspace .")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -484,8 +486,6 @@ fn check_dependencies() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(steps::install_cargo_shear())
             .add_step(run_cargo_shear())
-            .add_step(steps::install_cargo_sort())
-            .add_step(run_cargo_sort())
             .add_step(check_cargo_lock())
             .add_step(check_crate_graph())
             .add_step(check_vulnerable_dependencies()),
