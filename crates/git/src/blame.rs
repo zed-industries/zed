@@ -270,6 +270,18 @@ impl BlameEntry {
         Some((sha.parse().ok()?, filename))
     }
 
+    pub fn revision_target(&self, highlighted_sha: Option<Oid>) -> Option<(Oid, RepoPath)> {
+        if self.sha.is_zero() || Some(self.sha) == highlighted_sha {
+            return None;
+        }
+        Some((self.sha, RepoPath::new(&self.filename).ok()?))
+    }
+
+    pub fn previous_revision_target(&self) -> Option<(Oid, RepoPath)> {
+        let (sha, filename) = self.previous_sha_and_filename()?;
+        Some((sha, RepoPath::new(filename).ok()?))
+    }
+
     pub fn author_offset_date_time(&self) -> Result<time::OffsetDateTime> {
         if let (Some(author_time), Some(author_tz)) = (self.author_time, &self.author_tz) {
             let format = format_description!("[offset_hour][offset_minute]");
