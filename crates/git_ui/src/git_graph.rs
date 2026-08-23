@@ -1525,9 +1525,6 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
 
-    /// Width reserved to the left of the canvas for ref labels. It is capped at
-    /// half of the graph column so that narrow windows keep showing the graph
-    /// itself, and is zero when no commit carries a ref.
     fn ref_label_gutter_width(&self, window: &Window, cx: &App) -> Pixels {
         let Some((widest_label, _)) = self.graph_data.widest_ref_label.as_ref() else {
             return px(0.);
