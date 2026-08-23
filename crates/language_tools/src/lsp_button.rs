@@ -981,10 +981,7 @@ impl LspButton {
                 .language_servers
                 .binary_statuses
                 .is_empty()
-            || lsp_store
-                .read(cx)
-                .stopped_language_servers()
-                .is_some_and(|stopped| !stopped.is_empty())
+            || !lsp_store.read(cx).stopped_language_servers().is_empty()
         {
             lsp_button.refresh_lsp_menu(true, window, cx);
         }
@@ -1224,31 +1221,29 @@ impl LspButton {
             }
 
             if let Some(lsp_store) = state.lsp_store.upgrade() {
-                if let Some(stopped_language_servers) =
-                    lsp_store.read(cx).stopped_language_servers()
-                {
-                    stopped_language_servers
-                        .iter()
-                        .for_each(|(server_name, worktree_ids)| {
-                            worktree_ids.iter().for_each(|worktree_id| {
-                                if let Some(worktree) = lsp_store
-                                    .read(cx)
-                                    .worktree_store()
-                                    .read(cx)
-                                    .worktree_for_id(*worktree_id, cx)
-                                {
-                                    let worktree_name =
-                                        SharedString::new(worktree.read(cx).root_name_str());
-                                    servers_per_worktree.entry(worktree_name).or_default().push(
-                                        ServerData::WithStoppedStatus {
-                                            server_name,
-                                            worktree_id: *worktree_id,
-                                        },
-                                    );
-                                }
-                            });
+                lsp_store
+                    .read(cx)
+                    .stopped_language_servers()
+                    .iter()
+                    .for_each(|(server_name, worktree_ids)| {
+                        worktree_ids.iter().for_each(|worktree_id| {
+                            if let Some(worktree) = lsp_store
+                                .read(cx)
+                                .worktree_store()
+                                .read(cx)
+                                .worktree_for_id(*worktree_id, cx)
+                            {
+                                let worktree_name =
+                                    SharedString::new(worktree.read(cx).root_name_str());
+                                servers_per_worktree.entry(worktree_name).or_default().push(
+                                    ServerData::WithStoppedStatus {
+                                        server_name,
+                                        worktree_id: *worktree_id,
+                                    },
+                                );
+                            }
                         });
-                }
+                    });
             }
 
             let mut new_lsp_items = Vec::with_capacity(servers_per_worktree.len() + 1);
@@ -1309,12 +1304,11 @@ impl LspButton {
     fn is_empty(&self, cx: &App) -> bool {
         let lsp_state = self.server_state.read(cx);
 
-        (lsp_state.lsp_store.upgrade().is_some_and(|lsp_store| {
-            lsp_store
-                .read(cx)
-                .stopped_language_servers()
-                .is_some_and(|s| s.is_empty())
-        }) && lsp_state.language_servers.is_empty())
+        (lsp_state
+            .lsp_store
+            .upgrade()
+            .is_some_and(|lsp_store| lsp_store.read(cx).stopped_language_servers().is_empty())
+            && lsp_state.language_servers.is_empty())
             || self.lsp_menu.is_none()
     }
 }
@@ -1529,7 +1523,7 @@ mod tests {
     use project::{FakeFs, Project, lsp_store};
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{ResultExt as _, path};
     use workspace::Workspace;
 
     fn server_id(n: usize) -> LanguageServerId {
