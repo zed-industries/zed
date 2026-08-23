@@ -80,6 +80,24 @@ Configure them with `language_models.<provider>.custom_headers`:
 }
 ```
 
+Each value is either a static string or an object resolving a dynamic value per request:
+
+```json [settings]
+{
+  "language_models": {
+    "openai": {
+      "custom_headers": {
+        "X-Agent-Thread": {
+          "source": "agent_thread_id"
+        }
+      }
+    }
+  }
+}
+```
+
+`agent_thread_id` sends the current Agent Thread's stable identifier: a UUID generated when the thread is created and preserved across restarts. It is included on the thread's completion, compaction, title-generation, and summary requests. Headers with no thread context (for example, model discovery) omit dynamic values.
+
 `custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI-compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI.
 
 Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
