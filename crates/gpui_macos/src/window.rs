@@ -1,6 +1,7 @@
 use crate::{
     BoolExt, MacDisplay, NSRange, NSStringExt, TISCopyCurrentKeyboardInputSource,
-    TISGetInputSourceProperty, WindowFrameSource, events::platform_input_from_native,
+    TISGetInputSourceProperty, WindowFrameSource,
+    events::{current_modifiers, platform_input_from_native},
     kTISPropertyInputSourceIsASCIICapable, kTISPropertyInputSourceType, kTISTypeKeyboardInputMode,
     ns_string, renderer,
 };
@@ -3349,17 +3350,6 @@ async fn synthetic_drag(
                 break;
             }
         }
-    }
-}
-
-fn current_modifiers() -> Modifiers {
-    let modifiers: NSEventModifierFlags = unsafe { msg_send![class!(NSEvent), modifierFlags] };
-    Modifiers {
-        control: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
-        alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
-        shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
-        platform: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
-        function: modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask),
     }
 }
 
