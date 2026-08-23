@@ -283,11 +283,24 @@ struct EntryDetails {
     sticky: Option<StickyDetails>,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
+    diagnostic_mark: Option<DiagnosticMark>,
     diagnostic_count: Option<DiagnosticCount>,
     git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Arc<Path>>,
+}
+
+/// Which glyph on a row carries the diagnostic mark, and what shape it takes.
+///
+/// A row only ever has one indicator slot, so the mark decorates whichever glyph
+/// already occupies it rather than claiming a slot of its own. `Standalone` is the
+/// fallback for rows that draw no glyph at all.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum DiagnosticMark {
+    OnIcon(IconDecorationKind),
+    OnChevron(IconDecorationKind),
+    Standalone(IconName),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -5705,6 +5718,7 @@ impl ProjectPanel {
 
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
+        let diagnostic_mark = details.diagnostic_mark;
         let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
 
@@ -6225,55 +6239,41 @@ impl ProjectPanel {
                         },
                     )
                     .map(|this| {
-                        let icon_slot = if let Some(icon) = &icon {
-                            Some(
-                                if let Some((_, decoration_color)) =
-                                    entry_diagnostic_aware_icon_decoration_and_color(
-                                        diagnostic_severity,
-                                    )
-                                {
-                                    let is_warning = diagnostic_severity
-                                        .map(|severity| {
-                                            matches!(severity, DiagnosticSeverity::WARNING)
-                                        })
-                                        .unwrap_or(false);
-                                    div().child(
-                                        DecoratedIcon::new(
-                                            Icon::from_path(icon.clone()).color(Color::Muted),
-                                            Some(
-                                                IconDecoration::new(
-                                                    if kind.is_file() {
-                                                        if is_warning {
-                                                            IconDecorationKind::Triangle
-                                                        } else {
-                                                            IconDecorationKind::X
-                                                        }
-                                                    } else {
-                                                        IconDecorationKind::Dot
-                                                    },
-                                                    bg_color,
-                                                    cx,
-                                                )
-                                                .group_name(Some(GROUP_NAME.into()))
-                                                .knockout_hover_color(bg_hover_color)
-                                                .color(decoration_color.color(cx))
-                                                .position(Point {
-                                                    x: px(-2.),
-                                                    y: px(-2.),
-                                                }),
-                                            ),
-                                        )
-                                        .into_any_element(),
-                                    )
-                                } else {
-                                    h_flex().child(
-                                        Icon::from_path(icon.to_string()).color(Color::Muted),
-                                    )
-                                },
+                        let decoration_color =
+                            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
+                                .map(|(_, color)| color);
+                        let decorated = |glyph: SharedString,
+                                         decoration_kind: IconDecorationKind,
+                                         color: Color| {
+                            DecoratedIcon::new(
+                                Icon::from_path(glyph).color(Color::Muted),
+                                Some(
+                                    IconDecoration::new(decoration_kind, bg_color, cx)
+                                        .group_name(Some(GROUP_NAME.into()))
+                                        .knockout_hover_color(bg_hover_color)
+                                        .color(color.color(cx))
+                                        .position(Point {
+                                            x: px(-2.),
+                                            y: px(-2.),
+                                        }),
+                                ),
                             )
-                        } else if let Some((icon_name, color)) =
-                            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                            .into_any_element()
+                        };
+
+                        let icon_slot = if let Some(icon) = &icon {
+                            Some(match diagnostic_mark.zip(decoration_color) {
+                                Some((DiagnosticMark::OnIcon(decoration_kind), color)) => {
+                                    div().child(decorated(icon.clone(), decoration_kind, color))
+                                }
+                                _ => h_flex()
+                                    .child(Icon::from_path(icon.to_string()).color(Color::Muted)),
+                            })
+                        } else if let Some(DiagnosticMark::Standalone(icon_name)) = diagnostic_mark
                         {
+                            let color =
+                                entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                                    .map_or(Color::Error, |(_, color)| color);
                             Some(
                                 h_flex()
                                     .size(IconSize::default().rems())
@@ -6292,7 +6292,14 @@ impl ProjectPanel {
                         };
 
                         let chevron =
-                            chevron.map(|chevron| Icon::from_path(chevron).color(Color::Muted));
+                            chevron.map(|chevron| match diagnostic_mark.zip(decoration_color) {
+                                Some((DiagnosticMark::OnChevron(decoration_kind), color)) => {
+                                    decorated(chevron, decoration_kind, color)
+                                }
+                                _ => Icon::from_path(chevron)
+                                    .color(Color::Muted)
+                                    .into_any_element(),
+                            });
 
                         match (chevron, icon_slot) {
                             (Some(chevron), Some(icon_slot)) => {
@@ -6666,6 +6673,26 @@ impl ProjectPanel {
             .get(&(worktree_id, entry.path.clone()))
             .copied();
 
+        let diagnostic_mark = if icon.is_some() || chevron.is_some() {
+            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity).map(
+                |(kind, _)| {
+                    let kind = if entry.kind.is_file() {
+                        kind
+                    } else {
+                        IconDecorationKind::Dot
+                    };
+                    if icon.is_some() {
+                        DiagnosticMark::OnIcon(kind)
+                    } else {
+                        DiagnosticMark::OnChevron(kind)
+                    }
+                },
+            )
+        } else {
+            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                .map(|(name, _)| DiagnosticMark::Standalone(name))
+        };
+
         let filename_text_color =
             entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
@@ -6691,6 +6718,7 @@ impl ProjectPanel {
             sticky,
             filename_text_color,
             diagnostic_severity,
+            diagnostic_mark,
             diagnostic_count,
             git_status,
             is_private: entry.is_private,
