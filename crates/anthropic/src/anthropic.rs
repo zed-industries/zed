@@ -1213,14 +1213,26 @@ pub fn completion_error_from_anthropic(
             status_code,
             message,
         } => Error::from_http_status(provider, status_code, message, None),
-        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
-            provider,
-            retry_after: Some(retry_after),
-        },
-        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
-            provider,
-            retry_after,
-        },
+        AnthropicError::RateLimit { retry_after } => {
+            let message = format!("{provider}'s API rate limit exceeded");
+            Error::from_provider_response(
+                provider,
+                Some(StatusCode::TOO_MANY_REQUESTS),
+                None,
+                message,
+                Some(retry_after),
+            )
+        }
+        AnthropicError::ServerOverloaded { retry_after } => {
+            let message = format!("{provider}'s API servers are overloaded right now");
+            Error::from_provider_response(
+                provider,
+                StatusCode::from_u16(529).ok(),
+                None,
+                message,
+                retry_after,
+            )
+        }
         AnthropicError::ApiError(api_error) => {
             completion_error_from_anthropic_api(api_error, provider)
         }
@@ -1334,7 +1346,10 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::PaymentRequired { .. }
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            }
         ));
     }
 
@@ -1366,6 +1381,7 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
+                category: language_model_core::ProviderErrorCategory::Conflict,
             } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
                 && code == "conflict_error"
                 && message == "The resource was modified concurrently."
@@ -1400,6 +1416,7 @@ mod tests {
                 status: Some(StatusCode::GATEWAY_TIMEOUT),
                 code: Some(code),
                 retry_after: None,
+                category: language_model_core::ProviderErrorCategory::Timeout,
             } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
                 && code == "timeout_error"
                 && message == "The request timed out."

@@ -1001,20 +1001,31 @@ impl LanguageModel for BedrockModel {
                         )
                     }
                 }
-                BedrockError::RateLimited => LanguageModelCompletionError::RateLimitExceeded {
-                    provider: PROVIDER_NAME,
-                    retry_after: None,
-                },
+                BedrockError::RateLimited => LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    Some(http_client::StatusCode::TOO_MANY_REQUESTS),
+                    Some("ThrottlingException".to_string()),
+                    "Bedrock request was throttled".to_string(),
+                    None,
+                ),
                 BedrockError::ServiceUnavailable => {
-                    LanguageModelCompletionError::ServerOverloaded {
-                        provider: PROVIDER_NAME,
-                        retry_after: None,
-                    }
+                    LanguageModelCompletionError::from_provider_response(
+                        PROVIDER_NAME,
+                        Some(http_client::StatusCode::SERVICE_UNAVAILABLE),
+                        Some("ServiceUnavailableException".to_string()),
+                        "Bedrock service is temporarily unavailable".to_string(),
+                        None,
+                    )
                 }
-                BedrockError::AccessDenied(msg) => LanguageModelCompletionError::PermissionError {
-                    provider: PROVIDER_NAME,
-                    message: msg,
-                },
+                BedrockError::AccessDenied(msg) => {
+                    LanguageModelCompletionError::from_provider_response(
+                        PROVIDER_NAME,
+                        Some(http_client::StatusCode::FORBIDDEN),
+                        Some("AccessDeniedException".to_string()),
+                        msg,
+                        None,
+                    )
+                }
                 BedrockError::InternalServer(msg) => {
                     LanguageModelCompletionError::from_provider_response(
                         PROVIDER_NAME,
@@ -1093,16 +1104,19 @@ fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCo
     if let RequestError::HttpResponseError { status_code, .. } = &error
         && *status_code == http_client::http::StatusCode::FORBIDDEN
     {
-        return LanguageModelCompletionError::PermissionError {
-            provider: PROVIDER_NAME,
-            message: format!(
+        return LanguageModelCompletionError::from_provider_response(
+            PROVIDER_NAME,
+            Some(http_client::http::StatusCode::FORBIDDEN),
+            None,
+            format!(
                 "Bedrock Mantle denied this request for {}. Mantle-only models require IAM \
                  permissions for the `bedrock-mantle` endpoint (for example via the \
                  `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever \
                  permissions your existing Bedrock credentials already have.",
                 model.display_name()
             ),
-        };
+            None,
+        );
     }
     error.into()
 }

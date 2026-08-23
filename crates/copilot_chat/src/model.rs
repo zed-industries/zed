@@ -1269,6 +1269,7 @@ mod tests {
     use super::*;
     use crate::responses;
     use futures::StreamExt;
+    use language_model::ProviderErrorCategory;
     use serde_json::json;
 
     fn map_events(events: Vec<responses::StreamEvent>) -> Vec<LanguageModelCompletionEvent> {
@@ -1676,14 +1677,16 @@ mod tests {
 
         assert_eq!(mapped_results.len(), 1);
         match &mapped_results[0] {
-            Err(LanguageModelCompletionError::RateLimitExceeded {
+            Err(LanguageModelCompletionError::ProviderRejection {
                 provider,
                 retry_after,
+                category: ProviderErrorCategory::RateLimit,
+                ..
             }) => {
                 assert_eq!(provider, &PROVIDER_NAME);
                 assert_eq!(*retry_after, None);
             }
-            other => panic!("expected RateLimitExceeded, got {:?}", other),
+            other => panic!("expected RateLimit ProviderRejection, got {:?}", other),
         }
     }
 

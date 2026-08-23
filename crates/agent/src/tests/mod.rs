@@ -29,7 +29,7 @@ use language_model::{
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    ProviderErrorCategory, Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -3613,9 +3613,12 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
         .unwrap();
     cx.run_until_parked();
 
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
-        tokens: None,
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt too large".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -3639,9 +3642,12 @@ async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext
         .unwrap();
     cx.run_until_parked();
 
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
-        tokens: Some(1_500_000),
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt is too long: 1500000 tokens".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -4434,10 +4440,12 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_text_chunk("Hey,");
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
-        provider: LanguageModelProviderName::new("Anthropic"),
-        retry_after: Some(Duration::from_secs(3)),
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("Anthropic"),
+        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        "Anthropic's API servers are overloaded right now".to_string(),
+        Some(Duration::from_secs(3)),
+    ));
     fake_model.end_last_completion_stream();
 
     cx.executor().advance_clock(Duration::from_secs(3));
@@ -4509,10 +4517,12 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         tool_use_1.clone(),
     ));
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
-        provider: LanguageModelProviderName::new("Anthropic"),
-        retry_after: Some(Duration::from_secs(3)),
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("Anthropic"),
+        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        "Anthropic's API servers are overloaded right now".to_string(),
+        Some(Duration::from_secs(3)),
+    ));
     fake_model.end_last_completion_stream();
 
     cx.executor().advance_clock(Duration::from_secs(3));
@@ -4579,10 +4589,12 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     for _ in 0..crate::thread::MAX_RETRY_ATTEMPTS + 1 {
         fake_model.send_last_completion_stream_error(
-            LanguageModelCompletionError::ServerOverloaded {
-                provider: LanguageModelProviderName::new("Anthropic"),
-                retry_after: Some(Duration::from_secs(3)),
-            },
+            LanguageModelCompletionError::from_http_status(
+                LanguageModelProviderName::new("Anthropic"),
+                http_client::StatusCode::SERVICE_UNAVAILABLE,
+                "Anthropic's API servers are overloaded right now".to_string(),
+                Some(Duration::from_secs(3)),
+            ),
         );
         fake_model.end_last_completion_stream();
         cx.executor().advance_clock(Duration::from_secs(3));
@@ -4615,7 +4627,10 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
         .unwrap();
     assert!(matches!(
         error,
-        LanguageModelCompletionError::ServerOverloaded { .. }
+        LanguageModelCompletionError::ProviderRejection {
+            category: ProviderErrorCategory::Overloaded,
+            ..
+        }
     ));
 }
 
@@ -6947,9 +6962,12 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     });
 
     // The subagent's model returns a non-retryable error
-    model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
-        tokens: None,
-    });
+    model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt too large".to_string(),
+        None,
+    ));
 
     cx.run_until_parked();
 

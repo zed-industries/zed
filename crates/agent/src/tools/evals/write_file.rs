@@ -450,10 +450,6 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             Ok(_) => None,
             Err(err) => match err.downcast_ref::<LanguageModelCompletionError>() {
                 Some(err) => match &err {
-                    LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
-                    | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
-                        Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                    }
                     LanguageModelCompletionError::ProviderRejection {
                         status,
                         retry_after,

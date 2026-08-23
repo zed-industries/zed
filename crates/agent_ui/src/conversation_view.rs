@@ -34,7 +34,7 @@ use gpui::{
     linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
-use language_model::LanguageModelCompletionError;
+use language_model::{LanguageModelCompletionError, ProviderErrorCategory};
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
@@ -173,14 +173,39 @@ impl From<anyhow::Error> for ThreadError {
         } else if let Some(lm_error) = error.downcast_ref::<LanguageModelCompletionError>() {
             use LanguageModelCompletionError::*;
             match lm_error {
-                RateLimitExceeded { provider, .. } => Self::RateLimitExceeded {
-                    provider: provider.to_string().into(),
+                ProviderRejection {
+                    provider,
+                    message,
+                    category,
+                    ..
+                } => match category {
+                    ProviderErrorCategory::RateLimit => Self::RateLimitExceeded {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::Overloaded => Self::ServerOverloaded {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::PromptTooLarge { .. } => Self::PromptTooLarge,
+                    ProviderErrorCategory::PaymentRequired => Self::PaymentRequired,
+                    ProviderErrorCategory::Authentication => Self::AuthenticationFailed {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::Permission => Self::PermissionDenied {
+                        provider: provider.to_string().into(),
+                        message: Some(message.clone().into()),
+                    },
+                    ProviderErrorCategory::EndpointNotFound => Self::ApiError {
+                        provider: provider.to_string().into(),
+                    },
+                    ProviderErrorCategory::InvalidEncryptedContent
+                    | ProviderErrorCategory::InvalidRequest
+                    | ProviderErrorCategory::Conflict
+                    | ProviderErrorCategory::Timeout
+                    | ProviderErrorCategory::InternalServer
+                    | ProviderErrorCategory::Other => Self::ProviderRejection {
+                        message: message.clone().into(),
+                    },
                 },
-                ServerOverloaded { provider, .. } => Self::ServerOverloaded {
-                    provider: provider.to_string().into(),
-                },
-                PromptTooLarge { .. } => Self::PromptTooLarge,
-                PaymentRequired { .. } => Self::PaymentRequired,
                 NoApiKey { provider } => Self::NoCredentials {
                     provider: provider.to_string().into(),
                 },
@@ -190,20 +215,7 @@ impl From<anyhow::Error> for ThreadError {
                 | HttpSend { provider, .. } => Self::StreamError {
                     provider: provider.to_string().into(),
                 },
-                AuthenticationError { provider, .. } => Self::AuthenticationFailed {
-                    provider: provider.to_string().into(),
-                },
-                PermissionError { provider, message } => Self::PermissionDenied {
-                    provider: provider.to_string().into(),
-                    message: Some(message.clone().into()),
-                },
-                ProviderRejection { message, .. } => Self::ProviderRejection {
-                    message: message.clone().into(),
-                },
                 DataRetentionConsentRequired { .. } => Self::DataRetentionConsentRequired,
-                ApiEndpointNotFound { provider } => Self::ApiError {
-                    provider: provider.to_string().into(),
-                },
                 _ => {
                     let message: SharedString = format!("{:#}", error).into();
                     Self::Other {

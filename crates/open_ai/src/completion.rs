@@ -1723,7 +1723,7 @@ mod tests {
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
         LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
-        OPEN_AI_PROVIDER_NAME, SharedString, Speed,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -3116,6 +3116,7 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
+                ..
             } if provider == OPEN_AI_PROVIDER_NAME
                 && code == "server_error"
                 && message == "The model failed to generate a response."
@@ -3146,6 +3147,7 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
+                ..
             } if provider == OPEN_AI_PROVIDER_NAME
                 && code == "ERR_SOMETHING"
                 && message == "Something went wrong"
@@ -3182,6 +3184,7 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
+                category: ProviderErrorCategory::Other,
             } if provider == OPEN_AI_PROVIDER_NAME
                 && code == "cyber_policy"
                 && message == "This content was flagged as potentially violating our terms of use."
@@ -3209,7 +3212,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3232,7 +3238,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3260,6 +3269,7 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
+                ..
             } if provider == OPEN_AI_PROVIDER_NAME
                 && code == "invalid_request_error"
                 && message == "Invalid request."

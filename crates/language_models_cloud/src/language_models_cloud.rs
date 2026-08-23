@@ -216,10 +216,14 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         }
 
         if status == StatusCode::PAYMENT_REQUIRED {
-            return Err(LanguageModelCompletionError::PaymentRequired {
-                provider: Some(PROVIDER_NAME),
-                message: None,
-            });
+            return Err(LanguageModelCompletionError::from_provider_response(
+                PROVIDER_NAME,
+                Some(status),
+                None,
+                "payment required to use this language model; please upgrade your account"
+                    .to_string(),
+                None,
+            ));
         }
 
         let mut body = String::new();
@@ -1242,7 +1246,8 @@ mod tests {
     use http_client::FakeHttpClient;
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::{
-        LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent, Role, Speed,
+        LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent,
+        ProviderErrorCategory, Role, Speed,
     };
     use serde_json::json;
     use std::sync::Mutex;
@@ -1548,7 +1553,7 @@ mod tests {
 
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
-        // upstream_http_error with 503 status should become ServerOverloaded
+        // upstream_http_error with 503 status should become an Overloaded rejection
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
 
         let api_error = ApiError {
@@ -1560,15 +1565,17 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ServerOverloaded {
+            LanguageModelCompletionError::ProviderRejection {
                 provider,
                 retry_after,
+                category: ProviderErrorCategory::Overloaded,
+                ..
             } => {
                 assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected ServerOverloaded for upstream 503, got: {:?}",
+                "Expected Overloaded rejection for upstream 503, got: {:?}",
                 completion_error
             ),
         }
@@ -1591,6 +1598,7 @@ mod tests {
                 code,
                 message,
                 retry_after,
+                category,
             } => {
                 assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
@@ -1600,6 +1608,7 @@ mod tests {
                     "Received an error from the OpenAI API: internal server error"
                 );
                 assert_eq!(retry_after, None);
+                assert_eq!(category, ProviderErrorCategory::InternalServer);
             }
             _ => panic!(
                 "Expected ProviderRejection for upstream 500, got: {:?}",
@@ -1607,7 +1616,7 @@ mod tests {
             ),
         }
 
-        // upstream_http_error with 429 status should become RateLimitExceeded
+        // upstream_http_error with 429 status should become a RateLimit rejection
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Google API: rate limit exceeded","upstream_status":429}"#;
 
         let api_error = ApiError {
@@ -1619,15 +1628,17 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::RateLimitExceeded {
+            LanguageModelCompletionError::ProviderRejection {
                 provider,
                 retry_after,
+                category: ProviderErrorCategory::RateLimit,
+                ..
             } => {
                 assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected RateLimitExceeded for upstream 429, got: {:?}",
+                "Expected RateLimit rejection for upstream 429, got: {:?}",
                 completion_error
             ),
         }
@@ -1650,12 +1661,14 @@ mod tests {
                 code,
                 message,
                 retry_after,
+                category,
             } => {
                 assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
                 assert_eq!(code, None);
                 assert_eq!(message, "Regular internal server error");
                 assert_eq!(retry_after, None);
+                assert_eq!(category, ProviderErrorCategory::InternalServer);
             }
             _ => panic!(
                 "Expected ProviderRejection for regular 500, got: {:?}",
@@ -1663,7 +1676,7 @@ mod tests {
             ),
         }
 
-        // upstream_http_429 format should be converted to RateLimitExceeded
+        // upstream_http_429 format should be converted to a RateLimit rejection
         let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
 
         let api_error = ApiError {
@@ -1675,15 +1688,17 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::RateLimitExceeded {
+            LanguageModelCompletionError::ProviderRejection {
                 provider,
                 retry_after,
+                category: ProviderErrorCategory::RateLimit,
+                ..
             } => {
                 assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(retry_after, Some(Duration::from_secs_f64(30.5)));
             }
             _ => panic!(
-                "Expected RateLimitExceeded for upstream_http_429, got: {:?}",
+                "Expected RateLimit rejection for upstream_http_429, got: {:?}",
                 completion_error
             ),
         }
