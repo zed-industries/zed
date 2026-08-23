@@ -666,18 +666,22 @@ pub enum ResetMode {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum FetchOptions {
     All,
+    Unshallow,
     Remote(Remote),
 }
 
 impl FetchOptions {
     pub fn to_proto(&self) -> Option<String> {
         match self {
-            FetchOptions::All => None,
+            FetchOptions::All | FetchOptions::Unshallow => None,
             FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
         }
     }
 
-    pub fn from_proto(remote_name: Option<String>) -> Self {
+    pub fn from_proto(remote_name: Option<String>, unshallow: bool) -> Self {
+        if unshallow {
+            return FetchOptions::Unshallow;
+        }
         match remote_name {
             Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
             None => FetchOptions::All,
@@ -687,6 +691,7 @@ impl FetchOptions {
     pub fn name(&self) -> SharedString {
         match self {
             Self::All => "Fetch all remotes".into(),
+            Self::Unshallow => "Fetch missing history".into(),
             Self::Remote(remote) => remote.name.clone(),
         }
     }
@@ -696,6 +701,7 @@ impl std::fmt::Display for FetchOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FetchOptions::All => write!(f, "--all"),
+            FetchOptions::Unshallow => write!(f, "--unshallow"),
             FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
         }
     }

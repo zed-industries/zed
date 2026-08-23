@@ -450,6 +450,7 @@ message Fetch {
   uint64 repository_id = 3;
   uint64 askpass_id = 4;
   optional string remote = 5;
+  bool unshallow = 6;
 }
 
 message GetRemotes {

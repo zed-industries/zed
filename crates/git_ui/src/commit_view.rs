@@ -26,7 +26,7 @@ use markdown::{Markdown, MarkdownElement};
 use multi_buffer::PathKey;
 use project::{
     Project, ProjectPath, WorktreeId,
-    git_store::{CommitDiff, Repository},
+    git_store::{CommitDiff, Repository, UnshallowState},
 };
 use settings::{DiffViewStyle, Settings};
 use std::{
@@ -532,12 +532,16 @@ impl CommitView {
         }
     }
 
-    fn render_shallow_boundary_notice(&self) -> impl IntoElement {
+    fn render_shallow_boundary_notice(&self, cx: &App) -> impl IntoElement {
         let commit_sha = self.commit.sha.to_string();
-        let repository = self.repository.downgrade();
+        let repository = self.repository.clone();
         let workspace = self.workspace.clone();
         let stash = self.stash;
         let file_filter = self.file_filter.clone();
+        let unshallow_state = self.repository.read(cx).unshallow_state();
+        let can_fetch = !self.project.read(cx).is_via_collab()
+            && unshallow_state != UnshallowState::Unshallowed;
+        let fetch_in_flight = unshallow_state == UnshallowState::InProgress;
         v_flex()
             .flex_grow(1.)
             .items_center()
@@ -554,32 +558,86 @@ impl CommitView {
                 .color(Color::Muted),
             )
             .child(
-                Button::new(
-                    "load-shallow-snapshot",
-                    if file_filter.is_some() {
-                        "Load File Snapshot"
-                    } else {
-                        "Load Full Snapshot"
-                    },
-                )
-                    .style(ButtonStyle::Filled)
-                    .tooltip(Tooltip::text(if file_filter.is_some() {
-                        "Show this file's full contents at this commit as added."
-                    } else {
-                        "Show every file at this commit as added. This can be slow in large repositories."
-                    }))
-                    .on_click(move |_, window, cx| {
-                        Self::open_with_options(
-                            commit_sha.clone(),
-                            repository.clone(),
-                            workspace.clone(),
-                            stash,
-                            file_filter.clone(),
-                            true,
-                            window,
-                            cx,
-                        );
-                    }),
+                h_flex()
+                    .gap_2()
+                    .when(can_fetch, |this| {
+                        let commit_sha = commit_sha.clone();
+                        let repository = repository.clone();
+                        let workspace = workspace.clone();
+                        let file_filter = file_filter.clone();
+                        this.child(
+                            Button::new(
+                                "fetch-unshallow",
+                                if fetch_in_flight {
+                                    "Fetching…"
+                                } else {
+                                    "Fetch Missing History"
+                                },
+                            )
+                                .style(ButtonStyle::Filled)
+                                .disabled(fetch_in_flight)
+                                .tooltip(Tooltip::text(
+                                    "Run `git fetch --unshallow` to download the full history, then show this commit's changes.",
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    let fetch = crate::commit_tooltip::fetch_unshallow(
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                    let commit_sha = commit_sha.clone();
+                                    let repository = repository.downgrade();
+                                    let workspace = workspace.clone();
+                                    let file_filter = file_filter.clone();
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            fetch.await?;
+                                            cx.update(|window, cx| {
+                                                Self::open_with_options(
+                                                    commit_sha,
+                                                    repository,
+                                                    workspace,
+                                                    stash,
+                                                    file_filter,
+                                                    false,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                        })
+                                        .detach_and_log_err(cx);
+                                }),
+                        )
+                    })
+                    .child(
+                        Button::new(
+                            "load-shallow-snapshot",
+                            if file_filter.is_some() {
+                                "Load File Snapshot"
+                            } else {
+                                "Load Full Snapshot"
+                            },
+                        )
+                            .style(ButtonStyle::Outlined)
+                            .tooltip(Tooltip::text(if file_filter.is_some() {
+                                "Show this file's full contents at this commit as added."
+                            } else {
+                                "Show every file at this commit as added. This can be slow in large repositories."
+                            }))
+                            .on_click(move |_, window, cx| {
+                                Self::open_with_options(
+                                    commit_sha.clone(),
+                                    repository.downgrade(),
+                                    workspace.clone(),
+                                    stash,
+                                    file_filter.clone(),
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            }),
+                    ),
             )
     }
 
@@ -1345,7 +1403,7 @@ impl Render for CommitView {
                 |this| this.child(div().flex_grow(1.).child(self.editor.clone())),
             )
             .when(self.is_shallow_boundary, |this| {
-                this.child(self.render_shallow_boundary_notice())
+                this.child(self.render_shallow_boundary_notice(cx))
             })
     }
 }

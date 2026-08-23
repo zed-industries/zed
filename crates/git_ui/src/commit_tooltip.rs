@@ -1,15 +1,20 @@
 use crate::commit_view::CommitView;
+use anyhow::Result;
+use askpass::AskPassDelegate;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::blame::BlameEntry;
 use git::repository::CommitSummary;
 use git::{GitRemote, commit::ParsedCommitMessage};
+use git_ui_core::askpass_modal::AskPassModal;
+use git_ui_core::notifications::show_error_toast;
 use gpui::{
     AbsoluteLength, App, Asset, Element, Entity, MouseButton, ParentElement, Pixels, Render,
-    ScrollHandle, StatefulInteractiveElement, WeakEntity, prelude::*,
+    ScrollHandle, StatefulInteractiveElement, Task, WeakEntity, Window, prelude::*,
 };
 use markdown::{Markdown, MarkdownElement};
-use project::git_store::Repository;
+use notifications::status_toast::StatusToast;
+use project::git_store::{Repository, UnshallowState};
 use settings::Settings;
 use std::hash::Hash;
 use theme_settings::ThemeSettings;
@@ -348,6 +353,11 @@ impl Render for CommitTooltip {
             author_name: self.commit.author_name.clone(),
             has_parent: false,
         };
+        let boundary_notice = self
+            .commit
+            .boundary
+            .then(|| shallow_boundary_notice(self.repository.clone(), self.workspace.clone(), cx))
+            .flatten();
 
         tooltip_container(cx, move |this, cx| {
             this.occlude()
@@ -374,6 +384,7 @@ impl Render for CommitTooltip {
                                 .border_b_1()
                                 .border_color(cx.theme().colors().border_variant),
                         )
+                        .children(boundary_notice)
                         .child(
                             div()
                                 .id("inline-blame-commit-message")
@@ -383,25 +394,6 @@ impl Render for CommitTooltip {
                                 .overflow_y_scroll()
                                 .child(message),
                         )
-                        .when(self.commit.boundary, |this| {
-                            this.child(
-                                h_flex()
-                                    .pb_1p5()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::Warning)
-                                            .size(IconSize::Small)
-                                            .color(Color::Warning),
-                                    )
-                                    .child(
-                                        Label::new(
-                                            "Shallow clone boundary: earlier history is missing, so these lines may come from an older commit.",
-                                        )
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                    ),
-                            )
-                        })
                         .child(
                             h_flex()
                                 .text_color(cx.theme().colors().text_muted)
@@ -492,4 +484,149 @@ fn blame_entry_timestamp(blame_entry: &BlameEntry, format: time_format::Timestam
 
 pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     blame_entry_timestamp(blame_entry, time_format::TimestampFormat::Relative)
+}
+
+pub(crate) fn shallow_boundary_notice(
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    cx: &App,
+) -> Option<impl IntoElement + use<>> {
+    let unshallow_state = repository.read(cx).unshallow_state();
+    if unshallow_state == UnshallowState::Unshallowed {
+        return None;
+    }
+    let in_flight = unshallow_state == UnshallowState::InProgress;
+    let can_fetch = workspace
+        .read_with(cx, |workspace, cx| {
+            !workspace.project().read(cx).is_via_collab()
+        })
+        .unwrap_or(false);
+    Some(
+        h_flex()
+            .pt_1p5()
+            .gap_2()
+            .items_start()
+            .child(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Warning),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .gap_1()
+                    .child(
+                        Label::new(
+                            "Shallow clone boundary: earlier history is missing, so these lines may come from an older commit.",
+                        )
+                        .size(LabelSize::Small),
+                    )
+                    .when(can_fetch, |this| {
+                        this.child(
+                            h_flex().child(
+                                Button::new(
+                                    "fetch-unshallow",
+                                    if in_flight {
+                                        "Fetching…"
+                                    } else {
+                                        "Fetch Missing History"
+                                    },
+                                )
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
+                                .disabled(in_flight)
+                                .tooltip(Tooltip::text(
+                                    "Run `git fetch --unshallow` to download the full history",
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    cx.stop_propagation();
+                                    fetch_unshallow(
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .detach_and_log_err(cx);
+                                }),
+                            ),
+                        )
+                    }),
+            ),
+    )
+}
+
+pub(crate) fn fetch_unshallow(
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<()>> {
+    if repository.read(cx).unshallow_state() != UnshallowState::Idle {
+        return Task::ready(Ok(()));
+    }
+    let askpass = {
+        let workspace = workspace.clone();
+        let window_handle = window.window_handle();
+        AskPassDelegate::new_with_cancellation(
+            &mut cx.to_async(),
+            move |prompt, tx, cancellation, cx| {
+                window_handle
+                    .update(cx, |_, window, cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_modal(window, cx, |window, cx| {
+                                    AskPassModal::new(
+                                        "git fetch --unshallow".into(),
+                                        prompt.into(),
+                                        tx,
+                                        cancellation,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                            })
+                            .ok();
+                    })
+                    .ok();
+            },
+        )
+    };
+    let fetch = repository.update(cx, |repository, cx| repository.fetch_unshallow(askpass, cx));
+    window.refresh();
+    window.spawn(cx, async move |cx| {
+        let result = match fetch.await {
+            Ok(result) => result,
+            Err(canceled) => Err(anyhow::Error::from(canceled)),
+        };
+        cx.update(|window, cx| {
+            window.refresh();
+            let Some(workspace) = workspace.upgrade() else {
+                return Ok(());
+            };
+            match result {
+                Ok(_) => {
+                    workspace.update(cx, |workspace, cx| {
+                        let toast = StatusToast::new(
+                            "Fetched the missing commit history",
+                            cx,
+                            |this, _| {
+                                this.icon(
+                                    Icon::new(IconName::GitBranch)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                            },
+                        );
+                        workspace.toggle_status_toast(toast, cx);
+                    });
+                    Ok(())
+                }
+                Err(error) => {
+                    show_error_toast(workspace, "fetch --unshallow", error, cx);
+                    Err(anyhow::anyhow!("git fetch --unshallow failed"))
+                }
+            }
+        })?
+    })
 }
