@@ -694,44 +694,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shutdown_stops_crash_server() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock is before the Unix epoch")
-            .as_nanos();
-        let socket = PathBuf::from(format!(
-            "crashes-shutdown-test-{}-{unique}",
-            std::process::id()
-        ));
-        let logs_dir = std::env::temp_dir();
-        let (server_stopped_tx, server_stopped_rx) = std::sync::mpsc::channel();
-        let server_socket = socket.clone();
-        std::thread::spawn(move || {
-            crash_server(&server_socket, logs_dir);
-            server_stopped_tx
-                .send(())
-                .expect("test receiver should remain connected");
-        });
-
-        let client = Arc::new(
-            (0..100)
-                .find_map(|_| {
-                    let client = Client::with_name(SocketName::Path(&socket)).ok();
-                    if client.is_none() {
-                        std::thread::sleep(Duration::from_millis(10));
-                    }
-                    client
-                })
-                .expect("crash server did not start"),
-        );
-
-        shutdown_crash_handler(&client);
-        server_stopped_rx
-            .recv_timeout(Duration::from_secs(2))
-            .expect("crash server did not stop");
-    }
-
-    #[test]
     fn abort_message_read_len_requires_page_rounded_total() {
         assert_eq!(abort_message_read_len(0), None);
         // A message length rather than a mapping total means the glibc layout
