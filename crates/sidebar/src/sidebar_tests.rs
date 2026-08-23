@@ -3207,7 +3207,6 @@ async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
         .debug_bounds(&selector)
         .expect("switcher entry should be rendered");
 
-    // gpui's macOS backend maps ctrl-left clicks to right clicks.
     cx.simulate_mouse_down(
         bounds.center(),
         gpui::MouseButton::Right,
