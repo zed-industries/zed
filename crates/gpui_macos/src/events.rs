@@ -86,7 +86,6 @@ unsafe fn read_modifiers(native_event: id) -> Modifiers {
     modifiers_from_flags(unsafe { native_event.modifierFlags() })
 }
 
-/// The modifier keys currently held, independent of any particular event.
 pub(crate) fn current_modifiers() -> Modifiers {
     let flags: NSEventModifierFlags = unsafe { msg_send![class!(NSEvent), modifierFlags] };
     modifiers_from_flags(flags)
