@@ -6,8 +6,8 @@ use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet, hash_map};
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
-    App, Asset, AssetLogger, AsyncApp, Context, Entity, EventEmitter, ImageCacheError, ImageSource,
-    Img, RenderImage, Subscription, Task, WeakEntity, prelude::*,
+    App, Asset, AssetLogger, AsyncApp, Context, DefaultAppearance, Entity, EventEmitter,
+    ImageCacheError, ImageSource, Img, RenderImage, Subscription, Task, WeakEntity, prelude::*,
 };
 pub use image::ImageFormat;
 use image::{ExtendedColorType, GenericImageView, ImageReader};
@@ -126,6 +126,7 @@ impl Asset for ProjectImageAsset {
         cx: &mut App,
     ) -> impl Future<Output = Self::Output> + Send + 'static {
         let svg_renderer = cx.svg_renderer();
+        let appearance = DefaultAppearance::from(cx.window_appearance());
         let load_image = cx.spawn(async move |cx| {
             let open_image = source
                 .project
@@ -136,7 +137,9 @@ impl Asset for ProjectImageAsset {
 
         async move {
             let image = load_image.await?;
-            image.to_image_data(svg_renderer).map_err(Into::into)
+            image
+                .to_image_data(svg_renderer, appearance)
+                .map_err(Into::into)
         }
     }
 }

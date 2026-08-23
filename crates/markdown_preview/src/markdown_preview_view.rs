@@ -363,6 +363,16 @@ impl MarkdownPreviewView {
                 }
             }
 
+            // SVGs are rasterized with the window's current appearance, so cached
+            // images must be dropped when it changes.
+            cx.observe_window_appearance(window, |this, window, cx| {
+                this.image_cache.update(cx, |image_cache, cx| {
+                    image_cache.clear(window, cx);
+                });
+                cx.notify();
+            })
+            .detach();
+
             this
         })
     }

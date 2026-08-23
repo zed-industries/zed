@@ -21,6 +21,7 @@ pub struct SvgPreviewView {
     _refresh: Task<()>,
     _buffer_subscription: Option<Subscription>,
     _workspace_subscription: Option<Subscription>,
+    _appearance_subscription: Subscription,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -60,6 +61,14 @@ impl SvgPreviewView {
                 current_svg: None,
                 _buffer_subscription: subscription,
                 _workspace_subscription: workspace_subscription,
+                _appearance_subscription: cx.observe_window_appearance(
+                    window,
+                    |this, window, cx| {
+                        // SVGs are rasterized with the window's appearance, so the
+                        // preview must be re-rendered when it changes.
+                        this.render_image(window, cx);
+                    },
+                ),
                 _refresh: Task::ready(()),
             };
             this.render_image(window, cx);

@@ -36,11 +36,12 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
-    FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
-    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DefaultAppearance, DevicePixels, DispatchEventResult, Edges,
+    ExternalDragPayload, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs,
+    Hsla, ImageSource, Keymap, LineLayout, Pixels, PlatformGestures, PlatformInput, Point,
+    Priority, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window,
+    WindowControlArea, hash, point, px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -2652,7 +2653,11 @@ impl Image {
     }
 
     /// Convert the clipboard image to an `ImageData` object.
-    pub fn to_image_data(&self, svg_renderer: SvgRenderer) -> Result<Arc<RenderImage>> {
+    pub fn to_image_data(
+        &self,
+        svg_renderer: SvgRenderer,
+        appearance: DefaultAppearance,
+    ) -> Result<Arc<RenderImage>> {
         let frames = match self.format {
             ImageFormat::Gif => {
                 let decoder = GifDecoder::new(Cursor::new(&self.bytes))?;
@@ -2687,7 +2692,7 @@ impl Image {
             ImageFormat::Ico => decode_static_image(&self.bytes, image::ImageFormat::Ico)?,
             ImageFormat::Svg => {
                 return svg_renderer
-                    .render_single_frame(&self.bytes, 1.0)
+                    .render_single_frame_with_appearance(&self.bytes, 1.0, appearance)
                     .map_err(Into::into);
             }
             ImageFormat::Pnm => decode_static_image(&self.bytes, image::ImageFormat::Pnm)?,
@@ -2782,7 +2787,9 @@ mod image_tests {
             include_bytes!("../examples/image/exif-orientation-rotate-180.jpg").to_vec(),
         );
 
-        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+        let render_image = image
+            .to_image_data(SvgRenderer::new(Arc::new(())), DefaultAppearance::Light)
+            .unwrap();
 
         assert_eq!(render_image.size(0), size(16.into(), 32.into()));
 
@@ -2801,7 +2808,9 @@ mod image_tests {
                 .to_vec(),
         );
 
-        let render_image = image.to_image_data(SvgRenderer::new(Arc::new(()))).unwrap();
+        let render_image = image
+            .to_image_data(SvgRenderer::new(Arc::new(())), DefaultAppearance::Light)
+            .unwrap();
         let bytes = render_image.as_bytes(0).unwrap();
 
         for pixel in bytes.chunks_exact(4) {
