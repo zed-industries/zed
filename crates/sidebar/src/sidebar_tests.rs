@@ -3203,12 +3203,11 @@ async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
             .expect("switcher should list the build terminal");
         format!("THREAD_ITEM-{}", entry.element_id())
     });
-    // `debug_bounds` takes a `&'static str`; leaking a short string in a test is fine.
     let bounds = cx
         .debug_bounds(Box::leak(selector.into_boxed_str()))
         .expect("switcher entry should be rendered");
 
-    // macOS reports ctrl+left clicks as right-button clicks.
+    // gpui's macOS backend maps ctrl-left clicks to right clicks.
     cx.simulate_mouse_down(
         bounds.center(),
         gpui::MouseButton::Right,

@@ -410,7 +410,7 @@ impl Render for ThreadSwitcher {
                             .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
                                 this.select_and_confirm(ix, cx);
                             }))
-                            // macOS reports ctrl+left clicks as right-button clicks, and the
+                            // gpui's macOS backend maps ctrl-left clicks to right clicks, and the
                             // switcher is usually clicked while ctrl is still held.
                             .on_aux_click(cx.listener(
                                 move |this, _event: &ClickEvent, _window, cx| {
