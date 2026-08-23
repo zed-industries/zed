@@ -5,6 +5,7 @@ pub use fs_watcher::requires_poll_watcher;
 use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
+use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -302,12 +303,20 @@ pub struct Metadata {
     pub len: u64,
     pub is_fifo: bool,
     pub is_executable: bool,
-    pub is_writable: bool,
-    // Currently this is being used for comparison of crates/worktree/src:Entry
-    // and should not be considered the source of truth for is_executable, and
-    // is_writable
-    // TODO: Remove is_executable, and is_writable and derive them from permission_bits
+    // permission_bits should not be used to derive `is_executable`
     pub permission_bits: u32,
+}
+
+impl Metadata {
+    pub fn is_writable(&self) -> bool {
+        #[cfg(unix)]
+        let permissions = Permissions::from_mode(self.permission_bits);
+
+        #[cfg(windows)]
+        let permissions = Permissions::from_mode(self.permission_bits);
+
+        return !permissions.readonly();
+    }
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -1113,8 +1122,7 @@ impl Fs for RealFs {
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
             is_executable,
-            is_writable: !metadata.permissions().readonly(),
-            permission_bits: permission_bits.into(),
+            permission_bits: permission_bits,
         }))
     }
 
@@ -3254,12 +3262,15 @@ impl Fs for FakeFs {
                     is_dir: false,
                     is_symlink,
                     is_fifo: false,
-                    is_executable: false,
-                    is_writable: true,
-                    permission_bits: 0o644,
+                    is_executable: permission_bits & 0o111 != 0,
+                    permission_bits: *permission_bits,
                 },
                 FakeFsEntry::Dir {
-                    inode, mtime, len, ..
+                    inode,
+                    mtime,
+                    len,
+                    permission_bits,
+                    ..
                 } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
@@ -3267,9 +3278,8 @@ impl Fs for FakeFs {
                     is_dir: true,
                     is_symlink,
                     is_fifo: false,
-                    is_executable: false,
-                    is_writable: true,
-                    permission_bits: 0o755,
+                    is_executable: permission_bits & 0o111 != 0,
+                    permission_bits: *permission_bits,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
