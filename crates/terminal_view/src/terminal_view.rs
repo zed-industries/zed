@@ -428,6 +428,11 @@ impl TerminalView {
         }
     }
 
+    pub(crate) fn mark_needs_serialize(&mut self, cx: &mut Context<Self>) {
+        self.needs_serialize = true;
+        cx.emit(ItemEvent::UpdateTab);
+    }
+
     pub fn is_renaming(&self) -> bool {
         self.rename_editor.is_some()
     }
