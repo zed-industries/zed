@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use settings::RegisterSetting;
+use settings::settings_content::CustomHeaderValueContent;
 
 use crate::provider::{
     anthropic, anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
@@ -35,9 +36,9 @@ pub struct AllLanguageModelSettings {
 
 fn custom_headers_from(
     provider_name: &str,
-    raw: Option<HashMap<String, String>>,
+    raw: Option<HashMap<String, CustomHeaderValueContent>>,
     reserved: &[&str],
-) -> http_client::CustomHeaders {
+) -> crate::provider::CustomHeaderDefinitions {
     raw.as_ref()
         .filter(|map| !map.is_empty())
         .map(|map| resolve_custom_headers(provider_name, map, reserved))
