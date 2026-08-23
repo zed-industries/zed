@@ -34,6 +34,7 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
                 is_hidden: false,
                 char_bag: Default::default(),
                 is_fifo: false,
+                permission_bits: None,
             };
             Some(GitEntry {
                 entry,

@@ -3987,6 +3987,10 @@ pub struct Entry {
     pub is_private: bool,
     /// The entry's size on disk, in bytes.
     pub size: u64,
+
+    // The entry's permission bits on the fs
+    pub permission_bits: Option<u32>,
+
     pub char_bag: CharBag,
     pub is_fifo: bool,
 }
@@ -4148,6 +4152,7 @@ impl Entry {
             is_private: false,
             char_bag,
             is_fifo: metadata.is_fifo,
+            permission_bits: Some(metadata.permission_bits),
         }
     }
 
@@ -7052,6 +7057,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
             is_private: false,
             char_bag,
             is_fifo: entry.is_fifo,
+            permission_bits: entry.permission_bits,
         })
     }
 }

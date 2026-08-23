@@ -5,6 +5,7 @@ pub use fs_watcher::requires_poll_watcher;
 use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
+use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
@@ -302,6 +303,11 @@ pub struct Metadata {
     pub is_fifo: bool,
     pub is_executable: bool,
     pub is_writable: bool,
+    // Currently this is being used for comparison of crates/worktree/src:Entry
+    // and should not be considered the source of truth for is_executable, and
+    // is_writable
+    // TODO: Remove is_executable, and is_writable and derive them from permission_bits
+    pub permission_bits: u32,
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -1087,6 +1093,12 @@ impl Fs for RealFs {
         #[cfg(unix)]
         let is_fifo = metadata.file_type().is_fifo();
 
+        #[cfg(unix)]
+        let permission_bits = metadata.permissions().mode();
+
+        #[cfg(windows)]
+        let permission_bits = metadata.permissions().file_attributes();
+
         let path_buf = path.to_path_buf();
         let is_executable = self
             .executor
@@ -1102,6 +1114,7 @@ impl Fs for RealFs {
             is_fifo,
             is_executable,
             is_writable: !metadata.permissions().readonly(),
+            permission_bits: permission_bits.into(),
         }))
     }
 
@@ -3243,6 +3256,7 @@ impl Fs for FakeFs {
                     is_fifo: false,
                     is_executable: false,
                     is_writable: true,
+                    permission_bits: 0o644,
                 },
                 FakeFsEntry::Dir {
                     inode, mtime, len, ..
@@ -3255,6 +3269,7 @@ impl Fs for FakeFs {
                     is_fifo: false,
                     is_executable: false,
                     is_writable: true,
+                    permission_bits: 0o755,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))

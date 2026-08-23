@@ -60,6 +60,7 @@ async fn test_path_inclusion_matcher(cx: &mut gpui::TestAppContext) {
         size: 0,
         char_bag: Default::default(),
         is_fifo: false,
+        permission_bits: None,
     };
 
     // 1. Test searching for `field`, including ignored files without any

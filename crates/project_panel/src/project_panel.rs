@@ -4338,6 +4338,7 @@ impl ProjectPanel {
                 canonical_path: parent_entry.canonical_path.clone(),
                 char_bag: parent_entry.char_bag,
                 is_fifo: parent_entry.is_fifo,
+                permission_bits: parent_entry.permission_bits,
             },
             git_summary,
         }
