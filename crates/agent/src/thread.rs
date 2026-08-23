@@ -4530,10 +4530,16 @@ impl Thread {
             ProviderRejection {
                 status,
                 retry_after,
+                category,
                 ..
             } => {
-                let status = (*status)?;
-                if !is_retryable_provider_status(status) {
+                let retryable = status.is_some_and(is_retryable_provider_status)
+                    || matches!(
+                        category,
+                        ProviderErrorCategory::RateLimit | ProviderErrorCategory::Overloaded
+                    )
+                    || retry_after.is_some();
+                if !retryable {
                     return None;
                 }
                 Some(match retry_after {
@@ -8436,6 +8442,22 @@ mod tests {
             None,
         );
         assert!(Thread::retry_strategy_for(&error).is_none());
+    }
+
+    #[test]
+    fn test_retry_strategy_retries_status_less_transient_category() {
+        let error = LanguageModelCompletionError::from_provider_response(
+            language_model::ANTHROPIC_PROVIDER_NAME,
+            None,
+            Some("rate_limit_error".to_string()),
+            "Rate limit exceeded".to_string(),
+            None,
+        );
+
+        assert_eq!(
+            Thread::retry_strategy_for(&error),
+            Some(RetryStrategy::ExponentialBackoff)
+        );
     }
 
     #[test]
