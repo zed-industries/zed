@@ -292,7 +292,7 @@ If you prefer to work without a language server but would still like code format
 
 ## Debugging
 
-The Elixir extension also provides a debug adapter via ElixirLS. Like the language servers, the extension will try to find and use a local binary in your `$PATH`. If it cannot find it there, it will fallback to installing it for you instead.
+The Elixir extension also provides a debug adapter via ElixirLS. Like the language servers, the extension will try to find and use a local binary in your `$PATH`. If it cannot find one, it will fallback to installing it instead.
 
 Alternatively, you can provide your own custom binary by passing the path and arguments in your settings file via `dap.ElixirLS.binary` and `dap.ElixirLS.args` respectively.
 
