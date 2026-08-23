@@ -917,20 +917,17 @@ impl App {
 
         platform.on_quit(Box::new({
             let cx = Rc::downgrade(&app);
-            let mut shutdown_completed = false;
             move || {
-                if shutdown_completed {
-                    return;
+                if let Some(cx) = cx.upgrade() {
+                    // If the quit callback is invoked re-entrantly, there's nothing we can do, since we can't release the outer borrow.
+                    // We'll have to shut down ungracefully.
+                    match cx.try_borrow_mut() {
+                        Ok(mut cx) => cx.shutdown(),
+                        Err(_) => log::error!(
+                            "app re-entrantly borrowed during quit; skipping graceful shutdown"
+                        ),
+                    }
                 }
-                let Some(cx) = cx.upgrade() else {
-                    shutdown_completed = true;
-                    return;
-                };
-                let Ok(mut cx) = cx.try_borrow_mut() else {
-                    return;
-                };
-                cx.shutdown();
-                shutdown_completed = true;
             }
         }));
 

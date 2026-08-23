@@ -1030,8 +1030,10 @@ impl WindowsPlatformInner {
 
     fn handle_end_session(&self) -> Option<isize> {
         self.with_callback(|callbacks| &callbacks.quit, |callback| callback());
-        unsafe { PostQuitMessage(0) };
-        Some(0)
+        // Once every window has returned from, WM_ENDSESSION the system may terminate the process at any moment.
+        // We shouldn't return to the mesaage loop, since we've destroyed GPUI state.
+        log::logger().flush();
+        std::process::exit(0);
     }
 
     fn close_one_window(&self, target_window: HWND) -> bool {
