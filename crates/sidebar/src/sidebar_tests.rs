@@ -3204,7 +3204,7 @@ async fn test_thread_switcher_confirms_on_aux_click(cx: &mut TestAppContext) {
         format!("THREAD_ITEM-{}", entry.element_id())
     });
     let bounds = cx
-        .debug_bounds(Box::leak(selector.into_boxed_str()))
+        .debug_bounds(&selector)
         .expect("switcher entry should be rendered");
 
     // gpui's macOS backend maps ctrl-left clicks to right clicks.

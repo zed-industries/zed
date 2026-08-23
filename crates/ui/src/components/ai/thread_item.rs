@@ -434,10 +434,9 @@ impl RenderOnce for ThreadItem {
             || has_diff_stats
             || has_timestamp;
 
-        let id = self.id.clone();
         v_flex()
-            .id(id.clone())
-            .debug_selector(|| format!("THREAD_ITEM-{}", id))
+            .id(self.id.clone())
+            .debug_selector(|| format!("THREAD_ITEM-{}", self.id))
             .cursor_pointer()
             .group("thread-item")
             .relative()
