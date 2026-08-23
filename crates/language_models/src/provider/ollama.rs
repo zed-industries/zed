@@ -31,6 +31,7 @@ use ui::{
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::CustomHeaderDefinitions;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -48,7 +49,7 @@ pub struct OllamaSettings {
     pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
     pub context_window: Option<u64>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -115,7 +116,7 @@ impl State {
         let settings = OllamaLanguageModelProvider::settings(cx);
         let api_url = OllamaLanguageModelProvider::api_url(cx);
         let api_key = self.api_key_state.key(&api_url);
-        let extra_headers = settings.custom_headers.clone();
+        let extra_headers = settings.custom_headers.resolve_static();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
@@ -553,18 +554,20 @@ impl LanguageModel for OllamaLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            OllamaLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let request = match self.to_ollama_request(request) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
 
         let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OllamaLanguageModelProvider::api_url(cx);
-            let extra_headers = OllamaLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {

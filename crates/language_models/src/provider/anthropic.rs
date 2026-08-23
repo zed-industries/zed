@@ -19,6 +19,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 
+use crate::provider::CustomHeaderDefinitions;
 use anthropic::completion::collect_compaction_result;
 pub use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 pub use settings::AnthropicAvailableModel as AvailableModel;
@@ -32,7 +33,7 @@ pub struct AnthropicSettings {
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
     /// User-configured headers added to every Anthropic request.
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -111,7 +112,7 @@ impl State {
         };
         let extra_headers = AnthropicLanguageModelProvider::settings(cx)
             .custom_headers
-            .clone();
+            .resolve_static();
 
         cx.spawn(async move |this, cx| {
             let models = anthropic::list_models(
@@ -691,6 +692,7 @@ impl AnthropicModel {
     fn stream_completion(
         &self,
         request: anthropic::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -701,12 +703,9 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            let extra_headers = AnthropicLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let beta_headers = self.model.beta_headers();
@@ -811,6 +810,11 @@ impl LanguageModel for AnthropicModel {
             .boxed();
         }
 
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let mut request = match into_anthropic(
             request,
             self.model.request_id(false).to_string(),
@@ -826,7 +830,7 @@ impl LanguageModel for AnthropicModel {
         if !self.model.supports_speed {
             request.speed = None;
         }
-        let request = self.stream_completion(request, cx);
+        let request = self.stream_completion(request, extra_headers, cx);
         let future = self.request_limiter.run(async move {
             let response = request.await?;
             let stream = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
@@ -888,6 +892,11 @@ impl LanguageModel for AnthropicModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
         let mut request = match into_anthropic(
@@ -905,7 +914,7 @@ impl LanguageModel for AnthropicModel {
         if !self.model.supports_speed {
             request.speed = None;
         }
-        let request = self.stream_completion(request, cx);
+        let request = self.stream_completion(request, extra_headers, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response))

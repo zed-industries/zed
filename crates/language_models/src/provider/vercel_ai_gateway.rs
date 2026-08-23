@@ -21,6 +21,8 @@ use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 
+use crate::provider::CustomHeaderDefinitions;
+
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel_ai_gateway");
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("Vercel AI Gateway");
@@ -33,7 +35,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct VercelAiGatewaySettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct VercelAiGatewayLanguageModelProvider {
@@ -93,7 +95,7 @@ impl State {
         let api_key = self.api_key_state.key(&api_url);
         let extra_headers = VercelAiGatewayLanguageModelProvider::settings(cx)
             .custom_headers
-            .clone();
+            .resolve_static();
         cx.spawn(async move |this, cx| {
             let models = list_models(
                 http_client.as_ref(),
@@ -273,6 +275,7 @@ impl VercelAiGatewayLanguageModel {
     fn stream_open_ai(
         &self,
         request: open_ai::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -282,12 +285,9 @@ impl VercelAiGatewayLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = VercelAiGatewayLanguageModelProvider::api_url(cx);
-            let extra_headers = VercelAiGatewayLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -451,6 +451,11 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            VercelAiGatewayLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let request = match crate::provider::open_ai::into_open_ai(
             request,
             &self.model.name,
@@ -464,7 +469,7 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        let completions = self.stream_open_ai(request, cx);
+        let completions = self.stream_open_ai(request, extra_headers, cx);
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())

@@ -26,6 +26,7 @@ use ui::{
 use ui_input::InputField;
 use util::ResultExt;
 
+use crate::provider::CustomHeaderDefinitions;
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{
@@ -69,7 +70,7 @@ pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["x-opencode-session"];
 pub struct OpenCodeSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
     pub show_zen_models: bool,
     pub show_go_models: bool,
 }
@@ -368,11 +369,11 @@ impl OpenCodeLanguageModel {
         })
     }
 
-    fn custom_headers(&self, cx: &AsyncApp) -> CustomHeaders {
+    fn custom_headers(&self, request: &LanguageModelRequest, cx: &AsyncApp) -> CustomHeaders {
         self.state.read_with(cx, |_, cx| {
             OpenCodeLanguageModelProvider::settings(cx)
                 .custom_headers
-                .clone()
+                .resolve(request)
         })
     }
 
@@ -645,7 +646,7 @@ impl LanguageModel for OpenCodeLanguageModel {
         } else {
             self.http_client.clone()
         };
-        let extra_headers = self.custom_headers(cx);
+        let extra_headers = self.custom_headers(&request, cx);
 
         match self.model.protocol(self.subscription) {
             ApiProtocol::Anthropic => {

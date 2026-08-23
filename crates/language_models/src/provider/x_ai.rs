@@ -20,6 +20,8 @@ use strum::IntoEnumIterator;
 use ui::IconName;
 use x_ai::XAI_API_URL;
 
+use crate::provider::CustomHeaderDefinitions;
+
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("x_ai");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("xAI");
 
@@ -30,7 +32,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct XAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct XAiLanguageModelProvider {
@@ -220,6 +222,7 @@ impl XAiLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -230,12 +233,9 @@ impl XAiLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = XAiLanguageModelProvider::api_url(cx);
-            let extra_headers = XAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -412,6 +412,11 @@ impl LanguageModel for XAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            XAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let reasoning_effort = reasoning_effort_for_request(&request, &self.model);
         let request = match crate::provider::open_ai::into_open_ai(
             request,
@@ -426,7 +431,7 @@ impl LanguageModel for XAiLanguageModel {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        let completions = self.stream_completion(request, cx);
+        let completions = self.stream_completion(request, extra_headers, cx);
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
