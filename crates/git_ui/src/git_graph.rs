@@ -1525,9 +1525,12 @@ impl GitGraph {
         (LANE_WIDTH * self.graph_data.max_lanes.max(6) as f32) + LEFT_PADDING * 2.0
     }
 
+    /// Width reserved to the left of the canvas for ref labels. It is capped at
+    /// half of the graph column so that narrow windows keep showing the graph
+    /// itself, and is zero when no commit carries a ref.
     fn ref_label_gutter_width(&self, window: &Window, cx: &App) -> Pixels {
         let Some((widest_label, _)) = self.graph_data.widest_ref_label.as_ref() else {
-            return REF_LABEL_GUTTER_MIN_WIDTH;
+            return px(0.);
         };
 
         let text_style = window.text_style();
@@ -1549,7 +1552,9 @@ impl GitGraph {
             )
             .width;
 
-        label_width.clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
+        label_width
+            .clamp(REF_LABEL_GUTTER_MIN_WIDTH, REF_LABEL_GUTTER_MAX_WIDTH)
+            .min(self.graph_viewport_width(window, cx) / 2.)
     }
 
     /// Returns the column fractions in display order:
@@ -4300,6 +4305,7 @@ impl Render for GitGraph {
 
             let table_collapsed = table_fraction <= f32::EPSILON;
             let graph_content_width = self.graph_canvas_content_width();
+            let gutter_width = self.ref_label_gutter_width(window, cx);
 
             h_flex()
                 .size_full()
@@ -4526,20 +4532,21 @@ impl Render for GitGraph {
                                                                 }
                                                             },
                                                         ))
-                                                        .child(
-                                                            div()
-                                                                .relative()
-                                                                .h_full()
-                                                                .w(self.ref_label_gutter_width(
-                                                                    window, cx,
-                                                                ))
-                                                                .flex_shrink_0()
-                                                                .overflow_hidden()
-                                                                .child(
-                                                                    self.render_graph_ref_labels(
-                                                                        window, cx,
-                                                                    ),
-                                                                ),
+                                                        .when(
+                                                            gutter_width > px(0.),
+                                                            |this| {
+                                                                this.child(
+                                                                    div()
+                                                                        .relative()
+                                                                        .h_full()
+                                                                        .w(gutter_width)
+                                                                        .flex_shrink_0()
+                                                                        .overflow_hidden()
+                                                                        .child(
+                                                                            self.render_graph_ref_labels(window, cx),
+                                                                        ),
+                                                                )
+                                                            },
                                                         )
                                                         .child(
                                                             div()
