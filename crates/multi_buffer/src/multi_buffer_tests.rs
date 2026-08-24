@@ -379,6 +379,45 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut App) {
             })
             .collect::<Vec<_>>()
     }
+
+    #[gpui::test]
+    async fn test_excerpt_boundaries_in_range_with_excluded_bound(cx: &mut TestAppContext) {
+        use std::ops::Bound;
+
+        let buffer1 = cx.new(|cx| Buffer::local("buffer 1\n", cx));
+        let buffer2 = cx.new(|cx| Buffer::local("buffer 2\n", cx));
+        let multibuffer = cx.new(|cx| {
+            let mut mb = MultiBuffer::new(0, language::Capability::ReadWrite);
+            mb.push_excerpts(
+                buffer1,
+                [language::ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(1, 0),
+                    primary: None,
+                }],
+                cx,
+            );
+            mb.push_excerpts(
+                buffer2,
+                [language::ExcerptRange {
+                    context: Point::new(0, 0)..Point::new(1, 0),
+                    primary: None,
+                }],
+                cx,
+            );
+            mb
+        });
+
+        let snapshot = multibuffer.read_with(cx, |mb, cx| mb.snapshot(cx));
+        let boundaries = snapshot
+            .excerpt_boundaries_in_range((
+                Bound::Excluded(MultiBufferOffset(0)),
+                Bound::Unbounded,
+            ))
+            .collect::<Vec<_>>();
+
+        assert_eq!(boundaries.len(), 1);
+        assert_eq!(boundaries[0].row, MultiBufferRow(1));
+    }
 }
 
 #[gpui::test]

@@ -5466,8 +5466,9 @@ impl MultiBufferSnapshot {
                 start_offset = start.to_offset(self);
                 Bound::Included(start_offset)
             }
-            Bound::Excluded(_) => {
-                panic!("not supported")
+            Bound::Excluded(start) => {
+                start_offset = start.to_offset(self);
+                Bound::Excluded(start_offset)
             }
             Bound::Unbounded => {
                 start_offset = MultiBufferOffset::ZERO;
