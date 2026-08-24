@@ -4549,16 +4549,6 @@ impl Thread {
                             .or_insert_with(|| {
                                 serde_json::json!({
                                     "type": "boolean",
-                                    "default": true,
-                                    "description": concat!(
-                                        "Whether the agent waits for this tool call's result ",
-                                        "before continuing (default true). Set to false for ",
-                                        "long-running work whose result is not needed for the ",
-                                        "current reasoning step: the tool keeps running ",
-                                        "independently, the call immediately returns an ",
-                                        "async_tool_call_id, and the real result is delivered ",
-                                        "later as a user message carrying the same id."
-                                    ),
                                 })
                             });
                     }
