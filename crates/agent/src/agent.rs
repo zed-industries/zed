@@ -1366,21 +1366,32 @@ impl NativeAgent {
             return;
         };
         let acp_thread = session.acp_thread.clone();
-        let response_stream = match thread.update(cx, |thread, cx| thread.send_existing(cx)) {
-            Ok(response_stream) => response_stream,
-            Err(error) => {
-                log::error!("Failed to start continuation turn: {error:?}");
-                return;
-            }
-        };
         let connection = Some(NativeAgentConnection(cx.entity()));
-        NativeAgentConnection::handle_thread_events(
-            response_stream,
-            acp_thread.downgrade(),
-            connection,
-            cx,
-        )
-        .detach_and_log_err(cx);
+        let turn = acp_thread.update(cx, |acp_thread, cx| {
+            // Run through the ACP thread's turn machinery so the session
+            // reports `Generating` while the continuation runs — otherwise
+            // the panel shows no activity and sends new user messages
+            // directly instead of queueing/steering them.
+            acp_thread.run_agent_initiated_turn(cx, async move |acp_thread, cx| {
+                // `run_turn` begins by cancelling any previous turn that is
+                // still unwinding; start the native continuation turn only
+                // afterwards, so that cancel lands while the native thread
+                // is idle rather than killing the continuation.
+                let response_stream = cx.update(|cx| {
+                    thread.update(cx, |thread, cx| thread.send_existing(cx))
+                })?;
+                cx.update(|cx| {
+                    NativeAgentConnection::handle_thread_events(
+                        response_stream,
+                        acp_thread,
+                        connection,
+                        cx,
+                    )
+                })
+                .await
+            })
+        });
+        cx.spawn(async move |_, _| turn.await).detach_and_log_err(cx);
     }
 
     fn handle_project_event(
@@ -6779,6 +6790,147 @@ mod internal_tests {
                 .to_string())
             })
         }
+    }
+
+    /// A non-blocking tool call that finishes while the session is idle
+    /// starts a continuation turn. The session must report `Generating` for
+    /// its duration, so the panel shows activity and queues/steers new
+    /// messages instead of sending them into the running turn blindly.
+    #[gpui::test]
+    async fn test_continuation_turn_marks_session_generating(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store
+                    .set_user_settings(
+                        &json!({
+                            "agent": {
+                                "default_profile": "test-profile",
+                                "profiles": {
+                                    "test-profile": {
+                                        "name": "Test Profile",
+                                        "tools": {
+                                            GatedEchoTool::NAME: true,
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                        cx,
+                    )
+                    .ok();
+            });
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider, cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        let (release_tx, release_rx) = oneshot::channel::<()>();
+        thread.update(cx, |thread, _cx| {
+            thread.add_tool(GatedEchoTool::new(release_rx));
+        });
+
+        // Run a turn whose non-blocking tool call stays in flight.
+        let send = acp_thread.update(cx, |thread, cx| {
+            thread.send(vec!["Run the tool".into()], cx)
+        });
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+            LanguageModelToolUse {
+                id: "gated_1".into(),
+                name: GatedEchoTool::NAME.into(),
+                raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+                input: language_model::LanguageModelToolUseInput::Json(
+                    json!({"text": "slow", "blocking": false}),
+                ),
+                is_input_complete: true,
+                thought_signature: None,
+            },
+        ));
+        model.end_last_completion_stream();
+        cx.run_until_parked();
+        model.send_last_completion_stream_text_chunk("Running in the background.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            acp_thread.read_with(cx, |thread, _| thread.status()),
+            acp_thread::ThreadStatus::Idle,
+        );
+
+        // The tool finishing while idle starts a continuation turn; the
+        // session must report Generating while it waits on the model.
+        release_tx.send(()).unwrap();
+        cx.run_until_parked();
+        assert!(
+            !model.pending_completions().is_empty(),
+            "the continuation turn should have requested a completion"
+        );
+        assert_eq!(
+            acp_thread.read_with(cx, |thread, _| thread.status()),
+            acp_thread::ThreadStatus::Generating,
+            "continuation turn should mark the session as generating"
+        );
+
+        // Answering the continuation ends the turn and returns to idle.
+        model.send_last_completion_stream_text_chunk("Done.");
+        model.send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(
+            StopReason::EndTurn,
+        ));
+        model.end_last_completion_stream();
+        cx.run_until_parked();
+        assert_eq!(
+            acp_thread.read_with(cx, |thread, _| thread.status()),
+            acp_thread::ThreadStatus::Idle,
+        );
     }
 
     /// Sets up a session whose non-blocking gated tool call is in flight,

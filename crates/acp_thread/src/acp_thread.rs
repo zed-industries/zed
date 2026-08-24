@@ -3782,6 +3782,20 @@ impl AcpThread {
         })
     }
 
+    /// Runs a turn that the agent itself initiated — e.g. delivering a
+    /// finished non-blocking tool call's result while the session was idle —
+    /// rather than one started by a user prompt. Going through `run_turn`
+    /// makes the session report `Generating` for the duration, so the UI
+    /// shows activity and queues/steers new messages instead of sending them
+    /// into a running turn blindly.
+    pub fn run_agent_initiated_turn(
+        &mut self,
+        cx: &mut Context<Self>,
+        f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        self.run_turn(cx, f)
+    }
+
     fn run_turn(
         &mut self,
         cx: &mut Context<Self>,
