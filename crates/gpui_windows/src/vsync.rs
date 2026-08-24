@@ -38,12 +38,7 @@ struct FrameRequestState {
     closed: AtomicBool,
 }
 
-struct FrameRequest {
-    hwnd: SafeHwnd,
-    state: Arc<FrameRequestState>,
-}
-
-pub(crate) struct RequestedWindow {
+pub(crate) struct FrameRequest {
     hwnd: SafeHwnd,
     state: Arc<FrameRequestState>,
 }
@@ -94,7 +89,7 @@ impl FrameRequester {
     }
 }
 
-impl RequestedWindow {
+impl FrameRequest {
     pub(crate) fn hwnd_if_open(&self) -> Option<SafeHwnd> {
         (!self.state.closed.load(Ordering::Acquire)).then_some(self.hwnd)
     }
@@ -111,7 +106,7 @@ impl FrameRequestReceiver {
         }
     }
 
-    pub(crate) fn take_requested_windows(&mut self) -> SmallVec<[RequestedWindow; 4]> {
+    pub(crate) fn take_requested_windows(&mut self) -> SmallVec<[FrameRequest; 4]> {
         let requests = self
             .first_request
             .take()
@@ -123,10 +118,7 @@ impl FrameRequestReceiver {
                 if request.state.closed.load(Ordering::Acquire) {
                     return None;
                 }
-                Some(RequestedWindow {
-                    hwnd: request.hwnd,
-                    state: request.state,
-                })
+                Some(request)
             })
             .collect()
     }
