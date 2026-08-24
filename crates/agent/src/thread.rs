@@ -8398,6 +8398,7 @@ mod tests {
             Some("cyber_policy".to_string()),
             "This content was flagged as potentially violating our terms of use.".to_string(),
             None,
+            language_model::ProviderErrorCategory::Other,
         );
         let LanguageModelCompletionError::ProviderRejection {
             category,
@@ -8439,6 +8440,7 @@ mod tests {
             Some("rate_limit_error".to_string()),
             "Rate limit exceeded".to_string(),
             None,
+            language_model::ProviderErrorCategory::RateLimit,
         );
 
         assert_eq!(

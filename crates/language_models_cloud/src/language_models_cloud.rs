@@ -24,8 +24,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
-    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter,
+    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -223,6 +223,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
                 "payment required to use this language model; please upgrade your account"
                     .to_string(),
                 None,
+                ProviderErrorCategory::PaymentRequired,
             ));
         }
 
@@ -379,21 +380,27 @@ impl From<ApiError> for LanguageModelCompletionError {
                         .unwrap_or(error.status)
                 };
 
+                let category =
+                    ProviderErrorCategory::from_http_status(status, &cloud_error.message);
                 return LanguageModelCompletionError::from_provider_response(
                     PROVIDER_NAME,
                     Some(status),
                     Some(cloud_error.code),
                     cloud_error.message,
                     cloud_error.retry_after.map(Duration::from_secs_f64),
+                    category,
                 );
             }
 
+            let category =
+                ProviderErrorCategory::from_http_status(error.status, &cloud_error.message);
             return LanguageModelCompletionError::from_provider_response(
                 PROVIDER_NAME,
                 Some(error.status),
                 Some(cloud_error.code),
                 cloud_error.message,
                 None,
+                category,
             );
         }
 

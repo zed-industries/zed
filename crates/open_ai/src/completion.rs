@@ -6,8 +6,8 @@ use language_model_core::{
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
     LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
-    StopReason, TokenUsage, provider_name_for_id,
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
     util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
@@ -1283,6 +1283,7 @@ impl OpenAiResponseEventMapper {
                     Some("response.failed".to_string()),
                     response_failure_message(&response),
                     None,
+                    ProviderErrorCategory::Other,
                 ))],
             },
             ResponsesStreamEvent::Error { error } => {
@@ -1627,12 +1628,32 @@ fn completion_error_from_response_error(
     error: &ResponseError,
     provider: language_model_core::LanguageModelProviderName,
 ) -> LanguageModelCompletionError {
+    let category = match error.code.as_deref() {
+        Some("context_length_exceeded" | "request_too_large") => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        Some("invalid_encrypted_content") => ProviderErrorCategory::InvalidEncryptedContent,
+        Some("invalid_request_error") => ProviderErrorCategory::InvalidRequest,
+        Some("authentication_error") => ProviderErrorCategory::Authentication,
+        Some("billing_error" | "payment_required_error") => ProviderErrorCategory::PaymentRequired,
+        Some("permission_error") => ProviderErrorCategory::Permission,
+        Some("not_found_error") => ProviderErrorCategory::EndpointNotFound,
+        Some("conflict_error") => ProviderErrorCategory::Conflict,
+        Some("rate_limit_error" | "rate_limit_exceeded") => ProviderErrorCategory::RateLimit,
+        Some("timeout_error" | "request_timed_out") => ProviderErrorCategory::Timeout,
+        Some("api_error" | "internal_server_error" | "server_error") => {
+            ProviderErrorCategory::InternalServer
+        }
+        Some("overloaded_error") => ProviderErrorCategory::Overloaded,
+        Some(_) | None => ProviderErrorCategory::Other,
+    };
     LanguageModelCompletionError::from_provider_response(
         provider,
         None,
         error.code.clone(),
         error.message.clone(),
         None,
+        category,
     )
 }
 

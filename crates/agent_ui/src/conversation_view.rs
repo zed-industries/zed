@@ -3727,6 +3727,7 @@ pub(crate) mod tests {
             Some("cyber_policy".to_string()),
             "This content was flagged as potentially violating our terms of use.".to_string(),
             None,
+            ProviderErrorCategory::Other,
         );
 
         let error = ThreadError::from(anyhow!(provider_error));

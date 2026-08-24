@@ -45,8 +45,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role,
-    SubPageProviderSettings, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderErrorCategory, ProviderSettingsView, RateLimiter,
+    Role, SubPageProviderSettings, TokenUsage, env_var,
 };
 use open_ai::responses::Request as OpenAiResponseRequest;
 use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
@@ -983,56 +983,62 @@ impl LanguageModel for BedrockModel {
                     if msg.contains("model identifier is invalid") {
                         LanguageModelCompletionError::from_provider_response(
                             PROVIDER_NAME,
-                            Some(http_client::StatusCode::BAD_REQUEST),
+                            None,
                             Some("ValidationException".to_string()),
                             format!(
                                 "{display_name} is not available in {region}. \
                                  Try switching to a region where this model is supported."
                             ),
                             None,
+                            ProviderErrorCategory::InvalidRequest,
                         )
                     } else {
                         LanguageModelCompletionError::from_provider_response(
                             PROVIDER_NAME,
-                            Some(http_client::StatusCode::BAD_REQUEST),
+                            None,
                             Some("ValidationException".to_string()),
                             msg.clone(),
                             None,
+                            ProviderErrorCategory::InvalidRequest,
                         )
                     }
                 }
                 BedrockError::RateLimited => LanguageModelCompletionError::from_provider_response(
                     PROVIDER_NAME,
-                    Some(http_client::StatusCode::TOO_MANY_REQUESTS),
+                    None,
                     Some("ThrottlingException".to_string()),
                     "Bedrock request was throttled".to_string(),
                     None,
+                    ProviderErrorCategory::RateLimit,
                 ),
                 BedrockError::ServiceUnavailable => {
                     LanguageModelCompletionError::from_provider_response(
                         PROVIDER_NAME,
-                        Some(http_client::StatusCode::SERVICE_UNAVAILABLE),
+                        None,
                         Some("ServiceUnavailableException".to_string()),
                         "Bedrock service is temporarily unavailable".to_string(),
                         None,
+                        ProviderErrorCategory::Overloaded,
                     )
                 }
                 BedrockError::AccessDenied(msg) => {
                     LanguageModelCompletionError::from_provider_response(
                         PROVIDER_NAME,
-                        Some(http_client::StatusCode::FORBIDDEN),
+                        None,
                         Some("AccessDeniedException".to_string()),
                         msg,
                         None,
+                        ProviderErrorCategory::Permission,
                     )
                 }
                 BedrockError::InternalServer(msg) => {
                     LanguageModelCompletionError::from_provider_response(
                         PROVIDER_NAME,
-                        Some(http_client::StatusCode::INTERNAL_SERVER_ERROR),
+                        None,
                         Some("InternalServerException".to_string()),
                         msg,
                         None,
+                        ProviderErrorCategory::InternalServer,
                     )
                 }
                 other => LanguageModelCompletionError::Other(anyhow!(other)),
@@ -1116,6 +1122,7 @@ fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCo
                 model.display_name()
             ),
             None,
+            ProviderErrorCategory::Permission,
         );
     }
     error.into()

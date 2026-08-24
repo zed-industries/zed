@@ -514,7 +514,7 @@ pub async fn stream_completion(
                 Ok(ResponseStreamResult::Response(response)) => Some(Ok(response)),
                 Ok(ResponseStreamResult::Error(OpenRouterErrorResponse { error })) => {
                     Some(Err(OpenRouterError::ApiError(ApiError {
-                        status: error.code,
+                        status: None,
                         code: error.code,
                         message: error.message,
                         retry_after: None,
@@ -633,7 +633,7 @@ pub async fn list_models(
         };
 
         Err(OpenRouterError::ApiError(ApiError {
-            status: status.as_u16(),
+            status: Some(status.as_u16()),
             code: error_response.code,
             message: error_response.message,
             retry_after: retry_after_with_rate_limit_default(status, response.headers()),
@@ -682,7 +682,7 @@ impl OpenRouterError {
             },
         };
         Self::ApiError(ApiError {
-            status: status_code.as_u16(),
+            status: Some(status_code.as_u16()),
             code: error_response.code,
             message: error_response.message,
             retry_after: retry_after_with_rate_limit_default(status_code, &headers),
@@ -716,11 +716,12 @@ pub struct OpenRouterErrorResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
-#[error("OpenRouter API Error: {status}: {message}")]
+#[error("OpenRouter API Error: {code}: {message}")]
 pub struct ApiError {
     /// The HTTP status remains distinct from the provider's numeric error code
-    /// because OpenRouter can report different values for them.
-    pub status: u16,
+    /// because OpenRouter can report different values for them, and streaming
+    /// errors do not have their own HTTP response.
+    pub status: Option<u16>,
     pub code: u16,
     pub message: String,
     pub retry_after: Option<Duration>,
@@ -750,13 +751,27 @@ impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError
 
 impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
+        use language_model_core::ProviderErrorCategory;
+
         let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
+        let status = error
+            .status
+            .and_then(|status| http_client::StatusCode::from_u16(status).ok());
+        let category = http_client::StatusCode::from_u16(error.code)
+            .ok()
+            .map(|status| ProviderErrorCategory::from_http_status(status, &error.message))
+            .filter(|category| *category != ProviderErrorCategory::Other)
+            .or_else(|| {
+                status.map(|status| ProviderErrorCategory::from_http_status(status, &error.message))
+            })
+            .unwrap_or(ProviderErrorCategory::Other);
         Self::from_provider_response(
             provider,
-            http_client::StatusCode::from_u16(error.status).ok(),
+            status,
             Some(error.code.to_string()),
             error.message,
             error.retry_after,
+            category,
         )
     }
 }
@@ -870,7 +885,7 @@ mod tests {
         let OpenRouterError::ApiError(api_error) = &error else {
             panic!("expected ApiError, got {error:?}");
         };
-        assert_eq!(api_error.status, 500);
+        assert_eq!(api_error.status, Some(500));
         assert_eq!(api_error.code, 499);
 
         let completion_error = language_model_core::LanguageModelCompletionError::from(error);
@@ -882,6 +897,26 @@ mod tests {
                 category: language_model_core::ProviderErrorCategory::InternalServer,
                 ..
             } if status == http_client::StatusCode::INTERNAL_SERVER_ERROR && code == "499"
+        ));
+    }
+
+    #[test]
+    fn streaming_provider_code_does_not_become_http_status() {
+        let completion_error = language_model_core::LanguageModelCompletionError::from(ApiError {
+            status: None,
+            code: 402,
+            message: "Insufficient credits".to_string(),
+            retry_after: None,
+        });
+
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                status: None,
+                code: Some(code),
+                category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "402"
         ));
     }
 }

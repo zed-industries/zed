@@ -452,14 +452,19 @@ async fn handle_error_response(
     mut response: http::Response<AsyncBody>,
     rate_limits: RateLimitInfo,
 ) -> AnthropicError {
-    if response.status().as_u16() == 529 {
+    let status = response.status();
+    if status.as_u16() == 529 {
         return AnthropicError::ServerOverloaded {
+            status,
             retry_after: rate_limits.retry_after,
         };
     }
 
     if let Some(retry_after) = rate_limits.retry_after {
-        return AnthropicError::RateLimit { retry_after };
+        return AnthropicError::RateLimit {
+            status,
+            retry_after,
+        };
     }
 
     let mut body = String::new();
@@ -474,9 +479,12 @@ async fn handle_error_response(
     }
 
     match serde_json::from_str::<Event>(&body) {
-        Ok(Event::Error { error }) => AnthropicError::ApiError(error),
+        Ok(Event::Error { error }) => AnthropicError::ApiError {
+            status: Some(status),
+            error,
+        },
         Ok(_) | Err(_) => AnthropicError::HttpResponseError {
-            status_code: response.status(),
+            status_code: status,
             message: body,
         },
     }
@@ -1096,13 +1104,22 @@ pub enum AnthropicError {
     },
 
     /// Rate limit exceeded
-    RateLimit { retry_after: Duration },
+    RateLimit {
+        status: StatusCode,
+        retry_after: Duration,
+    },
 
     /// Server overloaded
-    ServerOverloaded { retry_after: Option<Duration> },
+    ServerOverloaded {
+        status: StatusCode,
+        retry_after: Option<Duration>,
+    },
 
     /// API returned an error response
-    ApiError(ApiError),
+    ApiError {
+        status: Option<StatusCode>,
+        error: ApiError,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
@@ -1213,28 +1230,36 @@ pub fn completion_error_from_anthropic(
             status_code,
             message,
         } => Error::from_http_status(provider, status_code, message, None),
-        AnthropicError::RateLimit { retry_after } => {
+        AnthropicError::RateLimit {
+            status,
+            retry_after,
+        } => {
             let message = format!("{provider}'s API rate limit exceeded");
             Error::from_provider_response(
                 provider,
-                Some(StatusCode::TOO_MANY_REQUESTS),
+                Some(status),
                 None,
                 message,
                 Some(retry_after),
+                language_model_core::ProviderErrorCategory::RateLimit,
             )
         }
-        AnthropicError::ServerOverloaded { retry_after } => {
+        AnthropicError::ServerOverloaded {
+            status,
+            retry_after,
+        } => {
             let message = format!("{provider}'s API servers are overloaded right now");
             Error::from_provider_response(
                 provider,
-                StatusCode::from_u16(529).ok(),
+                Some(status),
                 None,
                 message,
                 retry_after,
+                language_model_core::ProviderErrorCategory::Overloaded,
             )
         }
-        AnthropicError::ApiError(api_error) => {
-            completion_error_from_anthropic_api(api_error, provider)
+        AnthropicError::ApiError { status, error } => {
+            completion_error_from_anthropic_api_with_status(error, provider, status)
         }
     }
 }
@@ -1243,27 +1268,46 @@ pub fn completion_error_from_anthropic_api(
     error: ApiError,
     provider: language_model_core::LanguageModelProviderName,
 ) -> language_model_core::LanguageModelCompletionError {
+    completion_error_from_anthropic_api_with_status(error, provider, None)
+}
+
+fn completion_error_from_anthropic_api_with_status(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+    status: Option<StatusCode>,
+) -> language_model_core::LanguageModelCompletionError {
     use ApiErrorCode::*;
     use language_model_core::LanguageModelCompletionError as Error;
-    let status = error.code().and_then(|code| match code {
-        InvalidRequestError => Some(StatusCode::BAD_REQUEST),
-        AuthenticationError => Some(StatusCode::UNAUTHORIZED),
-        BillingError => Some(StatusCode::PAYMENT_REQUIRED),
-        PermissionError => Some(StatusCode::FORBIDDEN),
-        NotFoundError => Some(StatusCode::NOT_FOUND),
-        ConflictError => Some(StatusCode::CONFLICT),
-        RequestTooLarge => Some(StatusCode::PAYLOAD_TOO_LARGE),
-        RateLimitError => Some(StatusCode::TOO_MANY_REQUESTS),
-        TimeoutError => Some(StatusCode::GATEWAY_TIMEOUT),
-        ApiError => Some(StatusCode::INTERNAL_SERVER_ERROR),
-        OverloadedError => StatusCode::from_u16(529).ok(),
-    });
+    use language_model_core::ProviderErrorCategory;
+    let category = match error.code() {
+        Some(InvalidRequestError) => {
+            if let Some(tokens) = parse_prompt_too_long(&error.message) {
+                ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(tokens),
+                }
+            } else {
+                ProviderErrorCategory::InvalidRequest
+            }
+        }
+        Some(AuthenticationError) => ProviderErrorCategory::Authentication,
+        Some(BillingError) => ProviderErrorCategory::PaymentRequired,
+        Some(PermissionError) => ProviderErrorCategory::Permission,
+        Some(NotFoundError) => ProviderErrorCategory::EndpointNotFound,
+        Some(ConflictError) => ProviderErrorCategory::Conflict,
+        Some(RequestTooLarge) => ProviderErrorCategory::PromptTooLarge { tokens: None },
+        Some(RateLimitError) => ProviderErrorCategory::RateLimit,
+        Some(TimeoutError) => ProviderErrorCategory::Timeout,
+        Some(ApiError) => ProviderErrorCategory::InternalServer,
+        Some(OverloadedError) => ProviderErrorCategory::Overloaded,
+        None => ProviderErrorCategory::Other,
+    };
     Error::from_provider_response(
         provider,
         status,
         Some(error.error_type),
         error.message,
         None,
+        category,
     )
 }
 
@@ -1293,10 +1337,13 @@ mod tests {
 
         assert!(matches!(
             error,
-            AnthropicError::ApiError(ApiError {
-                error_type,
-                message,
-            }) if error_type == "authentication_error" && message == "invalid x-api-key"
+            AnthropicError::ApiError {
+                status: Some(StatusCode::UNAUTHORIZED),
+                error: ApiError {
+                    error_type,
+                    message,
+                },
+            } if error_type == "authentication_error" && message == "invalid x-api-key"
         ));
     }
 

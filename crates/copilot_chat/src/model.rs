@@ -22,8 +22,8 @@ use language_model::{
     LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderErrorCategory,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
 use util::debug_panic;
 
@@ -674,33 +674,36 @@ impl CopilotResponsesEventMapper {
             }
 
             copilot_responses::StreamEvent::Failed { response } => {
-                let (status, code, message) = match response.error {
+                let (code, message, category) = match response.error {
                     Some(error) => {
-                        let status = StatusCode::from_str(&error.code).ok();
-                        (status, Some(error.code), error.message)
+                        let category = category_from_copilot_error(&error.code, &error.message);
+                        (Some(error.code), error.message, category)
                     }
                     None => (
-                        None,
                         Some("response.failed".to_string()),
                         "response.failed".to_string(),
+                        ProviderErrorCategory::Other,
                     ),
                 };
                 vec![Err(LanguageModelCompletionError::from_provider_response(
                     PROVIDER_NAME,
-                    status,
+                    None,
                     code,
                     message,
                     None,
+                    category,
                 ))]
             }
 
             copilot_responses::StreamEvent::GenericError { error } => {
+                let category = category_from_copilot_error(&error.code, &error.message);
                 vec![Err(LanguageModelCompletionError::from_provider_response(
                     PROVIDER_NAME,
                     None,
                     Some(error.code),
                     error.message,
                     None,
+                    category,
                 ))]
             }
 
@@ -743,6 +746,13 @@ impl CopilotResponsesEventMapper {
             Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
         }
     }
+}
+
+fn category_from_copilot_error(code: &str, message: &str) -> ProviderErrorCategory {
+    StatusCode::from_str(code)
+        .ok()
+        .map(|status| ProviderErrorCategory::from_http_status(status, message))
+        .unwrap_or(ProviderErrorCategory::Other)
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
