@@ -264,6 +264,7 @@ impl WindowsWindowInner {
             self.state
                 .invalidate_devices
                 .store(true, std::sync::atomic::Ordering::Release);
+            // Wake the demand-driven VSync thread so it can recreate the devices.
             self.state.frame_requester.request();
         }
         if let Some(mut callback) = self.state.callbacks.resize.take() {

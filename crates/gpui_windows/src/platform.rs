@@ -46,7 +46,7 @@ pub struct WindowsPlatform {
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
     frame_request_sender: FrameRequestSender,
-    frame_request_receiver: RefCell<Option<FrameRequestReceiver>>,
+    frame_request_receiver: Cell<Option<FrameRequestReceiver>>,
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
@@ -212,7 +212,7 @@ impl WindowsPlatform {
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
             frame_request_sender,
-            frame_request_receiver: RefCell::new(Some(frame_request_receiver)),
+            frame_request_receiver: Cell::new(Some(frame_request_receiver)),
             app_identity: RefCell::new(None),
             system_notifications: RefCell::new(SystemNotificationState::new()),
         })
@@ -328,8 +328,7 @@ impl WindowsPlatform {
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
-        let Some(mut frame_request_receiver) = self.frame_request_receiver.borrow_mut().take()
-        else {
+        let Some(mut frame_request_receiver) = self.frame_request_receiver.take() else {
             log::error!("VSync thread already started");
             return;
         };
