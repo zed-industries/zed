@@ -3082,6 +3082,12 @@ impl Window {
         self.refresh();
     }
 
+    /// Returns the debug frame overlay's recorded draw times.
+    #[cfg(feature = "profiler")]
+    pub fn debug_frame_overlay_stats(&self) -> crate::DebugFrameOverlayStats {
+        self.debug_frame_overlay.stats()
+    }
+
     fn draw_roots(&mut self, cx: &mut App) {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
