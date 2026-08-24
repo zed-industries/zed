@@ -3908,7 +3908,15 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
+        let text_align = self.text_style().text_align;
+        self.modify_current_div(|el| {
+            let el = el.flex().flex_row().flex_wrap().items_start();
+            match text_align {
+                TextAlign::Left => el.justify_start(),
+                TextAlign::Center => el.justify_center(),
+                TextAlign::Right => el.justify_end(),
+            }
+        });
         self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
         self.append_child(child.into_any_element());
     }
@@ -5117,10 +5125,10 @@ impl InputHandler for MarkdownInputHandler {
 mod tests {
     use super::*;
     use gpui::{
-        Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout,
-        Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage, ScrollDelta,
-        ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode, TouchPhase,
-        UpdateGlobal, VisualTestContext, size,
+        Background, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, JustifyContent,
+        LineLayout, Modifiers, NoopTextSystem, PlatformTextSystem, RenderGlyphParams, RenderImage,
+        ScrollDelta, ScrollWheelEvent, Size, TestAppContext, TestDispatcher, TextRenderingMode,
+        TouchPhase, UpdateGlobal, VisualTestContext, size,
     };
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::borrow::Cow;
@@ -5275,6 +5283,51 @@ mod tests {
             .borrow()
             .clone()
             .expect("markdown should be rendered in the test view")
+    }
+
+    fn element_builder_with_text_align(text_align: TextAlign) -> MarkdownElementBuilder {
+        let base_text_style = TextStyle {
+            text_align,
+            ..Default::default()
+        };
+        MarkdownElementBuilder::new(
+            &StyleRefinement::default(),
+            base_text_style,
+            Arc::new(SyntaxTheme::default()),
+            MarkdownHighlights {
+                search_highlights: Rc::from(Vec::<Range<usize>>::new()),
+                active_search_highlight: None,
+                search_match_color: Hsla::default(),
+                active_search_match_color: Hsla::default(),
+                selection: None,
+                next_search_highlight_ix: 0,
+            },
+            Arc::new(CodeBlockHighlights::default()),
+        )
+    }
+
+    #[test]
+    fn test_image_child_container_follows_text_align() {
+        for (text_align, expected) in [
+            (TextAlign::Left, JustifyContent::Start),
+            (TextAlign::Center, JustifyContent::Center),
+            (TextAlign::Right, JustifyContent::End),
+        ] {
+            let mut builder = element_builder_with_text_align(text_align);
+            builder.push_image_child(div());
+
+            assert_eq!(
+                builder
+                    .div_stack
+                    .last_mut()
+                    .expect("image child should have a container")
+                    .div
+                    .style()
+                    .justify_content,
+                Some(expected),
+                "{text_align:?} paragraph should justify its image container to match"
+            );
+        }
     }
 
     #[gpui::test]
