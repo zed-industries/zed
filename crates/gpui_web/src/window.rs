@@ -143,9 +143,6 @@ impl WebWindow {
             .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
             .dyn_into()
             .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
-        input_element
-            .set_attribute("data-gpui-input", "")
-            .map_err(|e| anyhow::anyhow!("Failed to identify the input element: {e:?}"))?;
         let input_style = input_element.style();
         input_style.set_property("position", "fixed").ok();
         input_style.set_property("top", "0").ok();

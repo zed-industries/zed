@@ -10,9 +10,7 @@
 //! [`PinchEvent`](crate::PinchEvent)s — so components written against
 //! `on_click` and scroll containers work untouched on mobile.
 
-use std::time::Duration;
-
-use web_time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::{Axis, IsZero, Pixels, Point, TouchPhase, px};
 

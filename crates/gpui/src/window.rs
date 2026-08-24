@@ -3082,12 +3082,6 @@ impl Window {
         self.refresh();
     }
 
-    #[cfg(feature = "profiler")]
-    #[allow(missing_docs)]
-    pub fn debug_frame_overlay_stats(&self) -> crate::DebugFrameOverlayStats {
-        self.debug_frame_overlay.stats()
-    }
-
     fn draw_roots(&mut self, cx: &mut App) {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
@@ -4881,26 +4875,6 @@ impl Window {
         self.invalidator.debug_assert_paint();
 
         self.next_frame.dispatch_tree.on_key_event(Rc::new(
-            move |event: &dyn Any, phase, window: &mut Window, cx: &mut App| {
-                if let Some(event) = event.downcast_ref::<Event>() {
-                    listener(event, phase, window, cx)
-                }
-            },
-        ));
-    }
-
-    /// Register a key event listener on the dispatch root for the next frame.
-    /// Unlike [`Window::on_key_event`], this listener receives events regardless
-    /// of which element has focus.
-    ///
-    /// This method should only be called as part of the paint phase of element drawing.
-    pub fn on_global_key_event<Event: KeyEvent>(
-        &mut self,
-        listener: impl Fn(&Event, DispatchPhase, &mut Window, &mut App) + 'static,
-    ) {
-        self.invalidator.debug_assert_paint();
-
-        self.next_frame.dispatch_tree.on_global_key_event(Rc::new(
             move |event: &dyn Any, phase, window: &mut Window, cx: &mut App| {
                 if let Some(event) = event.downcast_ref::<Event>() {
                     listener(event, phase, window, cx)
