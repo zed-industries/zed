@@ -183,7 +183,9 @@ impl RetryStrategy {
         }
         match self {
             RetryStrategy::ExponentialBackoff => (attempt <= MAX_RETRY_ATTEMPTS)
-                .then(|| error.retry_delay(attempt as usize, BASE_RETRY_DELAY, MAX_RETRY_DELAY))
+                .then(|| {
+                    error.retry_delay(attempt as usize, BASE_RETRY_DELAY, MAX_RETRY_DELAY, None)
+                })
                 .flatten(),
             RetryStrategy::FixedDelay {
                 delay,
@@ -4531,7 +4533,7 @@ impl Thread {
             // exponential backoff when it didn't.
             ProviderRejection { retry_after, .. } => {
                 if error
-                    .retry_delay(1, BASE_RETRY_DELAY, MAX_RETRY_DELAY)
+                    .retry_delay(1, BASE_RETRY_DELAY, MAX_RETRY_DELAY, None)
                     .is_none()
                 {
                     return None;
