@@ -80,6 +80,8 @@ pub fn render_rules_template(
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     handlebars.register_helper("contains", Box::new(contains_helper));
+    handlebars.register_helper("join", Box::new(join_helper));
+    handlebars.register_helper("array", Box::new(ArrayHelper));
     for (name, content) in partials {
         handlebars.register_partial(name, content.as_str())?;
     }
@@ -213,6 +215,70 @@ pub fn contains_helper(
     }
 
     Ok(())
+}
+
+/// Handlebars helper for joining a list into a string with a separator:
+/// `{{join available_tools ", "}}`. Elements render like `{{this}}` would
+/// render them. Also used by the built-in templates in the `agent` crate.
+pub fn join_helper(
+    h: &handlebars::Helper,
+    _: &handlebars::Handlebars,
+    _: &handlebars::Context,
+    _: &mut handlebars::RenderContext,
+    out: &mut dyn handlebars::Output,
+) -> handlebars::HelperResult {
+    let list = h
+        .param(0)
+        .and_then(|v| v.value().as_array())
+        .ok_or_else(|| {
+            handlebars::RenderError::from(RenderErrorReason::Other(
+                "join: missing or invalid list parameter".to_string(),
+            ))
+        })?;
+    let separator = h
+        .param(1)
+        .and_then(|v| v.value().as_str())
+        .ok_or_else(|| {
+            handlebars::RenderError::from(RenderErrorReason::Other(
+                "join: missing or invalid separator parameter".to_string(),
+            ))
+        })?;
+
+    use handlebars::JsonRender as _;
+    let joined = list
+        .iter()
+        .map(|value| value.render())
+        .collect::<Vec<_>>()
+        .join(separator);
+    out.write(&joined)?;
+
+    Ok(())
+}
+
+/// Handlebars helper that builds a JSON array from its parameters, letting
+/// templates construct a list inline: `{{join (array "a" "b") ", "}}` or
+/// `{{#if (contains (array "a" "b") "a")}}`. The crate has no array
+/// literal syntax, so this is the only way to define a list in place.
+///
+/// Implemented via `call_inner` (rather than writing to `Output`) so the
+/// result keeps its array type when used as a subexpression — output-writing
+/// helpers degrade to strings there. Also used by the built-in templates in
+/// the `agent` crate.
+#[derive(Clone, Copy)]
+pub struct ArrayHelper;
+
+impl handlebars::HelperDef for ArrayHelper {
+    fn call_inner<'reg: 'rc, 'rc>(
+        &self,
+        h: &handlebars::Helper<'rc>,
+        _: &'reg handlebars::Handlebars<'reg>,
+        _: &'rc handlebars::Context,
+        _: &mut handlebars::RenderContext<'reg, 'rc>,
+    ) -> Result<handlebars::ScopedJson<'rc>, RenderError> {
+        Ok(handlebars::ScopedJson::Derived(handlebars::JsonValue::Array(
+            h.params().iter().map(|param| param.value().clone()).collect(),
+        )))
+    }
 }
 
 /// In-memory state of the user-global `AGENTS.hbs` file.
@@ -454,4 +520,90 @@ fn validate_template(source: &str, partials: &BTreeMap<String, String>) -> anyho
         sandboxing: false,
     };
     render_rules_template(source, &partials, &probe).map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context(available_tools: &[SharedString]) -> RulesTemplateContext<'_> {
+        RulesTemplateContext {
+            available_tools,
+            model_name: None,
+            date: "",
+            is_linux: false,
+            is_windows: false,
+            is_macos: false,
+            sandboxing: false,
+        }
+    }
+
+    #[test]
+    fn test_join_helper() {
+        let tools = vec![SharedString::from("grep"), SharedString::from("read_file")];
+        let rendered = render_rules_template(
+            "{{join available_tools \", \"}}",
+            &BTreeMap::new(),
+            &context(&tools),
+        )
+        .unwrap();
+        assert_eq!(rendered, "grep, read_file");
+    }
+
+    #[test]
+    fn test_join_helper_empty_list() {
+        let rendered =
+            render_rules_template("{{join available_tools \", \"}}", &BTreeMap::new(), &context(&[]))
+                .unwrap();
+        assert_eq!(rendered, "");
+    }
+
+    #[test]
+    fn test_join_helper_invalid_parameters() {
+        let tools = vec![SharedString::from("grep")];
+        // Non-list first parameter.
+        assert!(
+            render_rules_template("{{join date \", \"}}", &BTreeMap::new(), &context(&tools))
+                .is_err()
+        );
+        // Missing separator.
+        assert!(
+            render_rules_template("{{join available_tools}}", &BTreeMap::new(), &context(&tools))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_array_helper_inline_list() {
+        let rendered = render_rules_template(
+            "{{join (array \"linux\" \"windows\" \"macos\") \" / \"}}",
+            &BTreeMap::new(),
+            &context(&[]),
+        )
+        .unwrap();
+        assert_eq!(rendered, "linux / windows / macos");
+    }
+
+    #[test]
+    fn test_array_helper_composes_with_contains() {
+        let rendered = render_rules_template(
+            "{{#if (contains (array \"grep\" \"read_file\") \"grep\")}}yes{{else}}no{{/if}}",
+            &BTreeMap::new(),
+            &context(&[]),
+        )
+        .unwrap();
+        assert_eq!(rendered, "yes");
+    }
+
+    #[test]
+    fn test_array_helper_mixed_with_context_values() {
+        let tools = vec![SharedString::from("grep")];
+        let rendered = render_rules_template(
+            "{{#each (array \"shell\" \"glob\")}}{{this}},{{/each}}{{#each available_tools}}{{this}}{{/each}}",
+            &BTreeMap::new(),
+            &context(&tools),
+        )
+        .unwrap();
+        assert_eq!(rendered, "shell,glob,grep");
+    }
 }

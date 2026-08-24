@@ -17,6 +17,8 @@ impl Templates {
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
         handlebars.register_helper("contains", Box::new(agent_settings::contains_helper));
+        handlebars.register_helper("join", Box::new(agent_settings::join_helper));
+        handlebars.register_helper("array", Box::new(agent_settings::ArrayHelper));
         handlebars.register_embed_templates::<Assets>().unwrap();
         Arc::new(Self(handlebars))
     }

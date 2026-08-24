@@ -22,11 +22,16 @@ Context variables:
   is_macos
   sandboxing        whether terminal commands run in the OS-level sandbox
 
-Zed registers one custom helper, `contains` (list, item):
+Zed registers three custom helpers: `contains` (list, item),
+`join` (list, separator), and `array` (items...) for building a list
+inline — the template language has no array literal syntax.
 
   {{#if (contains available_tools 'grep')}}
   Prefer the `grep` tool for content search.
   {{/if}}
+
+  Available tools: {{join available_tools ", "}}
+  Platforms: {{join (array "linux" "windows" "macos") " / "}}
 
 Partials (imports): `{{> agents_md}}` splices your `AGENTS.md` in place.
 Every other `*.hbs` file under this directory (recursively) is importable by
