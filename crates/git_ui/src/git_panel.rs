@@ -665,13 +665,6 @@ impl GitListEntry {
         }
     }
 
-    fn directory_entry(&self) -> Option<&GitTreeDirEntry> {
-        match self {
-            GitListEntry::Directory(entry) => Some(entry),
-            _ => None,
-        }
-    }
-
     /// Returns the tree indentation depth for this entry.
     fn depth(&self) -> usize {
         match self {
