@@ -200,7 +200,7 @@ pub trait Platform: 'static {
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>);
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
