@@ -55,7 +55,7 @@ use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions},
+    item::{Item, ItemBufferKind, ItemEvent, ItemHandle, SaveOptions},
     searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
@@ -433,12 +433,11 @@ impl ProjectSearch {
         workspace: Option<&Entity<Workspace>>,
         cx: &mut Context<Self>,
     ) {
-        let project = self.project.clone();
         let stale_buffer_ids = self
             .excerpts
             .read(cx)
             .all_buffers_iter()
-            .filter(|buffer| is_buffer_stale(&project, workspace, buffer, cx))
+            .filter(|buffer| is_buffer_stale(&self.project, workspace, buffer, cx))
             .map(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
@@ -593,39 +592,38 @@ async fn consume_search_stream(
         let mut new_ranges = project_search
             .update(cx, |project_search, cx| {
                 project_search.excerpts.update(cx, |excerpts, cx| {
-                    let workspace = project_search.workspace.upgrade();
-
                     buffers_with_ranges
                         .into_iter()
-                        .filter(|(buffer, _)| {
-                            !is_buffer_stale(
-                                &project_search.project,
-                                workspace.as_ref(),
-                                buffer,
-                                cx,
-                            )
-                        })
                         .map(|(buffer, ranges)| {
-                            excerpts.set_anchored_excerpts_for_path(
+                            let new_ranges = excerpts.set_anchored_excerpts_for_path(
                                 PathKey::for_buffer(&buffer, cx),
-                                buffer,
+                                buffer.clone(),
                                 ranges,
                                 multibuffer_context_lines(cx),
                                 cx,
-                            )
+                            );
+                            async move { (buffer, new_ranges.await) }
                         })
                         .collect::<FuturesOrdered<_>>()
                 })
             })
             .ok()?;
-        while let Some(new_ranges) = new_ranges.next().await {
+        while let Some((buffer, new_ranges)) = new_ranges.next().await {
             // `new_ranges.next().await` likely never gets hit while still pending so `async_task`
             // will not reschedule, starving other front end tasks, insert a yield point for that here
             smol::future::yield_now().await;
             project_search
                 .update(cx, |project_search, cx| {
-                    project_search.match_ranges.extend(new_ranges);
-                    cx.notify();
+                    let workspace = project_search.workspace.upgrade();
+                    if !is_buffer_stale(&project_search.project, workspace.as_ref(), &buffer, cx) {
+                        project_search.match_ranges.extend(new_ranges);
+                        cx.notify();
+                    } else {
+                        let buffer_id = buffer.read(cx).remote_id();
+                        project_search.excerpts.update(cx, |excerpts, cx| {
+                            excerpts.remove_excerpts_for_buffer(buffer_id, cx)
+                        });
+                    }
                 })
                 .ok()?;
         }
@@ -2842,26 +2840,19 @@ fn is_buffer_stale(
     buffer: &Entity<Buffer>,
     cx: &App,
 ) -> bool {
+    let buffer_entity_id = buffer.entity_id();
     let buffer = buffer.read(cx);
     if let Some(file) = buffer.file() {
         file.disk_state().is_deleted()
     } else if let Some(workspace) = workspace {
-        !workspace
+        !workspace.read(cx).items(cx).any(|item| {
+            item.buffer_kind(cx) == ItemBufferKind::Singleton
+                && item.project_item_model_ids(cx).contains(&buffer_entity_id)
+        }) && !project
             .read(cx)
-            .items_of_type::<Editor>(cx)
-            .any(|editor| {
-                editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .buffer(buffer.remote_id())
-                    .is_some()
-            })
-            && !project
-                .read(cx)
-                .buffer_store()
-                .read(cx)
-                .is_shared(buffer.remote_id(), cx)
+            .buffer_store()
+            .read(cx)
+            .is_shared(buffer.remote_id(), cx)
     } else {
         false
     }
@@ -3426,12 +3417,14 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
+                assert_eq!(
                     results_text.contains("const TWO"),
+                    true,
                     "Open untitled buffer should appear in results, got: {results_text}"
                 );
-                assert!(
+                assert_eq!(
                     results_text.contains("const ONE"),
+                    true,
                     "File result should be present, got: {results_text}"
                 );
             })
@@ -3453,12 +3446,14 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    !results_text.contains("const TWO"),
+                assert_eq!(
+                    results_text.contains("const TWO"),
+                    false,
                     "Closed untitled buffer should be removed from results, got: {results_text}"
                 );
-                assert!(
+                assert_eq!(
                     results_text.contains("const ONE"),
+                    true,
                     "File result should still be present, got: {results_text}"
                 );
             })
@@ -3472,12 +3467,14 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    !results_text.contains("const TWO"),
+                assert_eq!(
+                    results_text.contains("const TWO"),
+                    false,
                     "Closed untitled buffer should not reappear after re-search, got: {results_text}"
                 );
-                assert!(
+                assert_eq!(
                     results_text.contains("const ONE"),
+                    true,
                     "File result should still be found, got: {results_text}"
                 );
             })
@@ -3539,8 +3536,9 @@ pub mod tests {
                         untitled_expected,
                         "Peer-shared untitled buffer result mismatch, got: {results_text}"
                     );
-                    assert!(
+                    assert_eq!(
                         results_text.contains("const ONE"),
+                        true,
                         "File result should be present, got: {results_text}"
                     );
                 })
