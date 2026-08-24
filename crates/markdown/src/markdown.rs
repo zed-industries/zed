@@ -347,38 +347,58 @@ impl MarkdownStyle {
     }
 
     fn with_preview_overrides(mut self, colors: &theme::ThemeColors) -> Self {
-        let body_font_size = rems(0.92);
+        let body_font_size = rems(1.0);
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
 
-        self.base_text_style.color = colors.text_muted.blend(colors.text.opacity(0.25));
-        self.inline_code.color = Some(colors.text);
-        self.heading.text.color = Some(colors.text);
+        self.base_text_style.color = colors.text;
+        self.base_text_style.line_height = relative(1.5);
+        self.paragraph_spacing = px(16.);
+        self.paragraph_line_height = relative(1.5);
+        self.list_spacing = px(12.);
+        self.table_cell_padding = point(px(10.), px(4.));
 
+        self.inline_code.color = Some(colors.text);
+        self.inline_code.font_size = Some(rems(0.875).into());
+        self.inline_code_corner_radius = px(4.);
+
+        self.link.background_color = None;
+
+        self.block_quote.color = Some(colors.text_muted);
+
+        self.code_block.padding = EdgesRefinement {
+            top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+            left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+            right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+            bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+        };
+        self.code_block.margin.top = Some(Length::Definite(px(16.).into()));
+        self.code_block.margin.bottom = Some(Length::Definite(px(16.).into()));
+        let code_block_corner_radius = AbsoluteLength::Pixels(px(6.));
+        self.code_block.corner_radii.top_left = Some(code_block_corner_radius);
+        self.code_block.corner_radii.top_right = Some(code_block_corner_radius);
+        self.code_block.corner_radii.bottom_left = Some(code_block_corner_radius);
+        self.code_block.corner_radii.bottom_right = Some(code_block_corner_radius);
+
+        self.heading.text.color = Some(colors.text);
+        self.heading.margin.top = Some(Length::Definite(px(24.).into()));
+        self.heading.margin.bottom = Some(Length::Definite(px(12.).into()));
+
+        let heading_text_style = |font_size: Rems| TextStyleRefinement {
+            font_size: Some(font_size.into()),
+            font_weight: Some(FontWeight::SEMIBOLD),
+            line_height: Some(relative(1.25)),
+            ..Default::default()
+        };
         self.heading_level_styles = Some(HeadingLevelStyles {
-            h1: Some(TextStyleRefinement {
-                font_size: Some(rems(1.45).into()),
-                ..Default::default()
-            }),
-            h2: Some(TextStyleRefinement {
-                font_size: Some(rems(1.3).into()),
-                ..Default::default()
-            }),
-            h3: Some(TextStyleRefinement {
-                font_size: Some(rems(1.1).into()),
-                ..Default::default()
-            }),
-            h4: Some(TextStyleRefinement {
-                font_size: Some(rems(1.01).into()),
-                ..Default::default()
-            }),
-            h5: Some(TextStyleRefinement {
-                font_size: Some(rems(0.95).into()),
-                ..Default::default()
-            }),
+            h1: Some(heading_text_style(rems(1.75))),
+            h2: Some(heading_text_style(rems(1.4))),
+            h3: Some(heading_text_style(rems(1.2))),
+            h4: Some(heading_text_style(rems(1.0))),
+            h5: Some(heading_text_style(rems(0.875))),
             h6: Some(TextStyleRefinement {
-                font_size: Some(rems(0.85).into()),
-                ..Default::default()
+                color: Some(colors.text_muted),
+                ..heading_text_style(rems(0.85))
             }),
         });
 
@@ -3317,15 +3337,16 @@ fn apply_heading_style(
         _ => heading.mt_6(),
     };
 
-    if let Some(border_color) = border_color
-        && matches!(
-            level,
-            pulldown_cmark::HeadingLevel::H1
-                | pulldown_cmark::HeadingLevel::H2
-                | pulldown_cmark::HeadingLevel::H3
-        )
-    {
-        heading = heading.pb_1().border_b_1().border_color(border_color);
+    if let Some(border_color) = border_color {
+        heading = match level {
+            pulldown_cmark::HeadingLevel::H1 => {
+                heading.pb_2().border_b_1().border_color(border_color)
+            }
+            pulldown_cmark::HeadingLevel::H2 => {
+                heading.pb_1().border_b_1().border_color(border_color)
+            }
+            _ => heading,
+        };
     }
 
     if let Some(styles) = custom_styles {
