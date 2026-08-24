@@ -2187,31 +2187,32 @@ fn test_fold_at_level_chain_fold(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.fold_at_level(&FoldAtLevel(1), window, cx);
-        println!("{}", editor.display_text(cx));
-        assert_eq!(
-            editor.display_text(cx),
-            "
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
                 fn foo(⋯) {⋯}
             "
-            .unindent(),
-        );
+                .unindent(),
+            );
 
-        editor.unfold_all(&UnfoldAll, window, cx);
-        editor.fold_at_level(&FoldAtLevel(2), window, cx);
-        assert_eq!(
-            editor.display_text(cx),
-            "
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
                 fn foo(
                     a: i32,
                 ) {
                     if true {⋯} else {⋯}
                 }
             "
-            .unindent(),
-        );
-    });
+                .unindent(),
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -2223,25 +2224,27 @@ fn test_fold_at_level_with_single_row_crease(cx: &mut TestAppContext) {
         build_editor(buffer, window, cx)
     });
 
-    _ = editor.update(cx, |editor, window, cx| {
-        let snapshot = editor.buffer().read(cx).snapshot(cx);
-        let range =
-            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
 
-        editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
+            editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
 
-        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
 
-        assert_eq!(
-            editor.display_text(cx),
-            "
+            assert_eq!(
+                editor.display_text(cx),
+                "
                 aaaaaa
                 ⋯ and more
                 cccccc
             "
-            .unindent(),
-        );
-    });
+                .unindent(),
+            );
+        })
+        .unwrap();
 }
 
 #[gpui::test]
