@@ -1740,6 +1740,7 @@ fn open_about_window(cx: &mut App) {
             is_minimizable: false,
             kind: WindowKind::Floating,
             app_id: Some(ReleaseChannel::global(cx).app_id().to_owned()),
+f            window_background: cx.theme().window_background_appearance(),
             ..Default::default()
         },
         |window, cx| {
