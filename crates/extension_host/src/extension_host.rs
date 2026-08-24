@@ -146,7 +146,7 @@ pub struct ExtensionStore {
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
     pub remote_clients: Vec<WeakEntity<RemoteClient>>,
-    pub ssh_registered_tx: UnboundedSender<()>,
+    pub ssh_registered_tx: UnboundedSender<Option<WeakEntity<RemoteClient>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -432,8 +432,17 @@ impl ExtensionStore {
 
                             Self::update_remote_clients(&this, cx).await?;
                         }
-                        _ = connection_registered_rx.next() => {
-                            debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
+                        client = connection_registered_rx.next() => {
+                            match client {
+                                Some(Some(client)) => {
+                                    Self::sync_extensions_to_remotes(&this, client, cx)
+                                        .await
+                                        .log_err();
+                                }
+                                _ => {
+                                    debounce_timer = cx.background_executor().timer(RELOAD_DEBOUNCE_DURATION).fuse()
+                                }
+                            }
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
@@ -1968,18 +1977,14 @@ impl ExtensionStore {
 
     pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
         self.remote_clients.push(client.downgrade());
+        self.ssh_registered_tx
+            .unbounded_send(Some(client.downgrade()))
+            .ok();
 
-        cx.subscribe(&client, |this, _client, event, _cx| {
+        cx.subscribe(&client, |store, _client, event, _cx| {
             if matches!(event, RemoteClientEvent::Reconnected) {
-                this.ssh_registered_tx.unbounded_send(()).ok();
+                store.ssh_registered_tx.unbounded_send(None).ok();
             }
-        })
-        .detach();
-
-        cx.spawn(async move |this, cx| {
-            Self::sync_extensions_to_remotes(&this, client.downgrade(), cx)
-                .await
-                .log_err();
         })
         .detach();
     }

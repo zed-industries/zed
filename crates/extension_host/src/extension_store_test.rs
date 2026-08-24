@@ -4,11 +4,12 @@ use crate::{
     RELOAD_DEBOUNCE_DURATION, SchemaVersion, load_plugin_queries,
 };
 use async_compression::futures::bufread::GzipEncoder;
+use client::{AnyProtoClient, TypedEnvelope, proto};
 use collections::{BTreeMap, HashSet};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, BackgroundExecutor, TaskExt, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, Entity, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles};
 use language_extension::LspAccess;
@@ -17,13 +18,17 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::{DEFAULT_COMPLETION_CONTEXT, Project};
 use release_channel::AppVersion;
+use remote::{RemoteClient, RemoteClientEvent, RemoteConnectionOptions};
 use reqwest_client::ReqwestClient;
 use serde_json::json;
 use settings::SettingsStore;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use theme::ThemeRegistry;
 use util::{rel_path::rel_path_buf, test::TempTree};
@@ -1274,4 +1279,171 @@ fn init_test(cx: &mut TestAppContext) {
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         gpui_tokio::init(cx);
     });
+}
+
+struct SyncRequestCounter(Arc<AtomicUsize>);
+
+/// Creates a mock remote connection whose server responds to connection
+/// handshake requests and counts every `SyncExtensions` request it receives.
+/// The returned `counter` entity must be kept alive for the handler to work.
+async fn setup_mock_remote(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (
+    RemoteConnectionOptions,
+    Entity<SyncRequestCounter>,
+    Arc<AtomicUsize>,
+) {
+    let sync_count = Arc::new(AtomicUsize::new(0));
+    let counter = server_cx.new(|_| SyncRequestCounter(sync_count.clone()));
+    let (opts, server_client, _) = RemoteClient::fake_server(cx, server_cx);
+    register_server_handlers(&server_client, counter.clone());
+    (opts, counter, sync_count)
+}
+
+fn register_server_handlers(server_client: &AnyProtoClient, counter: Entity<SyncRequestCounter>) {
+    // The remote client pings the server as part of the connection handshake.
+    server_client.add_request_handler::<proto::Ping, SyncRequestCounter, _, _>(
+        counter.downgrade(),
+        |_counter, _envelope: TypedEnvelope<proto::Ping>, _cx| async move { Ok(proto::Ack {}) },
+    );
+    server_client.add_request_handler::<proto::SyncExtensions, SyncRequestCounter, _, _>(
+        counter.downgrade(),
+        |counter, _envelope: TypedEnvelope<proto::SyncExtensions>, mut cx| async move {
+            counter.update(&mut cx, |counter, _cx| {
+                counter.0.fetch_add(1, Ordering::SeqCst);
+            });
+            Ok(proto::SyncExtensionsResponse {
+                missing_extensions: Vec::new(),
+                tmp_dir: String::new(),
+            })
+        },
+    );
+}
+
+fn create_extension_store(cx: &mut TestAppContext) -> Entity<ExtensionStore> {
+    let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::with_200_response();
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    let node_runtime = NodeRuntime::unavailable();
+
+    let store = cx.new(|cx| {
+        ExtensionStore::new(
+            PathBuf::from("/extensions"),
+            None,
+            proxy,
+            fs.clone(),
+            http_client.clone(),
+            http_client.clone(),
+            None,
+            node_runtime.clone(),
+            cx,
+        )
+    });
+    cx.run_until_parked();
+
+    store
+}
+
+#[gpui::test]
+async fn test_register_remote_client_syncs_only_the_new_client(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let store = create_extension_store(cx);
+
+    store.update(cx, |store, _cx| {
+        store.extension_index.extensions.insert(
+            "foo-lsp".into(),
+            remote_sync_entry(
+                "foo-lsp",
+                r#"
+                [language_servers.foo]
+                language = "Foo"
+                "#,
+            ),
+        );
+    });
+
+    let (opts_a, _counter_a, sync_count_a) = setup_mock_remote(cx, server_cx).await;
+    let (opts_b, _counter_b, sync_count_b) = setup_mock_remote(cx, server_cx).await;
+
+    let client_a = RemoteClient::connect_mock(opts_a, cx).await;
+    let client_b = RemoteClient::connect_mock(opts_b, cx).await;
+
+    store.update(cx, |store, cx| {
+        store.register_remote_client(client_a.clone(), cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        sync_count_a.load(Ordering::SeqCst),
+        1,
+        "registering a client should sync extensions to it once"
+    );
+    assert_eq!(sync_count_b.load(Ordering::SeqCst), 0);
+
+    store.update(cx, |store, cx| {
+        store.register_remote_client(client_b.clone(), cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        sync_count_a.load(Ordering::SeqCst),
+        1,
+        "registering a new client should not re-sync already-registered clients"
+    );
+    assert_eq!(
+        sync_count_b.load(Ordering::SeqCst),
+        1,
+        "registering a client should sync extensions to it once"
+    );
+}
+
+#[gpui::test]
+async fn test_register_remote_client_resyncs_extensions_on_reconnect(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let store = create_extension_store(cx);
+
+    store.update(cx, |store, _cx| {
+        store.extension_index.extensions.insert(
+            "foo-lsp".into(),
+            remote_sync_entry(
+                "foo-lsp",
+                r#"
+                [language_servers.foo]
+                language = "Foo"
+                "#,
+            ),
+        );
+    });
+
+    let (opts, _counter, sync_count) = setup_mock_remote(cx, server_cx).await;
+    let client = RemoteClient::connect_mock(opts, cx).await;
+    store.update(cx, |store, cx| {
+        store.register_remote_client(client.clone(), cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        sync_count.load(Ordering::SeqCst),
+        1,
+        "registering a remote client should sync extensions to it once"
+    );
+
+    // Simulate the remote client reconnecting (e.g. after an SSH reconnect
+    // restarted the remote server): the reconnect emits `Reconnected`, which
+    // should re-sync extensions to the client.
+    client.update(cx, |_client, cx| {
+        cx.emit(RemoteClientEvent::Reconnected);
+    });
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
+    cx.run_until_parked();
+
+    assert_eq!(
+        sync_count.load(Ordering::SeqCst),
+        2,
+        "reconnecting should re-sync extensions to the remote client"
+    );
 }

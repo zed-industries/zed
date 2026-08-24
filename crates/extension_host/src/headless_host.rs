@@ -85,24 +85,30 @@ impl HeadlessExtensionStore {
             })
             .collect();
 
-        let extensions_changed = !to_remove.is_empty() || !to_load.is_empty();
-
         cx.spawn(async move |store, cx| {
             let mut missing = Vec::new();
+            let mut extensions_changed = false;
 
             for extension_id in to_remove {
                 log::info!("removing extension: {}", extension_id);
                 store
                     .update(cx, |store, cx| store.uninstall_extension(&extension_id, cx))?
                     .await?;
+                extensions_changed = true;
             }
 
             for extension in to_load {
-                if let Err(e) = Self::load_extension(store.clone(), extension.clone(), cx).await {
-                    log::info!("failed to load extension: {}, {:#}", extension.id, e);
-                    missing.push(extension)
-                } else if extension.dev {
-                    missing.push(extension)
+                match Self::load_extension(store.clone(), extension.clone(), cx).await {
+                    Ok(()) => {
+                        extensions_changed = true;
+                        if extension.dev {
+                            missing.push(extension)
+                        }
+                    }
+                    Err(e) => {
+                        log::info!("failed to load extension: {}, {:#}", extension.id, e);
+                        missing.push(extension)
+                    }
                 }
             }
 
