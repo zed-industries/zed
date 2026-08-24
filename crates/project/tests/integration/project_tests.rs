@@ -19443,10 +19443,10 @@ async fn test_switching_submodule_branch_refreshes_parent_status(cx: &mut gpui::
     fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
         state
             .head_contents
-            .insert(repo_path("nested/nested.txt"), "old".to_owned());
+            .insert(repo_path("nested/nested.txt"), b"old".to_vec());
         state
             .index_contents
-            .insert(repo_path("nested/nested.txt"), "old".to_owned());
+            .insert(repo_path("nested/nested.txt"), b"old".to_vec());
     })
     .unwrap();
     let change_branch = nested.update(cx, |repository, _| {
@@ -19533,10 +19533,10 @@ async fn test_switching_linked_worktree_branch_does_not_refresh_main_worktree_st
     fs.with_git_state(path!("/project/.git").as_ref(), false, |state| {
         state
             .head_contents
-            .insert(repo_path("linked/linked.txt"), "old".to_owned());
+            .insert(repo_path("linked/linked.txt"), b"old".to_vec());
         state
             .index_contents
-            .insert(repo_path("linked/linked.txt"), "old".to_owned());
+            .insert(repo_path("linked/linked.txt"), b"old".to_vec());
     })
     .unwrap();
     let change_branch = linked_repository.update(cx, |repository, _| {

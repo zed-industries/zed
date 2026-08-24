@@ -923,7 +923,10 @@ impl GitListEntry {
             GitListEntry::Status(entry) => Some(&entry.repo_path),
             GitListEntry::TreeStatus(entry) => Some(&entry.entry.repo_path),
             GitListEntry::Directory(entry) => Some(&entry.key.path),
-            GitListEntry::Header(_) | GitListEntry::EmptySection(_) => None,
+            GitListEntry::RepositoryHeader(_)
+            | GitListEntry::ProjectRepositoriesHeader(_)
+            | GitListEntry::Header(_)
+            | GitListEntry::EmptySection(_) => None,
         }
     }
 }
@@ -2652,6 +2655,11 @@ impl GitPanel {
         self.select_first_entry_if_none(window, cx);
     }
 
+    fn get_selected_entry(&self) -> Option<&GitListEntry> {
+        self.selected_entry
+            .and_then(|index| self.entries.get(index))
+    }
+
     fn change_entries_by_path(&self) -> impl Iterator<Item = &GitStatusEntry> {
         let active_repository_id = self.active_repository_id;
         // A grouping can project one changed file into multiple list rows.
@@ -2858,11 +2866,13 @@ impl GitPanel {
     }
 
     fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some((repo_path, repo)) = self
-            .get_selected_entry()
-            .and_then(GitListEntry::repo_path)
-            .zip(self.active_repository.as_ref())
-        {
+        let selected = self.selected_entry.and_then(|index| {
+            self.entries
+                .get(index)
+                .and_then(GitListEntry::repo_path)
+                .zip(self.repository_for_entry_index(index, cx))
+        });
+        if let Some((repo_path, repo)) = selected {
             let path = repo.read(cx).repo_path_to_abs_path(repo_path);
             cx.write_to_clipboard(ClipboardItem::new_string(
                 path.to_string_lossy().into_owned(),
@@ -3942,8 +3952,12 @@ impl GitPanel {
         let Some(section) = self.section_for_entry_index(selected_index) else {
             return;
         };
-        self.toggle_staged_for_entry(
+        let Some(repository_id) = self.repository_id_for_entry_index(selected_index) else {
+            return;
+        };
+        self.toggle_staged_for_entry_in_repository(
             &GitListEntry::Header(GitHeaderEntry { header: section }),
+            repository_id,
             intent,
             window,
             cx,
@@ -16828,13 +16842,21 @@ mod tests {
         let panel = workspace.update_in(cx, GitPanel::new);
         await_git_panel_entries(&panel, cx).await;
 
+        let repository_id = panel.read_with(cx, |panel, _| {
+            panel
+                .active_repository_id
+                .expect("the project repository should be active")
+        });
+
         // Build the `TreeKey` for both the `files/` and `files/docs/` folders
         // so we can later assert that these entries are selected.
         let files_key = TreeKey {
+            repository_id,
             section: Section::Tracked,
             path: repo_path("files/"),
         };
         let docs_key = TreeKey {
+            repository_id,
             section: Section::Tracked,
             path: repo_path("files/docs/"),
         };
