@@ -8,13 +8,11 @@ use client::{Client, RefreshLlmTokenListener, UserStore};
 use fs::FakeFs;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{AppContext as _, AsyncApp, Entity, TestAppContext, UpdateGlobal as _};
-use http_client::StatusCode;
 use language::language_settings::FormatOnSave;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, Role, SelectedModel,
+    LanguageModel, LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelToolResult, LanguageModelToolResultContent,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel,
 };
 use project::Project;
 use prompt_store::{ProjectContext, WorktreeContext};
@@ -27,7 +25,6 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
 };
 use util::path;
 
@@ -446,35 +443,10 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             return response;
         }
 
-        let retry_delay = match &response {
-            Ok(_) => None,
-            Err(err) => match err.downcast_ref::<LanguageModelCompletionError>() {
-                Some(err) => match &err {
-                    LanguageModelCompletionError::ProviderRejection {
-                        status,
-                        retry_after,
-                        ..
-                    } => match status {
-                        Some(StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE) => {
-                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                        }
-                        Some(status) if status.as_u16() == 529 => {
-                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
-                        }
-                        Some(status) if status.is_server_error() => {
-                            Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
-                        }
-                        _ => None,
-                    },
-                    LanguageModelCompletionError::ApiReadResponseError { .. }
-                    | LanguageModelCompletionError::HttpSend { .. } => {
-                        Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            },
-        };
+        let retry_delay = response
+            .as_ref()
+            .err()
+            .and_then(|error| super::completion_retry_delay(error, attempt));
 
         if let Some(retry_after) = retry_delay {
             let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));

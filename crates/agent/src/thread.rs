@@ -168,6 +168,7 @@ impl std::fmt::Display for PromptId {
 
 pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
 pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(40);
 
 #[derive(Debug, Clone, PartialEq)]
 enum RetryStrategy {
@@ -176,13 +177,14 @@ enum RetryStrategy {
 }
 
 impl RetryStrategy {
-    fn delay_after(&self, attempt: u8) -> Option<Duration> {
+    fn delay_after(&self, error: &LanguageModelCompletionError, attempt: u8) -> Option<Duration> {
         if attempt == 0 {
             return None;
         }
         match self {
             RetryStrategy::ExponentialBackoff => (attempt <= MAX_RETRY_ATTEMPTS)
-                .then(|| BASE_RETRY_DELAY * 2u32.pow((attempt - 1) as u32)),
+                .then(|| error.retry_delay(attempt as usize, BASE_RETRY_DELAY, MAX_RETRY_DELAY))
+                .flatten(),
             RetryStrategy::FixedDelay {
                 delay,
                 max_attempts,
@@ -3334,7 +3336,7 @@ impl Thread {
             return Err(anyhow!(error));
         };
 
-        let Some(delay) = strategy.delay_after(attempt) else {
+        let Some(delay) = strategy.delay_after(&error, attempt) else {
             return Err(anyhow!(error));
         };
 
@@ -4527,19 +4529,11 @@ impl Thread {
             // permanent for the same reason. Otherwise, honor the
             // provider's requested delay when it gave one, and fall back to
             // exponential backoff when it didn't.
-            ProviderRejection {
-                status,
-                retry_after,
-                category,
-                ..
-            } => {
-                let retryable = status.is_some_and(is_retryable_provider_status)
-                    || matches!(
-                        category,
-                        ProviderErrorCategory::RateLimit | ProviderErrorCategory::Overloaded
-                    )
-                    || retry_after.is_some();
-                if !retryable {
+            ProviderRejection { retry_after, .. } => {
+                if error
+                    .retry_delay(1, BASE_RETRY_DELAY, MAX_RETRY_DELAY)
+                    .is_none()
+                {
                     return None;
                 }
                 Some(match retry_after {
@@ -4576,10 +4570,6 @@ impl Thread {
             }),
         }
     }
-}
-
-fn is_retryable_provider_status(status: http_client::StatusCode) -> bool {
-    status.is_server_error() || matches!(status.as_u16(), 408 | 425 | 429)
 }
 
 fn total_input_tokens(usage: language_model::TokenUsage) -> u64 {
@@ -8481,19 +8471,19 @@ mod tests {
                 RetryStrategy::ExponentialBackoff,
                 "status {status} should use exponential backoff when no retry_after is given"
             );
-            assert_eq!(strategy.delay_after(0), None);
+            assert_eq!(strategy.delay_after(&error, 0), None);
             assert_eq!(
-                strategy.delay_after(1),
+                strategy.delay_after(&error, 1),
                 Some(BASE_RETRY_DELAY),
                 "first retry should use the base delay"
             );
             assert_eq!(
-                strategy.delay_after(2),
+                strategy.delay_after(&error, 2),
                 Some(BASE_RETRY_DELAY * 2),
                 "second retry should double the delay"
             );
             assert_eq!(
-                strategy.delay_after(MAX_RETRY_ATTEMPTS + 1),
+                strategy.delay_after(&error, MAX_RETRY_ATTEMPTS + 1),
                 None,
                 "retrying should stop once attempts are exhausted"
             );
@@ -8518,9 +8508,12 @@ mod tests {
             }
         );
         // The delay stays fixed across attempts, unlike exponential backoff.
-        assert_eq!(strategy.delay_after(1), Some(retry_after));
-        assert_eq!(strategy.delay_after(MAX_RETRY_ATTEMPTS), Some(retry_after));
-        assert_eq!(strategy.delay_after(MAX_RETRY_ATTEMPTS + 1), None);
+        assert_eq!(strategy.delay_after(&error, 1), Some(retry_after));
+        assert_eq!(
+            strategy.delay_after(&error, MAX_RETRY_ATTEMPTS),
+            Some(retry_after)
+        );
+        assert_eq!(strategy.delay_after(&error, MAX_RETRY_ATTEMPTS + 1), None);
     }
 
     #[gpui::test]

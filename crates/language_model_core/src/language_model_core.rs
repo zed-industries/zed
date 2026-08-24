@@ -356,6 +356,72 @@ impl LanguageModelCompletionError {
             category,
         }
     }
+
+    /// Returns the delay before a retry attempt, honoring a provider-supplied
+    /// delay before falling back to bounded exponential backoff.
+    ///
+    /// `attempt` is one-based. The caller supplies the backoff bounds because
+    /// interactive requests and evaluation runs have different latency
+    /// budgets. Provider rejections that are not classified as transient, and
+    /// error kinds without shared retry semantics, return `None`.
+    pub fn retry_delay(
+        &self,
+        attempt: usize,
+        initial_backoff: Duration,
+        maximum_backoff: Duration,
+    ) -> Option<Duration> {
+        if attempt == 0 {
+            return None;
+        }
+
+        match self {
+            Self::ProviderRejection {
+                status,
+                retry_after,
+                category,
+                ..
+            } if status.is_some_and(is_retryable_provider_status)
+                || matches!(
+                    category,
+                    ProviderErrorCategory::RateLimit | ProviderErrorCategory::Overloaded
+                )
+                || retry_after.is_some() =>
+            {
+                (*retry_after)
+                    .or_else(|| exponential_backoff(attempt, initial_backoff, maximum_backoff))
+            }
+            Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => {
+                exponential_backoff(attempt, initial_backoff, maximum_backoff)
+            }
+            Self::DataRetentionConsentRequired { .. }
+            | Self::NoApiKey { .. }
+            | Self::ProviderRejection { .. }
+            | Self::SerializeRequest { .. }
+            | Self::BuildRequestBody { .. }
+            | Self::DeserializeResponse { .. }
+            | Self::StreamEndedUnexpectedly { .. }
+            | Self::Other(_) => None,
+        }
+    }
+}
+
+fn is_retryable_provider_status(status: StatusCode) -> bool {
+    status.is_server_error() || matches!(status.as_u16(), 408 | 425 | 429)
+}
+
+fn exponential_backoff(
+    attempt: usize,
+    initial_backoff: Duration,
+    maximum_backoff: Duration,
+) -> Option<Duration> {
+    let exponent = u32::try_from(attempt.checked_sub(1)?).unwrap_or(u32::MAX);
+    let multiplier = 2_u32.checked_pow(exponent).unwrap_or(u32::MAX);
+    Some(
+        initial_backoff
+            .checked_mul(multiplier)
+            .unwrap_or(maximum_backoff)
+            .min(maximum_backoff),
+    )
 }
 
 fn is_invalid_encrypted_content_message(message: &str) -> bool {
@@ -880,6 +946,59 @@ mod tests {
                 ..
             } if code == "rate_limit_error"
         ));
+    }
+
+    #[test]
+    fn test_retry_delay_uses_provider_delay_or_bounded_exponential_backoff() {
+        let retry_after = Duration::from_secs(17);
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded".to_string(),
+            Some(retry_after),
+        );
+        assert_eq!(
+            error.retry_delay(1, Duration::from_secs(1), Duration::from_secs(30)),
+            Some(retry_after)
+        );
+
+        let error = LanguageModelCompletionError::from_http_status(
+            ANTHROPIC_PROVIDER_NAME,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+            None,
+        );
+        let initial_backoff = Duration::from_secs(1);
+        let maximum_backoff = Duration::from_secs(30);
+        assert_eq!(error.retry_delay(0, initial_backoff, maximum_backoff), None);
+        assert_eq!(
+            error.retry_delay(1, initial_backoff, maximum_backoff),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            error.retry_delay(5, initial_backoff, maximum_backoff),
+            Some(Duration::from_secs(16))
+        );
+        assert_eq!(
+            error.retry_delay(20, initial_backoff, maximum_backoff),
+            Some(maximum_backoff)
+        );
+    }
+
+    #[test]
+    fn test_retry_delay_rejects_permanent_provider_error() {
+        let error = LanguageModelCompletionError::from_provider_response(
+            OPEN_AI_PROVIDER_NAME,
+            None,
+            Some("cyber_policy".to_string()),
+            "This content was flagged as potentially violating our terms of use.".to_string(),
+            None,
+        );
+
+        assert_eq!(
+            error.retry_delay(1, Duration::from_secs(1), Duration::from_secs(30)),
+            None
+        );
     }
 
     #[test]
