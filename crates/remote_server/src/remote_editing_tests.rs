@@ -44,7 +44,7 @@ use project::{
     image_store,
     search::{SearchQuery, SearchResult},
 };
-use remote::RemoteClient;
+use remote::{ConnectionState, OnRemoteClientCreated, RemoteClient};
 use rpc::proto;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
@@ -4313,6 +4313,46 @@ async fn test_remote_trash_restore(cx: &mut TestAppContext, server_cx: &mut Test
     worktree.update(cx, |worktree, _cx| {
         assert!(worktree.entry_for_path(rel_path("file_a.txt")).is_some());
     });
+}
+
+#[gpui::test]
+async fn test_remote_project_creation_triggers_on_remote_client_created_callback(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let server_fs = Arc::new(FakeFs::new(server_cx.executor()));
+    server_fs
+        .insert_tree(
+            path!("/project"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() {}",
+                },
+                "README.md": "# Test Project",
+            }),
+        )
+        .await;
+
+    let callback_invocations = Arc::new(AtomicUsize::new(0));
+    cx.update(|cx| {
+        let callback_invocations = callback_invocations.clone();
+        cx.set_global(OnRemoteClientCreated(Rc::new(move |client, cx| {
+            assert_eq!(
+                client.read(cx).connection_state(),
+                ConnectionState::Connected
+            );
+            callback_invocations.fetch_add(1, Ordering::SeqCst);
+        })));
+    });
+
+    let (project, _headless) = init_test(&server_fs, cx, server_cx).await;
+
+    assert_eq!(
+        callback_invocations.load(Ordering::SeqCst),
+        1,
+        "creating a remote project should invoke the OnRemoteClientCreated callback exactly once"
+    );
+    assert!(project.read_with(cx, |project, _| project.is_remote()));
 }
 
 pub async fn init_test(

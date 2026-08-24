@@ -14,7 +14,6 @@ use http_client::HttpClient;
 use language::{LanguageConfig, LanguageName, LanguageQueries, LoadedLanguage};
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
-use util::ResultExt;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 
@@ -88,17 +87,18 @@ impl HeadlessExtensionStore {
 
         let extensions_changed = !to_remove.is_empty() || !to_load.is_empty();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |store, cx| {
             let mut missing = Vec::new();
 
             for extension_id in to_remove {
                 log::info!("removing extension: {}", extension_id);
-                this.update(cx, |this, cx| this.uninstall_extension(&extension_id, cx))?
+                store
+                    .update(cx, |store, cx| store.uninstall_extension(&extension_id, cx))?
                     .await?;
             }
 
             for extension in to_load {
-                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), cx).await {
+                if let Err(e) = Self::load_extension(store.clone(), extension.clone(), cx).await {
                     log::info!("failed to load extension: {}, {:#}", extension.id, e);
                     missing.push(extension)
                 } else if extension.dev {
@@ -107,8 +107,7 @@ impl HeadlessExtensionStore {
             }
 
             if extensions_changed {
-                this.update(cx, |_, cx| notify_extensions_changed(cx))
-                    .log_err();
+                store.update(cx, |_, cx| notify_extensions_changed(cx)).ok();
             }
 
             Ok(missing)
@@ -283,22 +282,22 @@ impl HeadlessExtensionStore {
         let path = self.extension_dir.join(&extension.id);
         let fs = self.fs.clone();
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn(async move |store, cx| {
             if fs.is_dir(&path).await {
-                this.update(cx, |this, cx| {
-                    this.uninstall_extension(&extension.id.clone().into(), cx)
-                })?
-                .await?;
+                store
+                    .update(cx, |store, cx| {
+                        store.uninstall_extension(&extension.id.clone().into(), cx)
+                    })?
+                    .await?;
             }
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
                 .await
                 .with_context(|| format!("Failed to rename {tmp_path:?} to {path:?}"))?;
 
-            Self::load_extension(this.clone(), extension, cx).await?;
+            Self::load_extension(store.clone(), extension, cx).await?;
 
-            this.update(cx, |_, cx| notify_extensions_changed(cx))
-                .log_err();
+            store.update(cx, |_, cx| notify_extensions_changed(cx)).ok();
 
             Ok(())
         })

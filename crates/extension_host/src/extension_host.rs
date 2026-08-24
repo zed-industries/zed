@@ -42,7 +42,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::{OnRemoteClientCreated, RemoteClient};
+use remote::{OnRemoteClientCreated, RemoteClient, RemoteClientEvent};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{SemanticTokenRules, Settings, SettingsStore};
@@ -1966,13 +1966,22 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_remote_client(
-        &mut self,
-        client: Entity<RemoteClient>,
-        _cx: &mut Context<Self>,
-    ) {
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
         self.remote_clients.push(client.downgrade());
-        self.ssh_registered_tx.unbounded_send(()).ok();
+
+        cx.subscribe(&client, |this, _client, event, _cx| {
+            if matches!(event, RemoteClientEvent::Reconnected) {
+                this.ssh_registered_tx.unbounded_send(()).ok();
+            }
+        })
+        .detach();
+
+        cx.spawn(async move |this, cx| {
+            Self::sync_extensions_to_remotes(&this, client.downgrade(), cx)
+                .await
+                .log_err();
+        })
+        .detach();
     }
 }
 
