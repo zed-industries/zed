@@ -778,7 +778,7 @@ impl Editor {
                             }
                         }
 
-                        start_row = nested_end_row;
+                        start_row = (start_row + 1).max(nested_end_row);
                     }
                     None => start_row += 1,
                 }

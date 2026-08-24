@@ -2215,6 +2215,36 @@ fn test_fold_at_level_chain_fold(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_level_with_single_row_crease(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\n@file.txt and more\ncccccc\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let range =
+            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
+
+        editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
+
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+
+        assert_eq!(
+            editor.display_text(cx),
+            "
+                aaaaaa
+                ⋯ and more
+                cccccc
+            "
+            .unindent(),
+        );
+    });
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
