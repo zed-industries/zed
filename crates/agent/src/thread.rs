@@ -9,7 +9,7 @@ use crate::{
 };
 use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
-use agent_settings::UserAgentsMd;
+use agent_settings::{UserAgentsMd, UserAgentsTemplate};
 
 use crate::sandboxing::{
     SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandbox_git_dirs,
@@ -4309,18 +4309,65 @@ impl Thread {
         log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
+        let model_name = self.model().map(|m| m.name().0.to_string());
+        let date = Local::now().format("%Y-%m-%d").to_string();
+        let is_linux = cfg!(target_os = "linux");
+        let is_windows = cfg!(target_os = "windows");
+        let sandboxing =
+            crate::sandboxing::sandboxing_enabled_for_project(self.project.read(cx), cx);
+        let rules_context = agent_settings::RulesTemplateContext {
+            available_tools: &available_tools,
+            model_name: model_name.as_deref(),
+            date: &date,
+            is_linux,
+            is_windows,
+            is_macos: cfg!(target_os = "macos"),
+            sandboxing,
+        };
+
+        // A successfully rendered AGENTS.hbs replaces the verbatim AGENTS.md
+        // injection — even when it renders empty, since the template may gate
+        // `{{> agents_md}}` itself. A render failure falls back to AGENTS.md
+        // so a broken template never breaks a session.
+        let user_rules = match UserAgentsTemplate::global(cx).and_then(|t| t.source()) {
+            Some(source) => match agent_settings::render_user_agents_template(
+                source,
+                user_agents_md.as_deref(),
+                &rules_context,
+            ) {
+                Ok(rendered) => {
+                    let rendered = rendered.trim();
+                    if rendered.is_empty() {
+                        None
+                    } else {
+                        Some(SharedString::from(rendered.to_string()))
+                    }
+                }
+                Err(err) => {
+                    log::error!(
+                        "Failed to render {}: {err:#}",
+                        paths::agents_template_file().display()
+                    );
+                    user_agents_md
+                }
+            },
+            None => user_agents_md,
+        };
+
+        let tool_guidance = crate::tool_guidance::ToolGuidanceStore::global(cx)
+            .map(|store| store.render_sections(&available_tools, &rules_context))
+            .unwrap_or_default();
+
         let system_prompt = SystemPromptTemplate {
             project: self.project_context.read(cx),
             available_tools,
-            model_name: self.model().map(|m| m.name().0.to_string()),
-            date: Local::now().format("%Y-%m-%d").to_string(),
-            user_agents_md,
-            sandboxing: crate::sandboxing::sandboxing_enabled_for_project(
-                self.project.read(cx),
-                cx,
-            ),
-            is_linux: cfg!(target_os = "linux"),
-            is_windows: cfg!(target_os = "windows"),
+            tool_guidance,
+            model_name,
+            date,
+            user_agents_md: user_rules,
+            sandboxing,
+            is_linux,
+            is_windows,
         }
         .render(&self.templates)
         .context("failed to build system prompt")

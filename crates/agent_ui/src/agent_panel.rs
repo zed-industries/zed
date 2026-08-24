@@ -14,7 +14,7 @@ use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
-use agent_settings::UserAgentsMd;
+use agent_settings::{UserAgentsMd, UserAgentsTemplate, UserAgentsTemplateCustomization};
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
@@ -269,6 +269,79 @@ fn open_global_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Co
             cx,
         )
         .detach_and_log_err(cx);
+}
+
+/// Opens the global rules template, materializing it with the built-in
+/// default content first if it doesn't exist yet. Zed never recreates the
+/// file unprompted, so deleting it is a clean, permanent opt-out.
+fn open_global_rules_template(
+    workspace: &mut Workspace,
+    _window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let fs = workspace.app_state().fs.clone();
+    let path = paths::agents_template_file().clone();
+    cx.spawn(async move |workspace, cx| {
+        if !fs.is_file(&path).await {
+            fs.atomic_write(
+                path.clone(),
+                agent_settings::DEFAULT_AGENTS_TEMPLATE.to_string(),
+            )
+            .await?;
+        }
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    path,
+                    workspace::OpenOptions {
+                        focus: Some(true),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })?
+            .await?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
+}
+
+/// Opens a tool guidance override file, materializing it with the tool's
+/// built-in default guidance (or a stub, if the tool has none) first if it
+/// doesn't exist yet.
+fn open_tool_guidance_override(
+    workspace: &mut Workspace,
+    tool_name: &'static str,
+    cx: &mut Context<Workspace>,
+) {
+    let fs = workspace.app_state().fs.clone();
+    let path = paths::tool_guidance_dir().join(format!("{tool_name}.hbs"));
+    cx.spawn(async move |workspace, cx| {
+        if !fs.is_file(&path).await {
+            let content = match agent::tool_guidance::builtin_guidance(tool_name) {
+                Some(default) => default.to_string(),
+                None => agent::tool_guidance::default_tool_guidance_stub(tool_name),
+            };
+            // `write` creates the parent `tool_guidance` directory if needed.
+            fs.write(&path, content.as_bytes()).await?;
+        }
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    path,
+                    workspace::OpenOptions {
+                        focus: Some(true),
+                        ..Default::default()
+                    },
+                    window,
+                    cx,
+                )
+            })?
+            .await?;
+        anyhow::Ok(())
+    })
+    .detach_and_log_err(cx);
 }
 
 fn open_project_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
@@ -5592,6 +5665,19 @@ impl AgentPanel {
             .and_then(|md| md.content())
             .is_some();
 
+        let template_badge = match UserAgentsTemplate::global(cx).map(|template| template.customization()) {
+            Some(UserAgentsTemplateCustomization::Default) => Some(("(default)", Color::Muted)),
+            Some(UserAgentsTemplateCustomization::Overridden) => {
+                Some(("(overridden)", Color::Accent))
+            }
+            Some(UserAgentsTemplateCustomization::Invalid) => {
+                Some(("(invalid — using AGENTS.md)", Color::Error))
+            }
+            Some(UserAgentsTemplateCustomization::Absent) | None => {
+                Some(("(will be created)", Color::Muted))
+            }
+        };
+
         let workspace = self.workspace.clone();
 
         PopoverMenu::new("agent-options-menu")
@@ -5729,6 +5815,94 @@ impl AgentPanel {
                                         },
                                     );
                                 }
+                            }
+
+                            {
+                                let workspace = workspace.clone();
+                                menu = menu.custom_entry(
+                                    move |_window, _cx| {
+                                        h_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .child(Label::new("Open Global Rules Template"))
+                                            .child(
+                                                Label::new("(AGENTS.hbs)")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::Small),
+                                            )
+                                            .when_some(template_badge, |this, (text, color)| {
+                                                this.child(
+                                                    Label::new(text)
+                                                        .color(color)
+                                                        .size(LabelSize::Small),
+                                                )
+                                            })
+                                            .into_any_element()
+                                    },
+                                    move |window, cx| {
+                                        workspace
+                                            .update(cx, |workspace, cx| {
+                                                open_global_rules_template(workspace, window, cx);
+                                            })
+                                            .log_err();
+                                    },
+                                );
+                            }
+
+                            {
+                                let workspace = workspace.clone();
+                                menu = menu.submenu(
+                                    "Tool Guidance",
+                                    move |mut submenu, _window, cx| {
+                                        let guidance_store = agent::tool_guidance::ToolGuidanceStore::global(cx);
+                                        for tool_name in agent::ALL_TOOL_NAMES {
+                                            let badge = match guidance_store
+                                                .map(|store| store.override_state(tool_name))
+                                            {
+                                                Some(
+                                                    agent::tool_guidance::ToolGuidanceOverrideState::Default,
+                                                ) => Some(("(default)", Color::Muted)),
+                                                Some(
+                                                    agent::tool_guidance::ToolGuidanceOverrideState::Overridden,
+                                                ) => Some(("(overridden)", Color::Accent)),
+                                                Some(
+                                                    agent::tool_guidance::ToolGuidanceOverrideState::Absent,
+                                                )
+                                                | None => Some(("(will be created)", Color::Muted)),
+                                            };
+                                            let workspace = workspace.clone();
+                                            submenu = submenu.custom_entry(
+                                                move |_window, _cx| {
+                                                    h_flex()
+                                                        .w_full()
+                                                        .gap_1()
+                                                        .child(Label::new(*tool_name))
+                                                        .when_some(
+                                                            badge,
+                                                            |this, (text, color)| {
+                                                                this.child(
+                                                                    Label::new(text)
+                                                                        .color(color)
+                                                                        .size(LabelSize::Small),
+                                                                )
+                                                            },
+                                                        )
+                                                        .into_any_element()
+                                                },
+                                                move |_window, cx| {
+                                                    workspace
+                                                        .update(cx, |workspace, cx| {
+                                                            open_tool_guidance_override(
+                                                                workspace, tool_name, cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                },
+                                            );
+                                        }
+                                        submenu
+                                    },
+                                );
                             }
 
                             menu = menu

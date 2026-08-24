@@ -9,6 +9,7 @@ mod templates;
 mod tests;
 mod thread;
 mod thread_store;
+pub mod tool_guidance;
 mod tool_permissions;
 mod tools;
 
@@ -563,6 +564,8 @@ impl NativeAgent {
         cx: &mut App,
     ) -> Entity<NativeAgent> {
         log::debug!("Creating new NativeAgent");
+
+        tool_guidance::init(fs.clone(), cx);
 
         cx.new(|cx| {
             let subscriptions = vec![

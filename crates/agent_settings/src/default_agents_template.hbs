@@ -1,0 +1,42 @@
+{{!--
+AGENTS.hbs — personal global rules template for the Zed agent.
+
+When this file exists and renders successfully, its output replaces the
+verbatim `AGENTS.md` injection in the agent's system prompt. On a render
+error Zed falls back to `AGENTS.md` and shows a warning. Delete this file
+to return to plain `AGENTS.md` behavior entirely.
+
+Text is emitted verbatim — anything that isn't a `{{...}}` mustache lands in
+the prompt unchanged. Comments like this one are stripped at render time and
+never reach the model.
+
+Context variables:
+  available_tools   names of the tools enabled for this session
+  model_name        active model name, if any
+  date              today's date, YYYY-MM-DD
+  is_windows        host platform gates
+  is_linux
+  is_macos
+  sandboxing        whether terminal commands run in the OS-level sandbox
+
+Helpers: `contains`, plus the built-in boolean helpers `and`, `or`,
+`not`, `eq`, `ne`, `gt`, `lt`, `len`, nestable as subexpressions:
+
+  {{#if (contains available_tools 'grep')}}
+  Prefer the `grep` tool for content search.
+  {{/if}}
+  {{#if (and (contains available_tools 'grep') (contains available_tools 'terminal'))}}
+  Never run grep through the `terminal` tool.
+  {{/if}}
+
+Blocks also work inline — `a {{#if is_windows}}x{{/if}} b` splices `x`
+mid-line. There is no ternary form: `{{if cond "yes" "no"}}` parses but
+renders nothing — always use the block.
+
+Partials (imports): `{{> agents_md}}` splices your `AGENTS.md` in place.
+Every other `*.hbs` file under this directory (recursively) is importable by
+its relative path without the extension, `/`-separated on every platform —
+`partials/style.hbs` → `{{> partials/style}}`. Use `/` even on Windows:
+`\` is the template escape character and cannot appear in a partial name.
+--}}
+{{> agents_md}}

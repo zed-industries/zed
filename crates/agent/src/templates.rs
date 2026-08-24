@@ -16,7 +16,7 @@ impl Templates {
     pub fn new() -> Arc<Self> {
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
-        handlebars.register_helper("contains", Box::new(contains));
+        handlebars.register_helper("contains", Box::new(agent_settings::contains_helper));
         handlebars.register_embed_templates::<Assets>().unwrap();
         Arc::new(Self(handlebars))
     }
@@ -38,6 +38,10 @@ pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
+    /// Rendered per-tool guidance sections, one per available tool that has
+    /// guidance (built-in default or user override). See
+    /// `crate::tool_guidance`.
+    pub tool_guidance: Vec<ToolGuidanceSection>,
     pub model_name: Option<String>,
     pub date: String,
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
@@ -64,29 +68,12 @@ impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
 }
 
-/// Handlebars helper for checking if an item is in a list
-fn contains(
-    h: &handlebars::Helper,
-    _: &handlebars::Handlebars,
-    _: &handlebars::Context,
-    _: &mut handlebars::RenderContext,
-    out: &mut dyn handlebars::Output,
-) -> handlebars::HelperResult {
-    let list = h
-        .param(0)
-        .and_then(|v| v.value().as_array())
-        .ok_or_else(|| {
-            handlebars::RenderError::new("contains: missing or invalid list parameter")
-        })?;
-    let query = h.param(1).map(|v| v.value()).ok_or_else(|| {
-        handlebars::RenderError::new("contains: missing or invalid query parameter")
-    })?;
-
-    if list.contains(query) {
-        out.write("true")?;
-    }
-
-    Ok(())
+/// A rendered guidance section for one available tool, injected into the
+/// system prompt's gated "Tool guidance" section.
+#[derive(Serialize)]
+pub struct ToolGuidanceSection {
+    pub tool_name: SharedString,
+    pub guidance: SharedString,
 }
 
 #[cfg(test)]
@@ -102,6 +89,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -135,6 +123,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
+            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -164,6 +153,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -197,6 +187,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -240,6 +231,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: true,
             is_windows: false,
@@ -273,6 +265,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: true,
@@ -303,6 +296,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -325,6 +319,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -345,6 +340,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -363,6 +359,7 @@ mod tests {
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
+            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,

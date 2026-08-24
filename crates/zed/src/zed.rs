@@ -15,7 +15,9 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
-use agent_settings::{UserAgentsMdState, init_user_agents_md};
+use agent_settings::{
+    UserAgentsMdState, UserAgentsTemplateState, init_user_agents_md, init_user_agents_template,
+};
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -2183,6 +2185,36 @@ pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
             let path = paths::agents_file().display().to_string();
             log::error!("Failed to load user AGENTS.md from {path}: {message}");
             let body = format!("Failed to load {path}\n{message}");
+            let notification_id = notification_id.clone();
+            show_app_notification(notification_id, cx, move |cx| {
+                let body = body.clone();
+                cx.new(|cx| MessageNotification::new(body, cx))
+            });
+        }
+    });
+}
+
+/// Starts watching `~/.config/zed/AGENTS.hbs` (or the platform equivalent)
+/// and surfaces read/validation errors using the same notification UI as
+/// settings errors.
+///
+/// The template itself is loaded into [`agent_settings::UserAgentsTemplate`]
+/// and rendered per session for inclusion in prompts; an invalid template
+/// falls back to the verbatim `AGENTS.md` injection.
+pub fn watch_user_agents_template(fs: Arc<dyn fs::Fs>, cx: &mut App) {
+    struct UserAgentsTemplateError;
+    let notification_id = NotificationId::unique::<UserAgentsTemplateError>();
+
+    init_user_agents_template(fs, cx, move |state, cx| match state {
+        UserAgentsTemplateState::Loaded(_) | UserAgentsTemplateState::Empty => {
+            dismiss_app_notification(&notification_id, cx);
+        }
+        UserAgentsTemplateState::Error(message) => {
+            let path = paths::agents_template_file().display().to_string();
+            log::error!("Failed to load user AGENTS.hbs from {path}: {message}");
+            let body = format!(
+                "Failed to render {path}\n{message}\n\nFalling back to AGENTS.md."
+            );
             let notification_id = notification_id.clone();
             show_app_notification(notification_id, cx, move |cx| {
                 let body = body.clone();
