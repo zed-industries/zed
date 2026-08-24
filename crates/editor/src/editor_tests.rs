@@ -29156,12 +29156,28 @@ async fn test_indent_guide_ends_before_empty_line(cx: &mut TestAppContext) {
     assert_indent_guides(
         0..6,
         vec![
-            indent_guide(buffer_id, 1, 2, 0),
-            indent_guide(buffer_id, 2, 2, 1),
+            indent_guide(buffer_id, 1, 3, 0),
+            indent_guide(buffer_id, 2, 3, 1),
         ],
         None,
         &mut cx,
     );
+}
+
+#[gpui::test]
+async fn test_indent_guide_closing_brace_after_blank_lines(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        fn main() {
+            println!(\"hello\");
+
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(0..4, vec![indent_guide(buffer_id, 1, 2, 0)], None, &mut cx);
 }
 
 #[gpui::test]

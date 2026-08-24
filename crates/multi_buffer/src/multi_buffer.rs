@@ -6083,6 +6083,7 @@ impl MultiBufferSnapshot {
             // then add to the indent stack with the depth found
             let mut found_indent = false;
             let mut last_row = first_row;
+            let mut next_content_row = None;
             if line_indent.is_line_blank() {
                 while !found_indent {
                     let Some((target_row, new_line_indent, _)) = row_indents.next() else {
@@ -6097,6 +6098,7 @@ impl MultiBufferSnapshot {
                         continue;
                     }
                     last_row = target_row.min(end_row);
+                    next_content_row = Some(target_row);
                     line_indent = new_line_indent;
                     found_indent = true;
                     break;
@@ -6115,13 +6117,9 @@ impl MultiBufferSnapshot {
                 cmp::Ordering::Less => {
                     for _ in 0..(current_depth - depth) {
                         let mut indent = indent_stack.pop().unwrap();
-                        if last_row != first_row {
-                            // In this case, we landed on an empty row, had to seek forward,
-                            // and discovered that the indent we where on is ending.
-                            // This means that the last display row must
-                            // be on line that ends this indent range, so we
-                            // should display the range up to the first non-empty line
-                            indent.end_row = MultiBufferRow(first_row.0.saturating_sub(1));
+                        if let Some(next_content_row) = next_content_row {
+                            indent.end_row =
+                                MultiBufferRow(next_content_row.0.saturating_sub(1)).min(end_row);
                         }
 
                         result.push(indent)
