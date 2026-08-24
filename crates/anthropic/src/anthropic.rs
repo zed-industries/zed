@@ -1294,7 +1294,9 @@ fn completion_error_from_anthropic_api_with_status(
         Some(PermissionError) => ProviderErrorCategory::Permission,
         Some(NotFoundError) => ProviderErrorCategory::EndpointNotFound,
         Some(ConflictError) => ProviderErrorCategory::Conflict,
-        Some(RequestTooLarge) => ProviderErrorCategory::PromptTooLarge { tokens: None },
+        Some(RequestTooLarge) => ProviderErrorCategory::PromptTooLarge {
+            tokens: parse_prompt_too_long(&error.message),
+        },
         Some(RateLimitError) => ProviderErrorCategory::RateLimit,
         Some(TimeoutError) => ProviderErrorCategory::Timeout,
         Some(ApiError) => ProviderErrorCategory::InternalServer,
@@ -1395,6 +1397,27 @@ mod tests {
             completion_error,
             language_model_core::LanguageModelCompletionError::ProviderRejection {
                 category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn request_too_large_preserves_reported_token_count() {
+        let error = completion_error_from_anthropic_api(
+            ApiError {
+                error_type: "request_too_large".to_string(),
+                message: "prompt is too long: 1500000 tokens".to_string(),
+            },
+            language_model_core::ANTHROPIC_PROVIDER_NAME,
+        );
+
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(1_500_000),
+                },
                 ..
             }
         ));

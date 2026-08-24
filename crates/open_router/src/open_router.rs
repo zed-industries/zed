@@ -919,4 +919,28 @@ mod tests {
             } if code == "402"
         ));
     }
+
+    #[test]
+    fn streaming_server_error_remains_retryable_without_http_status() {
+        let completion_error = language_model_core::LanguageModelCompletionError::from(ApiError {
+            status: None,
+            code: 502,
+            message: "Upstream provider failed".to_string(),
+            retry_after: None,
+        });
+
+        assert!(matches!(
+            &completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                status: None,
+                code: Some(code),
+                category: language_model_core::ProviderErrorCategory::InternalServer,
+                ..
+            } if code == "502"
+        ));
+        assert_eq!(
+            completion_error.retry_delay(1),
+            Some(Duration::from_secs(5))
+        );
+    }
 }

@@ -163,11 +163,11 @@ impl ProviderErrorCategory {
             StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::Timeout,
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimit,
             StatusCode::SERVICE_UNAVAILABLE => Self::Overloaded,
-            StatusCode::INTERNAL_SERVER_ERROR => Self::InternalServer,
             // There is no `StatusCode` variant for the unofficial HTTP 529
             // ("the service is overloaded"), but providers such as
             // Anthropic send it in practice. See https://http.dev/529
             status_code if status_code.as_u16() == 529 => Self::Overloaded,
+            status_code if status_code.is_server_error() => Self::InternalServer,
             _ => Self::Other,
         }
     }
@@ -381,7 +381,10 @@ impl LanguageModelCompletionError {
             } if status.is_some_and(is_retryable_provider_status)
                 || matches!(
                     category,
-                    ProviderErrorCategory::RateLimit | ProviderErrorCategory::Overloaded
+                    ProviderErrorCategory::RateLimit
+                        | ProviderErrorCategory::Overloaded
+                        | ProviderErrorCategory::Timeout
+                        | ProviderErrorCategory::InternalServer
                 )
                 || retry_after.is_some() =>
             {
@@ -998,6 +1001,25 @@ mod tests {
         assert_eq!(error.retry_delay(2), Some(Duration::from_secs(10)));
         assert_eq!(error.retry_delay(4), Some(Duration::from_secs(40)));
         assert_eq!(error.retry_delay(20), Some(Duration::from_secs(40)));
+    }
+
+    #[test]
+    fn test_retry_delay_retries_statusless_transient_provider_errors() {
+        for category in [
+            ProviderErrorCategory::Timeout,
+            ProviderErrorCategory::InternalServer,
+        ] {
+            let error = LanguageModelCompletionError::from_provider_response(
+                ANTHROPIC_PROVIDER_NAME,
+                None,
+                Some("provider_error".to_string()),
+                "Transient provider error".to_string(),
+                None,
+                category,
+            );
+
+            assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+        }
     }
 
     #[test]
