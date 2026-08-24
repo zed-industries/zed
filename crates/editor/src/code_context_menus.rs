@@ -254,6 +254,7 @@ pub struct CompletionsMenu {
     pub completions: Rc<RefCell<Box<[Completion]>>>,
     /// String match candidate for each completion, grouped by `match_start`.
     match_candidates: Arc<[(Option<text::Anchor>, Vec<StringMatchCandidate>)]>,
+    label_match_state: LabelMatchState,
     /// Entries displayed in the menu, which is a filtered and sorted subset of `match_candidates`.
     pub entries: Rc<RefCell<Box<[CompletionMenuEntry]>>>,
     pub selected_item: usize,
@@ -300,6 +301,37 @@ pub enum CompletionsMenuSource {
     Words { ignore_threshold: bool },
 }
 
+pub struct CompletionMatchResults {
+    /// Fuzzy match result against the filter text
+    filter_matches: Vec<StringMatch>,
+    /// Fuzzy match result against the displayed label
+    label_matches: Box<[Option<StringMatch>]>,
+}
+
+/// The state for a second fuzzy match against the displayed label, used to
+/// render match highlights when the filter text differs from the label.
+struct LabelMatchState {
+    /// Candidates for the label match
+    candidates: Arc<[StringMatchCandidate]>,
+    /// Results of the label match
+    label_matches: Rc<RefCell<Box<[Option<StringMatch>]>>>,
+}
+
+impl LabelMatchState {
+    fn new(completions: &[Completion]) -> Self {
+        let candidates = completions
+            .iter()
+            .enumerate()
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
+            .collect();
+        let matches = std::iter::repeat_n(None, completions.len()).collect();
+        Self {
+            candidates,
+            label_matches: Rc::new(RefCell::new(matches)),
+        }
+    }
+}
+
 // TODO: There should really be a wrapper around fuzzy match tasks that does this.
 impl Drop for CompletionsMenu {
     fn drop(&mut self) {
@@ -337,10 +369,11 @@ impl CompletionsMenu {
         let match_candidates = completions
             .iter()
             .enumerate()
-            .map(|(id, completion)| StringMatchCandidate::new(id, completion.label.filter_text()))
+            .map(|(id, completion)| StringMatchCandidate::new(id, completion.filter_text()))
             .into_group_map_by(|candidate| completions[candidate.id].match_start)
             .into_iter()
             .collect();
+        let label_match_state = LabelMatchState::new(&completions);
 
         let completions_menu = Self {
             id,
@@ -353,6 +386,7 @@ impl CompletionsMenu {
             show_completion_documentation,
             completions: RefCell::new(completions).into(),
             match_candidates,
+            label_match_state,
             entries: Rc::new(RefCell::new(Box::new([]))),
             selected_item: 0,
             filter_task: Task::ready(()),
@@ -383,7 +417,7 @@ impl CompletionsMenu {
         scroll_handle: Option<UniformListScrollHandle>,
         snippet_sort_order: SnippetSortOrder,
     ) -> Self {
-        let completions = choices
+        let completions: Box<[Completion]> = choices
             .iter()
             .map(|choice| Completion {
                 replace_range: selection.clone(),
@@ -409,6 +443,7 @@ impl CompletionsMenu {
                 .map(|(id, completion)| StringMatchCandidate::new(id, completion))
                 .collect(),
         )]);
+        let label_match_state = LabelMatchState::new(&completions);
         let entries = choices
             .iter()
             .enumerate()
@@ -431,6 +466,7 @@ impl CompletionsMenu {
             buffer,
             completions: RefCell::new(completions).into(),
             match_candidates,
+            label_match_state,
             entries: RefCell::new(entries).into(),
             selected_item: 0,
             filter_task: Task::ready(()),
@@ -924,6 +960,7 @@ impl CompletionsMenu {
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let entries = self.entries.clone();
+        let label_matches = self.label_match_state.label_matches.clone();
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
@@ -933,6 +970,7 @@ impl CompletionsMenu {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
+                let label_matches_guard = label_matches.borrow();
 
                 entries.borrow()[range]
                     .iter()
@@ -963,13 +1001,29 @@ impl CompletionsMenu {
 
                         let filter_start = completion.label.filter_range.start;
 
+                        let match_highlights = label_matches_guard
+                            .get(mat.candidate_id)
+                            .and_then(Option::as_ref)
+                            .filter(|label_match| {
+                                // in case label changes during completion/resolve
+                                label_match.string == completion.label.filter_text()
+                            })
+                            .or_else(|| {
+                                (completion.filter_text() == completion.label.filter_text())
+                                    .then_some(mat)
+                            })
+                            .into_iter()
+                            .flat_map(|string_match| {
+                                string_match.ranges().map(|range| {
+                                    (
+                                        filter_start + range.start..filter_start + range.end,
+                                        FontWeight::BOLD.into(),
+                                    )
+                                })
+                            });
+
                         let highlights = gpui::combine_highlights(
-                            mat.ranges().map(|range| {
-                                (
-                                    filter_start + range.start..filter_start + range.end,
-                                    FontWeight::BOLD.into(),
-                                )
-                            }),
+                            match_highlights,
                             styled_runs_for_code_label(
                                 &completion.label,
                                 &style.syntax,
@@ -1308,10 +1362,11 @@ impl CompletionsMenu {
         query_end: text::Anchor,
         buffer: &Entity<Buffer>,
         cx: &Context<Editor>,
-    ) -> Task<Vec<StringMatch>> {
+    ) -> Task<CompletionMatchResults> {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let background_executor = cx.background_executor().clone();
         let match_candidates = self.match_candidates.clone();
+        let label_match_candidates = self.label_match_state.candidates.clone();
         let cancel_filter = self.cancel_filter.clone();
         let default_query = query.clone();
 
@@ -1329,35 +1384,76 @@ impl CompletionsMenu {
                 })
                 .collect_vec();
 
-            let mut results = vec![];
+            let mut filter_match_results = vec![];
+            let mut label_match_results =
+                std::iter::repeat_n(None, label_match_candidates.len()).collect::<Box<[_]>>();
             for (query, match_candidates) in queries_and_candidates {
-                results.extend(
-                    fuzzy::match_strings(
-                        &match_candidates,
-                        &query,
-                        query.chars().any(|c| c.is_uppercase()),
-                        false,
-                        1000,
-                        &cancel_filter,
-                        background_executor.clone(),
-                    )
-                    .await,
-                );
+                let smart_case = query.chars().any(|character| character.is_uppercase());
+                let filter_matches = fuzzy::match_strings(
+                    &match_candidates,
+                    &query,
+                    smart_case,
+                    false,
+                    1000,
+                    &cancel_filter,
+                    background_executor.clone(),
+                )
+                .await;
+                if query.is_empty() {
+                    filter_match_results.extend(filter_matches);
+                    continue;
+                }
+
+                // The filter text may differ from the displayed label, so the
+                // main match positions don't map onto the label; match the
+                // label separately to get positions for the highlights. When
+                // the filter text is the label itself, the main match already
+                // covers the label, so no second pass is needed.
+                let matching_label_candidates = filter_matches
+                    .iter()
+                    .filter_map(|filter_match| {
+                        let label_candidate =
+                            label_match_candidates.get(filter_match.candidate_id)?;
+                        (filter_match.string != label_candidate.string).then_some(label_candidate)
+                    })
+                    .collect_vec();
+                if matching_label_candidates.is_empty() {
+                    filter_match_results.extend(filter_matches);
+                    continue;
+                }
+                let label_matches = fuzzy::match_strings(
+                    &matching_label_candidates,
+                    &query,
+                    smart_case,
+                    false,
+                    matching_label_candidates.len(),
+                    &cancel_filter,
+                    background_executor.clone(),
+                )
+                .await;
+                for label_match in label_matches {
+                    let candidate_id = label_match.candidate_id;
+                    label_match_results[candidate_id] = Some(label_match);
+                }
+                filter_match_results.extend(filter_matches);
             }
-            results
+            CompletionMatchResults {
+                filter_matches: filter_match_results,
+                label_matches: label_match_results,
+            }
         });
 
         let completions = self.completions.clone();
         let sort_completions = self.sort_completions;
         let snippet_sort_order = self.snippet_sort_order;
         cx.foreground_executor().spawn(async move {
-            let mut matches = matches_task.await;
+            let mut results = matches_task.await;
 
             let completions_ref = completions.borrow();
 
             if sort_completions {
-                matches = Self::sort_string_matches(
-                    matches,
+                results.filter_matches = Self::sort_string_matches(
+                    results.filter_matches,
                     Some(&query), // used for non-snippets only
                     snippet_sort_order,
                     &completions_ref,
@@ -1367,28 +1463,32 @@ impl CompletionsMenu {
             // Remove duplicate snippet prefixes (e.g., "cool code" will match
             // the text "c c" in two places; we should only show the longer one)
             let mut snippets_seen = HashSet::<(usize, usize)>::default();
-            matches.retain(|result| {
+            results.filter_matches.retain(|result| {
                 match completions_ref[result.candidate_id].snippet_deduplication_key {
                     Some(key) => snippets_seen.insert(key),
                     None => true,
                 }
             });
 
-            matches
+            results
         })
     }
 
     pub fn set_filter_results(
         &mut self,
-        matches: Vec<StringMatch>,
+        match_results: CompletionMatchResults,
         provider: Option<Rc<dyn CompletionProvider>>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
+        let CompletionMatchResults {
+            filter_matches,
+            label_matches,
+        } = match_results;
         let completions = self.completions.borrow();
-        let mut entries: Vec<CompletionMenuEntry> = Vec::with_capacity(matches.len());
+        let mut entries: Vec<CompletionMenuEntry> = Vec::with_capacity(filter_matches.len());
         let mut last_group: Option<&CompletionGroup> = None;
-        for mat in matches {
+        for mat in filter_matches {
             let group = completions[mat.candidate_id].group.as_ref();
             if group != last_group {
                 if group.is_some() || last_group.is_some() {
@@ -1404,6 +1504,7 @@ impl CompletionsMenu {
             entries.push(CompletionMenuEntry::Match(mat));
         }
         drop(completions);
+        *self.label_match_state.label_matches.borrow_mut() = label_matches;
         *self.entries.borrow_mut() = entries.into_boxed_slice();
         self.selected_item = self.find_selectable_entry(0, true).unwrap_or(0);
         self.handle_selection_changed(provider.as_deref(), window, cx);
@@ -1485,7 +1586,7 @@ impl CompletionsMenu {
                     string_match,
                 ));
                 // This exact matching won't work for multi-word snippets, but it's fine
-                let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
+                let sort_exact = Reverse(if Some(completion.filter_text()) == query {
                     1
                 } else {
                     0
@@ -1562,8 +1663,8 @@ fn render_completion_kind_letter(
         .flex_none()
         .w(IconSize::XSmall.rems())
         .text_center()
-        .text_size(rems_from_px(11.))
-        .line_height(rems_from_px(14.));
+        .text_size(rems_from_px(11_f32))
+        .line_height(rems_from_px(14_f32));
 
     let Some(kind) = kind else {
         return badge.into_any_element();
