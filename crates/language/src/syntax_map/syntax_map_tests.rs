@@ -1050,6 +1050,91 @@ fn test_comment_triggered_injection_toggle(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_python_sql_injection_after_editing_preceding_lines(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+
+    let python = Arc::new(python_lang());
+    registry.add(python.clone());
+    registry.add(Arc::new(comment_lang()));
+    let sql_language = Arc::new(sql_lang());
+    registry.add(sql_language.clone());
+    let sql_language_id = sql_language.id();
+
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        concat!(
+            "# sql\n",
+            "query = \"CREATE DATABASE IF NOT EXISTS %(database)s; USE %(database)s;\"\n",
+            "cursor.execute(query, parameters)\n",
+        )
+        .to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+    syntax_map.reparse(python.clone(), &buffer);
+
+    let sql_layer_count = |syntax_map: &SyntaxMap, buffer: &Buffer| {
+        syntax_map
+            .layers(buffer)
+            .iter()
+            .filter(|layer| layer.language.id() == sql_language_id)
+            .count()
+    };
+
+    assert_eq!(sql_layer_count(&syntax_map, &buffer), 1);
+    assert!(!syntax_map.contains_unknown_injections());
+
+    let typing_steps = [
+        ("\nif droptable:", 1),
+        ("\n    # sql", 1),
+        (
+            "\n    query = \"DROP TABLE IF EXISTS %(database)s.%(table)s;\"",
+            2,
+        ),
+        ("\n    cursor.execute(query, parameters)", 2),
+    ];
+
+    for (i, (step_text, expected_sql_layers)) in typing_steps.into_iter().enumerate() {
+        let end = buffer.len();
+        buffer.edit([(end..end, step_text)]);
+        syntax_map.interpolate(&buffer);
+        syntax_map.reparse(python.clone(), &buffer);
+
+        let mut reference_syntax_map = SyntaxMap::new(&buffer);
+        reference_syntax_map.set_language_registry(registry.clone());
+        reference_syntax_map.reparse(python.clone(), &buffer);
+        let reference_layers = reference_syntax_map.layers(&buffer);
+
+        let mutated_layers = syntax_map.layers(&buffer);
+        assert_eq!(
+            mutated_layers.len(),
+            reference_layers.len(),
+            "wrong number of layers at step {i}"
+        );
+        for (edited_layer, reference_layer) in mutated_layers.iter().zip(reference_layers.iter()) {
+            assert_eq!(
+                edited_layer.node().to_sexp(),
+                reference_layer.node().to_sexp(),
+                "different layer tree at step {i}"
+            );
+            assert_eq!(
+                edited_layer.language.id(),
+                reference_layer.language.id(),
+                "different layer language at step {i}"
+            );
+        }
+        assert_eq!(
+            sql_layer_count(&syntax_map, &buffer),
+            expected_sql_layers,
+            "wrong SQL injection layer count at step {i}"
+        );
+        assert!(!syntax_map.contains_unknown_injections());
+    }
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
@@ -1630,6 +1715,18 @@ fn comment_lang() -> Language {
     )
 }
 
+fn sql_lang() -> Language {
+    // Mock "sql" language so SQL injections become real layers instead of
+    // unknown injections. Uses JSON grammar as a stand-in.
+    Language::new(
+        LanguageConfig {
+            name: "sql".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_json::LANGUAGE.into()),
+    )
+}
+
 fn range_for_text(buffer: &Buffer, text: &str) -> Range<usize> {
     let start = buffer.as_rope().to_string().find(text).unwrap();
     start..start + text.len()
@@ -1704,4 +1801,96 @@ pub fn string_contains_sequence(text: &str, parts: &[&str]) -> bool {
         }
     }
     true
+}
+
+#[gpui::test]
+fn test_python_sql_injection_leading_comment_in_block(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+
+    let python = Arc::new(python_lang());
+    registry.add(python.clone());
+    registry.add(Arc::new(comment_lang()));
+    let sql_language = Arc::new(sql_lang());
+    registry.add(sql_language.clone());
+    let sql_language_id = sql_language.id();
+
+    let snippets = [
+        "if x:\n    # sql\n    q = \"S\"",
+        "def f():\n    # sql\n    q = \"S\"",
+        "class C:\n    # sql\n    q = \"S\"",
+        "for x in y:\n    # sql\n    q = \"S\"",
+        "while x:\n    # sql\n    q = \"S\"",
+        "with x:\n    # sql\n    q = \"S\"",
+        "try:\n    # sql\n    q = \"S\"\nexcept E:\n    pass",
+        "if x:\n    pass\nelse:\n    # sql\n    q = \"S\"",
+        "if x:\n    pass\nelif y:\n    # sql\n    q = \"S\"",
+        "match x:\n    case 1:\n        # sql\n        q = \"S\"",
+        "async def f():\n    # sql\n    q = \"S\"",
+        "# sql\nq = \"S\"",
+    ];
+
+    for (i, src) in snippets.into_iter().enumerate() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(i as u64 + 1).unwrap(),
+            src.to_string(),
+        );
+        let mut syntax_map = SyntaxMap::new(&buffer);
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(python.clone(), &buffer);
+
+        let sql_layers: Vec<_> = syntax_map
+            .layers(&buffer)
+            .into_iter()
+            .filter(|layer| layer.language.id() == sql_language_id)
+            .collect();
+        assert_eq!(sql_layers.len(), 1, "wrong SQL layer count for snippet {i}");
+        let sql_layer_range = sql_layers[0].node().range();
+        assert_eq!(
+            buffer
+                .text_for_range(sql_layer_range.start_byte..sql_layer_range.end_byte)
+                .collect::<String>(),
+            "S"
+        );
+        assert!(!syntax_map.contains_unknown_injections());
+    }
+}
+
+#[gpui::test]
+fn test_python_no_sql_injection_without_sql_comment(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+
+    let python = Arc::new(python_lang());
+    registry.add(python.clone());
+    registry.add(Arc::new(comment_lang()));
+    let sql_language = Arc::new(sql_lang());
+    registry.add(sql_language.clone());
+    let sql_language_id = sql_language.id();
+
+    let snippets = [
+        "if x:\n    # not a trigger comment\n    q = \"S\"",
+        "# sql\nif x:\n    q = \"S\"",
+        "def f():\n    # sql\n    def g():\n        q = \"S\"",
+    ];
+
+    for (i, src) in snippets.into_iter().enumerate() {
+        let buffer = Buffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(i as u64 + 101).unwrap(),
+            src.to_string(),
+        );
+        let mut syntax_map = SyntaxMap::new(&buffer);
+        syntax_map.set_language_registry(registry.clone());
+        syntax_map.reparse(python.clone(), &buffer);
+
+        let sql_layers = syntax_map
+            .layers(&buffer)
+            .into_iter()
+            .filter(|layer| layer.language.id() == sql_language_id)
+            .count();
+        assert_eq!(
+            sql_layers, 0,
+            "unexpected SQL injection for snippet {i}: {src}"
+        );
+    }
 }
