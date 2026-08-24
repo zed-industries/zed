@@ -892,6 +892,58 @@ async fn test_shutdown_parent_session_if_all_children_are_shutdown(
 }
 
 #[gpui::test]
+async fn test_continue_response_updates_thread_statuses(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.rs": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |client| {
+        client.on_request::<Continue, _>(move |_, args| {
+            assert_eq!(args.single_thread, None);
+            Ok(dap::ContinueResponse {
+                all_threads_continued: None,
+            })
+        });
+    })
+    .unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Breakpoint,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    session.update(cx, |session, cx| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Stopped);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Stopped);
+        session.continue_thread(ThreadId(1), cx);
+    });
+    cx.run_until_parked();
+
+    session.update(cx, |session, _| {
+        assert_eq!(session.thread_status(ThreadId(1)), ThreadStatus::Running);
+        assert_eq!(session.thread_status(ThreadId(2)), ThreadStatus::Running);
+    });
+}
+
+#[gpui::test]
 async fn test_debug_panel_item_thread_status_reset_on_failure(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,

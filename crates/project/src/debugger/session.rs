@@ -2142,6 +2142,38 @@ impl Session {
         }
     }
 
+    fn on_continue_response(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(
+        &mut Self,
+        Result<dap::ContinueResponse>,
+        &mut Context<Self>,
+    ) -> Option<dap::ContinueResponse>
+    + 'static {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => {
+                if response.all_threads_continued.unwrap_or(true) {
+                    this.active_snapshot.thread_states.continue_all_threads();
+                } else {
+                    this.active_snapshot
+                        .thread_states
+                        .continue_thread(thread_id);
+                }
+                this.breakpoint_store.update(cx, |store, cx| {
+                    store.remove_active_position(Some(this.session_id()), cx)
+                });
+                this.invalidate_generic();
+                cx.notify();
+                Some(response)
+            }
+            None => {
+                this.active_snapshot.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
     fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
@@ -2295,7 +2327,7 @@ impl Session {
                     single_thread: None,
                 },
             },
-            Self::on_step_response::<ContinueCommand>(thread_id),
+            Self::on_continue_response(thread_id),
             cx,
         )
         .detach();
