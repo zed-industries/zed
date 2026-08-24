@@ -29,6 +29,7 @@ use crate::provider::open_ai_compatible::OpenAiCompatibleLanguageModelProvider;
 use crate::provider::open_router::OpenRouterLanguageModelProvider;
 use crate::provider::openai_subscribed::OpenAiSubscribedProvider;
 use crate::provider::opencode::OpenCodeLanguageModelProvider;
+use crate::provider::ramp_router::RampRouterLanguageModelProvider;
 use crate::provider::vercel_ai_gateway::VercelAiGatewayLanguageModelProvider;
 use crate::provider::x_ai::XAiLanguageModelProvider;
 pub use crate::settings::*;
@@ -309,6 +310,14 @@ fn register_language_model_providers(
         cx,
     );
     registry.register_provider(
+        Arc::new(RampRouterLanguageModelProvider::new(
+            client.http_client(),
+            credentials_provider.clone(),
+            cx,
+        )),
+        cx,
+    );
+    registry.register_provider(
         Arc::new(VercelAiGatewayLanguageModelProvider::new(
             client.http_client(),
             credentials_provider.clone(),
@@ -446,6 +455,43 @@ mod tests {
             .filter(|provider| provider.id().0.as_ref() == id)
             .map(|provider| provider.icon())
             .collect()
+    }
+
+    #[gpui::test]
+    fn test_ramp_router_is_registered_after_openrouter(cx: &mut App) {
+        let (client, credentials_provider) = init_test(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        client::RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+        let registry = cx.new(|_| LanguageModelRegistry::default());
+
+        registry.update(cx, |registry, cx| {
+            register_language_model_providers(
+                registry,
+                user_store,
+                client,
+                credentials_provider,
+                cx,
+            );
+        });
+
+        let providers = registry.read(cx).providers();
+        let openrouter_index = providers
+            .iter()
+            .position(|provider| provider.id().0.as_ref() == "openrouter")
+            .expect("OpenRouter provider");
+        let ramp_router_index = providers
+            .iter()
+            .position(|provider| provider.id().0.as_ref() == "ramp_router")
+            .expect("Ramp Router provider");
+        assert_eq!(ramp_router_index, openrouter_index + 1);
+        assert_eq!(
+            providers[ramp_router_index].name().0.as_ref(),
+            "Ramp Router"
+        );
+        assert_eq!(
+            providers[ramp_router_index].icon(),
+            IconOrSvg::Icon(IconName::AiRampRouter)
+        );
     }
 
     #[gpui::test]

@@ -9,7 +9,7 @@ use crate::provider::{
     google::GoogleSettings, llama_cpp::LlamaCppSettings, lmstudio::LmStudioSettings, mistral,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
     open_ai_compatible::OpenAiCompatibleSettings, open_router, open_router::OpenRouterSettings,
-    opencode, opencode::OpenCodeSettings, resolve_custom_headers,
+    opencode, opencode::OpenCodeSettings, ramp_router::RampRouterSettings, resolve_custom_headers,
     vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
@@ -26,6 +26,7 @@ pub struct AllLanguageModelSettings {
     pub ollama: OllamaSettings,
     pub opencode: OpenCodeSettings,
     pub open_router: OpenRouterSettings,
+    pub ramp_router: RampRouterSettings,
     pub openai: OpenAiSettings,
     pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
     pub vercel_ai_gateway: VercelAiGatewaySettings,
@@ -60,6 +61,7 @@ impl settings::Settings for AllLanguageModelSettings {
         let ollama = language_models.ollama.unwrap();
         let opencode = language_models.opencode.unwrap();
         let open_router = language_models.open_router.unwrap();
+        let ramp_router = language_models.ramp_router.unwrap();
         let openai = language_models.openai.unwrap();
         let openai_compatible = language_models.openai_compatible.unwrap();
         let vercel_ai_gateway = language_models.vercel_ai_gateway.unwrap();
@@ -167,6 +169,11 @@ impl settings::Settings for AllLanguageModelSettings {
                     open_router.custom_headers,
                     open_router::RESERVED_HEADER_NAMES,
                 ),
+            },
+            ramp_router: RampRouterSettings {
+                api_url: ramp_router.api_url.unwrap(),
+                available_models: ramp_router.available_models.unwrap_or_default(),
+                custom_headers: custom_headers_from("Ramp Router", ramp_router.custom_headers, &[]),
             },
             openai: OpenAiSettings {
                 api_url: openai.api_url.unwrap(),

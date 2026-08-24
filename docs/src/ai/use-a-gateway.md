@@ -1,15 +1,16 @@
 ---
 title: Use a Gateway - Zed
-description: Configure OpenRouter, Vercel AI Gateway, Amazon Bedrock, and other gateway or cloud model platforms in Zed.
+description: Configure OpenRouter, Ramp Router, Vercel AI Gateway, Amazon Bedrock, and other gateway or cloud model platforms in Zed.
 ---
 
 # Use a Gateway
 
-Use a gateway when you route model requests through a platform such as OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
+Use a gateway when you route model requests through a platform such as OpenRouter, Ramp Router, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
 
 | Gateway                   | Zed AI features | External Agents | Terminal Threads | Notes                                        |
 | ------------------------- | --------------- | --------------- | ---------------- | -------------------------------------------- |
 | OpenRouter                | Yes             | Separate config | Separate config  | Uses OpenRouter API access                   |
+| Ramp Router               | Yes             | Separate config | Separate config  | Uses Ramp Router API access                  |
 | Vercel AI Gateway         | Yes             | Separate config | Separate config  | Uses Vercel AI Gateway API access            |
 | Amazon Bedrock            | Yes             | Separate config | Separate config  | Uses AWS credentials or Bedrock bearer token |
 | OpenAI-compatible gateway | Yes             | Separate config | Separate config  | Configure base URL, model, and key           |
@@ -98,6 +99,46 @@ Supported fields include `order`, `allow_fallbacks`, `require_parameters`, `data
   }
 }
 ```
+
+## Ramp Router {#ramp-router}
+
+Use [Ramp Router](https://docs.router.com/) when you want to route Zed AI features through Ramp Router's OpenAI Responses-compatible API.
+
+1. Create an API key in the [Ramp Router dashboard](https://app.router.com).
+2. Open **Settings → AI → LLM Providers** with {#action agent::OpenSettings} and find the Ramp Router row.
+3. Enter your Ramp Router API key.
+
+Zed also reads `RAMP_ROUTER_API_KEY` from the local Zed process environment. After authentication, Zed fetches the models available to the key from `GET https://api.router.com/v1/models` and sends model requests to `POST https://api.router.com/v1/responses`.
+
+You can override the endpoint or model metadata in settings. Configure the API base URL without the `/responses` suffix:
+
+```json [settings]
+{
+  "language_models": {
+    "ramp_router": {
+      "api_url": "https://api.router.com/v1",
+      "available_models": [
+        {
+          "name": "your-model-id",
+          "display_name": "Your Model",
+          "max_tokens": 128000,
+          "max_output_tokens": 16000,
+          "reasoning_effort": "medium",
+          "capabilities": {
+            "tools": true,
+            "images": false,
+            "parallel_tool_calls": false,
+            "prompt_cache_key": false,
+            "chat_completions": false
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+Ramp Router model availability is specific to each API key. For models discovered without metadata overrides, Zed uses a 128,000-token context fallback and leaves tools, images, parallel tool calls, prompt-cache keys, and reasoning controls disabled. Add an `available_models` entry with the same model ID to override those values.
 
 ## Vercel AI Gateway {#vercel-ai-gateway}
 

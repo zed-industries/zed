@@ -638,6 +638,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "openai-subscribed",
                         "opencode",
                         "openrouter",
+                        "ramp_router",
                         "vercel_ai_gateway",
                         "x_ai",
                         "zed.dev"
