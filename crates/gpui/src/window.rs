@@ -3082,8 +3082,8 @@ impl Window {
         self.refresh();
     }
 
-    /// Returns the debug frame overlay's recorded draw times.
     #[cfg(feature = "profiler")]
+    #[allow(missing_docs)]
     pub fn debug_frame_overlay_stats(&self) -> crate::DebugFrameOverlayStats {
         self.debug_frame_overlay.stats()
     }

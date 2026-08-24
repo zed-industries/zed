@@ -17,23 +17,14 @@ pub enum DebugFrameOverlayMode {
     Full,
 }
 
-/// Recorded draw times from the debug frame overlay.
-///
-/// `p90_ms` is the overlay **10%** line. `p99_ms` is the overlay **1%** line.
-/// Those are the slow tail, not the fast frames.
+#[allow(missing_docs)]
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct DebugFrameOverlayStats {
-    /// Most recent draw, in milliseconds.
     pub current_ms: Option<f32>,
-    /// 90th percentile of the sample window, in milliseconds.
     pub p90_ms: Option<f32>,
-    /// 99th percentile of the sample window, in milliseconds.
     pub p99_ms: Option<f32>,
-    /// Slowest sample in the window, in milliseconds.
     pub max_ms: Option<f32>,
-    /// Frames recorded since the window opened. Survives a stats reset.
     pub frames: u64,
-    /// Samples in the current window. Capped at 1000.
     pub samples: usize,
 }
 
@@ -197,11 +188,15 @@ impl DebugFrameOverlay {
     }
 
     fn lines(&self) -> Vec<String> {
-        let stats = self.stats();
         match self.mode {
             DebugFrameOverlayMode::Hidden => Vec::new(),
-            DebugFrameOverlayMode::Minimal => vec![format_ms(stats.current_ms)],
+            DebugFrameOverlayMode::Minimal => {
+                vec![format_ms(
+                    self.draw_durations.back().copied().map(duration_ms),
+                )]
+            }
             DebugFrameOverlayMode::Full => {
+                let stats = self.stats();
                 // Past five digits the count would break the column
                 // alignment, so it saturates instead.
                 let frame_count = if stats.frames > 99_999 {
