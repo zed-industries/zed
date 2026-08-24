@@ -47,11 +47,12 @@ pub fn language_model_selector(
     if popover_styles {
         Picker::list(delegate, window, cx)
             .show_scrollbar(true)
-            .minimum_results_width(rems(20.))
-            .height(rems(20.))
-            .no_vertical_padding()
+            .initial_width(rems(20.))
+            .popover()
     } else {
-        Picker::list(delegate, window, cx).show_scrollbar(true)
+        Picker::list(delegate, window, cx)
+            .show_scrollbar(true)
+            .embedded()
     }
 }
 
@@ -377,11 +378,7 @@ impl ModelMatcher {
             .map(|(index, model)| {
                 StringMatchCandidate::new(
                     index,
-                    &format!(
-                        "{}/{}",
-                        &model.model.provider_name().0,
-                        &model.model.name().0
-                    ),
+                    &format!("{}/{}", model.model.provider_name().0, model.model.name().0),
                 )
             })
             .collect::<Vec<_>>()

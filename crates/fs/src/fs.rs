@@ -3,12 +3,13 @@ pub mod fs_watcher;
 pub use fs_watcher::requires_poll_watcher;
 
 use parking_lot::Mutex;
+use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::stream::iter;
 use gpui::App;
 use gpui::BackgroundExecutor;
@@ -61,7 +62,7 @@ use git::{
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(feature = "test-support")]
-use util::normalize_path;
+use path::normalize_path;
 
 #[cfg(feature = "test-support")]
 use smol::io::AsyncReadExt;
@@ -119,7 +120,7 @@ pub trait Fs: Send + Sync {
     /// Moves a file or directory to the system trash.
     /// Returns a [`TrashedEntry`] that can be used to keep track of the
     /// location of the trashed item in the system's trash.
-    async fn trash(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry>;
+    async fn trash(&self, path: &Path, options: RemoveOptions) -> Result<TrashId>;
 
     /// Removes a file from the filesystem.
     /// There is no expectation that the file will be preserved in the system
@@ -167,12 +168,12 @@ pub trait Fs: Send + Sync {
     async fn is_case_sensitive(&self) -> bool;
     fn subscribe_to_jobs(&self) -> JobEventReceiver;
 
-    /// Restores a given `TrashedEntry`, moving it from the system's trash back
-    /// to the original path.
-    async fn restore(
-        &self,
-        trashed_entry: TrashedEntry,
-    ) -> std::result::Result<PathBuf, TrashRestoreError>;
+    /// Returns the original absolute path of the item identified by `trash_id`.
+    fn original_path_for_trash_id(&self, trash_id: TrashId) -> Option<PathBuf>;
+
+    /// Restores the item identified by `trash_id`, moving it from the system's
+    /// trash back to its original path.
+    async fn restore(&self, trash_id: TrashId) -> std::result::Result<PathBuf, TrashRestoreError>;
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> Arc<FakeFs> {
@@ -186,7 +187,7 @@ pub trait Fs: Send + Sync {
 /// Represents a file or directory that has been moved to the system trash,
 /// retaining enough information to restore it to its original location.
 #[derive(Clone, PartialEq, Debug)]
-pub struct TrashedEntry {
+struct TrashedEntry {
     /// Platform-specific identifier for the file/directory in the trash.
     ///
     /// * Freedesktop – Path to the `.trashinfo` file.
@@ -228,6 +229,11 @@ pub enum TrashRestoreError {
     NotFound { path: PathBuf },
     #[error("File or directory ({}) already exists at the restore destination.", path.display())]
     Collision { path: PathBuf },
+    // This should never occur, the only way to get a TrashId is to undo
+    // consumes the Change::Trashed. We worry about remoting duplicate messages
+    // we do not want to crash the app then which is why this error is there.
+    #[error("The item was already restored")]
+    AlreadyRestored,
     #[error("Unknown error ({description})")]
     Unknown { description: String },
 }
@@ -295,6 +301,7 @@ pub struct Metadata {
     pub len: u64,
     pub is_fifo: bool,
     pub is_executable: bool,
+    pub is_writable: bool,
 }
 
 /// Filesystem modification time. The purpose of this newtype is to discourage use of operations
@@ -395,11 +402,24 @@ impl From<MTime> for proto::Timestamp {
     }
 }
 
+slotmap::new_key_type! { pub struct TrashId; }
+
+impl TrashId {
+    pub fn from_proto(value: u64) -> Self {
+        KeyData::from_ffi(value).into()
+    }
+
+    pub fn to_proto(self) -> u64 {
+        self.0.as_ffi()
+    }
+}
+
 pub struct RealFs {
     bundled_git_binary_path: Option<PathBuf>,
     executor: BackgroundExecutor,
     next_job_id: Arc<AtomicUsize>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
+    trash: Arc<Mutex<SlotMap<TrashId, TrashedEntry>>>,
     is_case_sensitive: AtomicU8,
 }
 
@@ -508,6 +528,7 @@ impl RealFs {
             executor,
             next_job_id: Arc::new(AtomicUsize::new(0)),
             job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
+            trash: Arc::new(Mutex::new(SlotMap::with_key())),
             is_case_sensitive: Default::default(),
         }
     }
@@ -609,6 +630,59 @@ fn path_to_c_string(path: &Path) -> io::Result<CString> {
             format!("path contains interior NUL: {}", path.display()),
         )
     })
+}
+
+// On Unix targets, std::fs::ReadDir panics in its Drop implementation
+// when an unexpected error is returned from closedir(2). We hit this
+// condition in production; one cause seems to be macOS's FSEventStream
+// incorrectly closing fds it doesn't own, resulting in closedir returning
+// EBADF, see https://github.com/zed-industries/zed/issues/59952#issuecomment-5080178879.
+//
+// We also see occasional errors like ENXIO and ETIMEDOUT that seem to
+// come from network or other exotic filesystems.
+//
+// To avoid crashing the app in this situation, we use the rustix analogue of
+// ReadDir, which doesn't have this panic in drop.
+#[cfg(unix)]
+fn read_dir_entries(path: PathBuf) -> Result<impl Send + Iterator<Item = Result<PathBuf>>> {
+    use rustix::fs::{Dir, Mode, OFlags};
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let directory_fd = rustix::fs::open(
+        &path,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .with_context(|| format!("failed to open directory {path:?}"))?;
+    let directory =
+        Dir::new(directory_fd).with_context(|| format!("failed to read directory {path:?}"))?;
+
+    Ok(directory.filter_map(move |entry| {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                return Some(Err(anyhow::Error::new(error)
+                    .context(format!("failed to read directory entry in {path:?}"))));
+            }
+        };
+        let name = entry.file_name().to_bytes();
+        if name == b"." || name == b".." {
+            return None;
+        }
+        Some(Ok(path.join(OsStr::from_bytes(name))))
+    }))
+}
+
+#[cfg(not(unix))]
+fn read_dir_entries(path: PathBuf) -> Result<impl Send + Iterator<Item = Result<PathBuf>>> {
+    let entries =
+        std::fs::read_dir(&path).with_context(|| format!("failed to open directory {path:?}"))?;
+    Ok(entries.map(move |entry| {
+        entry
+            .map(|entry| entry.path())
+            .with_context(|| format!("failed to read directory entry in {path:?}"))
+    }))
 }
 
 #[async_trait::async_trait]
@@ -798,7 +872,7 @@ impl Fs for RealFs {
         }
     }
 
-    async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashedEntry> {
+    async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashId> {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
         // the path variable holds.
@@ -807,17 +881,12 @@ impl Fs for RealFs {
         // its target and leave the link behind.
         let path = std::path::absolute(path).context("Could not make the path absolute")?;
 
-        let (tx, rx) = futures::channel::oneshot::channel();
-        std::thread::Builder::new()
-            .name("trash file or dir".to_string())
-            .spawn(|| tx.send(trash::delete_with_info(path)))
-            .expect("The os can spawn threads");
-
-        Ok(rx
+        let entry = smol::unblock(move || trash::delete_with_info(path))
             .await
-            .context("Tx dropped or fs.restore panicked")?
             .context("Could not trash file or dir")?
-            .into())
+            .into();
+
+        Ok(self.trash.lock().insert(entry))
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read + Send + Sync>> {
@@ -1032,6 +1101,7 @@ impl Fs for RealFs {
             is_dir: metadata.file_type().is_dir(),
             is_fifo,
             is_executable,
+            is_writable: !metadata.permissions().readonly(),
         }))
     }
 
@@ -1049,16 +1119,11 @@ impl Fs for RealFs {
         path: &Path,
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         let path = path.to_owned();
-        let result = iter(
-            self.executor
-                .spawn(async move { std::fs::read_dir(path) })
-                .await?,
-        )
-        .map(|entry| match entry {
-            Ok(entry) => Ok(entry.path()),
-            Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
-        });
-        Ok(Box::pin(result))
+        let entries = self
+            .executor
+            .spawn(async move { read_dir_entries(path) })
+            .await?;
+        Ok(Box::pin(iter(entries)))
     }
 
     async fn watch(
@@ -1098,7 +1163,11 @@ impl Fs for RealFs {
                 }
             }
             watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
+            // Skipped for poll watchers: PollWatcher::watch() recursively scans
+            // at registration, blocking on large virtual filesystem mounts
+            if let Some(parent) = target.parent()
+                && !fs_watcher::requires_poll_watcher(parent)
+            {
                 watcher.add(parent).log_err();
             }
         }
@@ -1184,7 +1253,7 @@ impl Fs for RealFs {
         if !output.status.success() {
             anyhow::bail!(
                 "git clone failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&output.stderr).trim_end()
             );
         }
 
@@ -1282,10 +1351,21 @@ impl Fs for RealFs {
         res
     }
 
-    async fn restore(
-        &self,
-        trashed_entry: TrashedEntry,
-    ) -> std::result::Result<PathBuf, TrashRestoreError> {
+    fn original_path_for_trash_id(&self, trash_id: TrashId) -> Option<PathBuf> {
+        self.trash
+            .lock()
+            .get(trash_id)
+            .map(|entry| entry.original_parent.join(&entry.name))
+    }
+
+    async fn restore(&self, trash_id: TrashId) -> std::result::Result<PathBuf, TrashRestoreError> {
+        let trashed_entry = self
+            .trash
+            .lock()
+            .get(trash_id)
+            .cloned()
+            .ok_or(TrashRestoreError::AlreadyRestored)?;
+
         let restored_item_path = trashed_entry.original_parent.join(&trashed_entry.name);
 
         let (tx, rx) = futures::channel::oneshot::channel();
@@ -1296,7 +1376,9 @@ impl Fs for RealFs {
                 tx.send(res)
             })
             .expect("The OS can spawn a threads");
+
         rx.await.expect("Restore all never panics")?;
+        self.trash.lock().remove(trash_id);
         Ok(restored_item_path)
     }
 }
@@ -1334,9 +1416,10 @@ struct FakeFsState {
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     job_event_subscribers: Arc<Mutex<Vec<JobEventSender>>>,
-    trash: Vec<(TrashedEntry, FakeFsEntry)>,
+    trash: Mutex<SlotMap<TrashId, (TrashedEntry, FakeFsEntry)>>,
     file_to_create_before_watch_add: Option<(PathBuf, PathBuf)>,
     remove_dir_errors: std::collections::HashMap<PathBuf, String>,
+    case_sensitive: bool,
 }
 
 #[cfg(feature = "test-support")]
@@ -1500,7 +1583,20 @@ impl FakeFsState {
                     Component::Normal(name) => {
                         let current_entry = *entry_stack.last()?;
                         if let FakeFsEntry::Dir { entries, .. } = current_entry {
-                            let entry = entries.get(name.to_str().unwrap())?;
+                            let name_str = name.to_str().unwrap();
+                            let (canonical_name, entry) = match entries.get(name_str) {
+                                Some(entry) => (name_str, entry),
+                                None => {
+                                    if !self.case_sensitive {
+                                        entries
+                                            .iter()
+                                            .find(|(key, _)| key.eq_ignore_ascii_case(name_str))
+                                            .map(|(key, entry)| (key.as_str(), entry))?
+                                    } else {
+                                        return None;
+                                    }
+                                }
+                            };
                             if (path_components.peek().is_some() || follow_symlink)
                                 && let FakeFsEntry::Symlink { target, .. } = entry
                             {
@@ -1510,7 +1606,7 @@ impl FakeFsState {
                                 continue 'outer;
                             }
                             entry_stack.push(entry);
-                            canonical_path = canonical_path.join(name);
+                            canonical_path = canonical_path.join(canonical_name);
                         } else {
                             return None;
                         }
@@ -1570,7 +1666,7 @@ impl FakeFsState {
         Ok(self
             .try_entry(target, true)
             .ok_or_else(|| {
-                anyhow!(io::Error::new(
+                anyhow::anyhow!(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("not found: {target:?}")
                 ))
@@ -1654,9 +1750,10 @@ impl FakeFs {
                 path_write_counts: Default::default(),
                 moves: Default::default(),
                 job_event_subscribers: Arc::new(Mutex::new(Vec::new())),
-                trash: Vec::new(),
+                trash: Mutex::new(SlotMap::with_key()),
                 file_to_create_before_watch_add: None,
                 remove_dir_errors: Default::default(),
+                case_sensitive: true,
             })),
         });
 
@@ -1674,6 +1771,11 @@ impl FakeFs {
         }).detach();
 
         this
+    }
+
+    /// Configures whether the fake filesystem reports as case-sensitive.
+    pub fn set_case_sensitive(&self, case_sensitive: bool) {
+        self.state.lock().case_sensitive = case_sensitive;
     }
 
     pub fn set_next_mtime(&self, next_mtime: SystemTime) {
@@ -1830,6 +1932,20 @@ impl FakeFs {
 
     pub fn clear_buffered_events(&self) {
         self.state.lock().buffered_events.clear();
+    }
+
+    /// Simulates the kernel's watch queue overflowing: all buffered
+    /// (undelivered) events are lost, and the watcher reports only a single
+    /// `Rescan` event for `root`, mirroring how the native backends report
+    /// lost sync (FSEvents `kFSEventStreamEventFlagMustScanSubDirs`, inotify
+    /// `IN_Q_OVERFLOW`, Windows `ERROR_NOTIFY_ENUM_DIR`).
+    ///
+    /// Note that the fake file system's state is unaffected; like a real
+    /// overflow, only the notifications are lost, not the changes themselves.
+    pub fn simulate_watcher_overflow(&self, root: impl Into<PathBuf>) {
+        let mut state = self.state.lock();
+        state.buffered_events.clear();
+        state.emit_event([(root, Some(PathEventKind::Rescan))]);
     }
 
     pub fn create_file_before_next_watch_add(
@@ -2198,7 +2314,7 @@ impl FakeFs {
             state.index_contents.extend(
                 index_state
                     .iter()
-                    .map(|(path, content)| (repo_path(path), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.as_bytes().to_vec())),
             );
         })
         .unwrap();
@@ -2215,7 +2331,7 @@ impl FakeFs {
             state.head_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (repo_path(path), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.as_bytes().to_vec())),
             );
             state.refs.insert("HEAD".into(), sha.into());
         })
@@ -2228,7 +2344,7 @@ impl FakeFs {
             state.head_contents.extend(
                 contents_by_path
                     .iter()
-                    .map(|(path, contents)| (repo_path(path), contents.clone())),
+                    .map(|(path, contents)| (repo_path(path), contents.as_bytes().to_vec())),
             );
             state.index_contents = state.head_contents.clone();
         })
@@ -2249,7 +2365,7 @@ impl FakeFs {
                 .map(|n| Oid::from_bytes(n.repeat(20).as_bytes()).unwrap());
             for ((path, content), oid) in contents_by_path.iter().zip(oids) {
                 state.merge_base_contents.insert(repo_path(path), oid);
-                state.oids.insert(oid, content.clone());
+                state.oids.insert(oid, content.as_bytes().to_vec());
             }
         })
         .unwrap();
@@ -2376,10 +2492,14 @@ impl FakeFs {
                 };
 
                 if let Some(content) = index_content {
-                    state.index_contents.insert(repo_path.clone(), content);
+                    state
+                        .index_contents
+                        .insert(repo_path.clone(), content.into_bytes());
                 }
                 if let Some(content) = head_content {
-                    state.head_contents.insert(repo_path.clone(), content);
+                    state
+                        .head_contents
+                        .insert(repo_path.clone(), content.into_bytes());
                 }
             }
         }).unwrap();
@@ -2404,7 +2524,18 @@ impl FakeFs {
         self.state
             .lock()
             .remove_dir_errors
-            .insert(normalize_path(path.as_ref()), message);
+            .insert(Self::remove_dir_error_key(path.as_ref()), message);
+    }
+
+    /// Entry resolution in `try_entry` ignores drive prefixes, so the error
+    /// injection map must too.
+    /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a
+    /// lookup for `\workspace\dir`.
+    fn remove_dir_error_key(path: &Path) -> PathBuf {
+        normalize_path(path)
+            .components()
+            .skip_while(|component| matches!(component, Component::Prefix(_)))
+            .collect()
     }
 
     pub fn paths(&self, include_dot_git: bool) -> Vec<PathBuf> {
@@ -2503,7 +2634,7 @@ impl FakeFs {
         state
             .event_txs
             .iter()
-            .filter_map(|(path, tx)| Some(path.clone()).filter(|_| !tx.is_closed()))
+            .filter_map(|(path, tx)| (!tx.is_closed()).then_some(path.clone()))
             .collect()
     }
 
@@ -2531,16 +2662,6 @@ impl FakeFs {
         self.executor.simulate_random_delay()
     }
 
-    /// Returns list of all tracked trash entries.
-    pub fn trash_entries(&self) -> Vec<TrashedEntry> {
-        self.state
-            .lock()
-            .trash
-            .iter()
-            .map(|(entry, _)| entry.clone())
-            .collect()
-    }
-
     async fn remove_dir_inner(
         &self,
         path: &Path,
@@ -2549,7 +2670,12 @@ impl FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        if let Some(message) = self.state.lock().remove_dir_errors.get(&path) {
+        if let Some(message) = self
+            .state
+            .lock()
+            .remove_dir_errors
+            .get(&Self::remove_dir_error_key(&path))
+        {
             anyhow::bail!("{message}");
         }
         let parent_path = path.parent().context("cannot remove the root")?;
@@ -2616,6 +2742,20 @@ impl FakeFs {
 
         state.emit_event([(path, Some(PathEventKind::Removed))]);
         Ok(removed)
+    }
+
+    pub fn trashed_paths(&self) -> Vec<PathBuf> {
+        self.state
+            .lock()
+            .trash
+            .lock()
+            .values()
+            .map(|(trashed_entry, _fake_entry)| {
+                PathBuf::new()
+                    .join(trashed_entry.original_parent.clone())
+                    .join(trashed_entry.name.clone())
+            })
+            .collect::<Vec<PathBuf>>()
     }
 }
 
@@ -2933,7 +3073,7 @@ impl Fs for FakeFs {
         self.remove_dir_inner(path, options).await.map(|_| ())
     }
 
-    async fn trash(&self, path: &Path, options: RemoveOptions) -> Result<TrashedEntry> {
+    async fn trash(&self, path: &Path, options: RemoveOptions) -> Result<TrashId> {
         let normalized_path = normalize_path(path);
         let parent_path = normalized_path.parent().context("cannot remove the root")?;
         let base_name = normalized_path.file_name().unwrap();
@@ -2951,9 +3091,14 @@ impl Fs for FakeFs {
                     original_parent: parent_path.to_path_buf(),
                 };
 
-                let mut state = self.state.lock();
-                state.trash.push((trashed_entry.clone(), fake_entry));
-                Ok(trashed_entry)
+                let trash_id = self
+                    .state
+                    .lock()
+                    .trash
+                    .lock()
+                    .insert((trashed_entry, fake_entry));
+
+                Ok(trash_id)
             }
             None => anyhow::bail!("{normalized_path:?} does not exist"),
         }
@@ -3072,6 +3217,7 @@ impl Fs for FakeFs {
                     is_symlink,
                     is_fifo: false,
                     is_executable: false,
+                    is_writable: true,
                 },
                 FakeFsEntry::Dir {
                     inode, mtime, len, ..
@@ -3083,6 +3229,7 @@ impl Fs for FakeFs {
                     is_symlink,
                     is_fifo: false,
                     is_executable: false,
+                    is_writable: true,
                 },
                 FakeFsEntry::Symlink { .. } => unreachable!(),
             }))
@@ -3205,7 +3352,7 @@ impl Fs for FakeFs {
     }
 
     async fn is_case_sensitive(&self) -> bool {
-        true
+        self.state.lock().case_sensitive
     }
 
     fn subscribe_to_jobs(&self) -> JobEventReceiver {
@@ -3214,18 +3361,20 @@ impl Fs for FakeFs {
         receiver
     }
 
-    async fn restore(&self, trashed_entry: TrashedEntry) -> Result<PathBuf, TrashRestoreError> {
+    fn original_path_for_trash_id(&self, trash_id: TrashId) -> Option<PathBuf> {
+        self.state
+            .lock()
+            .trash
+            .lock()
+            .get(trash_id)
+            .map(|(entry, _)| entry.original_parent.join(&entry.name))
+    }
+
+    async fn restore(&self, trash_id: TrashId) -> Result<PathBuf, TrashRestoreError> {
         let mut state = self.state.lock();
 
-        let Some((trashed_entry, fake_entry)) = state
-            .trash
-            .iter()
-            .find(|(entry, _)| *entry == trashed_entry)
-            .cloned()
-        else {
-            return Err(TrashRestoreError::NotFound {
-                path: PathBuf::from(trashed_entry.id),
-            });
+        let Some((trashed_entry, fake_entry)) = state.trash.lock().get(trash_id).cloned() else {
+            return Err(TrashRestoreError::AlreadyRestored);
         };
 
         let path = trashed_entry
@@ -3244,7 +3393,7 @@ impl Fs for FakeFs {
 
         match result {
             Ok(_) => {
-                state.trash.retain(|(entry, _)| *entry != trashed_entry);
+                state.trash.lock().remove(trash_id);
                 state.emit_event([(path.clone(), Some(PathEventKind::Created))]);
                 Ok(path)
             }

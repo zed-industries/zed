@@ -103,7 +103,7 @@ impl AttachModal {
                 window,
                 cx,
             )
-            .modal(modal)
+            .when(!modal, |picker| picker.embedded())
         });
         Self {
             _subscription: cx.subscribe(&picker, |_, _, _, cx| {
@@ -119,7 +119,6 @@ impl Render for AttachModal {
         v_flex()
             .key_context("AttachModal")
             .track_focus(&self.focus_handle(cx))
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }

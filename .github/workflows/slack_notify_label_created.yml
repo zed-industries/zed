@@ -4,6 +4,9 @@ on:
   label:
     types: [created]
 
+permissions:
+  contents: read
+
 jobs:
   notify-slack:
     if: >-

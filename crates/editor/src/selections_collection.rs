@@ -6,8 +6,8 @@ use std::{
 
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
-use language::{Bias, Point, PointUtf16, Selection, SelectionGoal};
-use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
+use language::{Bias, Point, Selection, SelectionGoal};
+use multi_buffer::{MultiBufferDimension, MultiBufferOffset, MultiBufferRow, ToPoint};
 use util::post_inc;
 
 use crate::{
@@ -212,6 +212,26 @@ impl SelectionsCollection {
         }
     }
 
+    pub fn disjoint_in_row_range<D>(
+        &self,
+        range: Range<Anchor>,
+        snapshot: &DisplaySnapshot,
+    ) -> Vec<Selection<D>>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord + std::fmt::Debug,
+    {
+        let buffer = snapshot.buffer_snapshot();
+        let start_row = range.start.to_point(buffer).row;
+        let end_row = range.end.to_point(buffer).row;
+        let start_ix = self
+            .disjoint
+            .partition_point(|probe| probe.end.to_point(buffer).row < start_row);
+        let end_ix = self
+            .disjoint
+            .partition_point(|probe| probe.start.to_point(buffer).row <= end_row);
+        resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
+    }
+
     pub fn disjoint_in_range<D>(
         &self,
         range: Range<Anchor>,
@@ -220,19 +240,13 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord + std::fmt::Debug,
     {
-        let start_ix = match self
+        let buffer = snapshot.buffer_snapshot();
+        let start_ix = self
             .disjoint
-            .binary_search_by(|probe| probe.end.cmp(&range.start, snapshot.buffer_snapshot()))
-        {
-            Ok(ix) | Err(ix) => ix,
-        };
-        let end_ix = match self
+            .partition_point(|probe| probe.end.cmp(&range.start, buffer).is_lt());
+        let end_ix = self
             .disjoint
-            .binary_search_by(|probe| probe.start.cmp(&range.end, snapshot.buffer_snapshot()))
-        {
-            Ok(ix) => ix + 1,
-            Err(ix) => ix,
-        };
+            .partition_point(|probe| probe.start.cmp(&range.end, buffer).is_le());
         resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
 
@@ -316,7 +330,7 @@ impl SelectionsCollection {
     pub fn first_anchor(&self) -> Selection<Anchor> {
         self.pending
             .as_ref()
-            .map(|pending| pending.selection.clone())
+            .map(|pending| pending.selection)
             .unwrap_or_else(|| self.disjoint.first().cloned().unwrap())
     }
 
@@ -391,7 +405,7 @@ impl SelectionsCollection {
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    pub fn build_columnar_selection(
+    pub(crate) fn build_columnar_selection(
         &mut self,
         display_map: &DisplaySnapshot,
         row: DisplayRow,
@@ -430,34 +444,33 @@ impl SelectionsCollection {
     }
 
     /// Attempts to build a selection in the provided buffer row using the
-    /// same UTF-16 column range as specified.
+    /// same tab-expanded column range as specified.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
-    fn build_columnar_selection_from_utf16_columns(
+    fn build_columnar_selection_from_tab_expanded_columns(
         &mut self,
         display_map: &DisplaySnapshot,
-        buffer_row: u32,
-        positions: &Range<u32>,
+        multi_buffer_row: MultiBufferRow,
+        goal_columns: &Range<u32>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
-        let snapshot = display_map.buffer_snapshot();
-        let is_empty = positions.start == positions.end;
-        let line_len_utf16 = snapshot.line_len_utf16(multi_buffer::MultiBufferRow(buffer_row));
+        let is_empty = goal_columns.start == goal_columns.end;
+        let line_len = display_map.tab_expanded_line_len(multi_buffer_row);
 
         let (start, end) = if is_empty {
-            let column = std::cmp::min(positions.start, line_len_utf16);
-            let point = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, column));
+            let point =
+                display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
             (point, point)
         } else {
-            if positions.start >= line_len_utf16 {
+            if goal_columns.start >= line_len {
                 return None;
             }
 
-            let start = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, positions.start));
-            let end_column = std::cmp::min(positions.end, line_len_utf16);
-            let end = snapshot.point_utf16_to_point(PointUtf16::new(buffer_row, end_column));
+            let start =
+                display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.start);
+            let end = display_map.point_for_tab_expanded_column(multi_buffer_row, goal_columns.end);
             (start, end)
         };
 
@@ -480,7 +493,7 @@ impl SelectionsCollection {
 
     /// Finds the next columnar selection by walking display rows one at a time
     /// so that soft-wrapped lines are considered and not skipped.
-    pub fn find_next_columnar_selection_by_display_row(
+    pub(crate) fn find_next_columnar_selection_by_display_row(
         &mut self,
         display_map: &DisplaySnapshot,
         start_row: DisplayRow,
@@ -513,7 +526,7 @@ impl SelectionsCollection {
 
     /// Finds the next columnar selection by skipping to the next buffer row,
     /// ignoring soft-wrapped lines.
-    pub fn find_next_columnar_selection_by_buffer_row(
+    pub(crate) fn find_next_columnar_selection_by_buffer_row(
         &mut self,
         display_map: &DisplaySnapshot,
         start_row: DisplayRow,
@@ -529,9 +542,9 @@ impl SelectionsCollection {
             let new_row =
                 display_map.start_of_relative_buffer_row(DisplayPoint::new(row, 0), direction);
             row = new_row.row();
-            let buffer_row = new_row.to_point(display_map).row;
+            let buffer_row = MultiBufferRow(new_row.to_point(display_map).row);
 
-            if let Some(selection) = self.build_columnar_selection_from_utf16_columns(
+            if let Some(selection) = self.build_columnar_selection_from_tab_expanded_columns(
                 display_map,
                 buffer_row,
                 goal_columns,
@@ -759,7 +772,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             return true;
         }
 
-        let mut oldest = self.oldest_anchor().clone();
+        let mut oldest = *self.oldest_anchor();
         if self.count() > 1 {
             self.collection.disjoint = Arc::from([oldest]);
             self.selections_changed = true;
@@ -843,6 +856,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
                 .map(|selection| selection_to_anchor_selection(selection, self.snapshot)),
         );
         self.collection.pending = None;
+        self.collection.select_mode = SelectMode::Character;
         self.selections_changed = true;
     }
 
@@ -985,7 +999,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
         let selections = selections
             .into_iter()
             .map(|selection| {
-                let mut moved_selection = selection.clone();
+                let mut moved_selection = selection;
                 move_selection(&display_map, &mut moved_selection);
                 if selection != moved_selection {
                     changed = true;
@@ -1010,7 +1024,7 @@ impl<'snap, 'a> MutableSelectionsCollection<'snap, 'a> {
             .all::<MultiBufferOffset>(&display_map)
             .into_iter()
             .map(|selection| {
-                let mut moved_selection = selection.clone();
+                let mut moved_selection = selection;
                 move_selection(self.snapshot, &mut moved_selection);
                 if selection != moved_selection {
                     changed = true;
@@ -1350,6 +1364,125 @@ mod tests {
     use rand::{Rng as _, rngs::StdRng};
     use settings::SettingsStore;
     use std::sync::Arc;
+
+    fn row_range_snapshot(cx: &mut gpui::TestAppContext, text: &str) -> DisplaySnapshot {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            crate::init(cx);
+        });
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        display_map.update(cx, |map, cx| map.snapshot(cx))
+    }
+
+    fn row_range_collection(
+        offset_ranges: impl IntoIterator<Item = Range<usize>>,
+        buffer_snapshot: &MultiBufferSnapshot,
+    ) -> SelectionsCollection {
+        let selections = offset_ranges
+            .into_iter()
+            .enumerate()
+            .map(|(id, range)| {
+                selection_to_anchor_selection(
+                    Selection {
+                        id,
+                        start: MultiBufferOffset(range.start),
+                        end: MultiBufferOffset(range.end),
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    },
+                    buffer_snapshot,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut collection = SelectionsCollection::new();
+        collection.disjoint = Arc::from(selections);
+        collection.pending = None;
+        collection
+    }
+
+    /// `disjoint_in_row_range` selects by whole rows, so a selection sharing a queried row must be
+    /// returned even when its columns don't overlap the queried range. `disjoint_in_range` compares
+    /// exact offsets and would miss this case.
+    #[gpui::test]
+    fn disjoint_in_row_range_matches_whole_row(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "aaaa\nbbbbbbbb\ncccc");
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        // A selection on row 1 spanning columns 3..5 (buffer offsets 8..10).
+        let collection = row_range_collection([8..10], buffer_snapshot);
+
+        // Query row 1 at columns 0..1, entirely before the selection's columns.
+        let range = buffer_snapshot.anchor_before(MultiBufferOffset(5))
+            ..buffer_snapshot.anchor_before(MultiBufferOffset(6));
+        let result = collection.disjoint_in_row_range::<Point>(range, &snapshot);
+
+        assert_eq!(
+            result.len(),
+            1,
+            "row range should include the selection sharing the queried row"
+        );
+        assert_eq!(result[0].start, Point::new(1, 3));
+        assert_eq!(result[0].end, Point::new(1, 5));
+    }
+
+    /// A selection on a row outside the queried row range must not be returned. This guards the
+    /// row-overlap boundary against becoming over-inclusive.
+    #[gpui::test]
+    fn disjoint_in_row_range_excludes_other_rows(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "aaaa\nbbbbbbbb\ncccc");
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        // A selection on row 2 (buffer offsets 14..16).
+        let collection = row_range_collection([14..16], buffer_snapshot);
+
+        // Query only row 0, two rows away from the selection.
+        let range = buffer_snapshot.anchor_before(MultiBufferOffset(0))
+            ..buffer_snapshot.anchor_before(MultiBufferOffset(1));
+        let result = collection.disjoint_in_row_range::<Point>(range, &snapshot);
+
+        assert!(
+            result.is_empty(),
+            "row range should exclude a selection on a non-queried row"
+        );
+    }
+
+    /// A selection spanning multiple rows must be returned when the query touches any of those rows,
+    /// not just when the query shares the selection's start or end row.
+    #[gpui::test]
+    fn disjoint_in_row_range_matches_interior_row(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "aaaa\nbbbb\ncccc\ndddd");
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        // A selection spanning row 1 column 1 through row 3 column 2 (buffer offsets 6..17).
+        let collection = row_range_collection([6..17], buffer_snapshot);
+
+        // Query only row 2, an interior row of the selection.
+        let range = buffer_snapshot.anchor_before(MultiBufferOffset(11))
+            ..buffer_snapshot.anchor_before(MultiBufferOffset(12));
+        let result = collection.disjoint_in_row_range::<Point>(range, &snapshot);
+
+        assert_eq!(
+            result.len(),
+            1,
+            "row range should include a selection whose interior row is queried"
+        );
+        assert_eq!(result[0].start, Point::new(1, 1));
+        assert_eq!(result[0].end, Point::new(3, 2));
+    }
 
     #[gpui::test(iterations = 20)]
     fn fast_and_slow_selection_resolution_match_without_collapsed_content(

@@ -7,14 +7,16 @@ use clap::Parser;
 
 /// Runs the Linux Bubblewrap sandboxing NixOS VM tests (see `nix/tests/sandboxing`).
 ///
-/// Each test boots a real kernel under QEMU to exercise bwrap behavior: one
-/// scenario with unprivileged user namespaces available (the sandbox must be
-/// enforced) and one with them disabled (the launcher must report the failure
-/// and degrade gracefully). They therefore only run on Linux with `/dev/kvm`
-/// available, and require `nix` with flakes enabled.
+/// Each test boots a real kernel under QEMU to exercise bwrap behavior across
+/// host configurations: a working host (the sandbox must be enforced and the
+/// full fs x network policy matrix must hold), and degraded hosts (no bwrap,
+/// setuid-only bwrap, user namespaces disabled) where `Sandbox::can_create`
+/// must report the specific failure and the consumer must fail closed. They
+/// therefore only run on Linux with `/dev/kvm` available, and require `nix`
+/// with flakes enabled.
 #[derive(Parser)]
 pub struct SandboxTestsArgs {
-    /// Names of specific tests to run (e.g. `sandbox-userns-enabled`). Defaults
+    /// Names of specific tests to run (e.g. `sandbox-working`). Defaults
     /// to all.
     tests: Vec<String>,
 

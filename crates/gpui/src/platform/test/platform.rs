@@ -3,8 +3,8 @@ use crate::{
     DummyKeyboardMapper, ForegroundExecutor, Keymap, NoopTextSystem, PathPromptOptions, Platform,
     PlatformDisplay, PlatformHeadlessRenderer, PlatformKeyboardLayout, PlatformKeyboardMapper,
     PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams,
-    size,
+    SharedString, SourceMetadata, SystemNotification, SystemNotificationResponse, Task,
+    TestDisplay, TestWindow, ThermalState, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -33,8 +33,10 @@ pub(crate) struct TestPlatform {
     pub(crate) prompts: RefCell<TestPrompts>,
     screen_capture_sources: RefCell<Vec<TestScreenCaptureSource>>,
     pub opened_url: RefCell<Option<String>>,
+    pub(crate) system_notifications: RefCell<TestSystemNotifications>,
     pub text_system: Arc<dyn PlatformTextSystem>,
-    pub expect_restart: RefCell<Option<oneshot::Sender<Option<PathBuf>>>>,
+    pub expect_restart:
+        RefCell<Option<oneshot::Sender<(Option<PathBuf>, Vec<std::ffi::OsString>)>>>,
     headless_renderer_factory: Option<Box<dyn Fn() -> Option<Box<dyn PlatformHeadlessRenderer>>>>,
     weak: Weak<Self>,
 }
@@ -80,6 +82,15 @@ struct TestPrompt {
     detail: Option<String>,
     answers: Vec<String>,
     tx: oneshot::Sender<usize>,
+}
+
+#[derive(Default)]
+pub(crate) struct TestSystemNotifications {
+    pub(crate) app_identity: Option<(SharedString, SharedString)>,
+    pub(crate) shown: Vec<SystemNotification>,
+    pub(crate) delivered: Vec<SystemNotification>,
+    pub(crate) dismissed: Vec<SharedString>,
+    response_callback: Option<Box<dyn FnMut(SystemNotificationResponse)>>,
 }
 
 #[derive(Default)]
@@ -134,6 +145,7 @@ impl TestPlatform {
             current_find_pasteboard_item: Mutex::new(None),
             weak: weak.clone(),
             opened_url: Default::default(),
+            system_notifications: Default::default(),
             text_system,
             headless_renderer_factory,
         })
@@ -258,6 +270,40 @@ impl TestPlatform {
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
         !self.prompts.borrow().new_path.is_empty()
     }
+
+    pub(crate) fn app_identity(&self) -> Option<(SharedString, SharedString)> {
+        self.system_notifications.borrow().app_identity.clone()
+    }
+
+    pub(crate) fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.system_notifications.borrow().shown.clone()
+    }
+
+    pub(crate) fn delivered_system_notifications(&self) -> Vec<SystemNotification> {
+        self.system_notifications.borrow().delivered.clone()
+    }
+
+    pub(crate) fn dismissed_system_notifications(&self) -> Vec<SharedString> {
+        self.system_notifications.borrow().dismissed.clone()
+    }
+
+    pub(crate) fn simulate_system_notification_response(
+        &self,
+        response: SystemNotificationResponse,
+    ) {
+        let callback = self
+            .system_notifications
+            .borrow_mut()
+            .response_callback
+            .take();
+        if let Some(mut callback) = callback {
+            callback(response);
+            self.system_notifications
+                .borrow_mut()
+                .response_callback
+                .get_or_insert(callback);
+        }
+    }
 }
 
 impl Platform for TestPlatform {
@@ -295,9 +341,9 @@ impl Platform for TestPlatform {
 
     fn quit(&self) {}
 
-    fn restart(&self, path: Option<PathBuf>) {
+    fn restart(&self, path: Option<PathBuf>, arguments: Vec<std::ffi::OsString>) {
         if let Some(tx) = self.expect_restart.take() {
-            tx.send(path).unwrap();
+            tx.send((path, arguments)).unwrap();
         }
     }
 
@@ -408,10 +454,52 @@ impl Platform for TestPlatform {
         unimplemented!()
     }
 
-    fn on_quit(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_quit(&self, _callback: Box<dyn FnMut() -> bool>) {}
 
     fn on_reopen(&self, _callback: Box<dyn FnMut()>) {
         unimplemented!()
+    }
+
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
+    fn set_app_identity(&self, identifier: &str, name: &str) {
+        self.system_notifications.borrow_mut().app_identity =
+            Some((identifier.to_string().into(), name.to_string().into()));
+    }
+
+    fn show_system_notification(&self, notification: SystemNotification) {
+        let mut system_notifications = self.system_notifications.borrow_mut();
+        if system_notifications.app_identity.is_none() {
+            return;
+        }
+
+        let delivered = system_notifications
+            .delivered
+            .iter_mut()
+            .find(|delivered| delivered.tag == notification.tag);
+        if let Some(delivered) = delivered {
+            *delivered = notification.clone();
+        } else {
+            system_notifications.delivered.push(notification.clone());
+        }
+        system_notifications.shown.push(notification);
+    }
+
+    fn dismiss_system_notification(&self, tag: &str) {
+        let mut system_notifications = self.system_notifications.borrow_mut();
+        system_notifications
+            .delivered
+            .retain(|notification| notification.tag != tag);
+        system_notifications
+            .dismissed
+            .push(SharedString::from(tag.to_string()));
+    }
+
+    fn on_system_notification_response(
+        &self,
+        callback: Box<dyn FnMut(SystemNotificationResponse)>,
+    ) {
+        self.system_notifications.borrow_mut().response_callback = Some(callback);
     }
 
     fn set_menus(&self, _menus: Vec<crate::Menu>, _keymap: &Keymap) {}
