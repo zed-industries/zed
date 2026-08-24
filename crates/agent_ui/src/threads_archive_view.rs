@@ -1293,7 +1293,7 @@ impl PickerDelegate for ProjectPickerDelegate {
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         format!(
-            "Associate the \"{}\" thread with...",
+            "Associate the \"{}\" thread with…",
             self.thread
                 .title
                 .as_ref()

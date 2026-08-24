@@ -1177,8 +1177,9 @@ impl VariableList {
     }
 
     fn center_truncate_string(s: &str, mut max_chars: usize) -> String {
-        const ELLIPSIS: &str = "...";
+        const ELLIPSIS: &str = "…";
         const MIN_LENGTH: usize = 3;
+        let ellipsis_length = ELLIPSIS.chars().count();
 
         max_chars = max_chars.max(MIN_LENGTH);
 
@@ -1187,11 +1188,11 @@ impl VariableList {
             return s.to_string();
         }
 
-        if ELLIPSIS.len() + MIN_LENGTH > max_chars {
+        if ellipsis_length + MIN_LENGTH > max_chars {
             return s.chars().take(MIN_LENGTH).collect();
         }
 
-        let available_chars = max_chars - ELLIPSIS.len();
+        let available_chars = max_chars - ellipsis_length;
 
         let start_chars = available_chars / 2;
         let end_chars = available_chars - start_chars;
@@ -1633,7 +1634,7 @@ mod tests {
         // Test simple truncation
         assert_eq!(
             VariableList::center_truncate_string("value->value2->value3->value4", 20),
-            "value->v...3->value4"
+            "value->va…e3->value4"
         );
 
         // Test with very long expression
@@ -1642,25 +1643,25 @@ mod tests {
                 "object->property1->property2->property3->property4->property5",
                 30
             ),
-            "object->prope...ty4->property5"
+            "object->proper…rty4->property5"
         );
 
-        // Test edge case with limit equal to ellipsis length
+        // Test edge case with limit equal to the minimum length
         assert_eq!(VariableList::center_truncate_string("anything", 3), "any");
 
-        // Test edge case with limit less than ellipsis length
+        // Test edge case with limit less than the minimum length
         assert_eq!(VariableList::center_truncate_string("anything", 2), "any");
 
         // Test with UTF-8 characters
         assert_eq!(
             VariableList::center_truncate_string("café->résumé->naïve->voilà", 15),
-            "café->...>voilà"
+            "café->r…->voilà"
         );
 
         // Test with emoji (multi-byte UTF-8)
         assert_eq!(
             VariableList::center_truncate_string("😀->happy->face->😎->cool", 15),
-            "😀->hap...->cool"
+            "😀->happ…😎->cool"
         );
     }
 }

@@ -2665,7 +2665,7 @@ impl Render for ConfigurationView {
             .and_then(|s| s.authentication_method.clone());
 
         if self.load_credentials_task.is_some() {
-            return div().child(Label::new("Loading credentials...")).into_any();
+            return div().child(Label::new("Loading credentials…")).into_any();
         }
 
         let configured_label = match &auth {

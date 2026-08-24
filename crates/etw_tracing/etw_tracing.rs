@@ -137,7 +137,7 @@ pub fn init(cx: &mut App) {
         };
         match send_json(&mut session.writer, &Command::Save) {
             Ok(()) => {
-                show_etw_notification(cx, "Stopping ETW recording...");
+                show_etw_notification(cx, "Stopping ETW recording…");
             }
             Err(error) => {
                 show_etw_notification(cx, format!("Failed to stop ETW recording: {error:#}"));
@@ -153,7 +153,7 @@ pub fn init(cx: &mut App) {
         };
         match send_json(&mut session.writer, &Command::Cancel) {
             Ok(()) => {
-                show_etw_notification(cx, "Cancelling ETW recording...");
+                show_etw_notification(cx, "Cancelling ETW recording…");
             }
             Err(error) => {
                 show_etw_notification(cx, format!("Failed to cancel ETW recording: {error:#}"));
