@@ -35,7 +35,7 @@ use fs::Fs;
 use futures::StreamExt as _;
 use gpui::{App, BorrowAppContext, Global, SharedString, Task};
 use handlebars::template::TemplateElement;
-use handlebars::{Handlebars, RenderError, Template};
+use handlebars::{Handlebars, RenderError, RenderErrorReason, Template};
 use serde::Serialize;
 use util::ResultExt as _;
 
@@ -118,16 +118,18 @@ fn check_partial(
     if visiting.iter().any(|visiting| visiting == name) {
         let mut chain = visiting.clone();
         chain.push(name.to_string());
-        return Err(RenderError::new(format!(
+        return Err(RenderErrorReason::Other(format!(
             "partial import cycle: {}",
             chain.join(" -> ")
-        )));
+        ))
+        .into());
     }
     let Some(content) = partials.get(name) else {
-        return Err(RenderError::new(format!("unknown partial `{name}`")));
+        return Err(RenderErrorReason::Other(format!("unknown partial `{name}`")).into());
     };
-    let template = Template::compile(content)
-        .map_err(|err| RenderError::new(format!("invalid partial `{name}`: {err}")))?;
+    let template = Template::compile(content).map_err(|err| {
+        RenderErrorReason::Other(format!("invalid partial `{name}`: {err}"))
+    })?;
     let mut references = Vec::new();
     collect_partial_references(&template.elements, &mut references);
     visiting.push(name.to_string());
@@ -196,10 +198,14 @@ pub fn contains_helper(
         .param(0)
         .and_then(|v| v.value().as_array())
         .ok_or_else(|| {
-            handlebars::RenderError::new("contains: missing or invalid list parameter")
+            handlebars::RenderError::from(RenderErrorReason::Other(
+                "contains: missing or invalid list parameter".to_string(),
+            ))
         })?;
     let query = h.param(1).map(|v| v.value()).ok_or_else(|| {
-        handlebars::RenderError::new("contains: missing or invalid query parameter")
+        handlebars::RenderError::from(RenderErrorReason::Other(
+            "contains: missing or invalid query parameter".to_string(),
+        ))
     })?;
 
     if list.contains(query) {

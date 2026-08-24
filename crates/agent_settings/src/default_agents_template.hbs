@@ -6,9 +6,12 @@ verbatim `AGENTS.md` injection in the agent's system prompt. On a render
 error Zed falls back to `AGENTS.md` and shows a warning. Delete this file
 to return to plain `AGENTS.md` behavior entirely.
 
-Text is emitted verbatim — anything that isn't a `{{...}}` mustache lands in
-the prompt unchanged. Comments like this one are stripped at render time and
-never reach the model.
+Text is emitted verbatim; comments like this one are stripped at render
+time and never reach the model. For template syntax and the built-in
+helpers see https://docs.rs/handlebars/latest/handlebars/#built-in-helpers
+
+Zed renders in strict mode: an unknown variable fails the render, so a typo'd
+name falls back to `AGENTS.md` with a warning rather than emitting nothing.
 
 Context variables:
   available_tools   names of the tools enabled for this session
@@ -19,19 +22,11 @@ Context variables:
   is_macos
   sandboxing        whether terminal commands run in the OS-level sandbox
 
-Helpers: `contains`, plus the built-in boolean helpers `and`, `or`,
-`not`, `eq`, `ne`, `gt`, `lt`, `len`, nestable as subexpressions:
+Zed registers one custom helper, `contains` (list, item):
 
   {{#if (contains available_tools 'grep')}}
   Prefer the `grep` tool for content search.
   {{/if}}
-  {{#if (and (contains available_tools 'grep') (contains available_tools 'terminal'))}}
-  Never run grep through the `terminal` tool.
-  {{/if}}
-
-Blocks also work inline — `a {{#if is_windows}}x{{/if}} b` splices `x`
-mid-line. There is no ternary form: `{{if cond "yes" "no"}}` parses but
-renders nothing — always use the block.
 
 Partials (imports): `{{> agents_md}}` splices your `AGENTS.md` in place.
 Every other `*.hbs` file under this directory (recursively) is importable by
