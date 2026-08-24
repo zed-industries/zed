@@ -531,6 +531,9 @@ fn validate_trust_scope(
     if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
         return Err("Enter an absolute folder path".into());
     }
+
+    let expanded = PathBuf::from(path_style.normalize(&expanded.to_string_lossy()));
+    let project = PathBuf::from(path_style.normalize(&project.to_string_lossy()));
     if path_style.strip_prefix(&project, &expanded).is_none() {
         return Err("Must be a parent folder of the project".into());
     }
