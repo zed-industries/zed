@@ -54,6 +54,11 @@ pub const COMPLETION_MENU_MAX_WIDTH: Pixels = px(540.);
 pub const CODE_ACTION_MENU_MIN_WIDTH: Pixels = px(220.);
 pub const CODE_ACTION_MENU_MAX_WIDTH: Pixels = px(540.);
 
+// Shrink factor of the inline documentation shown next to a completion label. It is much larger
+// than the label container's factor of 1 so that narrow rows truncate the documentation instead of
+// the label.
+const DOCUMENTATION_FLEX_SHRINK: f32 = 1000.;
+
 // Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
 // documentation not yet being parsed.
 //
@@ -1191,7 +1196,7 @@ impl CompletionsMenu {
                                     .when_some(documentation_label, |this, doc| {
                                         this.child(
                                             div()
-                                                .flex_shrink(1.0)
+                                                .flex_shrink(DOCUMENTATION_FLEX_SHRINK)
                                                 .ml_auto()
                                                 .min_w_0()
                                                 .child(doc.truncate()),
