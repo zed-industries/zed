@@ -328,7 +328,7 @@ The following example allows you to debug a Phoenix server:
     "task": "phx.server",
     "debugAutoInterpretAllModules": false,
     "debugInterpretModulesPatterns": ["MyApp*", "MyAppWeb*"],
-    "exitAfterTaskReturns": false,
+    "exitAfterTaskReturns": false
   }
 ]
 ```
