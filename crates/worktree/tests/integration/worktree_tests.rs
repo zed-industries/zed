@@ -6022,6 +6022,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                     size: None,
                     canonical_path: None,
                     is_unloaded: false,
+                    permission_bits: Some(0o755),
                 }],
                 removed_entries: vec![],
                 scan_id: 1,
@@ -6117,6 +6118,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                     size: None,
                     canonical_path: None,
                     is_unloaded: false,
+                    permission_bits: Some(0o755),
                 }],
                 removed_entries: vec![],
                 scan_id: 1,
@@ -7032,6 +7034,89 @@ async fn test_file_scan_depth_git_init_above_deferred_dirs(cx: &mut TestAppConte
         );
         assert_eq!(tree.deferred_scan_dir_count(), 0);
     });
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_chmod_updates_permission_bits(cx: &mut TestAppContext) {
+    init_test(cx);
+    set_file_scan_depth(cx, Some(2));
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                "demo.py": "#!/usr/bin/env python3"
+            }
+        }),
+    )
+    .await;
+    fs.set_permissions(path!("/root/project/demo.py"), 0o644)
+        .await;
+
+    use settings::Settings;
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        worktree::WorktreeSettings::register(cx);
+    });
+
+    let tree = build_worktree(fs.clone(), path!("/root"), cx).await;
+    cx.run_until_parked();
+
+    let demo_py = rel_path("project/demo.py");
+    let initial_permission_bits = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(demo_py)
+            .and_then(|entry| entry.permission_bits)
+            .expect("demo.py should have permission bits recorded")
+    });
+    assert_eq!(
+        initial_permission_bits & 0o111,
+        0,
+        "file should not be executable yet"
+    );
+
+    let updated_paths: Rc<Cell<Vec<PathChange>>> = Rc::new(Cell::new(Vec::new()));
+    tree.update(cx, {
+        let updated_paths = updated_paths.clone();
+        |_, cx| {
+            cx.subscribe(&cx.entity(), move |_, _, event, _| {
+                if let Event::UpdatedEntries(changes) = event {
+                    for (path, _, change_type) in changes.iter() {
+                        if path.as_ref() == demo_py {
+                            let mut paths = updated_paths.take();
+                            paths.push(*change_type);
+                            updated_paths.set(paths);
+                        }
+                    }
+                }
+            })
+            .detach();
+        }
+    });
+
+    // Change the file permissions without touching its contents.
+    fs.set_permissions(path!("/root/project/demo.py"), 0o755)
+        .await;
+    cx.run_until_parked();
+
+    let new_permission_bits = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(demo_py)
+            .and_then(|entry| entry.permission_bits)
+            .expect("demo.py should still have permission bits recorded")
+    });
+    assert_eq!(
+        new_permission_bits & 0o111,
+        0o111,
+        "entry's permission bits should reflect the file becoming executable"
+    );
+
+    assert!(
+        updated_paths.take().contains(&PathChange::Updated),
+        "chmod should fire Event::UpdatedEntries for demo.py, \
+         since language servers are notified of such changes"
+    );
 }
 
 async fn build_worktree(fs: Arc<FakeFs>, root: &str, cx: &mut TestAppContext) -> Entity<Worktree> {

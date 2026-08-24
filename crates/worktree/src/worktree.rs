@@ -7016,6 +7016,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
             is_unloaded: entry.kind == EntryKind::UnloadedDir,
+            permission_bits: entry.permission_bits,
         }
     }
 }

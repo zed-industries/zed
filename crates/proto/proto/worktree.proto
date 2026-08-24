@@ -30,6 +30,7 @@ message Entry {
   optional string canonical_path = 12;
   bool is_hidden = 13;
   bool is_unloaded = 14;
+  optional uint32 permission_bits = 15;
 }
 
 message AddWorktree {

@@ -6,7 +6,6 @@ use parking_lot::Mutex;
 use slotmap::{KeyData, SlotMap};
 use std::ffi::OsString;
 use std::fs::Permissions;
-use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::time::Instant;
 use util::maybe;
@@ -29,6 +28,12 @@ use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+#[cfg(windows)]
+use std::os::windows::fs::PermissionsExt;
 
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 use std::mem::MaybeUninit;
@@ -1467,6 +1472,7 @@ impl FakeFsState {
                 len: 0,
                 content: Vec::new(),
                 git_dir_path: None,
+                permission_bits: 0o644,
             });
             Ok(())
         })?;
@@ -1485,6 +1491,7 @@ enum FakeFsEntry {
         content: Vec<u8>,
         // The path to the repository state directory, if this is a gitfile.
         git_dir_path: Option<PathBuf>,
+        permission_bits: u32,
     },
     Dir {
         inode: u64,
@@ -1492,6 +1499,7 @@ enum FakeFsEntry {
         len: u64,
         entries: BTreeMap<String, FakeFsEntry>,
         git_repo_state: Option<Arc<Mutex<FakeGitRepositoryState>>>,
+        permission_bits: u32,
     },
     Symlink {
         target: PathBuf,
@@ -1509,6 +1517,7 @@ impl PartialEq for FakeFsEntry {
                     len: l_len,
                     content: l_content,
                     git_dir_path: l_git_dir_path,
+                    permission_bits: l_permission_bits,
                 },
                 Self::File {
                     inode: r_inode,
@@ -1516,6 +1525,7 @@ impl PartialEq for FakeFsEntry {
                     len: r_len,
                     content: r_content,
                     git_dir_path: r_git_dir_path,
+                    permission_bits: r_permission_bits,
                 },
             ) => {
                 l_inode == r_inode
@@ -1523,6 +1533,7 @@ impl PartialEq for FakeFsEntry {
                     && l_len == r_len
                     && l_content == r_content
                     && l_git_dir_path == r_git_dir_path
+                    && l_permission_bits == r_permission_bits
             }
             (
                 Self::Dir {
@@ -1531,6 +1542,7 @@ impl PartialEq for FakeFsEntry {
                     len: l_len,
                     entries: l_entries,
                     git_repo_state: l_git_repo_state,
+                    permission_bits: l_permission_bits,
                 },
                 Self::Dir {
                     inode: r_inode,
@@ -1538,6 +1550,7 @@ impl PartialEq for FakeFsEntry {
                     len: r_len,
                     entries: r_entries,
                     git_repo_state: r_git_repo_state,
+                    permission_bits: r_permission_bits,
                 },
             ) => {
                 let same_repo_state = match (l_git_repo_state.as_ref(), r_git_repo_state.as_ref()) {
@@ -1550,6 +1563,7 @@ impl PartialEq for FakeFsEntry {
                     && l_len == r_len
                     && l_entries == r_entries
                     && same_repo_state
+                    && l_permission_bits == r_permission_bits
             }
             (Self::Symlink { target: l_target }, Self::Symlink { target: r_target }) => {
                 l_target == r_target
@@ -1759,6 +1773,7 @@ impl FakeFs {
                     len: 0,
                     entries: Default::default(),
                     git_repo_state: None,
+                    permission_bits: 0o755,
                 },
                 git_event_tx: tx,
                 next_mtime: UNIX_EPOCH + Self::SYSTEMTIME_INTERVAL,
@@ -1824,6 +1839,7 @@ impl FakeFs {
                             content: Vec::new(),
                             len: 0,
                             git_dir_path: None,
+                            permission_bits: 0o644,
                         });
                     }
                     btree_map::Entry::Occupied(mut e) => match &mut *e.get_mut() {
@@ -1836,6 +1852,32 @@ impl FakeFs {
             })
             .unwrap();
         state.emit_event([(path.to_path_buf(), Some(PathEventKind::Changed))]);
+    }
+
+    pub async fn set_permissions(&self, path: impl AsRef<Path>, new_permission_bits: u32) -> &Self {
+        let mut state = self.state.lock();
+        let path = path.as_ref();
+        let _ = state
+            .write_path(path, move |entry| match entry {
+                btree_map::Entry::Occupied(mut e) => {
+                    match e.get_mut() {
+                        FakeFsEntry::File {
+                            permission_bits, ..
+                        } => *permission_bits = new_permission_bits,
+                        FakeFsEntry::Dir {
+                            permission_bits, ..
+                        } => *permission_bits = new_permission_bits,
+                        FakeFsEntry::Symlink { .. } => {}
+                    }
+                    Ok(())
+                }
+                btree_map::Entry::Vacant(_) => Err(anyhow::anyhow!(
+                    "cannot set permissions: path does not exist"
+                )),
+            })
+            .unwrap();
+        state.emit_event([(path, Some(PathEventKind::Changed))]);
+        self
     }
 
     pub async fn insert_file(&self, path: impl AsRef<Path>, content: Vec<u8>) {
@@ -1890,6 +1932,7 @@ impl FakeFs {
                             len: new_len,
                             content: new_content,
                             git_dir_path: None,
+                            permission_bits: 0o644,
                         });
                     }
                     btree_map::Entry::Occupied(mut e) => {
@@ -2905,6 +2948,7 @@ impl Fs for FakeFs {
                         len: 0,
                         entries: Default::default(),
                         git_repo_state: None,
+                        permission_bits: 0o755,
                     }
                 });
                 Ok(())
@@ -2926,6 +2970,7 @@ impl Fs for FakeFs {
             len: 0,
             content: Vec::new(),
             git_dir_path: None,
+            permission_bits: 0o644,
         };
         let mut kind = Some(PathEventKind::Created);
         state.write_path(path, |entry| {
@@ -3086,7 +3131,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let mtime = state.get_and_increment_mtime();
         let inode = state.get_and_increment_inode();
-        let source_entry = state.entry(&source)?;
+        let source_entry = state.entry(&source)?.clone();
         let content = source_entry.file_content(&source)?.clone();
         let mut kind = Some(PathEventKind::Created);
         state.write_path(&target, |e| match e {
@@ -3107,6 +3152,17 @@ impl Fs for FakeFs {
                     len: content.len() as u64,
                     content,
                     git_dir_path: None,
+                    permission_bits: match source_entry {
+                        FakeFsEntry::File {
+                            permission_bits, ..
+                        } => permission_bits,
+                        FakeFsEntry::Dir {
+                            permission_bits, ..
+                        } => permission_bits,
+                        FakeFsEntry::Symlink { .. } => {
+                            anyhow::bail!("Symlink cannot be copied to a file")
+                        }
+                    },
                 })
                 .clone(),
             )),
@@ -3254,7 +3310,11 @@ impl Fs for FakeFs {
 
             Ok(Some(match &*entry {
                 FakeFsEntry::File {
-                    inode, mtime, len, ..
+                    inode,
+                    mtime,
+                    len,
+                    permission_bits,
+                    ..
                 } => Metadata {
                     inode: *inode,
                     mtime: *mtime,
