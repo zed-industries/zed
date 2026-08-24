@@ -125,9 +125,9 @@ pub struct MarkdownStyle {
     pub heading_border_color: Option<Hsla>,
     pub paragraph_spacing: Pixels,
     pub paragraph_line_height: DefiniteLength,
-    /// Bottom margin of top-level lists.
+    /// Bottom margin of top-level lists only
     pub list_spacing: Pixels,
-    /// Horizontal (`x`) and vertical (`y`) padding of table cells.
+    /// Horizontal (`x`) and vertical (`y`) padding of table cells
     pub table_cell_padding: Point<Pixels>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
@@ -3672,9 +3672,8 @@ struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
     source_mappings: Vec<SourceMapping>,
-    /// Inline code chip ranges in rendered (not source) indices, so chip
-    /// bounds hug the glyphs exactly, unaffected by unrendered source
-    /// characters like the surrounding backticks
+    /// Rendered (not source) indices, so chips hug the glyphs and ignore
+    /// unrendered characters like the surrounding backticks
     code_chips: Vec<(Range<usize>, Hsla)>,
 }
 
@@ -4209,103 +4208,38 @@ impl RenderedLine {
             return;
         }
 
-        let line_text = self.layout.text();
         for (rendered_range, color) in &self.code_chips {
-            // The outset fakes the padding a real chip element would have, but
-            // the text layout reserves no space for it, so it is clamped to
-            // keep the gap to neighboring words visible
-            let left_allowance =
-                self.chip_outset_allowance(&line_text, rendered_range.start, false);
-            let right_allowance = self.chip_outset_allowance(&line_text, rendered_range.end, true);
-
-            let mut segment_bounds: SmallVec<[Bounds<Pixels>; 1]> = SmallVec::new();
             self.for_each_bounds_in_rendered_range(
                 &wrapped_line_segments,
                 rendered_range.clone(),
-                |bounds| segment_bounds.push(bounds),
+                |bounds| {
+                    // Kept to a hair since the layout reserves no padding and
+                    // anything wider eats the gap to neighboring words
+                    let horizontal_outset = px(1.);
+                    // Inset vertically so the chip hugs the glyphs like a badge
+                    // instead of filling the whole line box
+                    let vertical_inset = bounds.size.height * 0.1;
+                    let chip_bounds = Bounds {
+                        origin: point(
+                            bounds.origin.x - horizontal_outset,
+                            bounds.origin.y + vertical_inset,
+                        ),
+                        size: size(
+                            bounds.size.width + horizontal_outset * 2.,
+                            bounds.size.height - vertical_inset * 2.,
+                        ),
+                    };
+                    window.paint_quad(quad(
+                        chip_bounds,
+                        self.code_chip_corner_radius,
+                        *color,
+                        Edges::default(),
+                        Hsla::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                },
             );
-
-            let last_segment_ix = segment_bounds.len().saturating_sub(1);
-            for (segment_ix, bounds) in segment_bounds.into_iter().enumerate() {
-                // Inset vertically so the chip hugs the glyphs like a badge
-                // instead of filling the whole line box
-                let vertical_inset = bounds.size.height * 0.1;
-                let desired_outset = bounds.size.height * 0.1;
-                let left_outset = if segment_ix == 0 {
-                    left_allowance.map_or(desired_outset, |allowance| desired_outset.min(allowance))
-                } else {
-                    px(0.)
-                };
-                let right_outset = if segment_ix == last_segment_ix {
-                    right_allowance
-                        .map_or(desired_outset, |allowance| desired_outset.min(allowance))
-                } else {
-                    px(0.)
-                };
-                let chip_bounds = Bounds {
-                    origin: point(
-                        bounds.origin.x - left_outset,
-                        bounds.origin.y + vertical_inset,
-                    ),
-                    size: size(
-                        bounds.size.width + left_outset + right_outset,
-                        bounds.size.height - vertical_inset * 2.,
-                    ),
-                };
-                window.paint_quad(quad(
-                    chip_bounds,
-                    self.code_chip_corner_radius,
-                    *color,
-                    Edges::default(),
-                    Hsla::transparent_black(),
-                    BorderStyle::default(),
-                ));
-            }
         }
-    }
-
-    /// How far a code chip may extend past its glyphs at the given rendered
-    /// index: `None` for no limit (start or end of the line, where there is
-    /// only empty space), half the adjacent space character's width when next
-    /// to a space, and zero against any other glyph
-    fn chip_outset_allowance(
-        &self,
-        line_text: &str,
-        rendered_index: usize,
-        forward: bool,
-    ) -> Option<Pixels> {
-        let adjacent_is_space = if forward {
-            line_text[rendered_index..].chars().next() == Some(' ')
-        } else {
-            line_text[..rendered_index].chars().next_back() == Some(' ')
-        };
-
-        if !adjacent_is_space {
-            let at_line_edge = if forward {
-                rendered_index == line_text.len()
-            } else {
-                rendered_index == 0
-            };
-            return if at_line_edge { None } else { Some(px(0.)) };
-        }
-
-        let space_range = if forward {
-            rendered_index..rendered_index + 1
-        } else {
-            rendered_index - 1..rendered_index
-        };
-        let space_width = match (
-            self.layout.position_for_index(space_range.start),
-            self.layout.position_for_index(space_range.end),
-        ) {
-            (Some(space_start), Some(space_end)) if space_start.y == space_end.y => {
-                space_end.x - space_start.x
-            }
-            // The space sits at a soft-wrap boundary, so there is only empty
-            // space beyond the chip on this row
-            _ => return None,
-        };
-        Some(space_width * 0.5)
     }
 
     fn paint_highlights(&self, window: &mut Window) {
