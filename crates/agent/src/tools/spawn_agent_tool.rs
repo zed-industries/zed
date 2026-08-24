@@ -12,24 +12,6 @@ use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
 
 /// Spawn a sub-agent for a well-scoped task.
 ///
-/// ### Designing delegated subtasks
-/// - An agent does not see your conversation history. Include all relevant context (file paths, requirements, constraints) in the message.
-/// - Subtasks must be concrete, well-defined, and self-contained.
-/// - Delegated subtasks must materially advance the main task.
-/// - Do not duplicate work between your work and delegated subtasks.
-/// - Do not use this tool for tasks you could accomplish directly with one or two tool calls. For example, don't ask the agent to read a single file and return the contents, you can do this yourself.
-/// - When you delegate work, focus on coordinating and synthesizing results instead of duplicating the same work yourself.
-/// - Avoid issuing multiple delegate calls for the same unresolved subproblem unless the new delegated task is genuinely different and necessary.
-/// - Narrow the delegated ask to the concrete output you need next.
-/// - For code-edit subtasks, decompose work so each delegated task has a disjoint write set.
-/// - When sending a follow-up using an existing agent session_id, the agent already has the context from the previous turn. Send only a short, direct message. Do NOT repeat the original task or context.
-///
-/// ### Parallel delegation patterns
-/// - Run multiple independent information-seeking subtasks in parallel when you have distinct questions that can be answered independently.
-/// - Split implementation into disjoint codebase slices and spawn multiple agents for them in parallel when the write scopes do not overlap.
-/// - When a plan has multiple independent steps, prefer delegating those steps in parallel rather than serializing them unnecessarily.
-/// - Reuse the returned session_id when you want to follow up on the same delegated subproblem instead of creating a duplicate session.
-///
 /// ### Output
 /// - You will receive only the agent's final message as output.
 /// - Successful calls return a session_id that you can use for follow-up messages.

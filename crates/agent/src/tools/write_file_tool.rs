@@ -19,10 +19,6 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 
 /// This is a tool for creating a new file or overwriting an existing file with completely new contents.
 ///
-/// To make granular edits to an existing file, prefer the `edit_file` tool instead.
-///
-/// Before using this tool, verify the directory path is correct (only applicable when creating new files). Use the `list_directory` tool to verify the parent directory exists and is the correct location
-///
 /// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileToolInput {

@@ -1,0 +1,25 @@
+{{!-- Commented sections below document this tool's fixed API contract — already
+sent with the tool's schema and stripped from the prompt. Keep the guidance
+consistent with them. --}}
+{{!--
+Ask the user a question, presenting selectable options and/or a free-text
+field.
+--}}
+
+Use this when you need a decision or a piece of information from the user
+mid-task — for example choosing between implementation approaches, confirming
+an assumption, or supplying a value you can't infer. The question is rendered
+as a small form in the conversation, and the user's answer is returned to you
+verbatim.
+
+{{!--
+You control the shape of the answer:
+- Provide `options` (two or more) to present clickable choices.
+- Set `allow_free_text` to `true` to let the user type their own answer. Do
+  this when the listed options might not be exhaustive, or when you want a
+  free-form reply with no preset options at all.
+
+You must provide either at least two `options`, or set `allow_free_text` to
+`true` (or both). If both are supplied, the user may pick an option or type
+their own answer, and a typed answer takes precedence.
+--}}

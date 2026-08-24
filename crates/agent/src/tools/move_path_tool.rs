@@ -22,7 +22,6 @@ use util::markdown::MarkdownInlineCode;
 ///
 /// If the source and destination directories are the same, but the filename is different, this performs a rename. Otherwise, it performs a move.
 ///
-/// This tool should be used when it's desirable to move or rename a file or directory without changing its contents at all.
 /// The only supported paths outside the project are descendants of `~/.agents/skills`, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct MovePathToolInput {

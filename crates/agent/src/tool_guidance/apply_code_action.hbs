@@ -1,0 +1,17 @@
+{{!-- Commented sections below document this tool's fixed API contract — already
+sent with the tool's schema and stripped from the prompt. Keep the guidance
+consistent with them. --}}
+
+{{!--
+Applies a code action previously retrieved by get_code_actions.
+--}}
+
+{{!--
+You must call get_code_actions first to get the list of available actions,
+then use the number from that list to choose which action to apply.
+--}}
+
+{{!--
+After applying a code action, the list is cleared. If you want to apply
+another action, call get_code_actions again.
+--}}

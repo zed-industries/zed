@@ -11,30 +11,12 @@ use crate::{AgentTool, SiblingThreadRequest, ThreadEnvironment, ToolCallEventStr
 
 /// Create a new agent thread that runs in parallel with this one.
 ///
-/// Only use this after the user explicitly asks for or approves another thread.
 /// The new thread appears in the agent sidebar just like a thread the user created
 /// themselves, and runs independently — you will NOT receive its output and you
-/// cannot interact with it afterwards. Use `spawn_agent` instead if you need the
-/// results back.
+/// cannot interact with it afterwards.
 ///
 /// A successful call returns only the title, agent ID, and model used; there is
 /// currently no way to look up or control a sibling thread by session ID.
-///
-/// ### When to use
-/// - The user explicitly asks you to create or start another thread.
-/// - You may suggest a new thread for a separable task, but call this tool only
-///   after the user explicitly agrees.
-///
-/// ### Prompt design
-/// The new thread has no access to this conversation's history. Include in `prompt`
-/// everything the new agent needs: goals, relevant file paths, constraints, and
-/// context. Assume the new thread starts from a blank slate in the same project.
-///
-/// ### Agent and model selection
-/// - If you don't know what agents or models are available, call `list_agents_and_models`.
-/// - For bulk / lightweight work (e.g., spawning many parallel threads), prefer a
-///   cheaper / faster model over the default.
-/// - Leave `agent` and `model` unset to use the user's current defaults.
 ///
 /// ### Worktree support
 /// Set `use_new_worktree` to true to spawn the sibling inside a brand-new
@@ -52,10 +34,6 @@ use crate::{AgentTool, SiblingThreadRequest, ThreadEnvironment, ToolCallEventStr
 ///   let the editor pick a random non-colliding name.
 /// - The project must contain at least one git repository, otherwise the
 ///   call fails.
-///
-/// Use this when the sibling needs to make changes that shouldn't touch the
-/// user's current working tree (e.g., risky refactors, parallel experiments,
-/// or work the user wants to review independently).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CreateThreadToolInput {

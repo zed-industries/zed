@@ -17,12 +17,6 @@ const OTHER_FIELD: &str = "other";
 /// Ask the user a question, presenting selectable options and/or a free-text
 /// field.
 ///
-/// Use this when you need a decision or a piece of information from the user
-/// mid-task — for example choosing between implementation approaches, confirming
-/// an assumption, or supplying a value you can't infer. The question is rendered
-/// as a small form in the conversation, and the user's answer is returned to you
-/// verbatim.
-///
 /// You control the shape of the answer:
 /// - Provide `options` (two or more) to present clickable choices.
 /// - Set `allow_free_text` to `true` to let the user type their own answer. Do

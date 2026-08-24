@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
-/// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
+/// Lists files and directories in a given path.
 ///
 /// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

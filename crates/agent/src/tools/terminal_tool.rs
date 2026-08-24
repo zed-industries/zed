@@ -27,27 +27,13 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 ///
 /// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
 ///
-/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
-///
 /// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
-///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values yourself before calling this tool, or ask the user for the literal value to use.
-///
-/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
-///
-/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
-///
-/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
-/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
-///
-/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
-/// - Prefer Git flags that avoid optional metadata writes when possible, such as `git --no-optional-locks status` instead of `git status`.
-/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
-/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
@@ -69,27 +55,13 @@ pub struct TerminalToolInput {
 ///
 /// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
 ///
-/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
-///
 /// Always set the working directory with the `cd` parameter, never with `cd` inside `command`; otherwise it will error.
-///
-/// Do not generate terminal commands that use shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`. Resolve those values first or ask the user for the literal value to use.
-///
-/// Do not pipe output to `head`, `tail`, or similar output-filtering commands just to reduce what you receive. Instead, use `head_lines` and/or `tail_lines`; this keeps the terminal output visible to the user in real time while limiting only the final output sent back to you. When both are specified, the first `head_lines` lines are returned, then a blank line, then the last `tail_lines` lines. Avoid requesting too many lines, or the response may waste tokens or exceed the context window.
-///
-/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
-///
-/// For potentially long-running commands, prefer specifying `timeout_ms` to bound runtime and prevent indefinite hangs.
 ///
 /// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
 ///
-/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
-///
-/// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
-/// - Prefer Git flags that avoid optional metadata writes when possible, such as `git --no-optional-locks status` instead of `git status`.
-/// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
-/// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
+/// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SandboxedTerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
@@ -2552,32 +2524,32 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_tool_description_mentions_forbidden_substitutions() {
-        let description = <TerminalTool as crate::AgentTool>::description().to_string();
+    fn test_terminal_guidance_mentions_forbidden_substitutions() {
+        // The substitution pitfalls moved to the overridable guidance tier
+        // (the contract-tier schema description stays minimal).
+        let guidance = crate::tool_guidance::builtin_guidance(TerminalTool::NAME)
+            .expect("terminal should have built-in guidance");
 
+        assert!(guidance.contains("$VAR"), "missing $VAR example: {guidance}");
         assert!(
-            description.contains("$VAR"),
-            "missing $VAR example: {description}"
+            guidance.contains("${VAR}"),
+            "missing ${{VAR}} example: {guidance}"
         );
         assert!(
-            description.contains("${VAR}"),
-            "missing ${{VAR}} example: {description}"
+            guidance.contains("$(...)"),
+            "missing $(...) example: {guidance}"
         );
         assert!(
-            description.contains("$(...)"),
-            "missing $(...) example: {description}"
+            guidance.contains("backticks"),
+            "missing backticks example: {guidance}"
         );
         assert!(
-            description.contains("backticks"),
-            "missing backticks example: {description}"
+            guidance.contains("$((...))"),
+            "missing $((...)) example: {guidance}"
         );
         assert!(
-            description.contains("$((...))"),
-            "missing $((...)) example: {description}"
-        );
-        assert!(
-            description.contains("<(...)") && description.contains(">(...)"),
-            "missing process substitution examples: {description}"
+            guidance.contains("<(...)") && guidance.contains(">(...)"),
+            "missing process substitution examples: {guidance}"
         );
     }
 
@@ -2616,14 +2588,16 @@ mod tests {
     }
 
     #[test]
-    fn test_terminal_tool_description_mentions_head_and_tail_parameters() {
-        let description = <TerminalTool as crate::AgentTool>::description().to_string();
+    fn test_terminal_guidance_mentions_head_and_tail_parameters() {
+        // The head/tail guidance moved to the overridable guidance tier.
+        let guidance = crate::tool_guidance::builtin_guidance(TerminalTool::NAME)
+            .expect("terminal should have built-in guidance");
 
-        assert!(description.contains("head_lines"));
-        assert!(description.contains("tail_lines"));
-        assert!(description.contains("Do not pipe output to `head`, `tail`, or similar"));
-        assert!(description.contains("visible to the user in real time"));
-        assert!(description.contains("waste tokens or exceed the context window"));
+        assert!(guidance.contains("head_lines"));
+        assert!(guidance.contains("tail_lines"));
+        assert!(guidance.contains("Do not pipe output to `head`, `tail`, or similar"));
+        assert!(guidance.contains("visible to the user in real time"));
+        assert!(guidance.contains("waste tokens or exceed the context window"));
     }
 
     #[test]

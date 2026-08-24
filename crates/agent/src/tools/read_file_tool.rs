@@ -149,13 +149,6 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 
 /// Reads the content of the given file in the project.
 ///
-/// - Never attempt to read a path that hasn't been previously mentioned.
-/// - For large files, this tool returns a file outline with symbol names and line numbers instead of the full content.
-///   This outline IS a successful response - use the line numbers to read specific sections with start_line/end_line.
-///   Do NOT retry reading the same file without line numbers if you receive an outline.
-/// - This tool supports reading image files. Supported formats: PNG, JPEG, WebP, GIF, BMP, TIFF.
-///   Image files are returned as visual content that you can analyze directly.
-///
 /// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {

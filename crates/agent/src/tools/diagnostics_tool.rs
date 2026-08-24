@@ -15,30 +15,12 @@ type Result<T, E = String> = core::result::Result<T, E>;
 
 /// Get errors and warnings for the project or a specific file.
 ///
-/// This tool can be invoked after a series of edits to determine if further edits are necessary, or if the user asks to fix errors or warnings in their codebase.
-///
 /// When a path is provided, shows all diagnostics for that specific file.
 /// When no path is provided, shows a summary of error and warning counts for all files in the project.
 ///
 /// This tool attempts to refresh diagnostics before returning.
 /// If refreshing diagnostics fails (for example, if the language server does not support pull-based diagnostics), it will return any diagnostics already present.
 /// Note that, in this case, the results may be out-of-date, and may or may not reflect the most recent edits.
-/// If this happens, do not attempt to re-run this tool in the hope that refreshing will later succeed. Failures are typically persistent.
-///
-/// <example>
-/// To get diagnostics for a specific file:
-/// {
-///     "path": "src/main.rs"
-/// }
-///
-/// To get a project-wide diagnostic summary:
-/// {}
-/// </example>
-///
-/// <guidelines>
-/// - If you think you can fix a diagnostic, make 1-2 attempts and then give up.
-/// - Don't remove code you've generated just because you can't fix an error. The user can help you fix it.
-/// </guidelines>
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
     /// The path to get diagnostics for. If not provided, returns a project-wide summary.
