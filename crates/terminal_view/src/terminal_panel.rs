@@ -2708,15 +2708,7 @@ mod tests {
 
         terminal_panel
             .update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.add_terminal_task(
-                    SpawnInTerminal {
-                        command: Some("echo".to_owned()),
-                        ..SpawnInTerminal::default()
-                    },
-                    RevealStrategy::Always,
-                    window,
-                    cx,
-                )
+                terminal_panel.add_terminal_task(echo_task(), RevealStrategy::Always, window, cx)
             })
             .await
             .expect("Failed to spawn a task terminal");
@@ -2751,15 +2743,7 @@ mod tests {
 
         terminal_panel
             .update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.add_terminal_task(
-                    SpawnInTerminal {
-                        command: Some("echo".to_owned()),
-                        ..SpawnInTerminal::default()
-                    },
-                    RevealStrategy::Always,
-                    window,
-                    cx,
-                )
+                terminal_panel.add_terminal_task(echo_task(), RevealStrategy::Always, window, cx)
             })
             .await
             .expect("Failed to spawn a task terminal");
@@ -2884,6 +2868,20 @@ mod tests {
             cx.debug_bounds("KEY_BINDING-enter").is_some(),
             "tooltip should show the InlineAssist keybinding resolved in the terminal's context"
         );
+    }
+
+    // On Windows `echo` is a shell builtin rather than an executable, so spawning it directly fails.
+    fn echo_task() -> SpawnInTerminal {
+        let (command, args) = if cfg!(windows) {
+            ("cmd.exe", vec!["/C".to_owned(), "echo".to_owned()])
+        } else {
+            ("echo", Vec::new())
+        };
+        SpawnInTerminal {
+            command: Some(command.to_owned()),
+            args,
+            ..SpawnInTerminal::default()
+        }
     }
 
     async fn init_workspace_with_panel(
