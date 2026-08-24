@@ -358,22 +358,13 @@ impl LanguageModelCompletionError {
     }
 
     /// Returns the delay before a retry attempt, honoring a provider-supplied
-    /// delay before falling back to bounded exponential backoff.
+    /// delay before falling back to exponential backoff from five to forty
+    /// seconds.
     ///
-    /// `attempt` is one-based. The caller supplies the backoff bounds because
-    /// interactive requests and evaluation runs have different latency
-    /// budgets. `transient_provider_fallback` supplies a fixed delay for rate
-    /// limits and overloads that omit `retry_after`; passing `None` uses
-    /// exponential backoff for them. Provider rejections that are not
-    /// classified as transient, and error kinds without shared retry semantics,
-    /// return `None`.
-    pub fn retry_delay(
-        &self,
-        attempt: usize,
-        initial_backoff: Duration,
-        maximum_backoff: Duration,
-        transient_provider_fallback: Option<Duration>,
-    ) -> Option<Duration> {
+    /// `attempt` is one-based. Provider rejections that are not classified as
+    /// transient, and error kinds without shared retry semantics, return
+    /// `None`.
+    pub fn retry_delay(&self, attempt: usize) -> Option<Duration> {
         if attempt == 0 {
             return None;
         }
@@ -391,21 +382,10 @@ impl LanguageModelCompletionError {
                 )
                 || retry_after.is_some() =>
             {
-                (*retry_after)
-                    .or_else(|| {
-                        if matches!(
-                            category,
-                            ProviderErrorCategory::RateLimit | ProviderErrorCategory::Overloaded
-                        ) {
-                            transient_provider_fallback
-                        } else {
-                            None
-                        }
-                    })
-                    .or_else(|| exponential_backoff(attempt, initial_backoff, maximum_backoff))
+                (*retry_after).or_else(|| exponential_backoff(attempt))
             }
             Self::ApiReadResponseError { .. } | Self::HttpSend { .. } => {
-                exponential_backoff(attempt, initial_backoff, maximum_backoff)
+                exponential_backoff(attempt)
             }
             Self::DataRetentionConsentRequired { .. }
             | Self::NoApiKey { .. }
@@ -423,18 +403,17 @@ fn is_retryable_provider_status(status: StatusCode) -> bool {
     status.is_server_error() || matches!(status.as_u16(), 408 | 425 | 429)
 }
 
-fn exponential_backoff(
-    attempt: usize,
-    initial_backoff: Duration,
-    maximum_backoff: Duration,
-) -> Option<Duration> {
+fn exponential_backoff(attempt: usize) -> Option<Duration> {
+    const INITIAL_BACKOFF: Duration = Duration::from_secs(5);
+    const MAXIMUM_BACKOFF: Duration = Duration::from_secs(40);
+
     let exponent = u32::try_from(attempt.checked_sub(1)?).unwrap_or(u32::MAX);
     let multiplier = 2_u32.checked_pow(exponent).unwrap_or(u32::MAX);
     Some(
-        initial_backoff
+        INITIAL_BACKOFF
             .checked_mul(multiplier)
-            .unwrap_or(maximum_backoff)
-            .min(maximum_backoff),
+            .unwrap_or(MAXIMUM_BACKOFF)
+            .min(MAXIMUM_BACKOFF),
     )
 }
 
@@ -971,10 +950,7 @@ mod tests {
             "Rate limit exceeded".to_string(),
             Some(retry_after),
         );
-        assert_eq!(
-            error.retry_delay(1, Duration::from_secs(1), Duration::from_secs(30), None),
-            Some(retry_after)
-        );
+        assert_eq!(error.retry_delay(1), Some(retry_after));
 
         let error = LanguageModelCompletionError::from_http_status(
             ANTHROPIC_PROVIDER_NAME,
@@ -982,24 +958,11 @@ mod tests {
             "Internal server error".to_string(),
             None,
         );
-        let initial_backoff = Duration::from_secs(1);
-        let maximum_backoff = Duration::from_secs(30);
-        assert_eq!(
-            error.retry_delay(0, initial_backoff, maximum_backoff, None),
-            None
-        );
-        assert_eq!(
-            error.retry_delay(1, initial_backoff, maximum_backoff, None),
-            Some(Duration::from_secs(1))
-        );
-        assert_eq!(
-            error.retry_delay(5, initial_backoff, maximum_backoff, None),
-            Some(Duration::from_secs(16))
-        );
-        assert_eq!(
-            error.retry_delay(20, initial_backoff, maximum_backoff, None),
-            Some(maximum_backoff)
-        );
+        assert_eq!(error.retry_delay(0), None);
+        assert_eq!(error.retry_delay(1), Some(Duration::from_secs(5)));
+        assert_eq!(error.retry_delay(2), Some(Duration::from_secs(10)));
+        assert_eq!(error.retry_delay(4), Some(Duration::from_secs(40)));
+        assert_eq!(error.retry_delay(20), Some(Duration::from_secs(40)));
     }
 
     #[test]
@@ -1012,10 +975,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(
-            error.retry_delay(1, Duration::from_secs(1), Duration::from_secs(30), None),
-            None
-        );
+        assert_eq!(error.retry_delay(1), None);
     }
 
     #[test]

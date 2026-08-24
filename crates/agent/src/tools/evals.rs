@@ -14,7 +14,7 @@ mod write_file;
 
 #[cfg(all(test, feature = "unit-eval"))]
 #[test]
-fn completion_retry_delay_uses_fixed_transient_provider_fallback() {
+fn completion_retry_delay_uses_shared_backoff() {
     for status in [
         http_client::StatusCode::TOO_MANY_REQUESTS,
         http_client::StatusCode::SERVICE_UNAVAILABLE,
@@ -34,22 +34,25 @@ fn completion_retry_delay_uses_fixed_transient_provider_fallback() {
             Some(Duration::from_secs(5))
         );
         assert_eq!(
+            completion_retry_delay(&error, 2),
+            Some(Duration::from_secs(10))
+        );
+        assert_eq!(
+            completion_retry_delay(&error, 4),
+            Some(Duration::from_secs(40))
+        );
+        assert_eq!(
             completion_retry_delay(&error, 10),
-            Some(Duration::from_secs(5))
+            Some(Duration::from_secs(40))
         );
     }
 }
 
 #[cfg(all(test, feature = "unit-eval"))]
-fn completion_retry_delay(error: &anyhow::Error, attempt: usize) -> Option<Duration> {
+fn completion_retry_delay(error: &anyhow::Error, retry_attempt: usize) -> Option<Duration> {
     error
         .downcast_ref::<language_model::LanguageModelCompletionError>()?
-        .retry_delay(
-            attempt,
-            Duration::from_secs(1),
-            Duration::from_secs(30),
-            Some(Duration::from_secs(5)),
-        )
+        .retry_delay(retry_attempt)
 }
 
 #[cfg(all(test, feature = "unit-eval"))]

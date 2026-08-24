@@ -168,7 +168,6 @@ impl std::fmt::Display for PromptId {
 
 pub(crate) const MAX_RETRY_ATTEMPTS: u8 = 4;
 pub(crate) const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
-const MAX_RETRY_DELAY: Duration = Duration::from_secs(40);
 
 #[derive(Debug, Clone, PartialEq)]
 enum RetryStrategy {
@@ -183,9 +182,7 @@ impl RetryStrategy {
         }
         match self {
             RetryStrategy::ExponentialBackoff => (attempt <= MAX_RETRY_ATTEMPTS)
-                .then(|| {
-                    error.retry_delay(attempt as usize, BASE_RETRY_DELAY, MAX_RETRY_DELAY, None)
-                })
+                .then(|| error.retry_delay(attempt as usize))
                 .flatten(),
             RetryStrategy::FixedDelay {
                 delay,
@@ -4532,10 +4529,7 @@ impl Thread {
             // provider's requested delay when it gave one, and fall back to
             // exponential backoff when it didn't.
             ProviderRejection { retry_after, .. } => {
-                if error
-                    .retry_delay(1, BASE_RETRY_DELAY, MAX_RETRY_DELAY, None)
-                    .is_none()
-                {
+                if error.retry_delay(1).is_none() {
                     return None;
                 }
                 Some(match retry_after {

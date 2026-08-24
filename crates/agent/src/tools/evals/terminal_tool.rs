@@ -374,25 +374,28 @@ async fn extract_tool_use(
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
-    const MAX_RETRIES: usize = 20;
-    let mut attempt = 0;
+    const MAX_ATTEMPTS: usize = 20;
+    let mut completed_attempts = 0;
 
     loop {
-        attempt += 1;
         let response = request().await;
+        completed_attempts += 1;
 
-        if attempt >= MAX_RETRIES {
+        if completed_attempts >= MAX_ATTEMPTS {
             return response;
         }
 
+        let retry_attempt = completed_attempts;
         let retry_delay = response
             .as_ref()
             .err()
-            .and_then(|error| super::completion_retry_delay(error, attempt));
+            .and_then(|error| super::completion_retry_delay(error, retry_attempt));
 
         if let Some(retry_after) = retry_delay {
             let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
-            eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
+            eprintln!(
+                "Retry attempt #{retry_attempt}: Retry after {retry_after:?} + jitter of {jitter:?}"
+            );
             #[allow(clippy::disallowed_methods)]
             async_io::Timer::after(retry_after + jitter).await;
         } else {
