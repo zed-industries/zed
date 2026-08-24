@@ -3364,7 +3364,7 @@ pub mod tests {
     }
 
     #[gpui::test]
-    async fn test_search_results_do_not_readd_closed_untitled_buffer(cx: &mut TestAppContext) {
+    async fn test_search_results_do_not_read_closed_untitled_buffer(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -3417,13 +3417,10 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    results_text.contains("const TWO: usize = one::ONE"),
-                    "Open untitled buffer should appear in results, got: {results_text}"
-                );
-                assert!(
-                    results_text.contains("const ONE: usize = 1;"),
-                    "File result should be present, got: {results_text}"
+
+                assert_eq!(
+                    "\n\nconst TWO: usize = one::ONE;\n\n\n\nconst ONE: usize = 1;",
+                    results_text
                 );
             })
             .unwrap();
@@ -3444,13 +3441,9 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    !results_text.contains("const TWO: usize = one::ONE"),
-                    "Closed untitled buffer should be removed from results, got: {results_text}"
-                );
-                assert!(
-                    results_text.contains("const ONE: usize = 1;"),
-                    "File result should still be present, got: {results_text}"
+                assert_eq!(
+                    "\n\nconst ONE: usize = 1;",
+                    results_text
                 );
             })
             .unwrap();
@@ -3463,13 +3456,9 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    !results_text.contains("const TWO: usize = one::ONE"),
-                    "Closed untitled buffer should not reappear after re-search, got: {results_text}"
-                );
-                assert!(
-                    results_text.contains("const ONE: usize = 1;"),
-                    "File result should still be found, got: {results_text}"
+                assert_eq!(
+                    "\n\nconst ONE: usize = 1;",
+                    results_text
                 );
             })
             .unwrap();
@@ -3521,13 +3510,9 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    results_text.contains("const TWO: usize = one::ONE"),
-                    "Peer-shared untitled buffer result mismatch, got: {results_text}"
-                );
-                assert!(
-                    results_text.contains("const ONE: usize = 1;"),
-                    "File result should be present, got: {results_text}"
+                assert_eq!(
+                    "\n\nconst TWO: usize = one::ONE;\n\n\n\nconst ONE: usize = 1;",
+                    results_text
                 );
             })
             .unwrap();
@@ -3540,13 +3525,9 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    results_text.contains("const TWO: usize = one::ONE"),
-                    "Peer-shared untitled buffer result mismatch, got: {results_text}"
-                );
-                assert!(
-                    results_text.contains("const ONE: usize = 1;"),
-                    "File result should be present, got: {results_text}"
+                assert_eq!(
+                    "\n\nconst TWO: usize = one::ONE;\n\n\n\nconst ONE: usize = 1;",
+                    results_text
                 );
             })
             .unwrap();
@@ -3558,13 +3539,9 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert!(
-                    results_text.contains("const TWO: usize = one::ONE"),
-                    "Peer-shared untitled buffer result mismatch, got: {results_text}"
-                );
-                assert!(
-                    results_text.contains("const ONE: usize = 1;"),
-                    "File result should be present, got: {results_text}"
+                assert_eq!(
+                    "\n\nconst TWO: usize = one::ONE;\n\n\n\nconst ONE: usize = 1;",
+                    results_text
                 );
             })
             .unwrap();
