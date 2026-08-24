@@ -136,16 +136,27 @@ impl IgnoreStack {
                 abs_base_path,
                 ignore,
                 parent: prev,
-            } => match ignore.matched(abs_path.strip_prefix(abs_base_path).unwrap(), is_dir) {
-                ignore::Match::None => IgnoreStack {
-                    repo_root: self.repo_root.clone(),
-                    global_ignore_root: self.global_ignore_root.clone(),
-                    top: prev.clone(),
+            } => {
+                let Ok(relative_path) = abs_path.strip_prefix(abs_base_path) else {
+                    return IgnoreStack {
+                        repo_root: self.repo_root.clone(),
+                        global_ignore_root: self.global_ignore_root.clone(),
+                        top: prev.clone(),
+                    }
+                    .is_abs_path_ignored(abs_path, is_dir);
+                };
+
+                match ignore.matched(relative_path, is_dir) {
+                    ignore::Match::None => IgnoreStack {
+                        repo_root: self.repo_root.clone(),
+                        global_ignore_root: self.global_ignore_root.clone(),
+                        top: prev.clone(),
+                    }
+                    .is_abs_path_ignored(abs_path, is_dir),
+                    ignore::Match::Ignore(_) => true,
+                    ignore::Match::Whitelist(_) => false,
                 }
-                .is_abs_path_ignored(abs_path, is_dir),
-                ignore::Match::Ignore(_) => true,
-                ignore::Match::Whitelist(_) => false,
-            },
+            }
         }
     }
 }

@@ -6581,6 +6581,30 @@ fn test_repo_exclude_does_not_match_outside_its_work_directory() {
     );
 }
 
+#[test]
+fn test_gitignore_does_not_panic_outside_its_base_directory() {
+    use ignore::gitignore::GitignoreBuilder;
+    use worktree::{IgnoreKind, IgnoreStack};
+
+    let mut builder = GitignoreBuilder::new("/repo/subdir");
+    builder.add_line(None, "target").unwrap();
+    let gitignore = Arc::new(builder.build().unwrap());
+
+    let stack = IgnoreStack::none().append(
+        IgnoreKind::Gitignore(Arc::from(Path::new("/repo/subdir"))),
+        gitignore,
+    );
+
+    assert!(
+        stack.is_abs_path_ignored(Path::new("/repo/subdir/target"), true),
+        "patterns must apply within the base directory"
+    );
+    assert!(
+        !stack.is_abs_path_ignored(Path::new("/other/path/file.rs"), false),
+        "paths outside the base directory must not panic and not match"
+    );
+}
+
 #[gpui::test]
 async fn test_file_scan_depth_outside_repo(cx: &mut TestAppContext) {
     init_test(cx);
