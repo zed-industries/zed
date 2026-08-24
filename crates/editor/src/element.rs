@@ -6849,7 +6849,7 @@ pub fn render_breadcrumb_text(
                         this.style(ButtonStyle::Transparent)
                     })
                     .when(!multibuffer_header, |this| {
-                        let focus_handle = editor.upgrade().unwrap().focus_handle(&cx);
+                        let focus_handle = editor.upgrade().map(|editor| editor.focus_handle(&cx));
 
                         this.tooltip(Tooltip::element(move |_window, cx| {
                             v_flex()
@@ -6859,11 +6859,13 @@ pub fn render_breadcrumb_text(
                                         .gap_1()
                                         .justify_between()
                                         .child(Label::new("Show Symbol Outline"))
-                                        .child(ui::KeyBinding::for_action_in(
-                                            &zed_actions::outline::ToggleOutline,
-                                            &focus_handle,
-                                            cx,
-                                        )),
+                                        .children(focus_handle.as_ref().map(|focus_handle| {
+                                            ui::KeyBinding::for_action_in(
+                                                &zed_actions::outline::ToggleOutline,
+                                                focus_handle,
+                                                cx,
+                                            )
+                                        })),
                                 )
                                 .when(has_project_path, |this| {
                                     this.child(
@@ -12527,5 +12529,323 @@ mod tests {
             calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
             Some(px(400.0)),
         );
+    }
+
+    struct DroppedEditorItemHandle {
+        editor: std::sync::Mutex<Option<Entity<Editor>>>,
+        inner: Entity<Editor>,
+    }
+
+    impl workspace::item::ItemHandle for DroppedEditorItemHandle {
+        fn item_focus_handle(&self, cx: &App) -> gpui::FocusHandle {
+            self.inner.item_focus_handle(cx)
+        }
+        fn subscribe_to_item_events(
+            &self,
+            window: &mut gpui::Window,
+            cx: &mut App,
+            handler: Box<dyn Fn(workspace::item::ItemEvent, &mut gpui::Window, &mut App)>,
+        ) -> gpui::Subscription {
+            self.inner.subscribe_to_item_events(window, cx, handler)
+        }
+        fn tab_content(
+            &self,
+            params: workspace::item::TabContentParams,
+            window: &gpui::Window,
+            cx: &App,
+        ) -> gpui::AnyElement {
+            self.inner.tab_content(params, window, cx)
+        }
+        fn tab_content_text(&self, detail: usize, cx: &App) -> gpui::SharedString {
+            self.inner.tab_content_text(detail, cx)
+        }
+        fn suggested_filename(&self, cx: &App) -> gpui::SharedString {
+            self.inner.suggested_filename(cx)
+        }
+        fn tab_icon(&self, window: &gpui::Window, cx: &App) -> Option<ui::Icon> {
+            self.inner.tab_icon(window, cx)
+        }
+        fn tab_tooltip_text(&self, cx: &App) -> Option<gpui::SharedString> {
+            self.inner.tab_tooltip_text(cx)
+        }
+        fn tab_tooltip_content(&self, cx: &App) -> Option<workspace::item::TabTooltipContent> {
+            self.inner.tab_tooltip_content(cx)
+        }
+        fn telemetry_event_text(&self, cx: &App) -> Option<&'static str> {
+            self.inner.telemetry_event_text(cx)
+        }
+        fn dragged_tab_content(
+            &self,
+            params: workspace::item::TabContentParams,
+            window: &gpui::Window,
+            cx: &App,
+        ) -> gpui::AnyElement {
+            self.inner.dragged_tab_content(params, window, cx)
+        }
+        fn project_path(&self, cx: &App) -> Option<project::ProjectPath> {
+            self.inner.project_path(cx)
+        }
+        fn project_entry_ids(&self, cx: &App) -> smallvec::SmallVec<[project::ProjectEntryId; 3]> {
+            self.inner.project_entry_ids(cx)
+        }
+        fn project_paths(&self, cx: &App) -> smallvec::SmallVec<[project::ProjectPath; 3]> {
+            self.inner.project_paths(cx)
+        }
+        fn project_item_model_ids(&self, cx: &App) -> smallvec::SmallVec<[gpui::EntityId; 3]> {
+            self.inner.project_item_model_ids(cx)
+        }
+        fn for_each_project_item(
+            &self,
+            cx: &App,
+            f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
+        ) {
+            self.inner.for_each_project_item(cx, f)
+        }
+        fn buffer_kind(&self, cx: &App) -> workspace::item::ItemBufferKind {
+            self.inner.buffer_kind(cx)
+        }
+        fn boxed_clone(&self) -> Box<dyn workspace::item::ItemHandle> {
+            self.inner.boxed_clone()
+        }
+        fn can_split(&self, cx: &App) -> bool {
+            self.inner.can_split(cx)
+        }
+        fn clone_on_split(
+            &self,
+            workspace_id: Option<workspace::WorkspaceId>,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> gpui::Task<Option<Box<dyn workspace::item::ItemHandle>>> {
+            self.inner.clone_on_split(workspace_id, window, cx)
+        }
+        fn added_to_pane(
+            &self,
+            workspace: &mut workspace::Workspace,
+            pane: gpui::Entity<workspace::Pane>,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<workspace::Workspace>,
+        ) {
+            self.inner.added_to_pane(workspace, pane, window, cx)
+        }
+        fn deactivated(&self, window: &mut gpui::Window, cx: &mut App) {
+            self.inner.deactivated(window, cx)
+        }
+        fn on_removed(&self, cx: &mut App) {
+            self.inner.on_removed(cx)
+        }
+        fn workspace_deactivated(&self, window: &mut gpui::Window, cx: &mut App) {
+            self.inner.workspace_deactivated(window, cx)
+        }
+        fn navigate(
+            &self,
+            data: std::sync::Arc<dyn std::any::Any + Send>,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> bool {
+            self.inner.navigate(data, window, cx)
+        }
+        fn item_id(&self) -> gpui::EntityId {
+            self.inner.item_id()
+        }
+        fn to_any_view(&self) -> gpui::AnyView {
+            if let Some(editor) = self.editor.lock().unwrap().take() {
+                editor.into_any()
+            } else {
+                self.inner.to_any_view()
+            }
+        }
+        fn is_dirty(&self, cx: &App) -> bool {
+            self.inner.is_dirty(cx)
+        }
+        fn capability(&self, cx: &App) -> language::Capability {
+            self.inner.capability(cx)
+        }
+        fn toggle_read_only(&self, window: &mut gpui::Window, cx: &mut App) {
+            self.inner.toggle_read_only(window, cx)
+        }
+        fn has_deleted_file(&self, cx: &App) -> bool {
+            self.inner.has_deleted_file(cx)
+        }
+        fn has_conflict(&self, cx: &App) -> bool {
+            self.inner.has_conflict(cx)
+        }
+        fn can_save(&self, cx: &App) -> bool {
+            self.inner.can_save(cx)
+        }
+        fn can_save_as(&self, cx: &App) -> bool {
+            self.inner.can_save_as(cx)
+        }
+        fn save(
+            &self,
+            options: workspace::item::SaveOptions,
+            project: gpui::Entity<project::Project>,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> gpui::Task<anyhow::Result<()>> {
+            self.inner.save(options, project, window, cx)
+        }
+        fn save_as(
+            &self,
+            project: gpui::Entity<project::Project>,
+            path: project::ProjectPath,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> gpui::Task<anyhow::Result<()>> {
+            self.inner.save_as(project, path, window, cx)
+        }
+        fn reload(
+            &self,
+            project: gpui::Entity<project::Project>,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> gpui::Task<anyhow::Result<()>> {
+            self.inner.reload(project, window, cx)
+        }
+        fn act_as_type(&self, type_id: std::any::TypeId, cx: &App) -> Option<gpui::AnyEntity> {
+            self.inner.act_as_type(type_id, cx)
+        }
+        fn to_followable_item_handle(
+            &self,
+            cx: &App,
+        ) -> Option<Box<dyn workspace::item::FollowableItemHandle>> {
+            self.inner.to_followable_item_handle(cx)
+        }
+        fn to_serializable_item_handle(
+            &self,
+            cx: &App,
+        ) -> Option<Box<dyn workspace::item::SerializableItemHandle>> {
+            self.inner.to_serializable_item_handle(cx)
+        }
+        fn on_release(
+            &self,
+            cx: &mut App,
+            callback: Box<dyn FnOnce(&mut App) + Send>,
+        ) -> gpui::Subscription {
+            self.inner.on_release(cx, callback)
+        }
+        fn to_searchable_item_handle(
+            &self,
+            cx: &App,
+        ) -> Option<Box<dyn workspace::item::SearchableItemHandle>> {
+            self.inner.to_searchable_item_handle(cx)
+        }
+        fn breadcrumb_location(&self, cx: &App) -> workspace::ToolbarItemLocation {
+            self.inner.breadcrumb_location(cx)
+        }
+        fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<gpui::Font>)> {
+            self.inner.breadcrumbs(cx)
+        }
+        fn breadcrumb_prefix(
+            &self,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> Option<gpui::AnyElement> {
+            self.inner.breadcrumb_prefix(window, cx)
+        }
+        fn show_toolbar(&self, cx: &App) -> bool {
+            self.inner.show_toolbar(cx)
+        }
+        fn pixel_position_of_cursor(&self, cx: &App) -> Option<gpui::Point<gpui::Pixels>> {
+            self.inner.pixel_position_of_cursor(cx)
+        }
+        fn downgrade_item(&self) -> Box<dyn workspace::item::WeakItemHandle> {
+            self.inner.downgrade_item()
+        }
+        fn workspace_settings<'a>(&self, cx: &'a App) -> &'a workspace::WorkspaceSettings {
+            self.inner.workspace_settings(cx)
+        }
+        fn preserve_preview(&self, cx: &App) -> bool {
+            self.inner.preserve_preview(cx)
+        }
+        fn include_in_nav_history(&self) -> bool {
+            self.inner.include_in_nav_history()
+        }
+        fn relay_action(
+            &self,
+            action: Box<dyn gpui::Action>,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) {
+            self.inner.relay_action(action, window, cx)
+        }
+        fn handle_drop(
+            &self,
+            active_pane: &workspace::Pane,
+            dropped: &dyn std::any::Any,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> bool {
+            self.inner.handle_drop(active_pane, dropped, window, cx)
+        }
+        fn tab_extra_context_menu_actions(
+            &self,
+            window: &mut gpui::Window,
+            cx: &mut App,
+        ) -> Vec<(gpui::SharedString, Box<dyn gpui::Action>)> {
+            self.inner.tab_extra_context_menu_actions(window, cx)
+        }
+    }
+
+    #[gpui::test]
+    fn test_render_breadcrumb_text(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| MultiBuffer::build_simple("fn main() {}", cx));
+        let window_handle =
+            cx.add_window(|window, cx| crate::test::build_editor(buffer.clone(), window, cx));
+
+        window_handle
+            .update(cx, |_editor, window, cx| {
+                let editor_entity = cx.entity();
+
+                // Test normal rendering with active editor
+                let _element = render_breadcrumb_text(
+                    vec![HighlightedText {
+                        text: "main.rs".into(),
+                        highlights: vec![],
+                    }],
+                    None,
+                    None,
+                    &editor_entity,
+                    false,
+                    window,
+                    cx,
+                );
+
+                // Test multibuffer header
+                let _element_mb = render_breadcrumb_text(
+                    vec![HighlightedText {
+                        text: "main.rs".into(),
+                        highlights: vec![],
+                    }],
+                    None,
+                    None,
+                    &editor_entity,
+                    true,
+                    window,
+                    cx,
+                );
+
+                // Test rendering with dropped editor (WeakEntity upgrade returns None)
+                let temp_editor = cx.new(|cx| crate::test::build_editor(buffer, window, cx));
+                let dropped_item = DroppedEditorItemHandle {
+                    editor: std::sync::Mutex::new(Some(temp_editor)),
+                    inner: editor_entity,
+                };
+
+                let _element_dropped = render_breadcrumb_text(
+                    vec![HighlightedText {
+                        text: "main.rs".into(),
+                        highlights: vec![],
+                    }],
+                    None,
+                    None,
+                    &dropped_item,
+                    false,
+                    window,
+                    cx,
+                );
+            })
+            .unwrap();
     }
 }
