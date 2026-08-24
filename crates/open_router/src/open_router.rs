@@ -11,7 +11,6 @@ pub use settings::ModelMode;
 pub use settings::OpenRouterAvailableModel as AvailableModel;
 pub use settings::OpenRouterProvider as Provider;
 use std::{convert::TryFrom, io, time::Duration};
-use strum::EnumString;
 use thiserror::Error;
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
@@ -515,8 +514,10 @@ pub async fn stream_completion(
                 Ok(ResponseStreamResult::Response(response)) => Some(Ok(response)),
                 Ok(ResponseStreamResult::Error(OpenRouterErrorResponse { error })) => {
                     Some(Err(OpenRouterError::ApiError(ApiError {
-                        code: ApiErrorCode::from_status(error.code),
+                        status: None,
+                        code: error.code,
                         message: error.message,
+                        retry_after: None,
                     })))
                 }
                 Err(error) => Some(Err(OpenRouterError::DeserializeResponse(error))),
@@ -621,33 +622,22 @@ pub async fn list_models(
 
         Ok(models)
     } else {
-        let code = ApiErrorCode::from_status(response.status().as_u16());
-
+        let status = response.status();
         let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
             Ok(OpenRouterErrorResponse { error }) => error,
             Err(_) => OpenRouterErrorBody {
-                code: response.status().as_u16(),
+                code: status.as_u16(),
                 message: body,
                 metadata: None,
             },
         };
 
-        match code {
-            ApiErrorCode::RateLimitError => {
-                let retry_after = extract_retry_after(response.headers());
-                Err(OpenRouterError::RateLimit {
-                    retry_after: retry_after.unwrap_or_else(|| std::time::Duration::from_secs(60)),
-                })
-            }
-            ApiErrorCode::OverloadedError => {
-                let retry_after = extract_retry_after(response.headers());
-                Err(OpenRouterError::ServerOverloaded { retry_after })
-            }
-            _ => Err(OpenRouterError::ApiError(ApiError {
-                code: code,
-                message: error_response.message,
-            })),
-        }
+        Err(OpenRouterError::ApiError(ApiError {
+            status: Some(status.as_u16()),
+            code: error_response.code,
+            message: error_response.message,
+            retry_after: retry_after_with_rate_limit_default(status, response.headers()),
+        }))
     }
 }
 
@@ -664,12 +654,6 @@ pub enum OpenRouterError {
 
     /// Failed to read from response stream
     ReadResponse(io::Error),
-
-    /// Rate limit exceeded
-    RateLimit { retry_after: Duration },
-
-    /// Server overloaded
-    ServerOverloaded { retry_after: Option<Duration> },
 
     /// API returned an error response
     ApiError(ApiError),
@@ -689,7 +673,6 @@ impl OpenRouterError {
         else {
             return Self::ChatCompletion(error);
         };
-        let code = ApiErrorCode::from_status(status_code.as_u16());
         let error_response = match serde_json::from_str::<OpenRouterErrorResponse>(&body) {
             Ok(OpenRouterErrorResponse { error }) => error,
             Err(_) => OpenRouterErrorBody {
@@ -698,21 +681,25 @@ impl OpenRouterError {
                 metadata: None,
             },
         };
-
-        match code {
-            ApiErrorCode::RateLimitError => Self::RateLimit {
-                retry_after: extract_retry_after(&headers)
-                    .unwrap_or_else(|| std::time::Duration::from_secs(60)),
-            },
-            ApiErrorCode::OverloadedError => Self::ServerOverloaded {
-                retry_after: extract_retry_after(&headers),
-            },
-            _ => Self::ApiError(ApiError {
-                code,
-                message: error_response.message,
-            }),
-        }
+        Self::ApiError(ApiError {
+            status: Some(status_code.as_u16()),
+            code: error_response.code,
+            message: error_response.message,
+            retry_after: retry_after_with_rate_limit_default(status_code, &headers),
+        })
     }
+}
+
+/// OpenRouter reports a rate limit's reset time via `X-RateLimit-Reset` when
+/// present, but omits it on some rate-limited responses; a minute is a
+/// reasonable default backoff for those.
+fn retry_after_with_rate_limit_default(
+    status: http_client::StatusCode,
+    headers: &http::HeaderMap,
+) -> Option<Duration> {
+    extract_retry_after(headers).or_else(|| {
+        (status == http_client::StatusCode::TOO_MANY_REQUESTS).then(|| Duration::from_secs(60))
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -731,63 +718,13 @@ pub struct OpenRouterErrorResponse {
 #[derive(Debug, Serialize, Deserialize, Error)]
 #[error("OpenRouter API Error: {code}: {message}")]
 pub struct ApiError {
-    pub code: ApiErrorCode,
+    /// The HTTP status remains distinct from the provider's numeric error code
+    /// because OpenRouter can report different values for them, and streaming
+    /// errors do not have their own HTTP response.
+    pub status: Option<u16>,
+    pub code: u16,
     pub message: String,
-}
-
-/// An OpenROuter API error code.
-/// <https://openrouter.ai/docs/api-reference/errors#error-codes>
-#[derive(Debug, PartialEq, Eq, Clone, Copy, EnumString, Serialize, Deserialize)]
-#[strum(serialize_all = "snake_case")]
-pub enum ApiErrorCode {
-    /// 400: Bad Request (invalid or missing params, CORS)
-    InvalidRequestError,
-    /// 401: Invalid credentials (OAuth session expired, disabled/invalid API key)
-    AuthenticationError,
-    /// 402: Your account or API key has insufficient credits. Add more credits and retry the request.
-    PaymentRequiredError,
-    /// 403: Your chosen model requires moderation and your input was flagged
-    PermissionError,
-    /// 408: Your request timed out
-    RequestTimedOut,
-    /// 429: You are being rate limited
-    RateLimitError,
-    /// 502: Your chosen model is down or we received an invalid response from it
-    ApiError,
-    /// 503: There is no available model provider that meets your routing requirements
-    OverloadedError,
-}
-
-impl std::fmt::Display for ApiErrorCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            ApiErrorCode::InvalidRequestError => "invalid_request_error",
-            ApiErrorCode::AuthenticationError => "authentication_error",
-            ApiErrorCode::PaymentRequiredError => "payment_required_error",
-            ApiErrorCode::PermissionError => "permission_error",
-            ApiErrorCode::RequestTimedOut => "request_timed_out",
-            ApiErrorCode::RateLimitError => "rate_limit_error",
-            ApiErrorCode::ApiError => "api_error",
-            ApiErrorCode::OverloadedError => "overloaded_error",
-        };
-        write!(f, "{s}")
-    }
-}
-
-impl ApiErrorCode {
-    pub fn from_status(status: u16) -> Self {
-        match status {
-            400 => ApiErrorCode::InvalidRequestError,
-            401 => ApiErrorCode::AuthenticationError,
-            402 => ApiErrorCode::PaymentRequiredError,
-            403 => ApiErrorCode::PermissionError,
-            408 => ApiErrorCode::RequestTimedOut,
-            429 => ApiErrorCode::RateLimitError,
-            502 => ApiErrorCode::ApiError,
-            503 => ApiErrorCode::OverloadedError,
-            _ => ApiErrorCode::ApiError,
-        }
-    }
+    pub retry_after: Option<Duration>,
 }
 
 // -- Conversions to `language_model_core` types --
@@ -806,14 +743,6 @@ impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError
                 Self::DeserializeResponse { provider, error }
             }
             OpenRouterError::ReadResponse(error) => Self::ApiReadResponseError { provider, error },
-            OpenRouterError::RateLimit { retry_after } => Self::RateLimitExceeded {
-                provider,
-                retry_after: Some(retry_after),
-            },
-            OpenRouterError::ServerOverloaded { retry_after } => Self::ServerOverloaded {
-                provider,
-                retry_after,
-            },
             OpenRouterError::ApiError(api_error) => api_error.into(),
             OpenRouterError::ChatCompletion(error) => error.into(),
         }
@@ -822,43 +751,28 @@ impl From<OpenRouterError> for language_model_core::LanguageModelCompletionError
 
 impl From<ApiError> for language_model_core::LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        use ApiErrorCode::*;
+        use language_model_core::ProviderErrorCategory;
+
         let provider = language_model_core::LanguageModelProviderName::new("OpenRouter");
-        match error.code {
-            InvalidRequestError => Self::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Self::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            PaymentRequiredError => Self::AuthenticationError {
-                provider,
-                message: format!("Payment required: {}", error.message),
-            },
-            PermissionError => Self::PermissionError {
-                provider,
-                message: error.message,
-            },
-            RequestTimedOut => Self::HttpResponseError {
-                provider,
-                status_code: http_client::StatusCode::REQUEST_TIMEOUT,
-                message: error.message,
-            },
-            RateLimitError => Self::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            ApiError => Self::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Self::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
-        }
+        let status = error
+            .status
+            .and_then(|status| http_client::StatusCode::from_u16(status).ok());
+        let category = http_client::StatusCode::from_u16(error.code)
+            .ok()
+            .map(|status| ProviderErrorCategory::from_http_status(status, &error.message))
+            .filter(|category| *category != ProviderErrorCategory::Other)
+            .or_else(|| {
+                status.map(|status| ProviderErrorCategory::from_http_status(status, &error.message))
+            })
+            .unwrap_or(ProviderErrorCategory::Other);
+        Self::from_provider_response(
+            provider,
+            status,
+            Some(error.code.to_string()),
+            error.message,
+            error.retry_after,
+            category,
+        )
     }
 }
 
@@ -956,5 +870,77 @@ mod tests {
                 ..
             } if provider.0 == "OpenRouter" && host == "openrouter.ai"
         ));
+    }
+
+    #[test]
+    fn provider_code_remains_distinct_from_http_status() {
+        let error = OpenRouterError::from_chat_completion_request_error(
+            open_ai::RequestError::HttpResponseError {
+                provider: "OpenRouter".to_string(),
+                status_code: http_client::StatusCode::INTERNAL_SERVER_ERROR,
+                body: r#"{"error":{"code":499,"message":"upstream provider failed"}}"#.to_string(),
+                headers: Box::default(),
+            },
+        );
+        let OpenRouterError::ApiError(api_error) = &error else {
+            panic!("expected ApiError, got {error:?}");
+        };
+        assert_eq!(api_error.status, Some(500));
+        assert_eq!(api_error.code, 499);
+
+        let completion_error = language_model_core::LanguageModelCompletionError::from(error);
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                status: Some(status),
+                code: Some(code),
+                category: language_model_core::ProviderErrorCategory::InternalServer,
+                ..
+            } if status == http_client::StatusCode::INTERNAL_SERVER_ERROR && code == "499"
+        ));
+    }
+
+    #[test]
+    fn streaming_provider_code_does_not_become_http_status() {
+        let completion_error = language_model_core::LanguageModelCompletionError::from(ApiError {
+            status: None,
+            code: 402,
+            message: "Insufficient credits".to_string(),
+            retry_after: None,
+        });
+
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                status: None,
+                code: Some(code),
+                category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "402"
+        ));
+    }
+
+    #[test]
+    fn streaming_server_error_remains_retryable_without_http_status() {
+        let completion_error = language_model_core::LanguageModelCompletionError::from(ApiError {
+            status: None,
+            code: 502,
+            message: "Upstream provider failed".to_string(),
+            retry_after: None,
+        });
+
+        assert!(matches!(
+            &completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                status: None,
+                code: Some(code),
+                category: language_model_core::ProviderErrorCategory::InternalServer,
+                ..
+            } if code == "502"
+        ));
+        assert_eq!(
+            completion_error.retry_delay(1),
+            Some(Duration::from_secs(5))
+        );
     }
 }

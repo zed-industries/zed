@@ -6,9 +6,9 @@ use language_model_core::{
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
     LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
-    StopReason, TokenUsage,
-    util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
+    util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -1273,17 +1273,31 @@ impl OpenAiResponseEventMapper {
                 events
             }
             ResponsesStreamEvent::Failed { response } => match response.error.as_ref() {
-                Some(error) => vec![Err(completion_error_from_response_error(error))],
-                None => vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_failure_message(&response)
-                )))],
+                Some(error) => vec![Err(completion_error_from_response_error(
+                    error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))],
+                None => vec![Err(LanguageModelCompletionError::from_provider_response(
+                    provider_name_for_id(&self.compaction_state_owner),
+                    None,
+                    Some("response.failed".to_string()),
+                    response_failure_message(&response),
+                    None,
+                    ProviderErrorCategory::Other,
+                ))],
             },
             ResponsesStreamEvent::Error { error } => {
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::GenericError { error } => {
                 let error = error.into_response_error();
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::ReasoningSummaryPartAdded {
                 item_id,
@@ -1610,13 +1624,37 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .unwrap_or_else(|| "response.failed".to_string())
 }
 
-fn completion_error_from_response_error(error: &ResponseError) -> LanguageModelCompletionError {
-    let message = response_error_message(error);
-    if is_context_window_exceeded_message(&message) {
-        LanguageModelCompletionError::PromptTooLarge { tokens: None }
-    } else {
-        LanguageModelCompletionError::Other(anyhow!(message))
-    }
+fn completion_error_from_response_error(
+    error: &ResponseError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> LanguageModelCompletionError {
+    let category = match error.code.as_deref() {
+        Some("context_length_exceeded" | "request_too_large") => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        Some("invalid_encrypted_content") => ProviderErrorCategory::InvalidEncryptedContent,
+        Some("invalid_request_error") => ProviderErrorCategory::InvalidRequest,
+        Some("authentication_error") => ProviderErrorCategory::Authentication,
+        Some("billing_error" | "payment_required_error") => ProviderErrorCategory::PaymentRequired,
+        Some("permission_error") => ProviderErrorCategory::Permission,
+        Some("not_found_error") => ProviderErrorCategory::EndpointNotFound,
+        Some("conflict_error") => ProviderErrorCategory::Conflict,
+        Some("rate_limit_error" | "rate_limit_exceeded") => ProviderErrorCategory::RateLimit,
+        Some("timeout_error" | "request_timed_out") => ProviderErrorCategory::Timeout,
+        Some("api_error" | "internal_server_error" | "server_error") => {
+            ProviderErrorCategory::InternalServer
+        }
+        Some("overloaded_error") => ProviderErrorCategory::Overloaded,
+        Some(_) | None => ProviderErrorCategory::Other,
+    };
+    LanguageModelCompletionError::from_provider_response(
+        provider,
+        None,
+        error.code.clone(),
+        error.message.clone(),
+        None,
+        category,
+    )
 }
 
 fn response_error_message(error: &ResponseError) -> String {
@@ -1705,8 +1743,8 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
-        Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -3075,7 +3113,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_failed_uses_response_error_message() {
+    fn responses_stream_failed_preserves_provider_rejection() {
         let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
@@ -3091,10 +3129,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "server_error: The model failed to generate a response."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "server_error"
+                && message == "The model failed to generate a response."
+        ));
     }
 
     #[test]
@@ -3113,11 +3160,23 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "ERR_SOMETHING"
+                && message == "Something went wrong"
+        ));
     }
 
     #[test]
-    fn responses_stream_deserializes_nested_error_event() {
+    fn responses_stream_preserves_nested_cyber_policy_rejection() {
         // In practice the Responses API often nests error fields under an
         // `error` object even though the public spec documents them at the top
         // level. Make sure we don't lose the message and code in that case.
@@ -3125,8 +3184,8 @@ mod tests {
             "type": "error",
             "error": {
                 "type": "invalid_request_error",
-                "code": "invalid_prompt",
-                "message": "Your prompt was flagged.",
+                "code": "cyber_policy",
+                "message": "This content was flagged as potentially violating our terms of use.",
                 "param": "input"
             },
             "sequence_number": 2
@@ -3138,10 +3197,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "invalid_prompt: Your prompt was flagged."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: ProviderErrorCategory::Other,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
     }
 
     #[test]
@@ -3165,7 +3233,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3188,7 +3259,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3208,7 +3282,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "invalid_request_error: Invalid request.");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "invalid_request_error"
+                && message == "Invalid request."
+        ));
     }
 
     #[test]
