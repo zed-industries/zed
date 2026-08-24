@@ -1357,7 +1357,7 @@ impl Session {
                 cx.spawn(async move |this, cx| {
                     task.await;
                     this.update(cx, |this, cx| {
-                        this.continue_thread(active_thread_id, cx);
+                        this.continue_program(active_thread_id, cx);
                     })
                 })
                 .detach();
@@ -2312,7 +2312,28 @@ impl Session {
         })
     }
 
+    pub fn continue_program(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.continue_execution(thread_id, None, cx);
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        if !self
+            .capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default()
+        {
+            return;
+        }
+
+        self.continue_execution(thread_id, Some(true), cx);
+    }
+
+    fn continue_execution(
+        &mut self,
+        thread_id: ThreadId,
+        single_thread: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
         self.select_historic_snapshot(None, cx);
 
         self.active_snapshot
@@ -2322,9 +2343,7 @@ impl Session {
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    // Continue Program resumes all threads, even if the adapter supports
-                    // single-thread execution.
-                    single_thread: None,
+                    single_thread,
                 },
             },
             Self::on_continue_response(thread_id),
