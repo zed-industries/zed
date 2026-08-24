@@ -1682,10 +1682,11 @@ impl GitRepository for RealGitRepository {
                 let mut urls = HashMap::default();
                 if let Ok(stdout) = git.run(&["remote", "-v"]).await {
                     for line in stdout.lines() {
-                        // On promisor remotes, `git` appends `[filter]` (e.g. `[blob:none]`)
-                        // after `(fetch)`/`(push)`; strip it so the suffix check matches.
-                        let line = line.split(" [").next().unwrap_or(line);
-                        let Some(rest) = line.strip_suffix(" (fetch)") else {
+                        // Parse from the right around the final ` (fetch)` marker;
+                        // promisor remotes may be followed by a `[filter]`
+                        // annotation (e.g. `[blob:none]`), while URLs containing
+                        // `" ["` or `(fetch)` remain untouched.
+                        let Some((rest, _annotation)) = line.rsplit_once(" (fetch)") else {
                             continue;
                         };
                         if let Some((name, url)) = rest.split_once(char::is_whitespace) {
@@ -6579,6 +6580,45 @@ mod tests {
             remote_urls.get("origin"),
             Some(&remote_path.to_string_lossy().to_string()),
             "origin remote should be listed even though `git remote -v` includes a `[blob:none]` annotation"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_get_remote_urls_url_with_bracket_space(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        // A remote URL containing a `" ["` substring is legal and must not be
+        // confused with the `[filter]` annotation git appends on promisor remotes.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let repo_dir = temp_dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        git_init_repo(&repo_dir);
+
+        let url_with_bracket_space = format!("{} [archive].git", temp_dir.path().display());
+        git_command(
+            &repo_dir,
+            [
+                OsString::from("remote"),
+                OsString::from("add"),
+                OsString::from("origin"),
+                OsString::from(&url_with_bracket_space),
+            ],
+        );
+
+        let repo = RealGitRepository::new(
+            &repo_dir.join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let remote_urls = repo.remote_urls().await;
+        assert_eq!(
+            remote_urls.get("origin"),
+            Some(&url_with_bracket_space),
+            "remote whose URL contains ` [` must not be truncated"
         );
     }
 }
