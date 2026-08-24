@@ -564,16 +564,35 @@ impl MultiWorkspace {
                 multi_workspace.workspaces().cloned().collect::<Vec<_>>()
             })?;
 
+            let mut prepared = anyhow::Ok(true);
             for workspace in workspaces {
-                let should_continue = workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
-                    })?
-                    .await?;
-                if !should_continue {
-                    return anyhow::Ok(());
+                prepared = match workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+                }) {
+                    Ok(task) => task.await,
+                    Err(error) => Err(error),
+                };
+                if !matches!(prepared, Ok(true)) {
+                    break;
                 }
             }
+
+            if !matches!(prepared, Ok(true)) {
+                this.update(cx, |multi_workspace, cx| {
+                    for workspace in multi_workspace.workspaces() {
+                        workspace.update(cx, |workspace, _| {
+                            workspace.removing = false;
+                        });
+                    }
+                })?;
+                prepared?;
+                return anyhow::Ok(());
+            }
+
+            let flush_tasks = this.update_in(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_pending_serialization(window, cx)
+            })?;
+            futures::future::join_all(flush_tasks).await;
 
             cx.update(|window, _cx| {
                 window.remove_window();
@@ -1481,6 +1500,22 @@ impl MultiWorkspace {
     /// complete before the process exits.
     pub fn flush_serialization(&mut self) -> Task<()> {
         self._serialize_task.take().unwrap_or(Task::ready(()))
+    }
+
+    pub fn flush_pending_serialization(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Task<()>> {
+        let mut tasks = Vec::new();
+        for workspace in self.workspaces() {
+            tasks.push(workspace.update(cx, |workspace, cx| {
+                workspace.flush_serialization(window, cx)
+            }));
+        }
+        tasks.append(&mut self.take_pending_removal_tasks());
+        tasks.push(self.flush_serialization());
+        tasks
     }
 
     fn app_will_quit(&mut self, _cx: &mut Context<Self>) -> impl Future<Output = ()> + use<> {
