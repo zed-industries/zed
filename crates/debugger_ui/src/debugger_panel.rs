@@ -759,7 +759,7 @@ impl DebugPanel {
                                                     this.child(
                                                         IconButton::new(
                                                             "debug-continue-thread",
-                                                            IconName::DebugContinue,
+                                                            IconName::DebugContinueThread,
                                                         )
                                                         .icon_size(IconSize::Small)
                                                         .disabled(
