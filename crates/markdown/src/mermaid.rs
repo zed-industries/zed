@@ -1416,13 +1416,15 @@ mod tests {
         let contents = mermaid_contents("graph A");
         let source_offset = 0;
         markdown.update(cx, |markdown, _| {
-            markdown.parsed_markdown.mermaid_diagrams.insert(
-                source_offset,
-                ParsedMarkdownMermaidDiagram {
-                    content_range: 0..contents.contents.len(),
-                    contents: contents.clone(),
-                },
-            );
+            Arc::make_mut(&mut markdown.parsed_markdown)
+                .mermaid_diagrams
+                .insert(
+                    source_offset,
+                    ParsedMarkdownMermaidDiagram {
+                        content_range: 0..contents.contents.len(),
+                        contents: contents.clone(),
+                    },
+                );
             markdown.mermaid_state.cache.insert(
                 contents.clone(),
                 Arc::new(CachedMermaidDiagram::new_for_test(
@@ -1561,13 +1563,15 @@ mod tests {
         let contents = mermaid_contents("graph A");
         let source_offset = 0;
         markdown.update(cx, |markdown, _| {
-            markdown.parsed_markdown.mermaid_diagrams.insert(
-                source_offset,
-                ParsedMarkdownMermaidDiagram {
-                    content_range: 0..contents.contents.len(),
-                    contents: contents.clone(),
-                },
-            );
+            Arc::make_mut(&mut markdown.parsed_markdown)
+                .mermaid_diagrams
+                .insert(
+                    source_offset,
+                    ParsedMarkdownMermaidDiagram {
+                        content_range: 0..contents.contents.len(),
+                        contents: contents.clone(),
+                    },
+                );
             markdown.mermaid_state.cache.insert(
                 contents.clone(),
                 Arc::new(CachedMermaidDiagram::new_for_test(
