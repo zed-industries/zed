@@ -887,7 +887,7 @@ wasmtime = { version = "36", default-features = false, features = [
     "incremental-cache",
     "parallel-compilation",
 ] }
-wasmtime-wasi = "36"
+wasmtime-wasi = "36.0.14"
 wax = "0.7"
 which = "6.0.0"
 wasm-bindgen = "0.2.120"
