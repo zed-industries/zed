@@ -527,6 +527,8 @@ pub enum Model {
     Gemini25Pro,
     #[serde(rename = "gemini-3.1-flash-lite")]
     Gemini31FlashLite,
+    #[serde(rename = "gemini-3.5-flash-lite")]
+    Gemini35FlashLite,
     #[serde(rename = "gemini-3-flash-preview")]
     Gemini3Flash,
     #[serde(rename = "gemini-3.5-flash")]
@@ -559,6 +561,7 @@ impl Model {
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
+            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Gemini36Flash => "gemini-3.6-flash",
@@ -573,6 +576,7 @@ impl Model {
             Self::Gemini25Flash => "gemini-2.5-flash",
             Self::Gemini25Pro => "gemini-2.5-pro",
             Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
+            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
             Self::Gemini36Flash => "gemini-3.6-flash",
@@ -588,6 +592,7 @@ impl Model {
             Self::Gemini25Flash => "Gemini 2.5 Flash",
             Self::Gemini25Pro => "Gemini 2.5 Pro",
             Self::Gemini31FlashLite => "Gemini 3.1 Flash-Lite",
+            Self::Gemini35FlashLite => "Gemini 3.5 Flash-Lite",
             Self::Gemini3Flash => "Gemini 3 Flash",
             Self::Gemini35Flash => "Gemini 3.5 Flash",
             Self::Gemini36Flash => "Gemini 3.6 Flash",
@@ -605,6 +610,7 @@ impl Model {
             | Self::Gemini25Flash
             | Self::Gemini25Pro
             | Self::Gemini31FlashLite
+            | Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
             | Self::Gemini36Flash
@@ -620,6 +626,7 @@ impl Model {
             | Model::Gemini25Flash
             | Model::Gemini25Pro
             | Model::Gemini31FlashLite
+            | Model::Gemini35FlashLite
             | Model::Gemini3Flash
             | Model::Gemini35Flash
             | Model::Gemini36Flash
@@ -644,6 +651,7 @@ impl Model {
                 | Self::Gemini25Flash
                 | Self::Gemini25Pro
                 | Self::Gemini31FlashLite
+                | Self::Gemini35FlashLite
                 | Self::Gemini3Flash
                 | Self::Gemini35Flash
                 | Self::Gemini36Flash
@@ -659,6 +667,7 @@ impl Model {
     pub fn supported_thinking_levels(&self) -> &'static [ThinkingLevel] {
         match self {
             Self::Gemini31FlashLite
+            | Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
             | Self::Gemini36Flash => &[
@@ -679,6 +688,7 @@ impl Model {
     pub fn default_thinking_level(&self) -> Option<ThinkingLevel> {
         match self {
             Self::Gemini31FlashLite => Some(ThinkingLevel::Minimal),
+            Self::Gemini35FlashLite => Some(ThinkingLevel::Minimal),
             Self::Gemini3Flash => Some(ThinkingLevel::High),
             Self::Gemini35Flash => Some(ThinkingLevel::Medium),
             Self::Gemini36Flash => Some(ThinkingLevel::Medium),
@@ -698,6 +708,7 @@ impl Model {
                 }
             }
             Self::Gemini31FlashLite
+            | Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
             | Self::Gemini36Flash
@@ -732,6 +743,29 @@ mod tests {
         assert_eq!(serialized, json!("gemini-3.6-flash"));
         let deserialized: Model = serde_json::from_value(json!("gemini-3.6-flash")).unwrap();
         assert_eq!(deserialized, Model::Gemini36Flash);
+    }
+
+    #[test]
+    fn test_gemini_3_5_flash_lite_model_metadata() {
+        let model = Model::Gemini35FlashLite;
+        assert_eq!(model.id(), "gemini-3.5-flash-lite");
+        assert_eq!(model.request_id(), "gemini-3.5-flash-lite");
+        assert_eq!(model.display_name(), "Gemini 3.5 Flash-Lite");
+        assert_eq!(
+            model.supported_thinking_levels(),
+            &[
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High
+            ]
+        );
+        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Minimal));
+
+        let serialized = serde_json::to_value(&model).unwrap();
+        assert_eq!(serialized, json!("gemini-3.5-flash-lite"));
+        let deserialized: Model = serde_json::from_value(json!("gemini-3.5-flash-lite")).unwrap();
+        assert_eq!(deserialized, Model::Gemini35FlashLite);
     }
 
     #[test]
