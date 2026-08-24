@@ -144,11 +144,6 @@ impl RenderOnce for ModelSelectorListItem {
             .when_some(self.disabled, |this, disabled_reason| {
                 this.disabled(true)
                     .tooltip(Tooltip::text(disabled_reason.0))
-                    .end_slot(
-                        div()
-                            .pr_2()
-                            .child(Icon::new(IconName::Info).color(Color::Muted)),
-                    )
             })
             .child(
                 h_flex()
@@ -182,13 +177,17 @@ impl RenderOnce for ModelSelectorListItem {
                         this.child(Chip::new(cost_info).tooltip(Tooltip::text(tooltip_text)))
                     }),
             )
-            .when(self.is_selected, |this| {
-                this.end_slot(
-                    div()
-                        .pr_2()
-                        .child(Icon::new(IconName::Check).color(Color::Accent)),
-                )
-            })
+            .end_slot(
+                h_flex()
+                    .pr_2()
+                    .gap_1p5()
+                    .when(self.is_selected, |this| {
+                        this.child(Icon::new(IconName::Check).color(Color::Accent))
+                    })
+                    .when(is_disabled, |this| {
+                        this.child(Icon::new(IconName::Info).color(Color::Muted))
+                    }),
+            )
             .when(!is_disabled, |this| {
                 this.end_slot_on_hover(div().pr_1p5().when_some(self.on_toggle_favorite, {
                     |this, handle_click| {
@@ -244,7 +243,7 @@ impl RenderOnce for ModelSelectorFooter {
                     .style(ButtonStyle::Outlined)
                     .key_binding(
                         KeyBinding::for_action_in(action.as_ref(), &focus_handle, cx)
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            .map(|kb| kb.size(rems_from_px(12_f32))),
                     )
                     .on_click(move |_, window, cx| {
                         window.dispatch_action(action.boxed_clone(), cx);

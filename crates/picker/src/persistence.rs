@@ -36,6 +36,26 @@ pub(crate) fn store_shape_for_this_layout(
     });
 }
 
+/// Persist the last-used preview layout without touching the stored shape.
+///
+/// Changing the preview position (e.g. right/below/hidden) without resizing
+/// must still be remembered, so this is called whenever the layout changes.
+pub(crate) fn store_last_layout(
+    picker_delegate: &'static str,
+    preview_layout: Option<preview::Layout>,
+    cx: &App,
+) {
+    let kvp = KeyValueStore::global(cx);
+    db::write_and_log(cx, async move || {
+        kvp.scoped(PICKERS_NAMESPACE)
+            .write(
+                last_layout_key(picker_delegate),
+                layout_as_str(preview_layout).to_string(),
+            )
+            .await
+    });
+}
+
 pub(crate) fn try_load_shape(
     picker_delegate: &'static str,
     preview_layout: impl Into<Option<preview::Layout>>,
