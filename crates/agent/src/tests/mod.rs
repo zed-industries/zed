@@ -4448,7 +4448,10 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     ));
     fake_model.end_last_completion_stream();
 
-    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_text_chunk("there!");
@@ -4525,7 +4528,10 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
     ));
     fake_model.end_last_completion_stream();
 
-    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
     let completion = fake_model.pending_completions().pop().unwrap();
     assert_eq!(
         completion.messages[1..],
@@ -4597,7 +4603,10 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
             ),
         );
         fake_model.end_last_completion_stream();
-        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.executor()
+            .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+                3,
+            )));
         cx.run_until_parked();
     }
 
@@ -4686,7 +4695,10 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     fake_model.end_last_completion_stream();
 
     // Advance past the retry delay so run_turn_internal retries.
-    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            5,
+        )));
     cx.run_until_parked();
 
     // The retry request should contain the streaming tool's error result,

@@ -72,11 +72,17 @@ use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
 
-pub(crate) fn jitter_retry_delay(delay: Duration) -> Duration {
-    const MAXIMUM_JITTER_FRACTION: f64 = 0.1;
+const MAXIMUM_RETRY_JITTER_FRACTION: f64 = 0.1;
 
-    let jitter = delay.mul_f64(rand::rng().random_range(0.0..MAXIMUM_JITTER_FRACTION));
+pub(crate) fn jitter_retry_delay(delay: Duration) -> Duration {
+    let jitter = delay.mul_f64(rand::rng().random_range(0.0..MAXIMUM_RETRY_JITTER_FRACTION));
     delay.checked_add(jitter).unwrap_or(Duration::MAX)
+}
+
+#[cfg(test)]
+pub(crate) fn maximum_retry_delay_with_jitter(delay: Duration) -> Duration {
+    let maximum_jitter = delay.mul_f64(MAXIMUM_RETRY_JITTER_FRACTION);
+    delay.checked_add(maximum_jitter).unwrap_or(Duration::MAX)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
