@@ -5604,17 +5604,28 @@ impl Sidebar {
                 return Ok(ArchiveWorktreeOutcome::Cancelled);
             }
 
-            if let Err(error) = thread_worktree_archive::remove_root(root.clone(), cx).await {
-                if let Some(&(id, ref completed_root)) = completed_persists.last() {
-                    if completed_root.root_path == root.root_path {
+            match thread_worktree_archive::remove_root(root.clone(), cx).await {
+                Ok(thread_worktree_archive::RemoveRootOutcome::Removed) => {}
+                Ok(thread_worktree_archive::RemoveRootOutcome::Retained) => {
+                    if let Some(&(id, ref completed_root)) = completed_persists.last()
+                        && completed_root.root_path == root.root_path
+                    {
                         thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
                         completed_persists.pop();
                     }
                 }
-                for &(id, ref completed_root) in completed_persists.iter().rev() {
-                    thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
+                Err(error) => {
+                    if let Some(&(id, ref completed_root)) = completed_persists.last() {
+                        if completed_root.root_path == root.root_path {
+                            thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
+                            completed_persists.pop();
+                        }
+                    }
+                    for &(id, ref completed_root) in completed_persists.iter().rev() {
+                        thread_worktree_archive::rollback_persist(id, completed_root, cx).await;
+                    }
+                    return Err(error);
                 }
-                return Err(error);
             }
         }
 

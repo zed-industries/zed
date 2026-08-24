@@ -8232,6 +8232,125 @@ async fn test_archive_thread_uses_next_threads_own_workspace(cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_archive_worktree_thread_retains_worktree_with_uncommitted_changes(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            ".git": {
+                "worktrees": {
+                    "feature-a": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature-a",
+                    },
+                },
+            },
+            "src": {},
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/worktrees/project/feature-a/project",
+        serde_json::json!({
+            ".git": "gitdir: /project/.git/worktrees/feature-a",
+            "src": {
+                "uncommitted.rs": "fn uncommitted() {}",
+            },
+        }),
+    )
+    .await;
+
+    let worktree_path = Path::new(util::path!("/worktrees/project/feature-a/project"));
+    let uncommitted_path = worktree_path.join("src/uncommitted.rs");
+    fs.add_linked_worktree_for_repo(
+        Path::new(util::path!("/project/.git")),
+        false,
+        git::repository::Worktree {
+            path: worktree_path.to_path_buf(),
+            ref_name: Some("refs/heads/feature-a".into()),
+            sha: "abc".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    fs.set_status_for_repo(
+        &worktree_path.join(".git"),
+        &[("src/uncommitted.rs", git::status::FileStatus::Untracked)],
+    );
+    agent_ui::test_support::record_zed_created_worktree(fs.as_ref(), worktree_path, None, cx).await;
+
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let main_project =
+        project::Project::test(fs.clone(), [Path::new(util::path!("/project"))], cx).await;
+    let worktree_project = project::Project::test(fs.clone(), [worktree_path], cx).await;
+
+    main_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    worktree_project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(worktree_project.clone(), window, cx)
+    });
+
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("main-thread")),
+        Some("Main Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 2, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &main_project,
+        cx,
+    );
+
+    let worktree_session_id = acp::SessionId::new(Arc::from("worktree-thread"));
+    save_thread_metadata(
+        worktree_session_id.clone(),
+        Some("Worktree Thread".into()),
+        chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+        None,
+        None,
+        &worktree_project,
+        cx,
+    );
+    cx.run_until_parked();
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.archive_thread(&worktree_session_id, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        fs.is_dir(worktree_path).await,
+        "worktree with uncommitted changes should remain on disk after archiving its thread"
+    );
+    assert!(
+        fs.is_file(&uncommitted_path).await,
+        "uncommitted file should remain on disk after archiving its thread"
+    );
+    cx.update(|_window, cx| {
+        let metadata = ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&worktree_session_id)
+            .expect("archived thread metadata should remain available")
+            .clone();
+        assert!(metadata.archived, "thread should still be archived");
+    });
+}
+
+#[gpui::test]
 async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppContext) {
     // When the last non-archived thread for a linked worktree is archived,
     // the linked worktree workspace should be removed from the multi-workspace.

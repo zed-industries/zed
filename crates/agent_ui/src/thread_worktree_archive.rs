@@ -60,6 +60,12 @@ pub struct RootPlan {
     pub recorded_created_at: SystemTime,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoveRootOutcome {
+    Removed,
+    Retained,
+}
+
 /// A `Project` that references a worktree being archived, paired with the
 /// `WorktreeId` it uses for that worktree.
 ///
@@ -180,6 +186,11 @@ pub fn build_root_plan(
         return None;
     }
 
+    // Leave worktrees with staged, unstaged, or untracked changes on disk.
+    if linked_snapshot.status().next().is_some() {
+        return None;
+    }
+
     // Only archive worktrees that Zed explicitly created. The directory
     // check above constrains paths, but the database record is what
     // distinguishes a Zed-created worktree from one the user manually
@@ -211,9 +222,17 @@ pub fn build_root_plan(
 /// This is the destructive counterpart to [`persist_worktree_state`]. It
 /// first detaches the worktree from every [`AffectedProject`], waits for
 /// each project to fully release it, then asks the main repository to
-/// delete the worktree directory. If the git removal fails, the worktree
-/// is re-added to each project via [`rollback_root`].
-pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
+/// delete the worktree directory. If the worktree gained uncommitted changes
+/// after planning, it is retained. If the git removal fails, the worktree is
+/// re-added to each project via [`rollback_root`].
+pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<RemoveRootOutcome> {
+    if root
+        .worktree_repo
+        .read_with(cx, |repo, _cx| repo.cached_status().next().is_some())
+    {
+        return Ok(RemoveRootOutcome::Retained);
+    }
+
     verify_created_by_zed(&root, cx).await?;
 
     let release_tasks: Vec<_> = root
@@ -249,7 +268,7 @@ pub async fn remove_root(root: RootPlan, cx: &mut AsyncApp) -> Result<()> {
     .await
     .log_err();
 
-    Ok(())
+    Ok(RemoveRootOutcome::Removed)
 }
 
 /// Confirms that the worktree on disk is still the one Zed created, by
