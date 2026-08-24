@@ -188,11 +188,15 @@ impl DebugFrameOverlay {
     }
 
     fn lines(&self) -> Vec<String> {
-        let stats = self.stats();
         match self.mode {
             DebugFrameOverlayMode::Hidden => Vec::new(),
-            DebugFrameOverlayMode::Minimal => vec![format_ms(stats.current_ms)],
+            DebugFrameOverlayMode::Minimal => {
+                vec![format_ms(
+                    self.draw_durations.back().copied().map(duration_ms),
+                )]
+            }
             DebugFrameOverlayMode::Full => {
+                let stats = self.stats();
                 // Past five digits the count would break the column
                 // alignment, so it saturates instead.
                 let frame_count = if stats.frames > 99_999 {
