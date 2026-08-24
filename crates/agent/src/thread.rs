@@ -3338,6 +3338,7 @@ impl Thread {
         let Some(delay) = strategy.delay_after(&error, attempt) else {
             return Err(anyhow!(error));
         };
+        let delay = crate::jitter_retry_delay(delay);
 
         log::debug!("Retry attempt {attempt} with delay {delay:?}");
 

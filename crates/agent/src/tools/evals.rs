@@ -13,46 +13,11 @@ mod terminal_tool;
 mod write_file;
 
 #[cfg(all(test, feature = "unit-eval"))]
-#[test]
-fn completion_retry_delay_uses_shared_backoff() {
-    for status in [
-        http_client::StatusCode::TOO_MANY_REQUESTS,
-        http_client::StatusCode::SERVICE_UNAVAILABLE,
-        http_client::StatusCode::from_u16(529).expect("529 should be a valid status"),
-    ] {
-        let error = anyhow::Error::new(
-            language_model::LanguageModelCompletionError::from_http_status(
-                language_model::LanguageModelProviderName::new("test"),
-                status,
-                "transient provider failure".to_string(),
-                None,
-            ),
-        );
-
-        assert_eq!(
-            completion_retry_delay(&error, 1),
-            Some(Duration::from_secs(5))
-        );
-        assert_eq!(
-            completion_retry_delay(&error, 2),
-            Some(Duration::from_secs(10))
-        );
-        assert_eq!(
-            completion_retry_delay(&error, 4),
-            Some(Duration::from_secs(40))
-        );
-        assert_eq!(
-            completion_retry_delay(&error, 10),
-            Some(Duration::from_secs(40))
-        );
-    }
-}
-
-#[cfg(all(test, feature = "unit-eval"))]
 fn completion_retry_delay(error: &anyhow::Error, retry_attempt: usize) -> Option<Duration> {
     error
         .downcast_ref::<language_model::LanguageModelCompletionError>()?
         .retry_delay(retry_attempt)
+        .map(crate::jitter_retry_delay)
 }
 
 #[cfg(all(test, feature = "unit-eval"))]

@@ -9,7 +9,6 @@ use language_model::{
     LanguageModelRequestMessage, MessageContent, Role, SelectedModel,
 };
 use prompt_store::{ProjectContext, WorktreeContext};
-use rand::prelude::*;
 use reqwest_client::ReqwestClient;
 use settings::SettingsStore;
 use std::{
@@ -391,13 +390,10 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
             .err()
             .and_then(|error| super::completion_retry_delay(error, retry_attempt));
 
-        if let Some(retry_after) = retry_delay {
-            let jitter = retry_after.mul_f64(rand::rng().random_range(0.0..1.0));
-            eprintln!(
-                "Retry attempt #{retry_attempt}: Retry after {retry_after:?} + jitter of {jitter:?}"
-            );
+        if let Some(retry_delay) = retry_delay {
+            eprintln!("Retry attempt #{retry_attempt}: Retry after {retry_delay:?}");
             #[allow(clippy::disallowed_methods)]
-            async_io::Timer::after(retry_after + jitter).await;
+            async_io::Timer::after(retry_delay).await;
         } else {
             return response;
         }
