@@ -3441,10 +3441,7 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert_eq!(
-                    "\n\nconst ONE: usize = 1;",
-                    results_text
-                );
+                assert_eq!("\n\nconst ONE: usize = 1;", results_text);
             })
             .unwrap();
 
@@ -3456,10 +3453,7 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert_eq!(
-                    "\n\nconst ONE: usize = 1;",
-                    results_text
-                );
+                assert_eq!("\n\nconst ONE: usize = 1;", results_text);
             })
             .unwrap();
     }
