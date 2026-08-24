@@ -202,8 +202,9 @@ pub struct ThemeSettingsContent {
     pub buffer_font_weight: Option<FontWeightContent>,
     /// The buffer's line height.
     pub buffer_line_height: Option<BufferLineHeight>,
-    /// The line height for UI elements like the file tree, git panel, and outline panel.
-    /// Works as a multiplier of `ui_font_size`.
+    /// The row height for entries in UI panels, as a multiple of `ui_font_size`.
+    ///
+    /// When unset, each panel uses its own row height.
     pub ui_line_height: Option<UiLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
@@ -519,8 +520,7 @@ pub enum BufferLineHeight {
     Custom(#[serde(deserialize_with = "deserialize_buffer_line_height")] f32),
 }
 
-/// The line height for UI elements like the file tree, git panel, and outline panel.
-/// Works as a multiplier of `ui_font_size`.
+/// The row height for entries in UI panels, as a multiple of `ui_font_size`.
 #[derive(
     Clone,
     Copy,
@@ -536,12 +536,12 @@ pub enum BufferLineHeight {
 #[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
 #[serde(rename_all = "snake_case")]
 pub enum UiLineHeight {
-    /// A less dense line height.
+    /// A less dense row height.
     #[default]
     Comfortable,
-    /// The default line height.
+    /// A denser row height.
     Standard,
-    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
+    /// A custom row height, where 1.0 is the UI font's size. Must be at least 1.0.
     Custom(#[serde(deserialize_with = "deserialize_ui_line_height")] f32),
 }
 

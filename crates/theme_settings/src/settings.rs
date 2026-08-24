@@ -4,8 +4,8 @@ use crate::schema::{status_colors_refinement, syntax_overrides, theme_colors_ref
 use crate::{merge_accent_colors, merge_player_colors};
 use collections::HashMap;
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, SharedString, Subscription,
-    Window, px,
+    App, Context, Font, FontFallbacks, FontStyle, Global, Pixels, Rems, SharedString, Subscription,
+    Window, px, rems,
 };
 use refineable::Refineable;
 use schemars::JsonSchema;
@@ -81,9 +81,10 @@ pub struct ThemeSettings {
     ///
     /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
-    /// The line height for UI elements like the file tree, git panel, and outline panel.
-    /// Works as a multiplier of `ui_font_size`.
-    pub ui_line_height: UiLineHeight,
+    /// The row height for entries in UI panels, as a multiple of the UI font size.
+    ///
+    /// When unset, each panel uses its own row height.
+    pub ui_line_height: Option<UiLineHeight>,
     /// The current theme selection.
     pub theme: ThemeSelection,
     /// Manual overrides for the active theme.
@@ -372,37 +373,13 @@ pub fn buffer_line_height_from_settings(value: settings::BufferLineHeight) -> Bu
     }
 }
 
-/// The line height for UI elements like the file tree, git panel, and outline panel.
-/// Works as a multiplier of `ui_font_size`.
-#[derive(Clone, Copy, Debug, PartialEq, Default)]
-pub enum UiLineHeight {
-    /// A less dense line height.
-    #[default]
-    Comfortable,
-    /// The default line height.
-    Standard,
-    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
-    Custom(f32),
-}
+pub use theme::UiLineHeight;
 
-impl From<settings::UiLineHeight> for UiLineHeight {
-    fn from(value: settings::UiLineHeight) -> Self {
-        match value {
-            settings::UiLineHeight::Comfortable => UiLineHeight::Comfortable,
-            settings::UiLineHeight::Standard => UiLineHeight::Standard,
-            settings::UiLineHeight::Custom(line_height) => UiLineHeight::Custom(line_height),
-        }
-    }
-}
-
-impl UiLineHeight {
-    /// Returns the value of the line height.
-    pub fn value(&self) -> f32 {
-        match self {
-            UiLineHeight::Comfortable => 1.5,
-            UiLineHeight::Standard => 1.3,
-            UiLineHeight::Custom(line_height) => *line_height,
-        }
+pub fn ui_line_height_from_settings(value: settings::UiLineHeight) -> UiLineHeight {
+    match value {
+        settings::UiLineHeight::Comfortable => UiLineHeight::Comfortable,
+        settings::UiLineHeight::Standard => UiLineHeight::Standard,
+        settings::UiLineHeight::Custom(line_height) => UiLineHeight::Custom(line_height),
     }
 }
 
@@ -540,9 +517,12 @@ impl ThemeSettings {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
 
-    /// Returns the UI line height as a multiplier of `ui_font_size`.
-    pub fn ui_line_height(&self) -> f32 {
-        f32::max(self.ui_line_height.value(), MIN_LINE_HEIGHT)
+    /// Returns the row height for entries in UI panels, when the user has set one.
+    ///
+    /// One rem is the UI font size, so the row height scales with it.
+    pub fn ui_line_height(&self) -> Option<Rems> {
+        self.ui_line_height
+            .map(|line_height| rems(f32::max(line_height.value(), MIN_LINE_HEIGHT)))
     }
 
     /// Applies the theme overrides, if there are any, to the current theme.
@@ -774,7 +754,7 @@ impl settings::Settings for ThemeSettings {
             buffer_line_height: buffer_line_height_from_settings(
                 content.buffer_line_height.unwrap(),
             ),
-            ui_line_height: content.ui_line_height.unwrap_or_default().into(),
+            ui_line_height: content.ui_line_height.map(ui_line_height_from_settings),
             agent_ui_font_family: content
                 .agent_ui_font_family
                 .as_ref()

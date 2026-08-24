@@ -1098,8 +1098,8 @@ fn appearance_page() -> SettingsPage {
             SettingsPageItem::DynamicItem(DynamicItem {
                 discriminant: SettingItem {
                     files: USER,
-                    title: "Line Height",
-                    description: "Line height for UI elements like the file tree, git panel, and outline panel.",
+                    title: "Row Height",
+                    description: "Row height for entries in the project, outline, git and collaboration panels.",
                     field: Box::new(SettingField {
                         organization_override: None,
                         json_path: Some("ui_line_height$"),
@@ -1131,7 +1131,10 @@ fn appearance_page() -> SettingsPage {
                                 }
                                 settings::UiLineHeightDiscriminants::Custom => {
                                     let custom_value =
-                                        theme_settings::UiLineHeight::from(*settings_value).value();
+                                        theme_settings::ui_line_height_from_settings(
+                                            *settings_value,
+                                        )
+                                        .value();
                                     settings::UiLineHeight::Custom(custom_value)
                                 }
                             };
@@ -1155,8 +1158,8 @@ fn appearance_page() -> SettingsPage {
                         settings::UiLineHeightDiscriminants::Standard => vec![],
                         settings::UiLineHeightDiscriminants::Custom => vec![SettingItem {
                             files: USER,
-                            title: "Custom Line Height",
-                            description: "Custom UI line height value (must be at least 1.0).",
+                            title: "Custom Row Height",
+                            description: "Custom row height, as a multiple of the UI font size (must be at least 1.0).",
                             field: Box::new(SettingField {
                                 organization_override: None,
                                 json_path: Some("ui_line_height"),

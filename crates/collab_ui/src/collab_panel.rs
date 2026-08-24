@@ -55,9 +55,10 @@ const FAVORITE_CHANNELS_KEY: &str = "favorite_channels";
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 const TOAST_DURATION: Duration = Duration::from_secs(5);
 
-fn panel_row_height(cx: &App) -> Pixels {
-    let theme_settings = ThemeSettings::get_global(cx);
-    theme_settings.ui_font_size(cx) * theme_settings.ui_line_height()
+fn panel_row_height(cx: &App) -> Rems {
+    ThemeSettings::get_global(cx)
+        .ui_line_height()
+        .unwrap_or(rems_from_px(26_f32))
 }
 
 actions!(

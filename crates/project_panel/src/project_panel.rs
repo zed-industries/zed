@@ -5679,8 +5679,9 @@ impl ProjectPanel {
         let is_sticky = details.sticky.is_some();
         let sticky_index = details.sticky.as_ref().map(|this| this.sticky_index);
         let settings = ProjectPanelSettings::get_global(cx);
-        let theme_settings = ThemeSettings::get_global(cx);
-        let ui_line_height = theme_settings.ui_font_size(cx) * theme_settings.ui_line_height();
+        let row_height = ThemeSettings::get_global(cx)
+            .ui_line_height()
+            .unwrap_or(rems_from_px(24_f32));
         let show_editor = details.is_editing && !details.is_processing;
 
         let selection = SelectedEntry {
@@ -6276,11 +6277,11 @@ impl ProjectPanel {
                     })
                     .child(if show_editor {
                         h_flex()
-                            .h(ui_line_height)
+                            .h(row_height)
                             .w_full()
                             .child(self.filename_editor.clone())
                     } else {
-                        h_flex().h(ui_line_height).map(|this| {
+                        h_flex().h(row_height).map(|this| {
                             match self.state.ancestors.get(&entry_id) {
                                 Some(folded_ancestors) => {
                                     this.children(self.render_folder_elements(
