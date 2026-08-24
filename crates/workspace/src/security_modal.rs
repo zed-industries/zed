@@ -90,8 +90,8 @@ impl Render for SecurityModal {
             format!("Unrecognized Projects ({})", restricted_count).into()
         };
 
-        let trust_label = self.build_trust_label();
         let path_style = self.path_style(cx);
+        let trust_label = self.build_trust_label(path_style);
 
         // The editable trust-scope field is shown only when a single project is
         // being prompted for (Delta opens one worktree per thread).
@@ -345,7 +345,7 @@ impl SecurityModal {
         this
     }
 
-    fn build_trust_label(&self) -> Option<Cow<'static, str>> {
+    fn build_trust_label(&self, path_style: PathStyle) -> Option<Cow<'static, str>> {
         let mut has_restricted_files = false;
         let available_parents = self
             .restricted_paths
@@ -354,7 +354,7 @@ impl SecurityModal {
                 has_restricted_files |= restricted_path.is_file;
                 !restricted_path.is_file
             })
-            .filter_map(|restricted_path| restricted_path.abs_path.parent())
+            .filter_map(|restricted_path| path_style.parent(&restricted_path.abs_path))
             .collect::<SmallVec<[_; 2]>>();
         match available_parents.len() {
             0 => {
@@ -540,7 +540,7 @@ fn validate_trust_scope(
     Ok(expanded)
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
