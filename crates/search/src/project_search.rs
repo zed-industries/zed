@@ -617,13 +617,13 @@ async fn consume_search_stream(
                     let workspace = project_search.workspace.upgrade();
                     if !is_buffer_stale(&project_search.project, workspace.as_ref(), &buffer, cx) {
                         project_search.match_ranges.extend(new_ranges);
-                        cx.notify();
                     } else {
                         let buffer_id = buffer.read(cx).remote_id();
                         project_search.excerpts.update(cx, |excerpts, cx| {
                             excerpts.remove_excerpts_for_buffer(buffer_id, cx)
                         });
                     }
+                    cx.notify();
                 })
                 .ok()?;
         }
@@ -3417,14 +3417,12 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert_eq!(
+                assert!(
                     results_text.contains("const TWO"),
-                    true,
                     "Open untitled buffer should appear in results, got: {results_text}"
                 );
-                assert_eq!(
+                assert!(
                     results_text.contains("const ONE"),
-                    true,
                     "File result should be present, got: {results_text}"
                 );
             })
@@ -3446,14 +3444,12 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert_eq!(
-                    results_text.contains("const TWO"),
-                    false,
+                assert!(
+                    !results_text.contains("const TWO"),
                     "Closed untitled buffer should be removed from results, got: {results_text}"
                 );
-                assert_eq!(
+                assert!(
                     results_text.contains("const ONE"),
-                    true,
                     "File result should still be present, got: {results_text}"
                 );
             })
@@ -3467,14 +3463,12 @@ pub mod tests {
                 let results_text = search_view
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
-                assert_eq!(
-                    results_text.contains("const TWO"),
-                    false,
+                assert!(
+                    !results_text.contains("const TWO"),
                     "Closed untitled buffer should not reappear after re-search, got: {results_text}"
                 );
-                assert_eq!(
+                assert!(
                     results_text.contains("const ONE"),
-                    true,
                     "File result should still be found, got: {results_text}"
                 );
             })
@@ -3522,36 +3516,58 @@ pub mod tests {
         });
 
         perform_search(search_view, "const", cx);
-
-        let assert_results = |search_view: WindowHandle<ProjectSearchView>,
-                              cx: &mut TestAppContext,
-                              untitled_expected: bool| {
-            search_view
-                .update(cx, |search_view, _window, cx| {
-                    let results_text = search_view
-                        .results_editor
-                        .update(cx, |editor, cx| editor.display_text(cx));
-                    assert_eq!(
-                        results_text.contains("const TWO"),
-                        untitled_expected,
-                        "Peer-shared untitled buffer result mismatch, got: {results_text}"
-                    );
-                    assert_eq!(
-                        results_text.contains("const ONE"),
-                        true,
-                        "File result should be present, got: {results_text}"
-                    );
-                })
-                .unwrap();
-        };
-        assert_results(search_view, cx, true);
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    results_text.contains("const TWO"),
+                    "Peer-shared untitled buffer result mismatch, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("const ONE"),
+                    "File result should be present, got: {results_text}"
+                );
+            })
+            .unwrap();
 
         search.update(cx, |search, cx| search.remove_closed_untitled_buffers(cx));
         cx.run_until_parked();
-        assert_results(search_view, cx, true);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    results_text.contains("const TWO"),
+                    "Peer-shared untitled buffer result mismatch, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("const ONE"),
+                    "File result should be present, got: {results_text}"
+                );
+            })
+            .unwrap();
 
         perform_search(search_view, "const", cx);
-        assert_results(search_view, cx, true);
+
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let results_text = search_view
+                    .results_editor
+                    .update(cx, |editor, cx| editor.display_text(cx));
+                assert!(
+                    results_text.contains("const TWO"),
+                    "Peer-shared untitled buffer result mismatch, got: {results_text}"
+                );
+                assert!(
+                    results_text.contains("const ONE"),
+                    "File result should be present, got: {results_text}"
+                );
+            })
+            .unwrap();
     }
 
     #[perf]
