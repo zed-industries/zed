@@ -87,10 +87,11 @@ pub async fn create_batch(
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
+    let host = http_request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(http_request)
         .await
-        .map_err(AnthropicError::HttpSend)?;
+        .map_err(|error| AnthropicError::HttpSend { host, error })?;
 
     let rate_limits = RateLimitInfo::from_headers(response.headers());
 
@@ -126,10 +127,11 @@ pub async fn retrieve_batch(
         .body(AsyncBody::default())
         .map_err(AnthropicError::BuildRequestBody)?;
 
+    let host = http_request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(http_request)
         .await
-        .map_err(AnthropicError::HttpSend)?;
+        .map_err(|error| AnthropicError::HttpSend { host, error })?;
 
     let rate_limits = RateLimitInfo::from_headers(response.headers());
 
@@ -165,10 +167,11 @@ pub async fn retrieve_batch_results(
         .body(AsyncBody::default())
         .map_err(AnthropicError::BuildRequestBody)?;
 
+    let host = http_request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(http_request)
         .await
-        .map_err(AnthropicError::HttpSend)?;
+        .map_err(|error| AnthropicError::HttpSend { host, error })?;
 
     let rate_limits = RateLimitInfo::from_headers(response.headers());
 
