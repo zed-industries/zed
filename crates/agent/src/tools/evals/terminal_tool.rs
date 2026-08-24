@@ -225,13 +225,12 @@ impl TerminalToolTest {
                 .iter()
                 .map(|tool| tool.name.clone().into())
                 .collect::<Vec<_>>();
-            let template = crate::SystemPromptTemplate {
+            let template = crate::SystemPromptTemplateContext {
                 project: &project_context,
                 available_tools: tool_names,
                 model_name: None,
                 date: chrono::Local::now().format("%Y-%m-%d").to_string(),
                 user_agents_md: None,
-                tool_guidance: Vec::new(),
                 sandboxing: false,
                 is_linux: cfg!(target_os = "linux"),
                 is_windows: cfg!(target_os = "windows"),

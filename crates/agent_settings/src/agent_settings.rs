@@ -1,6 +1,6 @@
 mod agent_profile;
+mod system_prompt_template;
 mod user_agents_md;
-mod user_agents_template;
 
 use std::cmp::Ordering::{Equal, Greater, Less};
 use std::fmt;
@@ -25,13 +25,12 @@ use settings::{
 use util::ResultExt as _;
 
 pub use crate::agent_profile::*;
-pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
-pub use crate::user_agents_template::{
-    AGENTS_MD_PARTIAL_NAME, AGENTS_TEMPLATE_FILE_NAME, ArrayHelper, DEFAULT_AGENTS_TEMPLATE,
-    RulesTemplateContext, UserAgentsTemplate, UserAgentsTemplateCustomization,
-    UserAgentsTemplateSource, UserAgentsTemplateState, contains_helper,
-    init as init_user_agents_template, join_helper, render_rules_template, render_user_agents_template,
+pub use crate::system_prompt_template::{
+    AGENTS_MD_PARTIAL_NAME, ArrayHelper, RulesTemplateContext, SYSTEM_PROMPT_TEMPLATE_FILE_NAME,
+    SystemPromptTemplate, SystemPromptTemplateSource, SystemPromptTemplateState, contains_helper,
+    init as init_system_prompt_template, join_helper, render_rules_template, render_template,
 };
+pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
 pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =

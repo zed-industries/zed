@@ -16,7 +16,7 @@ pub mod visual_tests;
 pub(crate) mod windows_only_instance;
 
 use agent_settings::{
-    UserAgentsMdState, UserAgentsTemplateState, init_user_agents_md, init_user_agents_template,
+    SystemPromptTemplateState, UserAgentsMdState, init_system_prompt_template, init_user_agents_md,
 };
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
@@ -2194,26 +2194,26 @@ pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     });
 }
 
-/// Starts watching `~/.config/zed/AGENTS.hbs` (or the platform equivalent)
-/// and surfaces read/validation errors using the same notification UI as
-/// settings errors.
+/// Starts watching `~/.config/zed/system_prompt.hbs` (or the platform
+/// equivalent) and surfaces read/validation errors using the same notification
+/// UI as settings errors.
 ///
-/// The template itself is loaded into [`agent_settings::UserAgentsTemplate`]
-/// and rendered per session for inclusion in prompts; an invalid template
-/// falls back to the verbatim `AGENTS.md` injection.
-pub fn watch_user_agents_template(fs: Arc<dyn fs::Fs>, cx: &mut App) {
-    struct UserAgentsTemplateError;
-    let notification_id = NotificationId::unique::<UserAgentsTemplateError>();
+/// The template itself is loaded into [`agent_settings::SystemPromptTemplate`]
+/// and rendered per session; an invalid template falls back to the built-in
+/// system prompt.
+pub fn watch_system_prompt_template(fs: Arc<dyn fs::Fs>, cx: &mut App) {
+    struct SystemPromptTemplateError;
+    let notification_id = NotificationId::unique::<SystemPromptTemplateError>();
 
-    init_user_agents_template(fs, cx, move |state, cx| match state {
-        UserAgentsTemplateState::Loaded(_) | UserAgentsTemplateState::Empty => {
+    init_system_prompt_template(fs, cx, move |state, cx| match state {
+        SystemPromptTemplateState::Loaded(_) | SystemPromptTemplateState::Empty => {
             dismiss_app_notification(&notification_id, cx);
         }
-        UserAgentsTemplateState::Error(message) => {
-            let path = paths::agents_template_file().display().to_string();
-            log::error!("Failed to load user AGENTS.hbs from {path}: {message}");
+        SystemPromptTemplateState::Error(message) => {
+            let path = paths::system_prompt_template_file().display().to_string();
+            log::error!("Failed to load user system_prompt.hbs from {path}: {message}");
             let body = format!(
-                "Failed to render {path}\n{message}\n\nFalling back to AGENTS.md."
+                "Failed to render {path}\n{message}\n\nFalling back to the built-in system prompt."
             );
             let notification_id = notification_id.clone();
             show_app_notification(notification_id, cx, move |cx| {

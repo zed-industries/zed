@@ -325,15 +325,14 @@ pub fn agents_file() -> &'static PathBuf {
     AGENTS_FILE.get_or_init(|| config_dir().join("AGENTS.md"))
 }
 
-/// Returns the path to the user-global `AGENTS.hbs` rules template.
+/// Returns the path to the user-global overridable system prompt template.
 ///
-/// When present, this Handlebars template is rendered with the session context
-/// and its output replaces the verbatim `AGENTS.md` injection in the native
-/// agent's system prompt. Sibling `*.hbs` files in the same directory are
-/// importable from it as partials under their file stem.
-pub fn agents_template_file() -> &'static PathBuf {
-    static AGENTS_TEMPLATE_FILE: OnceLock<PathBuf> = OnceLock::new();
-    AGENTS_TEMPLATE_FILE.get_or_init(|| config_dir().join("AGENTS.hbs"))
+/// When present, this Handlebars template replaces the built-in system prompt
+/// template. Sibling `*.hbs` files in the same directory are importable from it
+/// as partials under their relative file path without the extension.
+pub fn system_prompt_template_file() -> &'static PathBuf {
+    static SYSTEM_PROMPT_TEMPLATE_FILE: OnceLock<PathBuf> = OnceLock::new();
+    SYSTEM_PROMPT_TEMPLATE_FILE.get_or_init(|| config_dir().join("system_prompt.hbs"))
 }
 
 /// Returns the path to the user-global tool guidance directory.

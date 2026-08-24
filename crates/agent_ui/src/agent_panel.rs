@@ -14,7 +14,7 @@ use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
-use agent_settings::{UserAgentsMd, UserAgentsTemplate, UserAgentsTemplateCustomization};
+use agent_settings::{SystemPromptTemplate, SystemPromptTemplateState, UserAgentsMd};
 use collections::HashSet;
 use db::kvp::{Dismissable, KeyValueStore};
 use itertools::Itertools;
@@ -271,23 +271,20 @@ fn open_global_rules(workspace: &mut Workspace, window: &mut Window, cx: &mut Co
         .detach_and_log_err(cx);
 }
 
-/// Opens the global rules template, materializing it with the built-in
-/// default content first if it doesn't exist yet. Zed never recreates the
-/// file unprompted, so deleting it is a clean, permanent opt-out.
-fn open_global_rules_template(
+/// Opens the overridable system prompt template, materializing it with the
+/// built-in default content first if it doesn't exist yet. Zed never recreates
+/// the file unprompted, so deleting it is a clean, permanent opt-out.
+fn open_system_prompt_template(
     workspace: &mut Workspace,
     _window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
     let fs = workspace.app_state().fs.clone();
-    let path = paths::agents_template_file().clone();
+    let path = paths::system_prompt_template_file().clone();
     cx.spawn(async move |workspace, cx| {
         if !fs.is_file(&path).await {
-            fs.atomic_write(
-                path.clone(),
-                agent_settings::DEFAULT_AGENTS_TEMPLATE.to_string(),
-            )
-            .await?;
+            fs.atomic_write(path.clone(), agent::BUILT_IN_SYSTEM_PROMPT.to_string())
+                .await?;
         }
         workspace
             .update_in(cx, |workspace, window, cx| {
@@ -5665,15 +5662,19 @@ impl AgentPanel {
             .and_then(|md| md.content())
             .is_some();
 
-        let template_badge = match UserAgentsTemplate::global(cx).map(|template| template.customization()) {
-            Some(UserAgentsTemplateCustomization::Default) => Some(("(default)", Color::Muted)),
-            Some(UserAgentsTemplateCustomization::Overridden) => {
-                Some(("(overridden)", Color::Accent))
+        let template_badge = match SystemPromptTemplate::global(cx).map(|template| template.state())
+        {
+            Some(SystemPromptTemplateState::Loaded(source)) => {
+                if source.source.trim() == agent::BUILT_IN_SYSTEM_PROMPT.trim() {
+                    Some(("(default)", Color::Muted))
+                } else {
+                    Some(("(overridden)", Color::Accent))
+                }
             }
-            Some(UserAgentsTemplateCustomization::Invalid) => {
-                Some(("(invalid — using AGENTS.md)", Color::Error))
+            Some(SystemPromptTemplateState::Error(_)) => {
+                Some(("(invalid — using built-in)", Color::Error))
             }
-            Some(UserAgentsTemplateCustomization::Absent) | None => {
+            Some(SystemPromptTemplateState::Empty) | None => {
                 Some(("(will be created)", Color::Muted))
             }
         };
@@ -5824,9 +5825,9 @@ impl AgentPanel {
                                         h_flex()
                                             .w_full()
                                             .gap_1()
-                                            .child(Label::new("Open Global Rules Template"))
+                                            .child(Label::new("Open System Prompt Template"))
                                             .child(
-                                                Label::new("(AGENTS.hbs)")
+                                                Label::new("(system_prompt.hbs)")
                                                     .color(Color::Muted)
                                                     .size(LabelSize::Small),
                                             )
@@ -5842,7 +5843,7 @@ impl AgentPanel {
                                     move |window, cx| {
                                         workspace
                                             .update(cx, |workspace, cx| {
-                                                open_global_rules_template(workspace, window, cx);
+                                                open_system_prompt_template(workspace, window, cx);
                                             })
                                             .log_err();
                                     },

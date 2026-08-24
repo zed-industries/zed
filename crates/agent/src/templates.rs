@@ -36,14 +36,10 @@ pub trait Template: Sized {
 }
 
 #[derive(Serialize)]
-pub struct SystemPromptTemplate<'a> {
+pub struct SystemPromptTemplateContext<'a> {
     #[serde(flatten)]
     pub project: &'a prompt_store::ProjectContext,
     pub available_tools: Vec<SharedString>,
-    /// Rendered per-tool guidance sections, one per available tool that has
-    /// guidance (built-in default or user override). See
-    /// `crate::tool_guidance`.
-    pub tool_guidance: Vec<ToolGuidanceSection>,
     pub model_name: Option<String>,
     pub date: String,
     /// Contents of the user-global `~/.config/zed/AGENTS.md` file (or the
@@ -66,16 +62,53 @@ pub struct SystemPromptTemplate<'a> {
     pub is_windows: bool,
 }
 
-impl Template for SystemPromptTemplate<'_> {
+impl Template for SystemPromptTemplateContext<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
 }
 
-/// A rendered guidance section for one available tool, injected into the
-/// system prompt's gated "Tool guidance" section.
-#[derive(Serialize)]
-pub struct ToolGuidanceSection {
-    pub tool_name: SharedString,
-    pub guidance: SharedString,
+/// The built-in system prompt template, used both as the default when no
+/// `system_prompt.hbs` override exists and as the content materialized when a
+/// user first opens the override from the agent menu.
+pub const BUILT_IN_SYSTEM_PROMPT: &str = include_str!("templates/system_prompt.hbs");
+
+/// Renders the system prompt, preferring the user's `system_prompt.hbs`
+/// override when one is loaded. A failed user template falls back to the
+/// built-in template rather than breaking the session.
+pub fn render_system_prompt(
+    context: &SystemPromptTemplateContext,
+    templates: &Templates,
+    user_template: Option<&agent_settings::SystemPromptTemplateSource>,
+) -> anyhow::Result<String> {
+    if let Some(source) = user_template {
+        match render_user_system_prompt(source, context) {
+            Ok(rendered) => return Ok(rendered),
+            Err(err) => {
+                log::error!(
+                    "Failed to render user system prompt template {}: {err:#}",
+                    paths::system_prompt_template_file().display()
+                );
+            }
+        }
+    }
+    context.render(templates)
+}
+
+fn render_user_system_prompt(
+    source: &agent_settings::SystemPromptTemplateSource,
+    context: &SystemPromptTemplateContext,
+) -> anyhow::Result<String> {
+    let mut partials = (*source.partials).clone();
+    // Registered last so the real `AGENTS.md` wins over a user partial that
+    // happens to use the same stem.
+    partials.insert(
+        agent_settings::AGENTS_MD_PARTIAL_NAME.to_string(),
+        context
+            .user_agents_md
+            .as_deref()
+            .unwrap_or_default()
+            .to_string(),
+    );
+    agent_settings::render_template(source.source.as_ref(), &partials, context)
 }
 
 #[cfg(test)]
@@ -85,13 +118,12 @@ mod tests {
     #[test]
     fn test_system_prompt_template() {
         let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -119,13 +151,12 @@ mod tests {
             }),
         }];
         let project = ProjectContext::new(worktrees);
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: Some("always be concise".into()),
-            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -149,13 +180,12 @@ mod tests {
     #[test]
     fn test_system_prompt_omits_sandbox_section_when_sandboxing_disabled() {
         let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -183,13 +213,12 @@ mod tests {
             },
         ];
         let project = ProjectContext::new(worktrees);
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -227,13 +256,12 @@ mod tests {
             rules_file: None,
         }];
         let project = ProjectContext::new(worktrees);
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: true,
             is_windows: false,
@@ -261,13 +289,12 @@ mod tests {
             rules_file: None,
         }];
         let project = ProjectContext::new(worktrees);
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: true,
@@ -292,13 +319,12 @@ mod tests {
     #[test]
     fn test_system_prompt_sandbox_section_handles_zero_worktrees() {
         let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into(), "terminal".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -315,13 +341,12 @@ mod tests {
         // A profile can disable the terminal tool entirely; the prompt must not
         // describe a sandboxed `terminal` tool the model doesn't have.
         let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: true,
             is_linux: false,
             is_windows: false,
@@ -336,13 +361,12 @@ mod tests {
     #[test]
     fn test_system_prompt_omits_user_agents_md_section_when_absent() {
         let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,
@@ -355,13 +379,12 @@ mod tests {
     #[test]
     fn test_system_prompt_does_not_render_legacy_zed_rules_section() {
         let project = prompt_store::ProjectContext::default();
-        let template = SystemPromptTemplate {
+        let template = SystemPromptTemplateContext {
             project: &project,
             available_tools: vec!["echo".into()],
             model_name: Some("test-model".to_string()),
             date: "2026-01-01".to_string(),
             user_agents_md: None,
-            tool_guidance: Vec::new(),
             sandboxing: false,
             is_linux: false,
             is_windows: false,

@@ -7,17 +7,17 @@
 //! `src/tool_guidance/<name>.hbs` and can be shadowed — skills-style — by a
 //! `<name>.hbs` file in the user-global `tool_guidance` config directory.
 //!
-//! Guidance is rendered through the same Handlebars engine as `AGENTS.hbs`
-//! ([`agent_settings::render_rules_template`]) with the same session context.
-//! Every guidance file — built-in or user — is importable from the others as
-//! a partial named by its relative path without the extension, `/`-separated
-//! (`shared/editing.hbs` → `{{> shared/editing}}`), so shared guidance can be
-//! factored out into files and subdirectories. Files in subdirectories never
-//! map to a tool name, so they are partial-only.
+//! Guidance is rendered through the same Handlebars engine as the system
+//! prompt ([`agent_settings::render_rules_template`]) with the same session
+//! context. Every guidance file — built-in or user — is importable from the
+//! others as a partial named by its relative path without the extension,
+//! `/`-separated (`shared/editing.hbs` → `{{> shared/editing}}`), so shared
+//! guidance can be factored out into files and subdirectories. Files in
+//! subdirectories never map to a tool name, so they are partial-only.
 //!
-//! A tool's guidance reaches the prompt only when the tool itself is
-//! available: sections are produced by iterating the session's available tool
-//! names, so gating needs no separate convention.
+//! A tool's guidance reaches the model only when the tool itself is
+//! available: guidance is appended to the tool's schema description when the
+//! completion request is built, so gating needs no separate convention.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -30,8 +30,6 @@ use futures::StreamExt as _;
 use gpui::{App, BorrowAppContext, Global, SharedString, Task};
 use rust_embed::RustEmbed;
 use util::ResultExt as _;
-
-use crate::templates::ToolGuidanceSection;
 
 /// Built-in default guidance, embedded from `src/tool_guidance/**/*.hbs`.
 ///
@@ -71,8 +69,8 @@ pub fn builtin_guidance(tool_name: &str) -> Option<&'static str> {
 pub fn default_tool_guidance_stub(tool_name: &str) -> String {
     format!(
         "{{{{!--\n\
-         Guidance for the `{tool_name}` tool, rendered under \"## Tool guidance\" in the\n\
-         agent's system prompt whenever `{tool_name}` is available in the session. Text is\n\
+         Guidance for the `{tool_name}` tool, appended to the tool's model-facing\n\
+         description whenever `{tool_name}` is available in the session. Text is\n\
          emitted verbatim; handlebars comments like this one are stripped and never reach\n\
          the model.\n\
          \n\
@@ -123,40 +121,36 @@ impl ToolGuidanceStore {
         }
     }
 
-    /// Renders the guidance section for each available tool that has one.
-    /// Render failures skip the section rather than failing the prompt build.
-    pub fn render_sections(
+    /// Renders the guidance for a single tool, if it has one.
+    /// Render failures return `None` rather than failing the request build.
+    pub fn render_guidance(
         &self,
-        available_tools: &[SharedString],
+        tool_name: &str,
         context: &RulesTemplateContext,
-    ) -> Vec<ToolGuidanceSection> {
+    ) -> Option<SharedString> {
         // User overrides shadow same-named built-in defaults.
         let mut files = BUILTIN_GUIDANCE.clone();
-        files.extend(self.user_files.iter().map(|(name, content)| {
-            (name.clone(), content.clone())
-        }));
+        files.extend(
+            self.user_files
+                .iter()
+                .map(|(name, content)| (name.clone(), content.clone())),
+        );
 
-        let mut sections = Vec::new();
-        for tool_name in available_tools {
-            let Some(source) = files.get(tool_name.as_ref()) else {
-                continue;
-            };
-            match agent_settings::render_rules_template(source, &files, context) {
-                Ok(rendered) => {
-                    let rendered = rendered.trim();
-                    if !rendered.is_empty() {
-                        sections.push(ToolGuidanceSection {
-                            tool_name: tool_name.clone(),
-                            guidance: SharedString::from(rendered.to_string()),
-                        });
-                    }
-                }
-                Err(err) => {
-                    log::error!("Failed to render tool guidance for `{tool_name}`: {err:#}");
+        let source = files.get(tool_name)?;
+        match agent_settings::render_rules_template(source, &files, context) {
+            Ok(rendered) => {
+                let rendered = rendered.trim();
+                if rendered.is_empty() {
+                    None
+                } else {
+                    Some(SharedString::from(rendered.to_string()))
                 }
             }
+            Err(err) => {
+                log::error!("Failed to render tool guidance for `{tool_name}`: {err:#}");
+                None
+            }
         }
-        sections
     }
 }
 
@@ -185,7 +179,8 @@ fn spawn_watcher(fs: Arc<dyn Fs>, cx: &mut App) -> Task<()> {
         let (events, watcher) = fs.watch(&guidance_dir, Duration::from_millis(100)).await;
         futures::pin_mut!(events);
 
-        let (mut user_files, mut scanned_dirs) = load_user_overrides(fs.as_ref(), &guidance_dir).await;
+        let (mut user_files, mut scanned_dirs) =
+            load_user_overrides(fs.as_ref(), &guidance_dir).await;
         loop {
             for dir in &scanned_dirs {
                 watcher.add(dir).log_err();
@@ -281,4 +276,3 @@ mod tests {
         }
     }
 }
-

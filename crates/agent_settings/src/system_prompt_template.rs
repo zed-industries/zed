@@ -1,12 +1,11 @@
-//! User-global `AGENTS.hbs` rules template support.
+//! User-overridable `system_prompt.hbs` system prompt template support.
 //!
-//! When `~/.config/zed/AGENTS.hbs` (or the platform equivalent) exists, it is
-//! rendered as a Handlebars template with the session context
-//! ([`RulesTemplateContext`]) and the rendered markdown replaces the verbatim
-//! `AGENTS.md` injection in the native agent's system prompt. This lets users
-//! gate sections of their personal rules on the tools a session actually has
-//! (`{{#if (contains available_tools 'es')}}...{{/if}}`) instead of
-//! documenting tools the model cannot call.
+//! When `~/.config/zed/system_prompt.hbs` (or the platform equivalent) exists,
+//! it replaces the built-in system prompt template for the native agent. The
+//! template is rendered with the full system prompt context and a set of
+//! partials; the raw `AGENTS.md` content remains available both as the
+//! `user_agents_md` context value and as the [`AGENTS_MD_PARTIAL_NAME`]
+//! partial, so existing personal rules keep working.
 //!
 //! Composition uses the engine's native partial mechanism — no new syntax:
 //! `AGENTS.md` is registered under the fixed partial name
@@ -20,11 +19,13 @@
 //! deliberately never rendered: a checked-in repository must not be able to
 //! condition the session's behavior on its tool set.
 //!
-//! Failure model: a template that fails to validate (syntax error, unknown
-//! variable in strict mode, missing partial) is treated as if the file were
-//! absent — the caller falls back to verbatim `AGENTS.md` — and the error is
-//! exposed via [`UserAgentsTemplateState::Error`] so the host application can
-//! surface it with the same UI it uses for settings/keymap errors.
+//! Load-time validation rejects malformed templates and missing/cyclic
+//! partials, but strict-mode unknown variables can only be detected at render
+//! time (the full context isn't available when the file is loaded). The
+//! renderer therefore falls back to the built-in system prompt on error and
+//! surfaces the failure via [`SystemPromptTemplateState::Error`] so the host
+//! application can show it with the same UI it uses for settings/keymap
+//! errors.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -39,20 +40,15 @@ use handlebars::{Handlebars, RenderError, RenderErrorReason, Template};
 use serde::Serialize;
 use util::ResultExt as _;
 
-/// File name of the rules template entrypoint in the global config directory.
-pub const AGENTS_TEMPLATE_FILE_NAME: &str = "AGENTS.hbs";
+/// File name of the overridable system prompt template in the global config
+/// directory.
+pub const SYSTEM_PROMPT_TEMPLATE_FILE_NAME: &str = "system_prompt.hbs";
 
 /// Partial name under which the `AGENTS.md` content is registered, so the
 /// template can splice it in place with `{{> agents_md}}`.
 pub const AGENTS_MD_PARTIAL_NAME: &str = "agents_md";
 
-/// The content written to `AGENTS.hbs` when the user materializes it from the
-/// agent menu. Its body is just `{{> agents_md}}` plus documentation comments
-/// (stripped at render time), so materializing it never changes the prompt.
-pub const DEFAULT_AGENTS_TEMPLATE: &str = include_str!("default_agents_template.hbs");
-
-/// The session context available to `AGENTS.hbs` and tool guidance templates.
-/// Mirrors the tool/platform context of the built-in system prompt template.
+/// The session context available to tool guidance templates.
 #[derive(Serialize)]
 pub struct RulesTemplateContext<'a> {
     /// Names of the tools enabled for the session.
@@ -69,13 +65,13 @@ pub struct RulesTemplateContext<'a> {
     pub sandboxing: bool,
 }
 
-/// Renders a rules template with the given partials registered on an ad-hoc
-/// registry — separate from Zed's embedded templates, so user partials can
-/// never collide with built-ins.
-pub fn render_rules_template(
+/// Renders a Handlebars template with the given partials registered on an
+/// ad-hoc registry — separate from Zed's embedded templates, so user partials
+/// can never collide with built-ins.
+pub fn render_template(
     source: &str,
     partials: &BTreeMap<String, String>,
-    context: &RulesTemplateContext,
+    context: &impl Serialize,
 ) -> anyhow::Result<String> {
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
@@ -88,6 +84,15 @@ pub fn render_rules_template(
     let entrypoint = Template::compile(source)?;
     check_partial_graph(&entrypoint, partials)?;
     Ok(handlebars.render_template(source, context)?)
+}
+
+/// Renders a tool guidance template with the given partials.
+pub fn render_rules_template(
+    source: &str,
+    partials: &BTreeMap<String, String>,
+    context: &RulesTemplateContext,
+) -> anyhow::Result<String> {
+    render_template(source, partials, context)
 }
 
 /// Handlebars renders a missing partial as empty output instead of failing,
@@ -129,9 +134,8 @@ fn check_partial(
     let Some(content) = partials.get(name) else {
         return Err(RenderErrorReason::Other(format!("unknown partial `{name}`")).into());
     };
-    let template = Template::compile(content).map_err(|err| {
-        RenderErrorReason::Other(format!("invalid partial `{name}`: {err}"))
-    })?;
+    let template = Template::compile(content)
+        .map_err(|err| RenderErrorReason::Other(format!("invalid partial `{name}`: {err}")))?;
     let mut references = Vec::new();
     collect_partial_references(&template.elements, &mut references);
     visiting.push(name.to_string());
@@ -168,23 +172,6 @@ fn collect_partial_references(elements: &[TemplateElement], out: &mut Vec<String
             _ => {}
         }
     }
-}
-
-/// Renders the user's `AGENTS.hbs`, additionally registering the `AGENTS.md`
-/// content under [`AGENTS_MD_PARTIAL_NAME`].
-pub fn render_user_agents_template(
-    source: &UserAgentsTemplateSource,
-    agents_md: Option<&str>,
-    context: &RulesTemplateContext,
-) -> anyhow::Result<String> {
-    let mut partials = (*source.partials).clone();
-    // Registered last so the real `AGENTS.md` wins over a user partial that
-    // happens to use the same stem.
-    partials.insert(
-        AGENTS_MD_PARTIAL_NAME.to_string(),
-        agents_md.unwrap_or_default().to_string(),
-    );
-    render_rules_template(&source.source, &partials, context)
 }
 
 /// Handlebars helper for checking if an item is in a list.
@@ -235,14 +222,11 @@ pub fn join_helper(
                 "join: missing or invalid list parameter".to_string(),
             ))
         })?;
-    let separator = h
-        .param(1)
-        .and_then(|v| v.value().as_str())
-        .ok_or_else(|| {
-            handlebars::RenderError::from(RenderErrorReason::Other(
-                "join: missing or invalid separator parameter".to_string(),
-            ))
-        })?;
+    let separator = h.param(1).and_then(|v| v.value().as_str()).ok_or_else(|| {
+        handlebars::RenderError::from(RenderErrorReason::Other(
+            "join: missing or invalid separator parameter".to_string(),
+        ))
+    })?;
 
     use handlebars::JsonRender as _;
     let joined = list
@@ -275,107 +259,82 @@ impl handlebars::HelperDef for ArrayHelper {
         _: &'rc handlebars::Context,
         _: &mut handlebars::RenderContext<'reg, 'rc>,
     ) -> Result<handlebars::ScopedJson<'rc>, RenderError> {
-        Ok(handlebars::ScopedJson::Derived(handlebars::JsonValue::Array(
-            h.params().iter().map(|param| param.value().clone()).collect(),
-        )))
+        Ok(handlebars::ScopedJson::Derived(
+            handlebars::JsonValue::Array(
+                h.params()
+                    .iter()
+                    .map(|param| param.value().clone())
+                    .collect(),
+            ),
+        ))
     }
 }
 
-/// In-memory state of the user-global `AGENTS.hbs` file.
+/// In-memory state of the user-global `system_prompt.hbs` file.
 #[derive(Debug, Default, Clone)]
-pub enum UserAgentsTemplateState {
+pub enum SystemPromptTemplateState {
     /// The file is missing, empty, or whitespace-only.
     #[default]
     Empty,
     /// The file was loaded and validated successfully.
-    Loaded(UserAgentsTemplateSource),
+    Loaded(SystemPromptTemplateSource),
     /// The file exists but could not be read or failed validation; carries
     /// the error message.
     Error(SharedString),
 }
 
-/// A validated `AGENTS.hbs` plus its importable partials.
+/// A validated `system_prompt.hbs` plus its importable partials.
 #[derive(Debug, Clone)]
-pub struct UserAgentsTemplateSource {
+pub struct SystemPromptTemplateSource {
     /// The raw template text.
     pub source: SharedString,
-    /// Partial name (file stem) → content, collected from the other `*.hbs`
-    /// files in the config directory.
+    /// Partial name (relative path without extension) → content, collected
+    /// from the other `*.hbs` files in the config directory.
     pub partials: Arc<BTreeMap<String, String>>,
 }
 
-/// How the materialized `AGENTS.hbs` relates to the built-in default — the
-/// three displayable states behind the agent menu's override indicator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum UserAgentsTemplateCustomization {
-    /// No template file (or a whitespace-only one); plain `AGENTS.md`
-    /// behavior applies.
-    Absent,
-    /// The file content equals the built-in default.
-    Default,
-    /// The file validates and differs from the built-in default.
-    Overridden,
-    /// The file exists but fails to read or validate; the session falls back
-    /// to `AGENTS.md`.
-    Invalid,
-}
-
-/// Global wrapper that owns the current [`UserAgentsTemplateState`] plus the
+/// Global wrapper that owns the current [`SystemPromptTemplateState`] plus the
 /// watcher task responsible for keeping it up to date.
-pub struct UserAgentsTemplate {
-    state: UserAgentsTemplateState,
+pub struct SystemPromptTemplate {
+    state: SystemPromptTemplateState,
     _watcher: Task<()>,
 }
 
-impl Global for UserAgentsTemplate {}
+impl Global for SystemPromptTemplate {}
 
-impl UserAgentsTemplate {
+impl SystemPromptTemplate {
     pub fn global(cx: &App) -> Option<&Self> {
-        cx.try_global::<UserAgentsTemplate>()
+        cx.try_global::<SystemPromptTemplate>()
     }
 
-    pub fn state(&self) -> &UserAgentsTemplateState {
+    pub fn state(&self) -> &SystemPromptTemplateState {
         &self.state
     }
 
     /// The validated template source, if loaded.
-    pub fn source(&self) -> Option<&UserAgentsTemplateSource> {
+    pub fn source(&self) -> Option<&SystemPromptTemplateSource> {
         match &self.state {
-            UserAgentsTemplateState::Loaded(source) => Some(source),
-            UserAgentsTemplateState::Empty | UserAgentsTemplateState::Error(_) => None,
-        }
-    }
-
-    pub fn customization(&self) -> UserAgentsTemplateCustomization {
-        match &self.state {
-            UserAgentsTemplateState::Empty => UserAgentsTemplateCustomization::Absent,
-            UserAgentsTemplateState::Error(_) => UserAgentsTemplateCustomization::Invalid,
-            UserAgentsTemplateState::Loaded(source) => {
-                if source.source.trim() == DEFAULT_AGENTS_TEMPLATE.trim() {
-                    UserAgentsTemplateCustomization::Default
-                } else {
-                    UserAgentsTemplateCustomization::Overridden
-                }
-            }
+            SystemPromptTemplateState::Loaded(source) => Some(source),
+            SystemPromptTemplateState::Empty | SystemPromptTemplateState::Error(_) => None,
         }
     }
 }
 
-/// Initialize the user-global `AGENTS.hbs` watcher.
+/// Initialize the user-global `system_prompt.hbs` watcher.
 ///
-/// Watches the config directory for changes to `AGENTS.hbs` or any sibling
-/// `*.hbs` partial and updates the [`UserAgentsTemplate`] global accordingly.
-/// The `on_change` callback is invoked on the foreground thread whenever a new
-/// load completes, so callers can show or dismiss notifications matching the
-/// settings/keymap-error UI.
+/// Watches the config directory for changes to `system_prompt.hbs` or any
+/// sibling `*.hbs` partial and updates the [`SystemPromptTemplate`] global
+/// accordingly. The `on_change` callback is invoked on the foreground thread
+/// whenever a new load completes, so callers can show or dismiss notifications
+/// matching the settings/keymap-error UI.
 pub fn init(
     fs: Arc<dyn Fs>,
     cx: &mut App,
-    on_change: impl Fn(&UserAgentsTemplateState, &mut App) + 'static,
+    on_change: impl Fn(&SystemPromptTemplateState, &mut App) + 'static,
 ) {
     let watcher = spawn_watcher(fs, cx, on_change);
-    cx.set_global(UserAgentsTemplate {
-        state: UserAgentsTemplateState::default(),
+    cx.set_global(SystemPromptTemplate {
+        state: SystemPromptTemplateState::default(),
         _watcher: watcher,
     });
 }
@@ -383,11 +342,11 @@ pub fn init(
 fn spawn_watcher(
     fs: Arc<dyn Fs>,
     cx: &mut App,
-    on_change: impl Fn(&UserAgentsTemplateState, &mut App) + 'static,
+    on_change: impl Fn(&SystemPromptTemplateState, &mut App) + 'static,
 ) -> Task<()> {
-    let config_dir = paths::agents_template_file()
+    let config_dir = paths::system_prompt_template_file()
         .parent()
-        .expect("AGENTS.hbs path should have a parent")
+        .expect("system_prompt.hbs path should have a parent")
         .to_path_buf();
 
     cx.spawn(async move |cx| {
@@ -404,7 +363,7 @@ fn spawn_watcher(
                 watcher.add(dir).log_err();
             }
             cx.update(|cx| {
-                cx.update_global::<UserAgentsTemplate, _>(|template, _| {
+                cx.update_global::<SystemPromptTemplate, _>(|template, _| {
                     template.state = state.clone();
                 });
                 on_change(&state, cx);
@@ -428,45 +387,45 @@ fn spawn_watcher(
     })
 }
 
-async fn load_template_state(fs: &Arc<dyn Fs>) -> (UserAgentsTemplateState, Vec<PathBuf>) {
+async fn load_template_state(fs: &Arc<dyn Fs>) -> (SystemPromptTemplateState, Vec<PathBuf>) {
     let (partials, scanned_dirs) = load_partials(fs.as_ref()).await;
     let state = 'state: {
-        let raw = match fs.load(paths::agents_template_file()).await {
+        let raw = match fs.load(paths::system_prompt_template_file()).await {
             Ok(raw) => raw,
             Err(err) => {
                 if let Some(io_err) = err.downcast_ref::<std::io::Error>()
                     && io_err.kind() == std::io::ErrorKind::NotFound
                 {
-                    break 'state UserAgentsTemplateState::Empty;
+                    break 'state SystemPromptTemplateState::Empty;
                 }
-                break 'state UserAgentsTemplateState::Error(SharedString::from(format!(
+                break 'state SystemPromptTemplateState::Error(SharedString::from(format!(
                     "{err:#}"
                 )));
             }
         };
         if raw.trim().is_empty() {
-            break 'state UserAgentsTemplateState::Empty;
+            break 'state SystemPromptTemplateState::Empty;
         }
         match validate_template(&raw, &partials) {
-            Ok(()) => UserAgentsTemplateState::Loaded(UserAgentsTemplateSource {
+            Ok(()) => SystemPromptTemplateState::Loaded(SystemPromptTemplateSource {
                 source: SharedString::from(raw),
                 partials: Arc::new(partials),
             }),
-            Err(err) => UserAgentsTemplateState::Error(SharedString::from(format!("{err:#}"))),
+            Err(err) => SystemPromptTemplateState::Error(SharedString::from(format!("{err:#}"))),
         }
     };
     (state, scanned_dirs)
 }
 
 /// Collects the importable partials: every `*.hbs` file under the config
-/// directory except the top-level `AGENTS.hbs` entrypoint, named by its
+/// directory except the top-level `system_prompt.hbs` entrypoint, named by its
 /// relative path without the extension, `/`-separated on every platform
 /// (handlebars template syntax cannot contain `\`). Also returns every
 /// directory that was scanned, so the watcher can register them.
 async fn load_partials(fs: &dyn Fs) -> (BTreeMap<String, String>, Vec<PathBuf>) {
     let mut partials = BTreeMap::new();
     let mut dirs = Vec::new();
-    let Some(config_dir) = paths::agents_template_file().parent() else {
+    let Some(config_dir) = paths::system_prompt_template_file().parent() else {
         return (partials, dirs);
     };
     let Ok(items) = fs::read_dir_items(fs, config_dir).await else {
@@ -480,7 +439,7 @@ async fn load_partials(fs: &dyn Fs) -> (BTreeMap<String, String>, Vec<PathBuf>) 
         let Ok(relative) = path.strip_prefix(config_dir) else {
             continue;
         };
-        if relative == Path::new(AGENTS_TEMPLATE_FILE_NAME) {
+        if relative == Path::new(SYSTEM_PROMPT_TEMPLATE_FILE_NAME) {
             continue;
         }
         let Some(name) = relative.to_str().map(|name| name.replace('\\', "/")) else {
@@ -497,29 +456,24 @@ async fn load_partials(fs: &dyn Fs) -> (BTreeMap<String, String>, Vec<PathBuf>) 
                 partials.insert(name.to_string(), content);
             }
             Err(err) => {
-                log::warn!("Failed to load rules partial {}: {err:#}", path.display());
+                log::warn!(
+                    "Failed to load system prompt partial {}: {err:#}",
+                    path.display()
+                );
             }
         }
     }
     (partials, dirs)
 }
 
-/// Probe-renders the template so syntax errors, unknown variables (strict
-/// mode), and missing partials are reported at load time rather than failing
-/// a session's prompt build.
+/// Rejects syntax errors, missing partials, and partial import cycles at load
+/// time. Strict-mode unknown-variable errors can only be caught when the full
+/// session context is available, so those fall through to the renderer's
+/// built-in-template fallback.
 fn validate_template(source: &str, partials: &BTreeMap<String, String>) -> anyhow::Result<()> {
-    let mut partials = partials.clone();
-    partials.insert(AGENTS_MD_PARTIAL_NAME.to_string(), String::new());
-    let probe = RulesTemplateContext {
-        available_tools: &[],
-        model_name: None,
-        date: "",
-        is_linux: false,
-        is_windows: false,
-        is_macos: false,
-        sandboxing: false,
-    };
-    render_rules_template(source, &partials, &probe).map(|_| ())
+    let entrypoint = Template::compile(source)?;
+    check_partial_graph(&entrypoint, partials)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -552,9 +506,12 @@ mod tests {
 
     #[test]
     fn test_join_helper_empty_list() {
-        let rendered =
-            render_rules_template("{{join available_tools \", \"}}", &BTreeMap::new(), &context(&[]))
-                .unwrap();
+        let rendered = render_rules_template(
+            "{{join available_tools \", \"}}",
+            &BTreeMap::new(),
+            &context(&[]),
+        )
+        .unwrap();
         assert_eq!(rendered, "");
     }
 
@@ -568,8 +525,12 @@ mod tests {
         );
         // Missing separator.
         assert!(
-            render_rules_template("{{join available_tools}}", &BTreeMap::new(), &context(&tools))
-                .is_err()
+            render_rules_template(
+                "{{join available_tools}}",
+                &BTreeMap::new(),
+                &context(&tools)
+            )
+            .is_err()
         );
     }
 

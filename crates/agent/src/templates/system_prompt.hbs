@@ -1,3 +1,51 @@
+{{!--
+When this file exists and renders successfully, its output replaces the
+built-in system prompt. On a render error Zed falls back to the built-in
+system prompt and shows a warning. Delete this file to return to the
+built-in system prompt entirely.
+
+Text is emitted verbatim; comments like this one are stripped at render
+time and never reach the model. For template syntax and the built-in
+helpers see https://docs.rs/handlebars/latest/handlebars/#built-in-helpers
+
+Zed renders in strict mode: an unknown variable fails the render, so a
+typo'd name falls back to the built-in system prompt with a warning rather
+than emitting nothing.
+
+Context variables:
+  available_tools   names of the tools enabled for this session
+  model_name        active model name, if any
+  date              today's date, YYYY-MM-DD
+  user_agents_md    raw user-global `AGENTS.md` content, if any
+  is_windows        whether the host is Windows
+  is_linux          whether the host is Linux
+  sandboxing        whether terminal commands run in the OS-level sandbox
+  worktrees         project worktrees (root_name, abs_path, rules_file)
+  has_rules         whether any worktree has a rules file
+  os                host operating system
+  arch              host architecture
+  shell             default shell
+  has_skills        whether skills are available
+  skills            catalog of skills (name, description, location)
+
+Zed registers three custom helpers: `contains` (list, item),
+`join` (list, separator), and `array` (items...) for building a list
+inline — the template language has no array literal syntax.
+
+  {{#if (contains available_tools 'grep')}}
+  Prefer the `grep` tool for content search.
+  {{/if}}
+
+  Available tools: {{join available_tools ", "}}
+  Platforms: {{join (array "linux" "windows" "macos") " / "}}
+
+Partials (imports): `{{> agents_md}}` splices your `AGENTS.md` in place.
+Every other `*.hbs` file under this directory (recursively) is importable by
+its relative path without the extension, `/`-separated on every platform —
+`partials/style.hbs` → `{{> partials/style}}`. Use `/` even on Windows:
+`\` is the template escape character and cannot appear in a partial name.
+--}}
+
 You are the Zed coding agent running inside the Zed editor. You help users complete software engineering tasks by understanding their codebase, making careful changes, and explaining your work clearly. Use your broad knowledge of programming languages, frameworks, design patterns, and engineering best practices to solve problems pragmatically.
 
 ## Communication
@@ -44,16 +92,6 @@ Mermaid diagrams are automatically color-coded using the user's theme accent pal
 - Do not waste tokens by re-reading files after calling `write_file`, `edit_file`, or similar. The tool call will fail if it didn't work. The same goes for creating folders, deleting folders, etc.
 - Before a group of related tool calls, send a brief one- to two-sentence preamble explaining what you're about to do, so the user can follow along. Skip the preamble for trivial single reads or when continuing a clearly described step.
 
-{{#if (gt (len tool_guidance) 0)}}
-## Tool guidance
-
-{{#each tool_guidance}}
-### `{{tool_name}}`
-
-{{{guidance}}}
-
-{{/each}}
-{{/if}}
 ## Task Execution
 
 - Keep going until the user's task is completely resolved before ending your turn and yielding back to the user. Only terminate your turn when you are sure the problem is solved.
