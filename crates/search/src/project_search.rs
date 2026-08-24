@@ -3418,11 +3418,11 @@ pub mod tests {
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
                 assert!(
-                    results_text.contains("const TWO"),
+                    results_text.contains("const TWO: usize = one::ONE"),
                     "Open untitled buffer should appear in results, got: {results_text}"
                 );
                 assert!(
-                    results_text.contains("const ONE"),
+                    results_text.contains("const ONE: usize = 1;"),
                     "File result should be present, got: {results_text}"
                 );
             })
@@ -3445,11 +3445,11 @@ pub mod tests {
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
                 assert!(
-                    !results_text.contains("const TWO"),
+                    !results_text.contains("const TWO: usize = one::ONE"),
                     "Closed untitled buffer should be removed from results, got: {results_text}"
                 );
                 assert!(
-                    results_text.contains("const ONE"),
+                    results_text.contains("const ONE: usize = 1;"),
                     "File result should still be present, got: {results_text}"
                 );
             })
@@ -3464,11 +3464,11 @@ pub mod tests {
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
                 assert!(
-                    !results_text.contains("const TWO"),
+                    !results_text.contains("const TWO: usize = one::ONE"),
                     "Closed untitled buffer should not reappear after re-search, got: {results_text}"
                 );
                 assert!(
-                    results_text.contains("const ONE"),
+                    results_text.contains("const ONE: usize = 1;"),
                     "File result should still be found, got: {results_text}"
                 );
             })
@@ -3522,11 +3522,11 @@ pub mod tests {
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
                 assert!(
-                    results_text.contains("const TWO"),
+                    results_text.contains("const TWO: usize = one::ONE"),
                     "Peer-shared untitled buffer result mismatch, got: {results_text}"
                 );
                 assert!(
-                    results_text.contains("const ONE"),
+                    results_text.contains("const ONE: usize = 1;"),
                     "File result should be present, got: {results_text}"
                 );
             })
@@ -3541,11 +3541,11 @@ pub mod tests {
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
                 assert!(
-                    results_text.contains("const TWO"),
+                    results_text.contains("const TWO: usize = one::ONE"),
                     "Peer-shared untitled buffer result mismatch, got: {results_text}"
                 );
                 assert!(
-                    results_text.contains("const ONE"),
+                    results_text.contains("const ONE: usize = 1;"),
                     "File result should be present, got: {results_text}"
                 );
             })
@@ -3559,11 +3559,11 @@ pub mod tests {
                     .results_editor
                     .update(cx, |editor, cx| editor.display_text(cx));
                 assert!(
-                    results_text.contains("const TWO"),
+                    results_text.contains("const TWO: usize = one::ONE"),
                     "Peer-shared untitled buffer result mismatch, got: {results_text}"
                 );
                 assert!(
-                    results_text.contains("const ONE"),
+                    results_text.contains("const ONE: usize = 1;"),
                     "File result should be present, got: {results_text}"
                 );
             })
