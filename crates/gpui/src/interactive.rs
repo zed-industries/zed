@@ -853,9 +853,11 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement,
-        KeyBinding, Keystroke, Modifiers, ParentElement, Render, TestAppContext, Window, div,
+        self as gpui, AppContext as _, Context, DispatchPhase, Entity, FocusHandle,
+        InteractiveElement, IntoElement, KeyBinding, KeyDownEvent, Keystroke, Modifiers,
+        ParentElement, Render, StyleRefinement, Styled, TestAppContext, Window, canvas, div,
     };
+    use std::{cell::RefCell, rc::Rc};
 
     struct TestView {
         saw_key_down: bool,
@@ -864,6 +866,38 @@ mod test {
     }
 
     actions!(test_only, [TestAction]);
+
+    struct RootKeyListenerView {
+        phases: Rc<RefCell<Vec<DispatchPhase>>>,
+    }
+
+    impl Render for RootKeyListenerView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let phases = self.phases.clone();
+            canvas(
+                |_, _, _| (),
+                move |_, _, window, _| {
+                    window.on_root_key_event({
+                        let phases = phases.clone();
+                        move |_: &KeyDownEvent, phase, _, _| phases.borrow_mut().push(phase)
+                    });
+                },
+            )
+            .size_full()
+        }
+    }
+
+    struct RootKeyListenerParent {
+        child: Entity<RootKeyListenerView>,
+    }
+
+    impl Render for RootKeyListenerParent {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(self.child.clone().cached(StyleRefinement::default()))
+        }
+    }
 
     impl Render for TestView {
         fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -920,6 +954,36 @@ mod test {
                 assert!(test_view.saw_action);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn root_key_listener_survives_cached_view_reuse(cx: &mut TestAppContext) {
+        let phases = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.update(|cx| {
+            cx.open_window(Default::default(), |_, cx| {
+                let child = cx.new(|_| RootKeyListenerView {
+                    phases: phases.clone(),
+                });
+                cx.new(|_| RootKeyListenerParent { child })
+            })
+            .unwrap()
+        });
+        cx.run_until_parked();
+
+        cx.dispatch_keystroke(*window, Keystroke::parse("a").unwrap());
+        assert_eq!(
+            phases.borrow().as_slice(),
+            &[DispatchPhase::Capture, DispatchPhase::Bubble]
+        );
+
+        phases.borrow_mut().clear();
+        window.update(cx, |_, _, cx| cx.notify()).unwrap();
+        cx.run_until_parked();
+        cx.dispatch_keystroke(*window, Keystroke::parse("b").unwrap());
+        assert_eq!(
+            phases.borrow().as_slice(),
+            &[DispatchPhase::Capture, DispatchPhase::Bubble]
+        );
     }
 
     #[gpui::test]

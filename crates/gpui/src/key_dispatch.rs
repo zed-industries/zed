@@ -127,7 +127,7 @@ pub(crate) struct DispatchResult {
     pub(crate) context_stack: Vec<KeyContext>,
 }
 
-type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>;
+pub(crate) type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>;
 type ModifiersChangedListener = Rc<dyn Fn(&ModifiersChangedEvent, &mut Window, &mut App)>;
 
 #[derive(Clone)]
@@ -322,11 +322,6 @@ impl DispatchTree {
 
     pub fn on_key_event(&mut self, listener: KeyListener) {
         self.active_node().key_listeners.push(listener);
-    }
-
-    pub fn on_global_key_event(&mut self, listener: KeyListener) {
-        let root = self.root_node_id();
-        self.nodes[root.0].key_listeners.push(listener);
     }
 
     pub fn on_modifiers_changed(&mut self, listener: ModifiersChangedListener) {
@@ -653,20 +648,6 @@ mod tests {
             Rc::new(RefCell::new(Keymap::new(bindings))),
             Rc::new(registry),
         )
-    }
-
-    #[test]
-    fn global_key_listener_attaches_to_the_root() {
-        let mut tree = test_dispatch_tree(Vec::new());
-        tree.push_node();
-        let child = tree.push_node();
-
-        tree.on_global_key_event(Rc::new(
-            |_: &dyn std::any::Any, _: DispatchPhase, _: &mut Window, _: &mut App| {},
-        ));
-
-        assert_eq!(tree.node(tree.root_node_id()).key_listeners.len(), 1);
-        assert!(tree.node(child).key_listeners.is_empty());
     }
 
     #[test]
