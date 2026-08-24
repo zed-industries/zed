@@ -29,13 +29,23 @@ pub(crate) struct FrameRequestReceiver {
 #[derive(Clone)]
 pub(crate) struct FrameRequester {
     hwnd: SafeHwnd,
-    queued: Arc<AtomicBool>,
+    state: Arc<FrameRequestState>,
     sender: FrameRequestSender,
+}
+
+struct FrameRequestState {
+    queued: AtomicBool,
+    closed: AtomicBool,
 }
 
 struct FrameRequest {
     hwnd: SafeHwnd,
-    queued: Arc<AtomicBool>,
+    state: Arc<FrameRequestState>,
+}
+
+pub(crate) struct RequestedWindow {
+    hwnd: SafeHwnd,
+    state: Arc<FrameRequestState>,
 }
 
 pub(crate) fn frame_request_channel() -> (FrameRequestSender, FrameRequestReceiver) {
@@ -53,7 +63,10 @@ impl FrameRequestSender {
     pub(crate) fn requester_for(&self, hwnd: SafeHwnd) -> FrameRequester {
         FrameRequester {
             hwnd,
-            queued: Arc::new(AtomicBool::new(false)),
+            state: Arc::new(FrameRequestState {
+                queued: AtomicBool::new(false),
+                closed: AtomicBool::new(false),
+            }),
             sender: self.clone(),
         }
     }
@@ -61,17 +74,29 @@ impl FrameRequestSender {
 
 impl FrameRequester {
     pub(crate) fn request(&self) {
-        if self.queued.swap(true, Ordering::AcqRel) {
+        if self.state.closed.load(Ordering::Acquire)
+            || self.state.queued.swap(true, Ordering::AcqRel)
+        {
             return;
         }
 
         let request = FrameRequest {
             hwnd: self.hwnd,
-            queued: self.queued.clone(),
+            state: self.state.clone(),
         };
         if self.sender.0.send(request).is_err() {
-            self.queued.store(false, Ordering::Release);
+            self.state.queued.store(false, Ordering::Release);
         }
+    }
+
+    pub(crate) fn close(&self) {
+        self.state.closed.store(true, Ordering::Release);
+    }
+}
+
+impl RequestedWindow {
+    pub(crate) fn hwnd_if_open(&self) -> Option<SafeHwnd> {
+        (!self.state.closed.load(Ordering::Acquire)).then_some(self.hwnd)
     }
 }
 
@@ -86,16 +111,22 @@ impl FrameRequestReceiver {
         }
     }
 
-    pub(crate) fn take_requested_windows(&mut self) -> SmallVec<[SafeHwnd; 4]> {
+    pub(crate) fn take_requested_windows(&mut self) -> SmallVec<[RequestedWindow; 4]> {
         let requests = self
             .first_request
             .take()
             .into_iter()
             .chain(self.receiver.try_iter());
         requests
-            .map(|request| {
-                request.queued.store(false, Ordering::Release);
-                request.hwnd
+            .filter_map(|request| {
+                request.state.queued.store(false, Ordering::Release);
+                if request.state.closed.load(Ordering::Acquire) {
+                    return None;
+                }
+                Some(RequestedWindow {
+                    hwnd: request.hwnd,
+                    state: request.state,
+                })
             })
             .collect()
     }
@@ -213,7 +244,12 @@ mod tests {
         assert!(receiver.wait());
         let requested_windows = receiver.take_requested_windows();
         assert_eq!(requested_windows.len(), 1);
-        assert_eq!(requested_windows[0].as_raw(), test_hwnd(1).as_raw());
+        assert_eq!(
+            requested_windows[0]
+                .hwnd_if_open()
+                .map(|hwnd| hwnd.as_raw()),
+            Some(test_hwnd(1).as_raw())
+        );
 
         requester.request();
         assert!(receiver.wait());
@@ -232,7 +268,79 @@ mod tests {
 
         let requested_windows = receiver.take_requested_windows();
         assert_eq!(requested_windows.len(), 2);
-        assert_eq!(requested_windows[0].as_raw(), test_hwnd(1).as_raw());
-        assert_eq!(requested_windows[1].as_raw(), test_hwnd(2).as_raw());
+        assert_eq!(
+            requested_windows[0]
+                .hwnd_if_open()
+                .map(|hwnd| hwnd.as_raw()),
+            Some(test_hwnd(1).as_raw())
+        );
+        assert_eq!(
+            requested_windows[1]
+                .hwnd_if_open()
+                .map(|hwnd| hwnd.as_raw()),
+            Some(test_hwnd(2).as_raw())
+        );
+    }
+
+    #[test]
+    fn closed_frame_requester_discards_its_pending_request() {
+        let (sender, mut receiver) = frame_request_channel();
+        let requester = sender.requester_for(test_hwnd(1));
+
+        requester.request();
+        assert!(receiver.wait());
+        requester.close();
+
+        assert!(receiver.take_requested_windows().is_empty());
+    }
+
+    #[test]
+    fn closed_frame_requester_ignores_new_requests() {
+        let (sender, mut receiver) = frame_request_channel();
+        let requester = sender.requester_for(test_hwnd(1));
+
+        requester.close();
+        requester.request();
+        drop(requester);
+        drop(sender);
+
+        assert!(!receiver.wait());
+    }
+
+    #[test]
+    fn closing_after_take_cancels_dispatch() {
+        let (sender, mut receiver) = frame_request_channel();
+        let requester = sender.requester_for(test_hwnd(1));
+
+        requester.request();
+        assert!(receiver.wait());
+        let requested_windows = receiver.take_requested_windows();
+        assert_eq!(requested_windows.len(), 1);
+
+        requester.close();
+
+        assert!(requested_windows[0].hwnd_if_open().is_none());
+    }
+
+    #[test]
+    fn closed_request_does_not_target_a_new_window_with_the_same_hwnd() {
+        let (sender, mut receiver) = frame_request_channel();
+        let closed_window = sender.requester_for(test_hwnd(1));
+        let new_window = sender.requester_for(test_hwnd(1));
+
+        closed_window.request();
+        assert!(receiver.wait());
+        closed_window.close();
+        new_window.request();
+
+        let requested_windows = receiver.take_requested_windows();
+        assert_eq!(requested_windows.len(), 1);
+        assert!(Arc::ptr_eq(&requested_windows[0].state, &new_window.state));
+        assert_eq!(
+            requested_windows[0]
+                .hwnd_if_open()
+                .map(|hwnd| hwnd.as_raw()),
+            Some(test_hwnd(1).as_raw())
+        );
     }
 }

@@ -356,18 +356,14 @@ impl WindowsPlatform {
                             panic!("Device lost: {err}");
                         }
                     }
-                    let Some(all_windows) = all_windows.upgrade() else {
+                    if all_windows.upgrade().is_none() {
                         break;
-                    };
+                    }
                     let requested_windows = frame_request_receiver.take_requested_windows();
-                    let all_windows = all_windows.read();
-                    for hwnd in requested_windows {
-                        if !all_windows
-                            .iter()
-                            .any(|window| window.as_raw() == hwnd.as_raw())
-                        {
+                    for requested_window in requested_windows {
+                        let Some(hwnd) = requested_window.hwnd_if_open() else {
                             continue;
-                        }
+                        };
                         unsafe {
                             RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
                                 .ok()

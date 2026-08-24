@@ -601,6 +601,7 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        self.0.state.frame_requester.close();
         // clone this `Rc` to prevent early release of the pointer
         let this = self.0.clone();
         self.0
