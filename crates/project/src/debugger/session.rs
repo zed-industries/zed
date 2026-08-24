@@ -1526,7 +1526,8 @@ impl Session {
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(event) => {
-                if event.all_threads_continued.unwrap_or_default() {
+                // DAP defines an omitted `allThreadsContinued` as `true`.
+                if event.all_threads_continued.unwrap_or(true) {
                     self.active_snapshot.thread_states.continue_all_threads();
                     self.breakpoint_store.update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id()), cx)
@@ -2282,8 +2283,6 @@ impl Session {
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         self.active_snapshot
             .thread_states
             .continue_thread(thread_id);
@@ -2291,7 +2290,9 @@ impl Session {
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: supports_single_thread_execution_requests,
+                    // Continue Program resumes all threads, even if the adapter supports
+                    // single-thread execution.
+                    single_thread: None,
                 },
             },
             Self::on_step_response::<ContinueCommand>(thread_id),
