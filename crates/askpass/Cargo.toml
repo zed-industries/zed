@@ -28,5 +28,5 @@ which.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
-[package.metadata.cargo-machete]
-ignored = ["log"]
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

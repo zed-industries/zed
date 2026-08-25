@@ -696,7 +696,12 @@ impl LocalBufferStore {
                     let buffer_id = BufferId::from(reservation.entity_id().as_non_zero_u64());
                     let text_buffer = cx
                         .background_spawn(async move {
-                            text::Buffer::new(ReplicaId::LOCAL, buffer_id, loaded.text)
+                            text::Buffer::new_normalized(
+                                ReplicaId::LOCAL,
+                                buffer_id,
+                                loaded.line_ending,
+                                loaded.text,
+                            )
                         })
                         .await;
                     cx.insert_entity(reservation, |_| {

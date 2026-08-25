@@ -808,8 +808,12 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, cx.clone()).map(|r| r.log_err()),
+            initialize_agent_panel(workspace_handle.clone(), cx.clone()).map(|r| r.log_err()),
         );
+
+        workspace_handle.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        })?;
 
         anyhow::Ok(())
     })
@@ -1025,9 +1029,26 @@ fn register_actions(
         .register_action(|_, _: &Zoom, window, _| {
             window.zoom_window();
         })
-        .register_action(|_, _: &ToggleFullScreen, window, _| {
-            window.toggle_fullscreen();
+        .register_action(|_, _: &ToggleFullScreen, window, cx| {
+            let use_simple_fullscreen = PlatformStyle::platform() == PlatformStyle::Mac
+                && (window.is_simple_fullscreen()
+                    || (!window.is_fullscreen()
+                        && WorkspaceSettings::get_global(cx).fullscreen_mode
+                            == settings::FullscreenMode::Simple));
+            if use_simple_fullscreen {
+                window.toggle_simple_fullscreen();
+            } else {
+                window.toggle_fullscreen();
+            }
         })
+        .register_action(|_, _: &zed_actions::dev::ToggleFpsOverlay, window, _| {
+            window.cycle_debug_frame_overlay_mode();
+        })
+        .register_action(
+            |_, _: &zed_actions::dev::ResetFrameOverlayStats, window, _| {
+                window.reset_debug_frame_overlay_stats();
+            },
+        )
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![String::from(&*action.url)],
@@ -1849,13 +1870,7 @@ fn quit(_: &Quit, cx: &mut App) {
         for window in &workspace_windows {
             window
                 .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
-                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
-                    flush_tasks.push(multi_workspace.flush_serialization());
+                    flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
                 })
                 .log_err();
         }
@@ -2922,7 +2937,7 @@ mod tests {
     use remote_server::{HeadlessAppState, HeadlessProject};
     use semver::Version;
     use serde_json::json;
-    use settings::{SaturatingBool, SettingsStore, watch_config_file};
+    use settings::{SaturatingBool, SettingsStore, SplicingVec, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -4267,7 +4282,10 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |project_settings| {
                     project_settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                        Some(SplicingVec::from(vec![
+                            "excluded_dir".to_string(),
+                            "**/.git".to_string(),
+                        ]));
                 });
             });
         });
@@ -5899,7 +5917,6 @@ mod tests {
                 "context_server",
                 "copilot",
                 "copilot_edit_predictions",
-                "csv",
                 "debug_panel",
                 "debugger",
                 "dev",
@@ -5953,6 +5970,7 @@ mod tests {
                 "svg",
                 "syntax_tree_view",
                 "tab_switcher",
+                "tabular_data",
                 "task",
                 "terminal",
                 "terminal_panel",
@@ -6303,7 +6321,7 @@ mod tests {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |worktree_settings| {
                 worktree_settings.project.worktree.file_scan_exclusions =
-                    Some(vec![".zed".to_string()]);
+                    Some(SplicingVec::from(vec![".zed".to_string()]));
             });
         });
 
