@@ -108,6 +108,60 @@ impl WebWindow {
         Ok(canvas)
     }
 
+    fn create_hidden_text_input(
+        document: &web_sys::Document,
+        body: &web_sys::HtmlElement,
+    ) -> anyhow::Result<web_sys::HtmlInputElement> {
+        let input_element: web_sys::HtmlInputElement = document
+            .create_element("input")
+            .map_err(|error| anyhow::anyhow!("Failed to create input element: {error:?}"))?
+            .dyn_into()
+            .map_err(|error| anyhow::anyhow!("Created element is not an input: {error:?}"))?;
+        // IME needs a focused DOM input. Host `input` CSS must not unhide it.
+        for (name, value) in [
+            ("data-gpui-input", ""),
+            ("autocomplete", "off"),
+            ("autocorrect", "off"),
+            ("autocapitalize", "none"),
+            ("spellcheck", "false"),
+        ] {
+            input_element.set_attribute(name, value).map_err(|error| {
+                anyhow::anyhow!("Failed to configure the input element ({name}): {error:?}")
+            })?;
+        }
+        let input_style = input_element.style();
+        for (property, value) in [
+            ("position", "fixed"),
+            ("top", "0"),
+            ("left", "0"),
+            ("width", "1px"),
+            ("height", "1px"),
+            ("margin", "0"),
+            ("padding", "0"),
+            ("border", "0"),
+            ("outline", "none"),
+            ("opacity", "0"),
+            ("overflow", "hidden"),
+            ("background", "transparent"),
+            ("caret-color", "transparent"),
+            ("color", "transparent"),
+            ("pointer-events", "none"),
+            ("clip-path", "inset(50%)"),
+        ] {
+            input_style
+                .set_property_with_priority(property, value, "important")
+                .map_err(|error| {
+                    anyhow::anyhow!("Failed to hide the input element ({property}): {error:?}")
+                })?;
+        }
+        body.append_child(&input_element)
+            .map_err(|error| anyhow::anyhow!("Failed to append input to body: {error:?}"))?;
+        if let Err(error) = input_element.focus() {
+            log::error!("Failed to focus the input element: {error:?}");
+        }
+        Ok(input_element)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         _handle: AnyWindowHandle,
@@ -138,24 +192,7 @@ impl WebWindow {
         };
         let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
-        let input_element: web_sys::HtmlInputElement = document
-            .create_element("input")
-            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
-            .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
-        input_element
-            .set_attribute("data-gpui-input", "")
-            .map_err(|e| anyhow::anyhow!("Failed to identify the input element: {e:?}"))?;
-        let input_style = input_element.style();
-        input_style.set_property("position", "fixed").ok();
-        input_style.set_property("top", "0").ok();
-        input_style.set_property("left", "0").ok();
-        input_style.set_property("width", "1px").ok();
-        input_style.set_property("height", "1px").ok();
-        input_style.set_property("opacity", "0").ok();
-        body.append_child(&input_element)
-            .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        input_element.focus().ok();
+        let input_element = Self::create_hidden_text_input(&document, &body)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
