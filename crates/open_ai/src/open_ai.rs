@@ -921,7 +921,7 @@ pub enum ResponseStreamResult {
 }
 
 #[derive(Deserialize)]
-struct ErrorResponseEnvelope {
+struct ResponseErrorEnvelope {
     error: responses::ResponseError,
 }
 
@@ -1267,7 +1267,7 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                     .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
                     .map(std::time::Duration::from_secs);
 
-                if let Ok(error_response) = serde_json::from_str::<ErrorResponseEnvelope>(&body) {
+                if let Ok(error_response) = serde_json::from_str::<ResponseErrorEnvelope>(&body) {
                     let error = error_response.error;
                     let category = completion::response_error_category(
                         error.code.as_deref(),
