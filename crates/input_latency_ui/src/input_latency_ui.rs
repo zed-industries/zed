@@ -167,59 +167,78 @@ pub fn report_input_latency_telemetry(window: &Window, cx: &mut App) {
     );
 }
 
-/// Per-window baselines for frame-duration telemetry, keyed by window id.
+/// Per-window baselines for frame-timing telemetry, keyed by window id.
 #[derive(Default)]
-struct FrameDurationTelemetryState {
-    previous: HashMap<WindowId, (Instant, FrameDurationSnapshot)>,
+struct FrameTimingTelemetryState {
+    previous: HashMap<WindowId, FrameDurationSnapshot>,
 }
 
-impl Global for FrameDurationTelemetryState {}
+impl Global for FrameTimingTelemetryState {}
 
 /// Sends the average dirty-to-present frame duration recorded since the
 /// previous report.
-pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
+pub fn report_frame_timing_telemetry(window: &Window, cx: &mut App) {
     let current = window.frame_duration_snapshot();
     let window_id = window.window_handle().window_id();
 
     let open_window_ids = open_window_ids(cx);
-    let state = cx.default_global::<FrameDurationTelemetryState>();
+    let state = cx.default_global::<FrameTimingTelemetryState>();
     state
         .previous
         .retain(|window_id, _| open_window_ids.contains(window_id));
-    let now = Instant::now();
+    let report = frame_timing_telemetry_report(&current, state.previous.get(&window_id));
+    state.previous.insert(window_id, current);
 
-    let (dirty_to_present_histogram, report_window_seconds) =
-        if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
-            let mut histogram = current.dirty_to_present_histogram.clone();
-            if histogram
-                .subtract(&prev_snapshot.dirty_to_present_histogram)
-                .is_err()
-            {
-                histogram = current.dirty_to_present_histogram.clone();
-            }
-            let elapsed = now.duration_since(*prev_instant).as_secs();
-            (histogram, elapsed)
-        } else {
-            (current.dirty_to_present_histogram.clone(), 0u64)
-        };
-
-    let root_entity_type = current.root_entity_type_name;
-    state.previous.insert(window_id, (now, current));
-
-    let total_frames = dirty_to_present_histogram.len();
-    if total_frames == 0 {
+    let Some(report) = report else {
         return;
-    }
-
-    let average_dirty_to_present_ms = dirty_to_present_histogram.mean() / 1_000_000.0;
+    };
 
     telemetry::event!(
-        "Frame Duration Report",
-        average_dirty_to_present_ms = average_dirty_to_present_ms,
-        total_frames = total_frames,
-        root_entity_type = root_entity_type,
-        report_window_seconds = report_window_seconds,
+        "Frame Timing Report",
+        average_dirty_to_present_ms = report.average_dirty_to_present_ms,
+        total_frames = report.total_frames,
+        root_entity_type_name = report.root_entity_type_name,
+        report_window_seconds = report.report_window_seconds,
     );
+}
+
+struct FrameTimingTelemetryReport {
+    average_dirty_to_present_ms: f64,
+    total_frames: u64,
+    root_entity_type_name: &'static str,
+    report_window_seconds: u64,
+}
+
+fn frame_timing_telemetry_report(
+    current: &FrameDurationSnapshot,
+    previous: Option<&FrameDurationSnapshot>,
+) -> Option<FrameTimingTelemetryReport> {
+    let mut histogram = current.dirty_to_present_histogram.clone();
+    let report_window = if let Some(previous) = previous {
+        match histogram.subtract(&previous.dirty_to_present_histogram) {
+            Ok(()) => current
+                .recording_duration
+                .saturating_sub(previous.recording_duration),
+            Err(_) => {
+                histogram = current.dirty_to_present_histogram.clone();
+                current.recording_duration
+            }
+        }
+    } else {
+        current.recording_duration
+    };
+
+    let total_frames = histogram.len();
+    if total_frames == 0 {
+        return None;
+    }
+
+    Some(FrameTimingTelemetryReport {
+        average_dirty_to_present_ms: histogram.mean() / 1_000_000.0,
+        total_frames,
+        root_entity_type_name: current.root_entity_type_name,
+        report_window_seconds: report_window.as_secs(),
+    })
 }
 
 fn open_window_ids(cx: &App) -> HashSet<WindowId> {
@@ -421,5 +440,71 @@ fn write_latency_distribution(report: &mut String, heading: &str, histogram: &Hi
             "  {range:>8}  {note:<11}: {count:>6} ({:>5.1}%) {bar}\n",
             fraction * 100.0,
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn frame_timing_report_uses_samples_since_the_previous_snapshot() {
+        let previous = frame_duration_snapshot(Duration::from_secs(10 * 60), &[10_000_000]);
+        let current =
+            frame_duration_snapshot(Duration::from_secs(40 * 60), &[10_000_000, 20_000_000]);
+
+        let report = frame_timing_telemetry_report(&current, Some(&previous))
+            .expect("the new sample should produce a report");
+
+        assert_eq!(report.total_frames, 1);
+        assert_eq!(report.root_entity_type_name, "test::RootEntity");
+        assert_eq!(report.report_window_seconds, 30 * 60);
+        assert!((report.average_dirty_to_present_ms - 20.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn first_frame_timing_report_uses_the_profiler_recording_duration() {
+        let current =
+            frame_duration_snapshot(Duration::from_secs(30 * 60), &[10_000_000, 20_000_000]);
+
+        let report = frame_timing_telemetry_report(&current, None)
+            .expect("the recorded samples should produce a report");
+
+        assert_eq!(report.total_frames, 2);
+        assert_eq!(report.report_window_seconds, 30 * 60);
+        assert!((report.average_dirty_to_present_ms - 15.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn frame_timing_report_skips_an_interval_without_new_samples() {
+        let previous = frame_duration_snapshot(Duration::from_secs(30 * 60), &[10_000_000]);
+        let current = frame_duration_snapshot(Duration::from_secs(60 * 60), &[10_000_000]);
+
+        assert!(frame_timing_telemetry_report(&current, Some(&previous)).is_none());
+    }
+
+    fn frame_duration_snapshot(
+        recording_duration: Duration,
+        dirty_to_present_samples: &[u64],
+    ) -> FrameDurationSnapshot {
+        let mut dirty_to_present_histogram =
+            Histogram::new(3).expect("histogram configuration should be valid");
+        for sample in dirty_to_present_samples {
+            dirty_to_present_histogram
+                .record(*sample)
+                .expect("test sample should fit in the histogram");
+        }
+
+        FrameDurationSnapshot {
+            root_entity_type_name: "test::RootEntity",
+            recording_duration,
+            dirty_to_present_histogram,
+            draw_duration_histogram: Histogram::new(3)
+                .expect("histogram configuration should be valid"),
+            present_interval_histogram: Histogram::new(3)
+                .expect("histogram configuration should be valid"),
+        }
     }
 }

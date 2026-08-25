@@ -854,6 +854,8 @@ pub enum FrameEvent {
 pub struct FrameDurationSnapshot {
     /// The concrete type name of the window's initial root entity.
     pub root_entity_type_name: &'static str,
+    /// Time covered by the cumulative histograms.
+    pub recording_duration: Duration,
     /// Histogram of durations from the first invalidation of a frame until its
     /// presentation completed, in nanoseconds.
     pub dirty_to_present_histogram: Histogram<u64>,
@@ -898,6 +900,7 @@ enum WindowActivity {
 pub struct WindowProfiler {
     window_id: WindowId,
     root_entity_type_name: &'static str,
+    recording_started_at: Instant,
     active_activities: SmallVec<[WindowActivity; 4]>,
     active_actions: SmallVec<[(&'static str, Instant); 2]>,
     dirty_to_present_histogram: Histogram<u64>,
@@ -917,9 +920,11 @@ pub struct WindowProfiler {
 impl WindowProfiler {
     /// Creates a profiler for a window.
     pub fn new(window_id: WindowId, root_entity_type_name: &'static str) -> anyhow::Result<Self> {
+        let recording_started_at = Instant::now();
         let profiler = Self {
             window_id,
             root_entity_type_name,
+            recording_started_at,
             active_activities: SmallVec::new(),
             active_actions: SmallVec::new(),
             dirty_to_present_histogram: Histogram::new(3).map_err(|error| {
@@ -944,7 +949,7 @@ impl WindowProfiler {
             animating_at_last_present: false,
             pending_frame: None,
         };
-        journal::record_frame_pending(window_id, Instant::now());
+        journal::record_frame_pending(window_id, recording_started_at);
         Ok(profiler)
     }
 
@@ -1082,6 +1087,7 @@ impl WindowProfiler {
     pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
         FrameDurationSnapshot {
             root_entity_type_name: self.root_entity_type_name,
+            recording_duration: Instant::now().duration_since(self.recording_started_at),
             dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
             draw_duration_histogram: self.draw_duration_histogram.clone(),
             present_interval_histogram: self.present_interval_histogram.clone(),

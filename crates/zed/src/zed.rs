@@ -427,6 +427,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
     }
 }
 
+const FRAME_TIMING_TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_mins(30);
+
 pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     let mut _on_close_subscription = bind_on_window_closed(cx);
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -440,6 +442,24 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     init_app_appearance(cx);
     init_reduce_motion(cx);
     init_global_config_error_notifications(cx);
+
+    cx.spawn(async move |cx| {
+        loop {
+            cx.background_executor()
+                .timer(FRAME_TIMING_TELEMETRY_INTERVAL)
+                .await;
+            cx.update(|cx| {
+                for window_handle in cx.windows() {
+                    window_handle
+                        .update(cx, |_, window, cx| {
+                            input_latency_ui::report_frame_timing_telemetry(window, cx)
+                        })
+                        .log_err();
+                }
+            });
+        }
+    })
+    .detach();
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
@@ -483,25 +503,6 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 if cx
                     .update(|window, cx| {
                         input_latency_ui::report_input_latency_telemetry(window, cx)
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-
-        cx.spawn_in(window, async move |_this, cx| {
-            const FRAME_DURATION_TELEMETRY_INTERVAL: std::time::Duration =
-                std::time::Duration::from_mins(30);
-            loop {
-                cx.background_executor()
-                    .timer(FRAME_DURATION_TELEMETRY_INTERVAL)
-                    .await;
-                if cx
-                    .update(|window, cx| {
-                        input_latency_ui::report_frame_duration_telemetry(window, cx)
                     })
                     .is_err()
                 {
