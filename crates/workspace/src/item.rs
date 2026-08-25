@@ -1457,6 +1457,7 @@ pub mod test {
         pub save_as_count: usize,
         pub reload_count: usize,
         pub is_dirty: bool,
+        pub save_error: Option<String>,
         pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
         pub has_deleted_file: bool,
@@ -1549,6 +1550,7 @@ pub mod test {
                 save_as_count: 0,
                 reload_count: 0,
                 is_dirty: false,
+                save_error: None,
                 has_conflict: false,
                 has_deleted_file: false,
                 capability: Capability::ReadWrite,
@@ -1586,6 +1588,11 @@ pub mod test {
 
         pub fn with_dirty(mut self, dirty: bool) -> Self {
             self.is_dirty = dirty;
+            self
+        }
+
+        pub fn with_save_error(mut self, message: impl Into<String>) -> Self {
+            self.save_error = Some(message.into());
             self
         }
 
@@ -1743,6 +1750,7 @@ pub mod test {
                     save_as_count: self.save_as_count,
                     reload_count: self.reload_count,
                     is_dirty: self.is_dirty,
+                    save_error: self.save_error.clone(),
                     buffer_kind: self.buffer_kind,
                     has_conflict: self.has_conflict,
                     has_deleted_file: self.has_deleted_file,
@@ -1798,6 +1806,9 @@ pub mod test {
             _window: &mut Window,
             cx: &mut Context<Self>,
         ) -> Task<anyhow::Result<()>> {
+            if let Some(error) = &self.save_error {
+                return Task::ready(Err(anyhow::anyhow!("{error}")));
+            }
             self.save_count += 1;
             self.is_dirty = false;
             for item in &self.project_items {
