@@ -1870,13 +1870,7 @@ fn quit(_: &Quit, cx: &mut App) {
         for window in &workspace_windows {
             window
                 .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
-                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
-                    flush_tasks.push(multi_workspace.flush_serialization());
+                    flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
                 })
                 .log_err();
         }
