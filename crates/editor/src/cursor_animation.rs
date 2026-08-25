@@ -1,3 +1,10 @@
+// Cursor animation physics adapted from vscode-neovide-cursor:
+// https://github.com/LengineerC/vscode-neovide-cursor
+//
+// Copyright (c) 2025 LengineerC
+// Licensed under the MIT License:
+// https://github.com/LengineerC/vscode-neovide-cursor/blob/main/LICENSE
+
 use collections::HashMap;
 use gpui::{Bounds, Pixels, Point, point, px};
 use std::time::{Duration, Instant};
