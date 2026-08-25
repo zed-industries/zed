@@ -17,14 +17,14 @@ where
     });
 
     let mut deserializer = serde_json_lenient::Deserializer::from_str(json);
-    let value = T::deserialize(&mut deserializer);
+    let value = serde_path_to_error::deserialize::<_, T>(&mut deserializer);
     let value = match value {
         Ok(value) => value,
         Err(error) => {
             return (
                 None,
                 ParseStatus::Failed {
-                    error: error.to_string(),
+                    error: error.into_inner().to_string(),
                 },
             );
         }
