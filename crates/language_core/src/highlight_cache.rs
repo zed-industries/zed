@@ -14,6 +14,7 @@ use std::{
 pub const MAX_TEXT_HIGHLIGHT_ENTRY_BYTES: usize = MAX_TEXT_HIGHLIGHT_CACHE_BYTES / 8;
 
 const MAX_TEXT_HIGHLIGHT_CACHE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CHUNK_HIGHLIGHT_CACHE_BYTES: usize = 10 * 1024 * 1024;
 const APPROXIMATE_LRU_NODE_BYTES: usize = 4 * size_of::<usize>();
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -109,6 +110,44 @@ impl TextHighlightCache {
     }
 }
 
+pub struct ChunkHighlightCache(Mutex<CostBudgetedLru<usize, ResolvedHighlights>>);
+
+impl Default for ChunkHighlightCache {
+    fn default() -> Self {
+        Self(Mutex::new(CostBudgetedLru::new(
+            MAX_CHUNK_HIGHLIGHT_CACHE_BYTES,
+            MAX_CHUNK_HIGHLIGHT_CACHE_BYTES,
+        )))
+    }
+}
+
+impl fmt::Debug for ChunkHighlightCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChunkHighlightCache")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ChunkHighlightCache {
+    pub fn get(&self, chunk_id: usize) -> Option<ResolvedHighlights> {
+        let mut lru = self.0.lock();
+        let highlights = lru.get(&chunk_id)?;
+        if !highlights.is_current() {
+            return None;
+        }
+        Some(highlights.clone())
+    }
+
+    pub fn insert(&self, chunk_id: usize, highlights: ResolvedHighlights) {
+        let cost = highlights.cost_bytes();
+        self.0.lock().insert(chunk_id, highlights, cost);
+    }
+
+    pub fn clear(&mut self) {
+        self.0.get_mut().clear();
+    }
+}
+
 struct CostBudgetedLru<K: Hash + Eq, V> {
     entries: LruCache<K, (V, usize)>,
     total_cost: usize,
@@ -148,6 +187,11 @@ impl<K: Hash + Eq, V> CostBudgetedLru<K, V> {
             };
             self.total_cost -= evicted_cost;
         }
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.total_cost = 0;
     }
 }
 
@@ -207,6 +251,17 @@ mod tests {
         assert_eq!(cache.get(&"a"), Some(&1));
         assert_eq!(cache.get(&"b"), None);
         assert_eq!(cache.total_cost, 40 + overhead);
+    }
+
+    #[test]
+    fn test_clear_resets_the_budget() {
+        let overhead = CostBudgetedLru::<&str, u32>::ENTRY_OVERHEAD_BYTES;
+        let mut cache = CostBudgetedLru::<&str, u32>::new(90 + overhead, 100);
+        cache.insert("a", 1, 90);
+        cache.clear();
+        assert_eq!(cache.total_cost, 0);
+        cache.insert("b", 2, 90);
+        assert_eq!(cache.get(&"b"), Some(&2));
     }
 
     #[test]
