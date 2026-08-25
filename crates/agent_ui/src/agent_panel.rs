@@ -1174,6 +1174,7 @@ pub struct AgentPanel {
     _project_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
+    persist_selected_agent_task: Task<()>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
     selected_agent: Agent,
@@ -1567,6 +1568,7 @@ impl AgentPanel {
             focus_handle: cx.focus_handle(),
             context_server_registry,
             draft_thread: None,
+            persist_selected_agent_task: Task::ready(()),
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
             pending_terminal_spawn: None,
@@ -1927,13 +1929,12 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
-        cx.background_spawn({
+        self.persist_selected_agent_task = cx.background_spawn({
             let kvp = KeyValueStore::global(cx);
             async move {
                 write_global_last_used_agent(kvp, agent).await;
             }
-        })
-        .detach();
+        });
     }
 
     /// Sets the panel's selected agent without opening the panel or focusing
@@ -5751,6 +5752,17 @@ impl AgentPanel {
                             menu = menu.action("Log Out", Box::new(LogoutAgent))
                         }
 
+                        if let Some(conversation_view) = conversation_view.as_ref() {
+                            menu = menu.entry("Reload Agent", None, {
+                                let conversation_view = conversation_view.clone();
+                                move |window, cx| {
+                                    conversation_view.update(cx, |conversation_view, cx| {
+                                        conversation_view.retry_connection(window, cx);
+                                    });
+                                }
+                            });
+                        }
+
                         menu
                     }))
                 }
@@ -7138,6 +7150,89 @@ mod tests {
             assert!(
                 panel.is_zoomed(window, cx),
                 "focusing the thread title editor should not close Zen Mode"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_resubmitting_edited_message_keeps_zoomed_agent_panel_open(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            agent::ThreadStore::init_global(cx);
+            language_model::LanguageModelRegistry::test(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |multi_workspace, _cx| {
+                multi_workspace.workspace().clone()
+            })
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
+        cx.simulate_resize(size(px(900.), px(700.)));
+
+        let connection = StubAgentConnection::new();
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("Response".into()),
+        )]);
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.focus_panel::<AgentPanel>(window, cx);
+            panel
+        });
+        open_thread_with_connection(&panel, connection.clone(), cx);
+        send_message(&panel, cx);
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_zoom(&ToggleZoom, window, cx);
+        });
+        cx.run_until_parked();
+
+        let thread_view = panel.read_with(cx, |panel, cx| panel.active_thread_view(cx).unwrap());
+        let user_message_editor = thread_view.read_with(cx, |thread_view, cx| {
+            thread_view
+                .entry_view_state
+                .read(cx)
+                .entry(0)
+                .unwrap()
+                .message_editor()
+                .unwrap()
+                .clone()
+        });
+        cx.focus(&user_message_editor);
+        cx.run_until_parked();
+        user_message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Edited message", window, cx);
+        });
+
+        connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+            acp::ContentChunk::new("New response".into()),
+        )]);
+        user_message_editor.update_in(cx, |_editor, window, cx| {
+            window.dispatch_action(Box::new(zed_actions::agent::Chat), cx);
+        });
+        cx.update(|window, _cx| window.blur());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let position = panel.read(cx).position(window, cx);
+            assert!(
+                workspace.dock_at_position(position).read(cx).is_open(),
+                "resubmitting an edited message should not hide the agent panel"
+            );
+            assert!(
+                panel.read(cx).is_zoomed(window, cx),
+                "resubmitting an edited message should not close Zen Mode"
+            );
+            assert!(
+                panel.read(cx).focus_handle(cx).contains_focused(window, cx),
+                "focus should stay within the agent panel after resubmitting"
             );
         });
     }
@@ -11416,7 +11511,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 25)]
     async fn test_select_agent_action_updates_visible_draft(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());

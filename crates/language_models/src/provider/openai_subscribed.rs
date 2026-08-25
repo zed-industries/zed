@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use credentials_provider::CredentialsProvider;
 use futures::future::Shared;
 use gpui::{App, Context, Entity, SharedString, Task, Window};
@@ -8,7 +8,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, ProviderSettingsView,
 };
-use openai_subscribed::{ChatGptModel, PROVIDER_ID, PROVIDER_NAME, State, create_language_model};
+use openai_subscribed::{PROVIDER_ID, PROVIDER_NAME, State, create_language_model};
 use std::sync::Arc;
 use ui::{ConfiguredApiCard, prelude::*};
 
@@ -52,22 +52,31 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(create_language_model(ChatGptModel::Gpt55, &self.state, cx))
+        self.state
+            .read(cx)
+            .default_model()
+            .map(|model| create_language_model(model, &self.state, cx))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(create_language_model(
-            ChatGptModel::Gpt56Luna,
-            &self.state,
-            cx,
-        ))
+        self.state
+            .read(cx)
+            .default_fast_model()
+            .map(|model| create_language_model(model, &self.state, cx))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        ChatGptModel::all()
-            .into_iter()
+        self.state
+            .read(cx)
+            .available_models()
+            .iter()
+            .cloned()
             .map(|model| create_language_model(model, &self.state, cx))
             .collect()
+    }
+
+    fn recommended_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        self.default_model(cx).into_iter().collect()
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -82,10 +91,12 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         if let Some(load_task) = load_task {
             let weak_state = self.state.downgrade();
             cx.spawn(async move |cx| {
-                let _ = load_task.await;
+                load_task
+                    .await
+                    .map_err(|error| AuthenticateError::Other(anyhow!("{error:#}")))?;
                 let is_auth = weak_state
                     .read_with(&*cx, |state, _| state.is_authenticated())
-                    .unwrap_or(false);
+                    .map_err(AuthenticateError::Other)?;
                 if is_auth {
                     Ok(())
                 } else {
@@ -167,10 +178,12 @@ impl Render for ConfigurationView {
                 .email()
                 .map(|e| format!("Signed in as {e}"))
                 .unwrap_or_else(|| "Signed in".to_string());
+            let model_catalog_error = state.model_catalog_error();
 
             let state_entity = self.state.clone();
 
             return v_flex()
+                .gap_2()
                 .child(
                     ConfiguredApiCard::new("openai-subscribed-sign-out", SharedString::from(label))
                         .button_label("Sign Out")
@@ -180,6 +193,19 @@ impl Render for ConfigurationView {
                                 .detach_and_log_err(cx);
                         })),
                 )
+                .when_some(model_catalog_error, |this, error| {
+                    this.child(
+                        h_flex()
+                            .gap_1()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::XCircle)
+                                    .color(Color::Error)
+                                    .size(IconSize::Small),
+                            )
+                            .child(Label::new(error).color(Color::Muted)),
+                    )
+                })
                 .into_any_element();
         }
 
@@ -253,7 +279,24 @@ mod tests {
         let http_client = FakeHttpClient::create(|_| async {
             Ok(http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::default())?)
+                .body(http_client::AsyncBody::from(
+                    serde_json::json!({
+                        "models": [{
+                            "slug": "gpt-account-default",
+                            "display_name": "Account Default",
+                            "default_reasoning_level": "medium",
+                            "supported_reasoning_levels": [],
+                            "visibility": "list",
+                            "priority": 0,
+                            "additional_speed_tiers": [],
+                            "service_tiers": [],
+                            "context_window": 128_000,
+                            "max_context_window": null,
+                            "input_modalities": ["text"]
+                        }]
+                    })
+                    .to_string(),
+                ))?)
         });
 
         let provider =
@@ -270,6 +313,20 @@ mod tests {
             result.is_ok(),
             "authenticate should succeed after load completes with valid credentials"
         );
+        cx.update(|cx| {
+            let models = provider.provided_models(cx);
+            assert_eq!(models.len(), 1);
+            assert_eq!(
+                models.first().map(|model| model.id().0.to_string()),
+                Some("gpt-account-default".to_string())
+            );
+            assert_eq!(
+                provider
+                    .default_model(cx)
+                    .map(|model| model.id().0.to_string()),
+                Some("gpt-account-default".to_string())
+            );
+        });
     }
 
     struct FakeCredentialsProvider {

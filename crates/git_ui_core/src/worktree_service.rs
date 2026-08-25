@@ -387,17 +387,27 @@ fn create_worktree_askpass_delegate(
 ) -> AskPassDelegate {
     let operation = operation.into();
     let window = window.window_handle();
-    AskPassDelegate::new(&mut cx.to_async(), move |prompt, tx, cx| {
-        window
-            .update(cx, |_, window, cx| {
-                workspace.update(cx, |workspace, cx| {
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        AskPassModal::new(operation.clone(), prompt.into(), tx, window, cx)
-                    });
+    AskPassDelegate::new_with_cancellation(
+        &mut cx.to_async(),
+        move |prompt, tx, cancellation, cx| {
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            AskPassModal::new(
+                                operation.clone(),
+                                prompt.into(),
+                                tx,
+                                cancellation,
+                                window,
+                                cx,
+                            )
+                        });
+                    })
                 })
-            })
-            .ok();
-    })
+                .ok();
+        },
+    )
 }
 
 async fn fetch_remote_for_worktree_base(
@@ -1194,7 +1204,7 @@ async fn open_worktree_workspace(
                 None
             };
 
-            let task = multi_workspace.find_or_create_workspace_with_source_workspace(
+            let task = multi_workspace.find_or_create_workspace(
                 path_list,
                 remote_connection_options,
                 None,
@@ -1206,7 +1216,6 @@ async fn open_worktree_workspace(
                         cx,
                     )
                 },
-                &[],
                 init,
                 OpenMode::Add,
                 source_for_transfer.clone(),
@@ -1355,7 +1364,7 @@ async fn open_worktree_workspace(
         } else {
             // Background open: register the new workspace as a retained tab
             // but leave the user where they are.
-            multi_workspace.add_background_workspace(new_workspace.clone(), window, cx);
+            multi_workspace.add(new_workspace.clone(), window, cx);
         }
 
         if is_creating_new_worktree {
