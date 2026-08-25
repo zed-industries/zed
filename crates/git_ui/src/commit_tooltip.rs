@@ -356,7 +356,9 @@ impl Render for CommitTooltip {
         let boundary_notice = self
             .commit
             .boundary
-            .then(|| shallow_boundary_notice(self.repository.clone(), self.workspace.clone(), cx))
+            .then(|| {
+                shallow_boundary_notice(self.repository.clone(), self.workspace.clone(), window, cx)
+            })
             .flatten();
 
         tooltip_container(cx, move |this, cx| {
@@ -489,6 +491,7 @@ pub fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
 pub(crate) fn shallow_boundary_notice(
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
+    window: &Window,
     cx: &App,
 ) -> Option<impl IntoElement + use<>> {
     let unshallow_state = repository.read(cx).unshallow_state();
@@ -496,63 +499,72 @@ pub(crate) fn shallow_boundary_notice(
         return None;
     }
     let in_flight = unshallow_state == UnshallowState::InProgress;
+    let avatar_width = CommitAvatar::rendered_size(rems(1.), window);
     let can_fetch = workspace
         .read_with(cx, |workspace, cx| {
             !workspace.project().read(cx).is_via_collab()
         })
         .unwrap_or(false);
     Some(
-        h_flex()
-            .pt_1p5()
+        v_flex()
+            .py_1()
             .gap_2()
-            .items_start()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(
-                Icon::new(IconName::Warning)
-                    .size(IconSize::Small)
-                    .color(Color::Warning),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .gap_1()
+                h_flex()
+                    .gap_2()
+                    .items_start()
                     .child(
-                        Label::new(
-                            "Shallow clone boundary: earlier history is missing, so these lines may come from an older commit.",
-                        )
-                        .size(LabelSize::Small),
+                        h_flex().w(avatar_width).justify_center().child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::Small)
+                                .color(Color::Warning),
+                        ),
                     )
-                    .when(can_fetch, |this| {
-                        this.child(
-                            h_flex().child(
-                                Button::new(
-                                    "fetch-unshallow",
-                                    if in_flight {
-                                        "Fetching…"
-                                    } else {
-                                        "Fetch Missing History"
-                                    },
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Label::new(
+                                "Shallow clone boundary: earlier history is missing, so these lines may come from an older commit.",
+                            )
+                            .size(LabelSize::Small)
+                            .line_height_style(LineHeightStyle::UiLabel),
+                        ),
+                    ),
+            )
+            .when(can_fetch, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().w(avatar_width))
+                        .child(
+                            Button::new(
+                                "fetch-unshallow",
+                                if in_flight {
+                                    "Fetching…"
+                                } else {
+                                    "Fetch Missing History"
+                                },
+                            )
+                            .style(ButtonStyle::Outlined)
+                            .label_size(LabelSize::Small)
+                            .disabled(in_flight)
+                            .tooltip(Tooltip::text(
+                                "Run `git fetch --unshallow` to download the full history",
+                            ))
+                            .on_click(move |_, window, cx| {
+                                cx.stop_propagation();
+                                fetch_unshallow(
+                                    repository.clone(),
+                                    workspace.clone(),
+                                    window,
+                                    cx,
                                 )
-                                .style(ButtonStyle::Outlined)
-                                .label_size(LabelSize::Small)
-                                .disabled(in_flight)
-                                .tooltip(Tooltip::text(
-                                    "Run `git fetch --unshallow` to download the full history",
-                                ))
-                                .on_click(move |_, window, cx| {
-                                    cx.stop_propagation();
-                                    fetch_unshallow(
-                                        repository.clone(),
-                                        workspace.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                    .detach_and_log_err(cx);
-                                }),
-                            ),
-                        )
-                    }),
-            ),
+                                .detach_and_log_err(cx);
+                            }),
+                        ),
+                )
+            }),
     )
 }
 

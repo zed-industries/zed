@@ -401,7 +401,7 @@ impl BlameRenderer for GitBlameRenderer {
         };
         let boundary_notice = blame
             .boundary
-            .then(|| shallow_boundary_notice(repository.clone(), workspace.clone(), cx))
+            .then(|| shallow_boundary_notice(repository.clone(), workspace.clone(), window, cx))
             .flatten();
 
         Some(
