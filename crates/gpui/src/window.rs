@@ -770,9 +770,8 @@ impl HitboxId {
     ///
     /// See [`Hitbox::is_hovered`] for details.
     pub fn is_hovered(self, window: &Window) -> bool {
-        // If this hitbox has captured the pointer, it's always considered hovered
-        if window.captured_hitbox == Some(self) {
-            return true;
+        if window.captured_hitbox.is_some() {
+            return window.captured_hitbox == Some(self);
         }
         if window.last_input_was_keyboard() {
             return false;
@@ -785,9 +784,8 @@ impl HitboxId {
     ///
     /// See [`HitboxId::is_hovered`] for more details.
     pub(crate) fn is_hovered_ignoring_last_input(self, window: &Window) -> bool {
-        // If this hitbox has captured the pointer, it's always considered hovered
-        if window.captured_hitbox == Some(self) {
-            return true;
+        if window.captured_hitbox.is_some() {
+            return window.captured_hitbox == Some(self);
         }
         self.hit_test(window)
     }
@@ -828,6 +826,7 @@ pub struct Hitbox {
     pub content_mask: ContentMask<Pixels>,
     /// Flags that specify hitbox behavior.
     pub behavior: HitboxBehavior,
+    identity: Option<GlobalElementId>,
 }
 
 impl Hitbox {
@@ -1205,6 +1204,9 @@ pub struct Window {
     /// The hitbox that has captured the pointer, if any.
     /// While captured, mouse events route to this hitbox regardless of hit testing.
     captured_hitbox: Option<HitboxId>,
+    /// Stable element identity for the captured hitbox. Hitbox IDs are per-frame;
+    /// this is rebound to the new hitbox when the same element is painted again.
+    captured_identity: Option<GlobalElementId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
     #[cfg(feature = "profiler")]
@@ -1891,6 +1893,7 @@ impl Window {
             client_inset: None,
             image_cache_stack: Vec::new(),
             captured_hitbox: None,
+            captured_identity: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
             #[cfg(feature = "profiler")]
@@ -2816,19 +2819,25 @@ impl Window {
         self.mouse_position
     }
 
-    /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
-    /// events will be routed to listeners that check this hitbox's `is_hovered` status,
-    /// regardless of actual hit testing. This enables drag operations that continue
-    /// even when the pointer moves outside the element's bounds.
-    ///
-    /// The capture is automatically released on mouse up.
+    /// Captures the pointer for the given hitbox. While captured, only that
+    /// element's current-frame hitbox is hovered, so move and up continue after
+    /// the pointer leaves its bounds. Capture is rebound across redraws by
+    /// element identity and released on mouse up or when the element is not painted.
     pub fn capture_pointer(&mut self, hitbox_id: HitboxId) {
         self.captured_hitbox = Some(hitbox_id);
+        self.captured_identity = self
+            .rendered_frame
+            .hitboxes
+            .iter()
+            .chain(self.next_frame.hitboxes.iter())
+            .find(|hitbox| hitbox.id == hitbox_id)
+            .and_then(|hitbox| hitbox.identity.clone());
     }
 
     /// Releases any active pointer capture.
     pub fn release_pointer(&mut self) {
         self.captured_hitbox = None;
+        self.captured_identity = None;
     }
 
     /// Returns the hitbox that has captured the pointer, if any.
@@ -2891,7 +2900,11 @@ impl Window {
             }
         }
         if !cx.mode.skip_drawing() {
+            self.captured_hitbox = None;
             self.draw_roots(cx);
+            if self.captured_identity.is_some() && self.captured_hitbox.is_none() {
+                self.captured_identity = None;
+            }
             #[cfg(feature = "profiler")]
             {
                 let viewport_size = self.viewport_size;
@@ -4751,11 +4764,17 @@ impl Window {
         let content_mask = self.content_mask();
         let mut id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
+        let identity = (!self.element_id_stack.is_empty())
+            .then(|| GlobalElementId(Arc::from(&*self.element_id_stack)));
+        if identity.is_some() && self.captured_identity == identity {
+            self.captured_hitbox = Some(id);
+        }
         let hitbox = Hitbox {
             id,
             bounds,
             content_mask,
             behavior,
+            identity,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
@@ -5271,7 +5290,7 @@ impl Window {
 
         // Auto-release pointer capture on mouse up
         if event.is::<MouseUpEvent>() && self.captured_hitbox.is_some() {
-            self.captured_hitbox = None;
+            self.release_pointer();
         }
     }
 

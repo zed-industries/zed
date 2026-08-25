@@ -838,6 +838,17 @@ pub trait InteractiveElement: Sized {
         self
     }
 
+    /// Capture the pointer on left mouse down so move and up keep targeting this
+    /// element after the pointer leaves its bounds. Released on mouse up, or when
+    /// this element is not painted.
+    fn capture_pointer(mut self) -> Self
+    where
+        Self: Sized,
+    {
+        self.interactivity().capture_pointer = true;
+        self
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     /// Set a key that can be used to look up this element's bounds
     /// in the [`crate::VisualTestContext::debug_bounds`] map
@@ -2076,6 +2087,7 @@ pub struct Interactivity {
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) capture_pointer: bool,
     pub(crate) tab_index: Option<isize>,
     pub(crate) tab_group: bool,
     pub(crate) tab_stop: bool,
@@ -2312,6 +2324,7 @@ impl Interactivity {
             || !self.drop_listeners.is_empty()
             || !self.drag_over_styles.is_empty()
             || self.tooltip_builder.is_some()
+            || self.capture_pointer
             || window.is_inspector_picking(cx)
     }
 
@@ -2669,6 +2682,18 @@ impl Interactivity {
             window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
                 listener(event, phase, &hitbox, window, cx);
             })
+        }
+
+        if self.capture_pointer {
+            let hitbox = hitbox.clone();
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _cx| {
+                if phase == DispatchPhase::Bubble
+                    && event.button == MouseButton::Left
+                    && hitbox.is_hovered(window)
+                {
+                    window.capture_pointer(hitbox.id);
+                }
+            });
         }
 
         for listener in self.mouse_up_listeners.drain(..) {
@@ -4241,10 +4266,13 @@ impl ScrollHandle {
 mod tests {
     use super::*;
     use crate::{
-        AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, MouseMoveEvent,
+        AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, Modifiers, MouseMoveEvent,
         TestAppContext, canvas, util::FluentBuilder as _,
     };
-    use std::{cell::Cell, rc::Weak};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Weak,
+    };
 
     struct GroupHoverTestView {
         render_count: Rc<Cell<usize>>,
@@ -5193,5 +5221,94 @@ mod tests {
         assert_eq!(bounds("cell-0").origin.x, px(0.));
         assert_eq!(bounds("cell-1").origin.x, px(100.));
         assert_eq!(bounds("cell-2").origin.x, px(300.));
+    }
+
+    struct PointerCaptureView {
+        removed: bool,
+        events: Rc<RefCell<Vec<&'static str>>>,
+    }
+
+    impl Render for PointerCaptureView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let events = self.events.clone();
+            if self.removed {
+                return div().size_full().child(
+                    div()
+                        .id("other")
+                        .w(px(200.))
+                        .h(px(40.))
+                        .on_mouse_move({
+                            let events = events.clone();
+                            move |_, _, _| events.borrow_mut().push("other-move")
+                        })
+                        .on_mouse_up(MouseButton::Left, {
+                            let events = events.clone();
+                            move |_, _, _| events.borrow_mut().push("other-up")
+                        }),
+                );
+            }
+            div().size_full().child(
+                div()
+                    .id("handle")
+                    .w(px(80.))
+                    .h(px(40.))
+                    .capture_pointer()
+                    .on_mouse_down(MouseButton::Left, {
+                        let events = events.clone();
+                        move |_, _, _| events.borrow_mut().push("down")
+                    })
+                    .on_mouse_move({
+                        let events = events.clone();
+                        move |_, _, _| events.borrow_mut().push("handle-move")
+                    })
+                    .on_mouse_up(MouseButton::Left, {
+                        let events = events.clone();
+                        move |_, _, _| events.borrow_mut().push("handle-up")
+                    }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn pointer_capture_keeps_move_and_up_outside_bounds(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (_view, cx) = cx.add_window_view({
+            let events = events.clone();
+            move |_, _| PointerCaptureView {
+                removed: false,
+                events,
+            }
+        });
+        cx.simulate_mouse_down(point(px(10.), px(10.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(point(px(200.), px(10.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(point(px(200.), px(10.)), MouseButton::Left, Modifiers::none());
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["down", "handle-move", "handle-up"]
+        );
+    }
+
+    #[gpui::test]
+    fn pointer_capture_releases_when_element_is_not_painted(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let (view, cx) = cx.add_window_view({
+            let events = events.clone();
+            move |_, _| PointerCaptureView {
+                removed: false,
+                events,
+            }
+        });
+        cx.simulate_mouse_down(point(px(10.), px(10.)), MouseButton::Left, Modifiers::none());
+        view.update(cx, |view, cx| {
+            view.removed = true;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        cx.simulate_mouse_move(point(px(10.), px(10.)), MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_up(point(px(10.), px(10.)), MouseButton::Left, Modifiers::none());
+        assert_eq!(
+            events.borrow().as_slice(),
+            ["down", "other-move", "other-up"]
+        );
     }
 }
