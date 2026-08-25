@@ -7,3 +7,4 @@ RunAfter=安装后运行 %1
 Other=其他:
 SourceFile=%1 源文件
 OpenWithContextMenu=通过 %1 打开
+AllUsersAlreadyInstalled=已将 Zed 安装到所有用户。请改用“为所有用户”安装包（Zed-AllUsers-x86_64.exe）。

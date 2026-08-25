@@ -28,6 +28,11 @@ UploadToBlobStore -BucketName $bucketName -FileToUpload "target/Zed-$Architectur
 
 Remove-Item -Path "target/Zed-$Architecture.exe" -ErrorAction SilentlyContinue
 
+UploadToBlobStore -BucketName $bucketName -FileToUpload "target/Zed-AllUsers-$Architecture.exe" -BlobStoreKey "nightly/Zed-AllUsers-$Architecture.exe"
+UploadToBlobStore -BucketName $bucketName -FileToUpload "target/Zed-AllUsers-$Architecture.exe" -BlobStoreKey "$version/Zed-AllUsers-$Architecture.exe"
+
+Remove-Item -Path "target/Zed-AllUsers-$Architecture.exe" -ErrorAction SilentlyContinue
+
 $version | Out-File -FilePath "target/latest-sha" -NoNewline
 UploadToBlobStore -BucketName $bucketName -FileToUpload "target/latest-sha" -BlobStoreKey "nightly/latest-sha-windows"
 Remove-Item -Path "target/latest-sha" -ErrorAction SilentlyContinue
