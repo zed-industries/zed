@@ -811,6 +811,7 @@ impl Item for Editor {
                         params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
                     )
                 })
+                .single_line()
                 .color(label_color)
                 .when(params.truncate_title_middle, |this| {
                     this.truncate_middle().flex_1()
@@ -821,6 +822,7 @@ impl Item for Editor {
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
+                        .single_line()
                         .size(LabelSize::XSmall)
                         .when(params.truncate_title_middle, |this| {
                             this.truncate_start().flex_shrink()
@@ -930,6 +932,9 @@ impl Item for Editor {
     }
 
     fn can_save(&self, cx: &App) -> bool {
+        if self.read_only(cx) {
+            return false;
+        }
         let buffer = &self.buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton() {
             buffer.read(cx).project_path(cx).is_some()
@@ -945,6 +950,9 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         // Add meta data tracking # of auto saves
         if options.autosave {
             self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
@@ -968,7 +976,7 @@ impl Item for Editor {
                 // `save_as`. Trying to save it here errors and aborts the whole save.
                 .filter(|buffer| {
                     let buffer = buffer.read(cx);
-                    buffer.is_dirty() && buffer.file().is_some()
+                    buffer.is_dirty() && !buffer.read_only() && buffer.file().is_some()
                 })
                 .collect()
         };
@@ -1178,7 +1186,7 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::DirtyChanged => {
+            EditorEvent::DirtyChanged | EditorEvent::CapabilityChanged => {
                 f(ItemEvent::UpdateTab);
             }
 

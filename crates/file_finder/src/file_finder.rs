@@ -48,8 +48,8 @@ use util::{
     rel_path::RelPath,
 };
 use workspace::{
-    ModalView, OpenChannelNotesById, OpenOptions, OpenVisible, SplitDirection, Workspace,
-    item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
+    MAX_RECENT_SELECTIONS, ModalView, OpenChannelNotesById, OpenOptions, OpenVisible,
+    SplitDirection, Workspace, item::PreviewTabsSettings, notifications::NotifyResultExt, pane,
 };
 use zed_actions::search::ToggleIncludeIgnored;
 
@@ -851,7 +851,6 @@ impl FoundPath {
     }
 }
 
-const MAX_RECENT_SELECTIONS: usize = 20;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
 const WORKTREE_UPDATE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -1416,8 +1415,9 @@ impl FileFinderDelegate {
         }
 
         (
-            HighlightedLabel::new(file_name, file_name_positions),
+            HighlightedLabel::new(file_name, file_name_positions).single_line(),
             HighlightedLabel::new(full_path, full_path_positions)
+                .single_line()
                 .size(LabelSize::Small)
                 .color(Color::Muted),
         )
