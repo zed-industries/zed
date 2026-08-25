@@ -12,21 +12,30 @@ Zed renders in strict mode: an unknown variable fails the render, so a
 typo'd name falls back to the built-in system prompt with a warning rather
 than emitting nothing.
 
-Context variables:
+Context variables for system prompt:
+  arch              host architecture
   available_tools   names of the tools enabled for this session
-  model_name        active model name, if any
   date              today's date, YYYY-MM-DD
-  user_agents_md    raw user-global `AGENTS.md` content, if any
+  has_rules         whether any worktree has a rules file
+  has_skills        whether skills are available
   is_windows        whether the host is Windows
   is_linux          whether the host is Linux
-  sandboxing        whether terminal commands run in the OS-level sandbox
-  worktrees         project worktrees (root_name, abs_path, rules_file)
-  has_rules         whether any worktree has a rules file
+  model_name        active model name, if any
   os                host operating system
-  arch              host architecture
+  sandboxing        whether terminal commands run in the OS-level sandbox
   shell             default shell
-  has_skills        whether skills are available
   skills            catalog of skills (name, description, location)
+  user_agents_md    raw user-global `AGENTS.md` content, if any
+  worktrees         project worktrees (root_name, abs_path, rules_file)
+
+Context variables for tool guidance:
+  available_tools
+  date
+  is_linux
+  is_macos
+  is_windows
+  model_name
+  sandboxing
 
 Zed registers three custom helpers: `contains` (list, item),
 `join` (list, separator), and `array` (items...) for building a list
@@ -44,6 +53,10 @@ Every other `*.hbs` file under this directory (recursively) is inplace-appendabl
 its relative path without the extension, `/`-separated on every platform —
 `partials/style.hbs` → `{{> partials/style}}`. Use `/` even on Windows:
 `\` is the template escape character and cannot appear in a partial name.
+######################################################################################
+######################################################################################
+######################################################################################
+######################################################################################
 --}}
 
 You are the Zed coding agent running inside the Zed editor. You help users complete software engineering tasks by understanding their codebase, making careful changes, and explaining your work clearly. Use your broad knowledge of programming languages, frameworks, design patterns, and engineering best practices to solve problems pragmatically.

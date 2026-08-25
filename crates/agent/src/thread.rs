@@ -4333,10 +4333,6 @@ impl Thread {
         log::trace!("Building request messages from {} thread messages", end_ix);
 
         let user_agents_md = UserAgentsMd::global(cx).and_then(|s| s.content().cloned());
-        let model_name = self.model().map(|m| m.name().0.to_string());
-        let date = Local::now().format("%Y-%m-%d").to_string();
-        let is_linux = cfg!(target_os = "linux");
-        let is_windows = cfg!(target_os = "windows");
         let sandboxing =
             crate::sandboxing::sandboxing_enabled_for_project(self.project.read(cx), cx);
 
@@ -4344,12 +4340,13 @@ impl Thread {
         let context = SystemPromptTemplateContext {
             project: self.project_context.read(cx),
             available_tools,
-            model_name,
-            date,
+            model_name: self.model().map(|m| m.name().0.to_string()),
+            date: Local::now().format("%Y-%m-%d").to_string(),
             user_agents_md,
             sandboxing,
-            is_linux,
-            is_windows,
+            is_linux: cfg!(target_os = "linux"),
+            is_windows: cfg!(target_os = "windows"),
+            is_macos: cfg!(target_os = "macos"),
         };
 
         let system_prompt = render_system_prompt(&context, &self.templates, user_template)
