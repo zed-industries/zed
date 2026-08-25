@@ -1535,6 +1535,58 @@ mod tests {
         let highlight_keyword = grammar.highlight_id_for_name("keyword").unwrap();
         let highlight_field = grammar.highlight_id_for_name("property").unwrap();
 
+        let macro_detail_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    detail: Some("macro_rules! println".to_string()),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        let macro_description_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: None,
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await;
+
+        assert_eq!(macro_detail_label, macro_description_label);
+
+        let macro_label = macro_detail_label.unwrap();
+        assert_eq!(macro_label.text, "println!");
+        assert_eq!(macro_label.filter_range, 0..8);
+
+        let macro_import_label = adapter
+            .label_for_completion(
+                &lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FUNCTION),
+                    label: "println!".to_string(),
+                    label_details: Some(CompletionItemLabelDetails {
+                        detail: Some("(use std::println)".to_string()),
+                        description: Some("macro_rules! println".to_string()),
+                    }),
+                    ..Default::default()
+                },
+                &language,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(macro_import_label.text, "println! (use std::println)");
+        assert_eq!(macro_import_label.filter_range, 0..8);
+
         assert_eq!(
             adapter
                 .label_for_completion(
