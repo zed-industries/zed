@@ -43,13 +43,17 @@ impl SnippetRegistry {
         let kind = file_path
             .file_stem()
             .and_then(|stem| stem.to_str().and_then(file_stem_to_key));
-        let new_snippets: Vec<Arc<Snippet>> = crate::file_to_snippets(snippets_in_file, file_path)
-            .filter_map(Result::log_err)
-            .collect();
+        let new_snippets =
+            crate::file_to_snippets(snippets_in_file, file_path).filter_map(Result::log_err);
         let mut snippets = self.snippets.write();
         let existing = snippets.entry(kind).or_default();
         for snippet in new_snippets {
-            if !existing.iter().any(|s| s.body == snippet.body) {
+            // Only the first prefix is currently used to trigger a snippet completion, so
+            // dedup on it alone for now rather than the full prefix list.
+            if !existing
+                .iter()
+                .any(|s| s.prefix.first() == snippet.prefix.first())
+            {
                 existing.push(snippet);
             }
         }
@@ -111,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn test_register_snippets_same_name_different_bodies_both_appear() {
+    fn test_register_snippets_same_first_prefix_deduplicated() {
         let registry = SnippetRegistry::new();
         registry
             .register_snippets(
@@ -122,7 +126,57 @@ mod tests {
         registry
             .register_snippets(
                 Path::new("ruby.json"),
-                r#"{"For Loop": {"prefix": "for", "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+                r#"{"Different Name": {"prefix": "for", "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+            )
+            .unwrap();
+
+        let snippets = registry.get_snippets(&Some("ruby".to_owned()));
+        assert_eq!(
+            snippets.len(),
+            1,
+            "Snippets sharing the same first prefix should be deduplicated, keeping the first"
+        );
+        assert_eq!(snippets[0].name, "For Loop");
+    }
+
+    #[test]
+    fn test_register_snippets_extra_prefixes_ignored_for_dedup() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+            )
+            .unwrap();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"For Loop Alt": {"prefix": ["for", "floop"], "body": "${2:iter}.each do |${1:item}|\n$0\nend"}}"#,
+            )
+            .unwrap();
+
+        let snippets = registry.get_snippets(&Some("ruby".to_owned()));
+        assert_eq!(
+            snippets.len(),
+            1,
+            "Only the first prefix is currently used to trigger completions, \
+            so a matching first prefix is a duplicate regardless of any extra prefixes"
+        );
+    }
+
+    #[test]
+    fn test_register_snippets_different_first_prefixes_not_deduplicated() {
+        let registry = SnippetRegistry::new();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter} do\n$0\nend"}}"#,
+            )
+            .unwrap();
+        registry
+            .register_snippets(
+                Path::new("ruby.json"),
+                r#"{"While Loop": {"prefix": "while", "body": "while ${1:cond}\n$0\nend"}}"#,
             )
             .unwrap();
 
@@ -130,26 +184,7 @@ mod tests {
         assert_eq!(
             snippets.len(),
             2,
-            "Same name is not a global identifier — both snippets should appear"
-        );
-    }
-
-    #[test]
-    fn test_register_snippets_identical_body_deduplicated() {
-        let registry = SnippetRegistry::new();
-        let body = r#"{"For Loop": {"prefix": "for", "body": "for ${1:i} in ${2:iter}:"}}"#;
-        registry
-            .register_snippets(Path::new("python.json"), body)
-            .unwrap();
-        registry
-            .register_snippets(Path::new("python.json"), body)
-            .unwrap();
-
-        let snippets = registry.get_snippets(&Some("python".to_owned()));
-        assert_eq!(
-            snippets.len(),
-            1,
-            "Identical body from two extensions should be deduplicated"
+            "Snippets with different first prefixes should not be deduplicated"
         );
     }
 
