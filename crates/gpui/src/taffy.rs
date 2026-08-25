@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use collections::{FxHashMap, FxHashSet};
-use std::{fmt::Debug, ops::Range};
+use std::{fmt::Debug, mem, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
@@ -35,6 +35,57 @@ pub struct TaffyLayoutEngine {
     absolute_outer_origins: FxHashMap<LayoutId, Point<f32>>,
     computed_layouts: FxHashSet<LayoutId>,
     layout_bounds_scratch_space: Vec<LayoutId>,
+}
+
+/// A layout tree of its own, for laying an element out while another tree computes.
+///
+/// Taffy computes one tree at a time. The measure closure of
+/// [`Window::request_measured_layout`] runs inside that computation, so an
+/// element that wants to measure a child there cannot use the window's tree.
+/// This holds a second tree for the child, and [`IsolatedLayout::enter`] puts it
+/// in front of the window's tree for the duration of a closure.
+///
+/// With that, an element can size itself from content that the window's tree
+/// has not laid out yet. A panel that animates its height to the height of its
+/// content is the case this exists for.
+///
+/// The layout ids made inside `enter` belong to this tree and address a
+/// different node in any other tree. Every call that reads one has to run inside
+/// `enter`, which means the child's `prepaint` as well as its layout, because
+/// `prepaint` reads bounds. Two things break that rule: a child that calls
+/// `Window::defer_draw`, which prepaints after `enter` returns, and a child that
+/// keeps a layout id for a later frame.
+pub struct IsolatedLayout(Option<TaffyLayoutEngine>);
+
+impl Default for IsolatedLayout {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IsolatedLayout {
+    /// An empty tree.
+    pub fn new() -> Self {
+        Self(Some(TaffyLayoutEngine::new()))
+    }
+
+    /// Run `f` with this tree in front of the window's tree.
+    ///
+    /// The window gets its own tree back when `f` returns, so calls that
+    /// straddle the two stay separate.
+    pub fn enter<R>(&mut self, window: &mut Window, f: impl FnOnce(&mut Window) -> R) -> R {
+        let outer = mem::replace(&mut window.layout_engine, self.0.take());
+        let result = f(window);
+        self.0 = mem::replace(&mut window.layout_engine, outer);
+        result
+    }
+
+    /// Drop everything this tree holds, keeping it usable for another frame.
+    pub fn clear(&mut self) {
+        if let Some(engine) = self.0.as_mut() {
+            engine.clear();
+        }
+    }
 }
 
 const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by construction if possible";
@@ -772,5 +823,141 @@ mod tests {
             taffy_border.left,
             taffy::style::LengthPercentage::length(2.0)
         );
+    }
+}
+
+#[cfg(test)]
+mod isolated_layout_tests {
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
+    use crate::{
+        AnyElement, AnyWindowHandle, App, AppContext as _, AvailableSpace, Bounds, Context,
+        Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, IsolatedLayout,
+        LayoutId, ParentElement, Pixels, Render, Size, Style, Styled, TestAppContext, Window, div,
+        px, size,
+    };
+
+    /// An element that takes its size from content it measures during layout.
+    ///
+    /// The content is laid out in a tree of its own, because the measure closure
+    /// runs while the window's tree computes.
+    struct MeasureDuringLayout {
+        state: Rc<RefCell<(AnyElement, IsolatedLayout)>>,
+        bounds: Rc<Cell<Bounds<Pixels>>>,
+    }
+
+    impl Element for MeasureDuringLayout {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            _cx: &mut App,
+        ) -> (LayoutId, ()) {
+            let state = self.state.clone();
+            let layout_id = window.request_measured_layout(
+                Style::default(),
+                move |known: Size<Option<Pixels>>, available: Size<AvailableSpace>, window, cx| {
+                    let (content, layout) = &mut *state.borrow_mut();
+                    let width = known
+                        .width
+                        .map_or(available.width, AvailableSpace::Definite);
+                    layout.enter(window, |window| {
+                        content.layout_as_root(size(width, AvailableSpace::MaxContent), window, cx)
+                    })
+                },
+            );
+            (layout_id, ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            _request_layout: &mut (),
+            _window: &mut Window,
+            _cx: &mut App,
+        ) {
+            self.bounds.set(bounds);
+        }
+
+        fn paint(
+            &mut self,
+            _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&InspectorElementId>,
+            _bounds: Bounds<Pixels>,
+            _request_layout: &mut (),
+            _prepaint: &mut (),
+            _window: &mut Window,
+            _cx: &mut App,
+        ) {
+        }
+    }
+
+    impl IntoElement for MeasureDuringLayout {
+        type Element = Self;
+
+        fn into_element(self) -> Self {
+            self
+        }
+    }
+
+    struct MeasureTestView {
+        bounds: Rc<Cell<Bounds<Pixels>>>,
+    }
+
+    impl Render for MeasureTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            // Two children of 120 wrap into two rows of 30 at a width of 200, and
+            // sit on one row of 30 at max content.
+            let content = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .child(div().w(px(120.)).h(px(30.)))
+                .child(div().w(px(120.)).h(px(30.)))
+                .into_any_element();
+
+            div()
+                .w(px(200.))
+                .flex()
+                .flex_col()
+                .child(MeasureDuringLayout {
+                    state: Rc::new(RefCell::new((content, IsolatedLayout::new()))),
+                    bounds: self.bounds.clone(),
+                })
+        }
+    }
+
+    #[crate::test]
+    fn measures_content_at_the_width_layout_resolved(cx: &mut TestAppContext) {
+        let bounds = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window({
+            let bounds = bounds.clone();
+            move |_, _| MeasureTestView { bounds }
+        });
+
+        cx.update_window(AnyWindowHandle::from(window), |_, window, cx| {
+            window.draw(cx).clear(cx)
+        })
+        .unwrap();
+
+        // The width reaches the measure closure, so the content wraps the way it
+        // will on screen. Without it the content would measure at max content and
+        // the element would stop at 30.
+        assert_eq!(bounds.get().size.height, px(60.));
     }
 }
