@@ -177,7 +177,7 @@ impl ImeMirror {
         self.selection.set((selection_start, selection_end));
     }
 
-    /// Schedules a coalesced [`sync`] for the next task.
+    /// Schedules a coalesced sync of the mirror for the next task.
     ///
     /// Event handlers must not write to the mirror element mid-gesture:
     /// every write (value, selection) is observed by the IME, and a
@@ -187,6 +187,10 @@ impl ImeMirror {
     /// zero-delay timeout coalesces all sync requests from one gesture into
     /// a single write that lands after the browser has finished processing
     /// the gesture's events.
+    ///
+    /// `sync` is deliberately nested here so that scheduling is the only
+    /// way to reach it: a direct synchronous call would reintroduce the
+    /// mid-gesture writes this indirection exists to prevent.
     pub(crate) fn schedule_sync(window: &Rc<WebWindowInner>) {
         if window.ime_mirror.sync_scheduled.replace(true) {
             return;
@@ -202,94 +206,101 @@ impl ImeMirror {
             .browser_window
             .set_timeout_with_callback(closure.unchecked_ref())
             .ok();
-    }
-}
 
-/// Mirrors the text surrounding the selection into the hidden element.
-///
-/// With an empty element, Gboard deletes against its private buffer (the
-/// keypress reaches the page only as an `"Unidentified"` placeholder) and
-/// its suggestion strip has no context. Mirroring a window of real text
-/// makes those operations arrive as interpretable `beforeinput` events.
-///
-/// All offsets are UTF-16 code units on both sides: GPUI's input-handler
-/// protocol and JavaScript string indexing agree by construction.
-///
-/// Writing to the element is a last resort: any rewrite of its value or
-/// selection makes the browser restart the IME's input connection, which
-/// resets the keyboard's state — fatal in the middle of a keyboard's
-/// multi-step edit sequence (suggestion picks arrive as delete-then-insert
-/// pairs). After an imported edit, the element already *is* a faithful — if
-/// off-center — window of the document, so this first verifies the element
-/// against the document at its current alignment and skips every write
-/// while that holds. The window is rebuilt only when the app changed
-/// independently (caret moved by tap or keybinding, remote edit inside the
-/// window) or the selection drifted too close to the window's edge to give
-/// the IME context.
-fn sync(window: &WebWindowInner) {
-    if window.is_composing.get() {
-        return;
-    }
-    let mirror = &window.ime_mirror;
-    let selection = window
-        .with_input_handler(|handler| handler.selected_text_range(false))
-        .flatten();
-    let Some(selection) = selection else {
-        if !mirror.text.borrow().is_empty() {
-            mirror.element.set_value("");
-            mirror.text.borrow_mut().clear();
+        /// Mirrors the text surrounding the selection into the hidden
+        /// element.
+        ///
+        /// With an empty element, Gboard deletes against its private buffer
+        /// (the keypress reaches the page only as an `"Unidentified"`
+        /// placeholder) and its suggestion strip has no context. Mirroring
+        /// a window of real text makes those operations arrive as
+        /// interpretable `beforeinput` events.
+        ///
+        /// All offsets are UTF-16 code units on both sides: GPUI's
+        /// input-handler protocol and JavaScript string indexing agree by
+        /// construction.
+        ///
+        /// Writing to the element is a last resort: any rewrite of its
+        /// value or selection makes the browser restart the IME's input
+        /// connection, which resets the keyboard's state — fatal in the
+        /// middle of a keyboard's multi-step edit sequence (suggestion
+        /// picks arrive as delete-then-insert pairs). After an imported
+        /// edit, the element already *is* a faithful — if off-center —
+        /// window of the document, so this first verifies the element
+        /// against the document at its current alignment and skips every
+        /// write while that holds. The window is rebuilt only when the app
+        /// changed independently (caret moved by tap or keybinding, remote
+        /// edit inside the window) or the selection drifted too close to
+        /// the window's edge to give the IME context.
+        fn sync(window: &WebWindowInner) {
+            if window.is_composing.get() {
+                return;
+            }
+            let mirror = &window.ime_mirror;
+            let selection = window
+                .with_input_handler(|handler| handler.selected_text_range(false))
+                .flatten();
+            let Some(selection) = selection else {
+                if !mirror.text.borrow().is_empty() {
+                    mirror.element.set_value("");
+                    mirror.text.borrow_mut().clear();
+                }
+                mirror.selection.set((0, 0));
+                return;
+            };
+
+            if is_consistent(window, &selection.range, MIN_EDGE_CHARS) {
+                return;
+            }
+
+            // A caret move within the existing window (a tap into nearby
+            // text) must update only the element's selection, like a native
+            // tap in a plain textarea. Rewriting the value restarts the IME
+            // connection, which desynchronizes the keyboard's word model
+            // right when it is about to act on the tapped word.
+            if move_selection_within_window(window, &selection.range, MIN_EDGE_CHARS) {
+                return;
+            }
+
+            let window_range = selection.range.start.saturating_sub(CONTEXT_CHARS)
+                ..selection.range.end + CONTEXT_CHARS;
+            let mut adjusted = None;
+            let text = window
+                .with_input_handler(|handler| {
+                    handler.text_for_range(window_range.clone(), &mut adjusted)
+                })
+                .flatten()
+                .unwrap_or_default();
+            let window_start = adjusted.unwrap_or(window_range).start;
+
+            if *mirror.text.borrow() != text || mirror.element.value() != text {
+                mirror.element.set_value(&text);
+                *mirror.text.borrow_mut() = text;
+            }
+
+            mirror.window_hint.set(window_start);
+            let selection_start = selection.range.start.saturating_sub(window_start) as u32;
+            let selection_end = selection.range.end.saturating_sub(window_start) as u32;
+            if mirror.element.selection_start().ok().flatten() != Some(selection_start)
+                || mirror.element.selection_end().ok().flatten() != Some(selection_end)
+            {
+                mirror
+                    .element
+                    .set_selection_range(selection_start, selection_end)
+                    .ok();
+            }
+            // Read the selection back rather than trusting the computed
+            // values: the browser clamps out-of-bounds positions, and a
+            // stored selection the element doesn't actually have would
+            // corrupt the next diff.
+            let actual_start = mirror.element.selection_start().ok().flatten();
+            let actual_end = mirror.element.selection_end().ok().flatten();
+            mirror.selection.set((
+                actual_start.unwrap_or(selection_start),
+                actual_end.unwrap_or(selection_end),
+            ));
         }
-        mirror.selection.set((0, 0));
-        return;
-    };
-
-    if is_consistent(window, &selection.range, MIN_EDGE_CHARS) {
-        return;
     }
-
-    // A caret move within the existing window (a tap into nearby text)
-    // must update only the element's selection, like a native tap in a
-    // plain textarea. Rewriting the value restarts the IME connection,
-    // which desynchronizes the keyboard's word model right when it is
-    // about to act on the tapped word.
-    if move_selection_within_window(window, &selection.range, MIN_EDGE_CHARS) {
-        return;
-    }
-
-    let window_range =
-        selection.range.start.saturating_sub(CONTEXT_CHARS)..selection.range.end + CONTEXT_CHARS;
-    let mut adjusted = None;
-    let text = window
-        .with_input_handler(|handler| handler.text_for_range(window_range.clone(), &mut adjusted))
-        .flatten()
-        .unwrap_or_default();
-    let window_start = adjusted.unwrap_or(window_range).start;
-
-    if *mirror.text.borrow() != text || mirror.element.value() != text {
-        mirror.element.set_value(&text);
-        *mirror.text.borrow_mut() = text;
-    }
-
-    mirror.window_hint.set(window_start);
-    let selection_start = selection.range.start.saturating_sub(window_start) as u32;
-    let selection_end = selection.range.end.saturating_sub(window_start) as u32;
-    if mirror.element.selection_start().ok().flatten() != Some(selection_start)
-        || mirror.element.selection_end().ok().flatten() != Some(selection_end)
-    {
-        mirror
-            .element
-            .set_selection_range(selection_start, selection_end)
-            .ok();
-    }
-    // Read the selection back rather than trusting the computed values:
-    // the browser clamps out-of-bounds positions, and a stored selection
-    // the element doesn't actually have would corrupt the next diff.
-    let actual_start = mirror.element.selection_start().ok().flatten();
-    let actual_end = mirror.element.selection_end().ok().flatten();
-    mirror.selection.set((
-        actual_start.unwrap_or(selection_start),
-        actual_end.unwrap_or(selection_end),
-    ));
 }
 
 /// Attempts to represent a changed app selection as a pure element
