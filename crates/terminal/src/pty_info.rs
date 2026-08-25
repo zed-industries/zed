@@ -1,5 +1,7 @@
 use gpui::{Context, Task};
 use parking_lot::{MappedRwLockReadGuard, Mutex, RwLock, RwLockReadGuard};
+#[cfg(unix)]
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::{path::PathBuf, sync::Arc};
 
 #[cfg(target_os = "windows")]
@@ -9,20 +11,19 @@ use sysinfo::{Pid, Process, ProcessRefreshKind, ProcessesToUpdate, System, Updat
 
 use crate::{Event, Terminal};
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct ProcessIdGetter {
+    /// Zed's own dup of the PTY master: the event loop closes its fd as soon
+    /// as the child exits, after which the raw number can be recycled for a
+    /// newer terminal's PTY (#62095, #62286).
+    #[cfg(unix)]
+    handle: Option<Arc<OwnedFd>>,
+    #[cfg(not(unix))]
     handle: i32,
     fallback_pid: u32,
 }
 
 impl ProcessIdGetter {
-    pub(crate) fn new(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
-        ProcessIdGetter {
-            handle,
-            fallback_pid,
-        }
-    }
-
     pub fn fallback_pid(&self) -> Pid {
         Pid::from_u32(self.fallback_pid)
     }
@@ -30,13 +31,16 @@ impl ProcessIdGetter {
 
 #[cfg(unix)]
 impl ProcessIdGetter {
+    pub(crate) fn new(handle: Option<Arc<OwnedFd>>, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle,
+            fallback_pid,
+        }
+    }
+
     fn pid(&self) -> Option<Pid> {
-        // Negative pid means error.
-        // Zero pid means no foreground process group is set on the PTY yet.
-        // Avoid killing the current process by returning a zero pid.
-        let pid = unsafe { libc::tcgetpgrp(self.handle) };
-        if pid > 0 {
-            return Some(Pid::from_u32(pid as u32));
+        if let Some(foreground) = self.foreground_process_group_id() {
+            return Some(Pid::from_u32(foreground as u32));
         }
 
         if self.fallback_pid > 0 {
@@ -45,10 +49,37 @@ impl ProcessIdGetter {
 
         None
     }
+
+    /// Rebuilds the pre-#62095 hazard deterministically: a getter whose fd
+    /// number was recycled behaved exactly like one holding another live
+    /// terminal's PTY handle next to its own long-dead fallback pid.
+    #[cfg(test)]
+    pub(crate) fn with_fallback_pid(&self, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle: self.handle.clone(),
+            fallback_pid,
+        }
+    }
+
+    fn foreground_process_group_id(&self) -> Option<libc::pid_t> {
+        let handle = self.handle.as_ref()?;
+        // Negative means error; zero means no foreground group is set or the
+        // session is dead — filtered so callers never killpg(0), i.e. Zed's
+        // own group.
+        let pid = unsafe { libc::tcgetpgrp(handle.as_raw_fd()) };
+        (pid > 0).then_some(pid)
+    }
 }
 
 #[cfg(windows)]
 impl ProcessIdGetter {
+    pub(crate) fn new(handle: i32, fallback_pid: u32) -> ProcessIdGetter {
+        ProcessIdGetter {
+            handle,
+            fallback_pid,
+        }
+    }
+
     fn pid(&self) -> Option<Pid> {
         let pid = unsafe { GetProcessId(HANDLE(self.handle as _)) };
         // the GetProcessId may fail and returns zero, which will lead to a stack overflow issue
@@ -70,6 +101,68 @@ pub(crate) struct ProcessInfo {
     pub(crate) name: String,
     pub(crate) cwd: PathBuf,
     pub(crate) argv: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TerminalProcessIds {
+    #[cfg(unix)]
+    child: Option<libc::pid_t>,
+    #[cfg(unix)]
+    foreground: Option<libc::pid_t>,
+}
+
+#[cfg(unix)]
+impl TerminalProcessIds {
+    fn process_group_ids(&self) -> impl Iterator<Item = libc::pid_t> {
+        [self.child, self.foreground].into_iter().flatten()
+    }
+
+    /// `killpg` failing with `ESRCH` (the group already exited) is expected,
+    /// so failures only surface as an unsuccessful signal.
+    fn signal_process_groups(&self, signal: i32) -> bool {
+        let mut signalled = false;
+        for process_group_id in self.process_group_ids() {
+            signalled |= unsafe { libc::killpg(process_group_id, signal) } == 0;
+        }
+        signalled
+    }
+
+    pub(crate) fn terminate(&self) -> bool {
+        self.signal_process_groups(libc::SIGTERM)
+    }
+
+    pub(crate) fn kill(&self) -> bool {
+        self.signal_process_groups(libc::SIGKILL)
+    }
+}
+
+#[cfg(not(unix))]
+impl TerminalProcessIds {
+    pub(crate) fn terminate(&self) -> bool {
+        false
+    }
+
+    // Windows has no process groups to escalate on; killing the child relies
+    // on [`PtyProcessInfo::kill_child_process`] instead.
+    pub(crate) fn kill(&self) -> bool {
+        false
+    }
+}
+
+/// The ids passed here may be long dead with their pid recycled by an
+/// unrelated process, so an unvalidated `killpg` can kill an innocent process
+/// group (#62095, #62286). The spawned child called `setsid`, so its pid
+/// doubles as the session id every candidate group must still belong to. This
+/// errs safe: a group whose leader exited is skipped even if members live on.
+#[cfg(unix)]
+fn process_group_in_session(
+    process_group_id: libc::pid_t,
+    session_id: libc::pid_t,
+) -> Option<libc::pid_t> {
+    // killpg(0) signals Zed's own process group, so never let a non-positive
+    // id through.
+    (process_group_id > 0 && unsafe { libc::getsid(process_group_id) } == session_id)
+        .then_some(process_group_id)
 }
 
 /// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
@@ -148,10 +241,18 @@ impl PtyProcessInfo {
 
     #[cfg(unix)]
     pub(crate) fn kill_current_process(&self) -> bool {
-        let Some(pid) = self.pid_getter.pid() else {
+        // The foreground group read through our own PTY dup can only name this
+        // terminal's session (guarding it would even skip jobs whose group
+        // leader already exited); only the fallback pid can be stale.
+        let child_pid = self.pid_getter.fallback_pid().as_u32() as libc::pid_t;
+        let process_group_id = self
+            .pid_getter
+            .foreground_process_group_id()
+            .or_else(|| process_group_in_session(child_pid, child_pid));
+        let Some(process_group_id) = process_group_id else {
             return false;
         };
-        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGKILL) == 0 }
+        unsafe { libc::killpg(process_group_id, libc::SIGKILL) == 0 }
     }
 
     #[cfg(not(unix))]
@@ -160,18 +261,36 @@ impl PtyProcessInfo {
     }
 
     pub(crate) fn kill_child_process(&self) -> bool {
+        #[cfg(unix)]
+        {
+            let child_pid = self.pid_getter.fallback_pid().as_u32() as libc::pid_t;
+            if process_group_in_session(child_pid, child_pid).is_none() {
+                return false;
+            }
+        }
         self.get_child().is_some_and(|process| process.kill())
     }
 
+    /// Under job control the foreground job runs in a separate process group
+    /// that `killpg` on the shell's group never reaches, so both groups are
+    /// captured (#47412). A terminal whose child already exited captures
+    /// nothing, keeping its cleanup signal-free.
     #[cfg(unix)]
-    pub(crate) fn terminate_child_process(&self) -> bool {
-        let pid = self.pid_getter.fallback_pid();
-        unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
+    pub(crate) fn capture_process_ids(&self) -> TerminalProcessIds {
+        let child_pid = self.pid_getter.fallback_pid().as_u32() as libc::pid_t;
+        TerminalProcessIds {
+            child: process_group_in_session(child_pid, child_pid),
+            foreground: self
+                .pid_getter
+                .foreground_process_group_id()
+                .filter(|foreground| *foreground != child_pid)
+                .and_then(|foreground| process_group_in_session(foreground, child_pid)),
+        }
     }
 
     #[cfg(not(unix))]
-    pub(crate) fn terminate_child_process(&self) -> bool {
-        false
+    pub(crate) fn capture_process_ids(&self) -> TerminalProcessIds {
+        TerminalProcessIds {}
     }
 
     fn load(&self) -> Option<ProcessInfo> {
@@ -259,7 +378,7 @@ mod tests {
         reason = "the test needs real short-lived child processes and may block"
     )]
     fn process_map_stays_bounded() {
-        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(-1, std::process::id()));
+        let mut info = PtyProcessInfo::new(ProcessIdGetter::new(None, std::process::id()));
         assert!(
             info.get_child().is_some(),
             "the spawned child must be inspectable for kill_child_process \
@@ -277,7 +396,7 @@ mod tests {
                 .arg("30")
                 .spawn()
                 .expect("failed to spawn child process");
-            info.pid_getter = ProcessIdGetter::new(-1, child.id());
+            info.pid_getter = ProcessIdGetter::new(None, child.id());
             assert!(info.load_for_test().is_some());
             child.kill().expect("failed to kill child process");
             child.wait().expect("failed to wait for child process");
