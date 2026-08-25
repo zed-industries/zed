@@ -1435,20 +1435,20 @@ impl AgentPanel {
                     // backend; otherwise fall back to the serialized
                     // selection, then the global last-used agent.
                     //
-                    // Only a restored thread with a session keeps an agent that
-                    // is no longer installed, so that it stays resumable if the
-                    // user reinstalls it. A draft has no session to resume, so
-                    // the binding protects nothing and would only make every
-                    // reopen of this workspace fail to launch the agent — the
-                    // panel opens a draft on its own, so that would be most
-                    // workspaces after an uninstall. A *preference* naming a
-                    // removed agent is dropped for the same reason: the global
-                    // one outlives the workspace it was set in, so every
-                    // project opened after an uninstall would otherwise keep
-                    // selecting an agent that can no longer be launched.
+                    // Only a restored thread with a session keeps a locally
+                    // uninstalled agent, so that it stays resumable if the user
+                    // reinstalls it. A draft has no session to resume, so the
+                    // binding protects nothing and would only make every reopen
+                    // of this workspace fail to launch the agent — the panel
+                    // opens a draft on its own, so that would be most workspaces
+                    // after an uninstall. A *preference* naming a removed agent
+                    // is dropped for the same reason: the global one outlives
+                    // the workspace it was set in, so every project opened
+                    // after an uninstall would otherwise keep selecting an
+                    // agent that can no longer be launched.
                     let restored_thread_agent = thread_to_restore.as_ref().and_then(|(info, _)| {
                         let agent = clamp(info.agent_type.clone());
-                        (info.session_id.is_some() || panel.is_agent_available(&agent, cx))
+                        (info.session_id.is_some() || panel.should_restore_agent(&agent, cx))
                             .then_some(agent)
                     });
                     let initial_agent = restored_thread_agent.or_else(|| {
@@ -1457,7 +1457,7 @@ impl AgentPanel {
                             .and_then(|p| p.selected_agent.clone())
                             .map(clamp)
                             .or(global_fallback)
-                            .filter(|agent| panel.is_agent_available(agent, cx))
+                            .filter(|agent| panel.should_restore_agent(agent, cx))
                     });
                     if let Some(agent) = initial_agent {
                         panel.selected_agent = agent;
@@ -1675,36 +1675,25 @@ impl AgentPanel {
         }
     }
 
-    /// Whether `agent` still exists as far as this panel is concerned.
-    ///
-    /// Both the `agent_servers` setting and the project's [`AgentServerStore`]
-    /// are consulted, because neither is conclusive on its own: registry-backed
-    /// agents only reach the store once the agent registry has finished
-    /// loading, and remote projects register agents that this machine's
-    /// settings don't describe. An agent the user uninstalled is absent from
-    /// both, so only treating it as gone when both agree keeps a slow registry
-    /// load from looking like an uninstall.
-    fn is_agent_available(&self, agent: &Agent, cx: &App) -> bool {
+    /// Whether a persisted selection should be restored.
+    fn should_restore_agent(&self, agent: &Agent, cx: &App) -> bool {
         let Agent::Custom { id } = agent else {
             return true;
         };
 
-        AllAgentServersSettings::get_global(cx).contains_key(id.0.as_ref())
-            || self
-                .project
-                .read(cx)
-                .agent_server_store()
-                .read(cx)
-                .external_agents()
-                .any(|registered| registered == id)
+        // This fix only detects local uninstalls. The settings on this machine
+        // do not describe remote agents, and a remote project's server store is
+        // empty until its initial agent list arrives, so absence from either is
+        // not conclusive for a remote project.
+        self.project.read(cx).is_via_remote_server()
+            || AllAgentServersSettings::get_global(cx).contains_key(id.0.as_ref())
     }
 
-    /// The panel's selection, or the Zed Agent when the selected agent has
-    /// been uninstalled. Used where the selection is carried over to a panel
-    /// that has yet to pick an agent of its own.
-    fn available_agent_selection(&self, cx: &App) -> Agent {
+    /// The panel's selection, or the Zed Agent when the selected local agent
+    /// has been uninstalled.
+    fn restorable_agent_selection(&self, cx: &App) -> Agent {
         let agent = self.selected_agent(cx);
-        if self.is_agent_available(&agent, cx) {
+        if self.should_restore_agent(&agent, cx) {
             agent
         } else {
             Agent::NativeAgent
@@ -1944,10 +1933,10 @@ impl AgentPanel {
             // would only fail to open the draft; the typed text is restored
             // either way.
             let agent = Agent::from(metadata.agent_id.clone());
-            if self.is_agent_available(&agent, cx) {
+            if self.should_restore_agent(&agent, cx) {
                 agent
             } else {
-                self.available_agent_selection(cx)
+                self.restorable_agent_selection(cx)
             }
         };
         let initial_content = crate::draft_prompt_store::read(thread_id, cx).map(|blocks| {
@@ -5302,7 +5291,7 @@ impl AgentPanel {
         let source_panel = source_workspace.read(cx).panel::<AgentPanel>(cx)?;
         let source_panel = source_panel.read(cx);
         Some(SourcePanelInitialization {
-            agent: source_panel.available_agent_selection(cx),
+            agent: source_panel.restorable_agent_selection(cx),
             initial_content: source_panel.active_initial_content(cx),
         })
     }
