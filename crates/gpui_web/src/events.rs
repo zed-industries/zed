@@ -273,6 +273,9 @@ impl WebWindowInner {
     /// keeping hardware key events flowing to the hidden input; the
     /// blur/focus cycle is what makes the browser re-evaluate keyboard
     /// visibility, since `focus()` on an already-focused element is a no-op.
+    ///
+    /// We don't use `navigator.virtualKeyboard` here because it's
+    /// Chromium-only.
     fn sync_virtual_keyboard(&self) {
         let editable = self.state.borrow().input_handler.is_some();
         let was_editable = !self.ime_mirror.read_only();
