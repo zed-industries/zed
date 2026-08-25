@@ -887,13 +887,8 @@ impl Vim {
 
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line
-                let buffer_point = Point::new(
-                    DisplayPoint::new(selection.start.row(), 0)
-                        .to_point(&display_map)
-                        .row,
-                    0,
-                )
-                .to_point(buffer_snapshot);
+                let buffer_point = movement::line_beginning(&display_map, selection.start, false)
+                    .to_point(&display_map);
                 let current_end_row = movement::line_end(&display_map, selection.end, false)
                     .to_point(&display_map)
                     .row;
