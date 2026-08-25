@@ -284,6 +284,7 @@ struct EntryDetails {
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
     diagnostic_mark: Option<DiagnosticMark>,
+    reserves_chevron_slot: bool,
     diagnostic_count: Option<DiagnosticCount>,
     git_status: GitSummary,
     is_private: bool,
@@ -291,11 +292,11 @@ struct EntryDetails {
     canonical_path: Option<Arc<Path>>,
 }
 
-/// Which glyph on a row carries the diagnostic mark, and what shape it takes.
+/// The glyph a row's diagnostic mark decorates, and the shape of that mark.
 ///
-/// A row only ever has one indicator slot, so the mark decorates whichever glyph
-/// already occupies it rather than claiming a slot of its own. `Standalone` is the
-/// fallback for rows that draw no glyph at all.
+/// A row has one indicator slot, so the mark decorates whichever glyph already fills
+/// it rather than claiming a slot of its own. `Standalone` covers rows that draw no
+/// glyph at all.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum DiagnosticMark {
     OnIcon(IconDecorationKind),
@@ -5720,6 +5721,7 @@ impl ProjectPanel {
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
         let diagnostic_mark = details.diagnostic_mark;
+        let reserves_chevron_slot = details.reserves_chevron_slot;
         let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
 
@@ -6308,6 +6310,17 @@ impl ProjectPanel {
                                 this.child(h_flex().gap_0p5().child(chevron).child(icon_slot))
                             }
                             (Some(chevron), None) => this.child(h_flex().child(chevron)),
+                            (None, Some(icon_slot)) if reserves_chevron_slot => this.child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .child(
+                                        h_flex()
+                                            .size(IconSize::default().rems())
+                                            .invisible()
+                                            .flex_none(),
+                                    )
+                                    .child(icon_slot),
+                            ),
                             (None, Some(icon_slot)) => this.child(icon_slot),
                             (None, None) => this,
                         }
@@ -6695,6 +6708,11 @@ impl ProjectPanel {
                 .map(|(name, _)| DiagnosticMark::Standalone(name))
         };
 
+        // Only `both` makes a directory two glyphs wide, leaving file icons under the
+        // folder chevrons unless files hold that width open too.
+        let reserves_chevron_slot =
+            chevron.is_none() && folder_indicator.shows_chevron() && folder_indicator.shows_icon();
+
         let filename_text_color =
             entry_git_aware_label_color(git_status, entry.is_ignored, is_marked);
 
@@ -6721,6 +6739,7 @@ impl ProjectPanel {
             filename_text_color,
             diagnostic_severity,
             diagnostic_mark,
+            reserves_chevron_slot,
             diagnostic_count,
             git_status,
             is_private: entry.is_private,

@@ -10679,8 +10679,6 @@ async fn test_folder_indicator_selection(cx: &mut gpui::TestAppContext) {
     );
 }
 
-/// A row has a single indicator slot, so a diagnostic mark decorates whichever glyph
-/// already fills it. Only a row with no glyph at all draws a standalone mark.
 #[gpui::test]
 async fn test_diagnostic_mark_decorates_the_row_glyph(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -10792,6 +10790,72 @@ async fn test_diagnostic_mark_decorates_the_row_glyph(cx: &mut gpui::TestAppCont
         Some(DiagnosticMark::OnChevron(IconDecorationKind::Dot)),
         "`file_icons` must not disturb how a directory is marked"
     );
+}
+
+#[gpui::test]
+async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": { "nested.rs": "" },
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window .read_with(cx, |mw, _| mw.workspace().clone()) .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    for (indicator, expected) in [
+        (FolderIndicator::Icon, false),
+        (FolderIndicator::Chevron, false),
+        (FolderIndicator::Both, true),
+    ] {
+        set_folder_indicator(indicator, cx);
+        cx.run_until_parked();
+
+        let slots = visible_entry_chevron_slots(&panel, 0..50, cx);
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(name, _)| name == "file.rs")
+                .map(|(_, reserved)| *reserved),
+            Some(expected),
+            "{indicator:?}: a file reserves the chevron's width only when directories draw one \
+             alongside their icon"
+        );
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(name, _)| name == "dir")
+                .map(|(_, reserved)| *reserved),
+            Some(false),
+            "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
+        );
+    }
+}
+
+fn visible_entry_chevron_slots(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, bool)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.reserves_chevron_slot));
+        });
+    });
+
+    result
 }
 
 fn visible_entry_diagnostic_marks(

@@ -41,7 +41,7 @@ use std::{
     u32,
 };
 
-use outline_panel_settings::{DockSide, OutlinePanelSettings, ShowIndentGuides};
+use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -2372,7 +2372,10 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    icon.unwrap_or_else(empty_icon),
+                    reserve_chevron_slot(
+                        settings.folder_indicator,
+                        icon.unwrap_or_else(empty_icon),
+                    ),
                 )
             }
             FsEntry::Directory(directory) => {
@@ -2436,7 +2439,10 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    icon.unwrap_or_else(empty_icon),
+                    reserve_chevron_slot(
+                        settings.folder_indicator,
+                        icon.unwrap_or_else(empty_icon),
+                    ),
                 )
             }
         };
@@ -5315,6 +5321,24 @@ fn empty_icon() -> AnyElement {
         .invisible()
         .flex_none()
         .into_any_element()
+}
+
+/// Reserves the width of a directory's chevron ahead of `icon`.
+///
+/// In `FolderIndicator::Both` a directory draws a chevron and an icon, so file rows
+/// hold the chevron's width open to line up with the folder icons rather than the
+/// chevrons.
+fn reserve_chevron_slot(indicator: FolderIndicator, icon: AnyElement) -> AnyElement {
+    if indicator.shows_chevron() && indicator.shows_icon() {
+        h_flex()
+            .flex_none()
+            .gap_0p5()
+            .child(empty_icon())
+            .child(icon)
+            .into_any_element()
+    } else {
+        icon
+    }
 }
 
 #[derive(Debug, Default)]
