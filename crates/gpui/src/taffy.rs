@@ -96,14 +96,12 @@ impl TaffyLayoutEngine {
         + 'static,
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size, scale_factor);
+        let measure = Box::new(measure) as Box<MeasureFn>;
+        #[cfg(feature = "stacker")]
+        let measure = StackSafe::new(measure);
 
         self.taffy
-            .new_leaf_with_context(
-                taffy_style,
-                NodeContext {
-                    measure: (Box::new(measure) as Box<MeasureFn>).into(),
-                },
-            )
+            .new_leaf_with_context(taffy_style, NodeContext { measure })
             .expect(EXPECT_MESSAGE)
             .into()
     }
