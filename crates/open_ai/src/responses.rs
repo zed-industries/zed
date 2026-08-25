@@ -743,7 +743,15 @@ pub async fn compact_response(
         ))
         .map_err(|error| RequestError::Other(error.into()))?;
 
-    let mut response = client.send(request).await?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_owned(),
+            host,
+            error,
+        })?;
     let mut body = String::new();
     response
         .body_mut()
@@ -758,7 +766,7 @@ pub async fn compact_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -784,7 +792,15 @@ pub async fn stream_response(
         ))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
+    let mut response = client
+        .send(request)
+        .await
+        .map_err(|error| RequestError::HttpSend {
+            provider: provider_name.to_owned(),
+            host,
+            error,
+        })?;
     if response.status().is_success() {
         if is_streaming {
             let reader = BufReader::new(response.into_body());
@@ -948,7 +964,7 @@ pub async fn stream_response(
             provider: provider_name.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -1109,6 +1125,70 @@ mod tests {
             matches!(error, RequestError::Other(_)),
             "expected malformed JSON to produce a request error, got {error:?}"
         );
+    }
+
+    #[test]
+    fn stream_response_reports_http_send_errors() {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = block_on(stream_response(
+            http_client.as_ref(),
+            "ChatGPT Subscription",
+            "https://chatgpt.com/backend-api/codex",
+            "secret",
+            response_test_request(),
+            &CustomHeaders::default(),
+        ));
+        let error = match error {
+            Ok(_) => panic!("expected request to fail"),
+            Err(error) => language_model_core::LanguageModelCompletionError::from(error),
+        };
+
+        match error {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
+                assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
+                assert_eq!(error.to_string(), "DNS lookup failed");
+            }
+            error => panic!("expected an HTTP send error, got {error:?}"),
+        }
+    }
+
+    #[test]
+    fn compact_response_reports_http_send_errors() {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = block_on(compact_response(
+            http_client.as_ref(),
+            "ChatGPT Subscription",
+            "https://chatgpt.com/backend-api/codex",
+            "secret",
+            compact_test_request(),
+            &CustomHeaders::default(),
+        ));
+        let error = match error {
+            Ok(_) => panic!("expected request to fail"),
+            Err(error) => language_model_core::LanguageModelCompletionError::from(error),
+        };
+
+        match error {
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                provider,
+                host,
+                error,
+            } => {
+                assert_eq!(provider.0.as_ref(), "ChatGPT Subscription");
+                assert_eq!(host, "chatgpt.com");
+                assert_eq!(error.to_string(), "DNS lookup failed");
+            }
+            error => panic!("expected an HTTP send error, got {error:?}"),
+        }
     }
 
     #[test]
@@ -1306,6 +1386,27 @@ mod tests {
             ),
             prompt_cache_key: Some("thread-123".to_string()),
             service_tier: Some(ServiceTier::Priority),
+        }
+    }
+
+    fn response_test_request() -> Request {
+        Request {
+            model: "gpt-5.4".to_string(),
+            instructions: None,
+            input: ResponseInput::new(Vec::new(), Vec::new()),
+            include: Vec::new(),
+            stream: true,
+            temperature: None,
+            top_p: None,
+            max_output_tokens: None,
+            parallel_tool_calls: None,
+            tool_choice: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning: None,
+            store: None,
+            service_tier: None,
+            context_management: None,
         }
     }
 }
