@@ -128,7 +128,6 @@ pub enum ProviderErrorCategory {
     InvalidEncryptedContent,
     Authentication,
     Permission,
-    /// The provider rejected request or response content under its usage policy.
     ContentPolicy,
     EndpointNotFound,
     PaymentRequired,
