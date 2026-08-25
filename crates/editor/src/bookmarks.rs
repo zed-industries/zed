@@ -76,7 +76,7 @@ impl Editor {
         let multi_buffer_snapshot = snapshot.buffer_snapshot();
 
         let mut selections = self.selections.all::<Point>(&snapshot.display_snapshot);
-        selections.sort_by_key(|s| s.head());
+        selections.sort_unstable_by_key(|s| s.head());
         selections.dedup_by_key(|s| s.head().row);
 
         let mut exist_targets: Vec<BookmarkTarget> = vec![];
