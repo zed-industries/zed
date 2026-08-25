@@ -1347,11 +1347,14 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
 }
 
 impl Window {
-    pub(crate) fn new(
-        handle: AnyWindowHandle,
+    pub(crate) fn new<Root: 'static>(
+        handle: WindowHandle<Root>,
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<Self> {
+        #[cfg(feature = "profiler")]
+        let root_entity_type_name = std::any::type_name::<Root>();
+        let handle = handle.into();
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -1873,7 +1876,10 @@ impl Window {
             needs_present,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
-            window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
+            window_profiler: profiler::WindowProfiler::new(
+                handle.window_id(),
+                root_entity_type_name,
+            )?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -6949,6 +6955,21 @@ mod tests {
         // subsequent draws of both windows work against a fresh arena.
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
+    }
+
+    #[cfg(feature = "profiler")]
+    #[gpui::test]
+    fn test_frame_duration_snapshot_identifies_root_entity_type(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+
+        window
+            .update(cx, |_, window, _| {
+                assert_eq!(
+                    window.frame_duration_snapshot().root_entity_type_name,
+                    std::any::type_name::<EmptyView>()
+                );
+            })
+            .expect("window should remain open");
     }
 
     /// Platforms that stop requesting frames for idle windows (currently web)

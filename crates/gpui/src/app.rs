@@ -1264,7 +1264,7 @@ impl App {
         self.update(|cx| {
             let id = cx.windows.insert(None);
             let handle = WindowHandle::new(id);
-            match Window::new(handle.into(), options, cx) {
+            match Window::new(handle, options, cx) {
                 Ok(mut window) => {
                     cx.window_update_stack.push(id);
                     let root_view = build_root_view(&mut window, cx);

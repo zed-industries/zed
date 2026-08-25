@@ -474,13 +474,34 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         }
 
         cx.spawn_in(window, async move |_this, cx| {
-            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+            const INPUT_LATENCY_TELEMETRY_INTERVAL: std::time::Duration =
+                std::time::Duration::from_mins(5);
             loop {
-                cx.background_executor().timer(TELEMETRY_INTERVAL).await;
+                cx.background_executor()
+                    .timer(INPUT_LATENCY_TELEMETRY_INTERVAL)
+                    .await;
                 if cx
                     .update(|window, cx| {
-                        input_latency_ui::report_input_latency_telemetry(window, cx);
-                        input_latency_ui::report_frame_duration_telemetry(window, cx);
+                        input_latency_ui::report_input_latency_telemetry(window, cx)
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        cx.spawn_in(window, async move |_this, cx| {
+            const FRAME_DURATION_TELEMETRY_INTERVAL: std::time::Duration =
+                std::time::Duration::from_mins(30);
+            loop {
+                cx.background_executor()
+                    .timer(FRAME_DURATION_TELEMETRY_INTERVAL)
+                    .await;
+                if cx
+                    .update(|window, cx| {
+                        input_latency_ui::report_frame_duration_telemetry(window, cx)
                     })
                     .is_err()
                 {

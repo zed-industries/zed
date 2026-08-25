@@ -852,6 +852,11 @@ pub enum FrameEvent {
 #[cfg(feature = "profiler")]
 #[derive(Clone)]
 pub struct FrameDurationSnapshot {
+    /// The concrete type name of the window's initial root entity.
+    pub root_entity_type_name: &'static str,
+    /// Histogram of durations from the first invalidation of a frame until its
+    /// presentation completed, in nanoseconds.
+    pub dirty_to_present_histogram: Histogram<u64>,
     /// Histogram of `Window::draw` durations, in nanoseconds.
     pub draw_duration_histogram: Histogram<u64>,
     /// Histogram of intervals between consecutively presented frames while the
@@ -892,8 +897,10 @@ enum WindowActivity {
 #[cfg(feature = "profiler")]
 pub struct WindowProfiler {
     window_id: WindowId,
+    root_entity_type_name: &'static str,
     active_activities: SmallVec<[WindowActivity; 4]>,
     active_actions: SmallVec<[(&'static str, Instant); 2]>,
+    dirty_to_present_histogram: Histogram<u64>,
     draw_duration_histogram: Histogram<u64>,
     present_interval_histogram: Histogram<u64>,
     first_input_at: Option<Instant>,
@@ -909,11 +916,15 @@ pub struct WindowProfiler {
 #[cfg(feature = "profiler")]
 impl WindowProfiler {
     /// Creates a profiler for a window.
-    pub fn new(window_id: WindowId) -> anyhow::Result<Self> {
+    pub fn new(window_id: WindowId, root_entity_type_name: &'static str) -> anyhow::Result<Self> {
         let profiler = Self {
             window_id,
+            root_entity_type_name,
             active_activities: SmallVec::new(),
             active_actions: SmallVec::new(),
+            dirty_to_present_histogram: Histogram::new(3).map_err(|error| {
+                anyhow::anyhow!("Failed to create dirty-to-present histogram: {error}")
+            })?,
             draw_duration_histogram: Histogram::new(3).map_err(|error| {
                 anyhow::anyhow!("Failed to create draw duration histogram: {error}")
             })?,
@@ -1070,6 +1081,8 @@ impl WindowProfiler {
     /// Returns a snapshot of the current frame-duration histograms.
     pub fn frame_duration_snapshot(&self) -> FrameDurationSnapshot {
         FrameDurationSnapshot {
+            root_entity_type_name: self.root_entity_type_name,
+            dirty_to_present_histogram: self.dirty_to_present_histogram.clone(),
             draw_duration_histogram: self.draw_duration_histogram.clone(),
             present_interval_histogram: self.present_interval_histogram.clone(),
         }
@@ -1109,8 +1122,16 @@ impl WindowProfiler {
         };
         journal::record_present(present_timing, frame);
 
-        if frame.is_none() {
+        let Some(frame) = frame else {
             return;
+        };
+
+        if let Some(dirty_at) = frame.dirty_at
+            && let Err(error) = self
+                .dirty_to_present_histogram
+                .record(present_end.duration_since(dirty_at).as_nanos() as u64)
+        {
+            log::error!("failed to record dirty-to-present frame timing: {error}");
         }
 
         if let Some(animation_interval) = animation_interval {
@@ -1230,8 +1251,7 @@ mod tests {
     fn records_draw_events_only_while_tracing() {
         let _trace_test_guard = TraceTestGuard::new();
         let window_id = WindowId::from(0xD0A0);
-        let mut window_profiler =
-            WindowProfiler::new(window_id).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(window_id);
         let dirty_at = Instant::now();
         let mut collector = FrameTimingCollector::new();
 
@@ -1267,8 +1287,7 @@ mod tests {
         let _trace_test_guard = TraceTestGuard::new();
         set_trace_enabled(true);
         let window_id = WindowId::from(0xA11E);
-        let mut window_profiler =
-            WindowProfiler::new(window_id).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(window_id);
         let start = Instant::now();
         let mut collector = FrameTimingCollector::new();
 
@@ -1315,8 +1334,7 @@ mod tests {
         let _trace_test_guard = TraceTestGuard::new();
         set_trace_enabled(true);
         let window_id = WindowId::from(0xC1EA);
-        let mut window_profiler =
-            WindowProfiler::new(window_id).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(window_id);
         let mut collector = FrameTimingCollector::new();
 
         window_profiler.begin_draw();
@@ -1342,8 +1360,7 @@ mod tests {
     #[cfg(feature = "profiler")]
     #[test]
     fn records_intervals_only_between_animation_frames() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(1)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(1));
         let start = Instant::now();
 
         draw_and_present(&mut window_profiler, start, true, true);
@@ -1362,8 +1379,7 @@ mod tests {
     #[cfg(feature = "profiler")]
     #[test]
     fn missed_frames_stretch_the_recorded_interval() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(2)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(2));
         let start = Instant::now();
 
         draw_and_present(&mut window_profiler, start, true, true);
@@ -1376,8 +1392,7 @@ mod tests {
     #[cfg(feature = "profiler")]
     #[test]
     fn ignores_re_presents_of_unchanged_frames() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(3)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(3));
         let start = Instant::now();
 
         draw_and_present(&mut window_profiler, start, true, true);
@@ -1393,8 +1408,7 @@ mod tests {
     #[cfg(feature = "profiler")]
     #[test]
     fn skips_intervals_for_inactive_windows() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(4)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(4));
         let start = Instant::now();
 
         draw_and_present(&mut window_profiler, start, false, true);
@@ -1408,11 +1422,47 @@ mod tests {
         assert_eq!(window_profiler.present_interval_histogram.len(), 1);
     }
 
+    #[test]
+    fn records_dirty_to_present_durations_with_the_root_entity_type() {
+        let mut window_profiler = test_window_profiler(WindowId::from(8));
+        let draw_end = Instant::now();
+        let present_end = draw_end + Duration::from_millis(6);
+
+        record_test_draw(&mut window_profiler, draw_end);
+        window_profiler.record_present_at(present_end, present_end, true, false);
+        window_profiler.record_present_at(
+            present_end + Duration::from_millis(1),
+            present_end + Duration::from_millis(1),
+            true,
+            false,
+        );
+        window_profiler.record_draw_timing(FrameTiming {
+            window_id: window_profiler.window_id,
+            dirty_at: None,
+            invalidations: 0,
+            draw_start: present_end,
+            draw_end: present_end + Duration::from_millis(1),
+        });
+        window_profiler.record_present_at(
+            present_end + Duration::from_millis(2),
+            present_end + Duration::from_millis(2),
+            true,
+            false,
+        );
+
+        let snapshot = window_profiler.frame_duration_snapshot();
+        assert_eq!(snapshot.root_entity_type_name, TEST_ROOT_ENTITY_TYPE_NAME);
+        assert_eq!(snapshot.dirty_to_present_histogram.len(), 1);
+        assert!(
+            snapshot.dirty_to_present_histogram.max()
+                >= Duration::from_millis(10).as_nanos() as u64
+        );
+    }
+
     #[cfg(feature = "profiler")]
     #[test]
     fn records_every_draw_duration() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(5)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(5));
 
         window_profiler.record_draw_duration(Duration::from_millis(2));
         window_profiler.record_draw_duration(Duration::from_millis(40));
@@ -1424,8 +1474,7 @@ mod tests {
 
     #[test]
     fn records_input_latency_at_the_frame_presentation_timestamp() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(6)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(6));
         let first_input_at = Instant::now();
         let presented_at = first_input_at + Duration::from_millis(12);
 
@@ -1449,8 +1498,7 @@ mod tests {
 
     #[test]
     fn excludes_input_that_arrives_during_a_draw() {
-        let mut window_profiler =
-            WindowProfiler::new(WindowId::from(7)).expect("window profiler should initialize");
+        let mut window_profiler = test_window_profiler(WindowId::from(7));
 
         window_profiler.begin_draw();
         begin_input_at(&mut window_profiler, Instant::now());
@@ -1477,7 +1525,13 @@ mod tests {
     }
 
     const FRAME: Duration = Duration::from_millis(16);
+    const TEST_ROOT_ENTITY_TYPE_NAME: &str = "test::RootEntity";
     static TRACE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn test_window_profiler(window_id: WindowId) -> WindowProfiler {
+        WindowProfiler::new(window_id, TEST_ROOT_ENTITY_TYPE_NAME)
+            .expect("window profiler should initialize")
+    }
 
     struct TraceTestGuard {
         was_enabled: bool,
