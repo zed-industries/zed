@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
-use gpui::{AppContext as _, Entity};
+use gpui::{AppContext as _, Entity, EventEmitter, Subscription, Task};
 use language::Buffer;
 use multi_buffer::{
     Anchor, MultiBuffer, MultiBufferOffset, MultiBufferSnapshot, PathKey, ToOffset as _,
@@ -353,7 +353,7 @@ impl Editor {
             let editor = pane_ref
                 .items()
                 .filter_map(|item| item.downcast::<Editor>())
-                .find(|editor| editor.read(cx).bookmark_view_subscription.is_some())?;
+                .find(|editor| editor.read(cx).bookmark_view.is_some())?;
             let index = pane_ref.index_for_item(&editor)?;
             Some((pane.clone(), index))
         });
@@ -373,6 +373,8 @@ impl Editor {
         let capability = workspace.project().read(cx).capability();
         let excerpt_buffer =
             cx.new(|_cx| MultiBuffer::new(capability).with_title("Bookmarks".into()));
+        let bookmarks_view =
+            cx.new(|cx| BookmarksView::new(excerpt_buffer.clone(), bookmark_store, cx));
         let editor = cx.new(|cx| {
             let mut editor = Editor::for_multibuffer(
                 excerpt_buffer,
@@ -380,115 +382,60 @@ impl Editor {
                 window,
                 cx,
             );
-            editor.bookmark_view_subscription =
-                Some(editor.subscribe_to_bookmark_store(bookmark_store.clone(), window, cx));
             editor.bookmark_initial_selection_pending = true;
-            editor.schedule_bookmark_refresh(bookmark_store, window, cx);
+            editor.set_bookmark_view(bookmarks_view, window, cx);
             editor
         });
 
         workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
     }
 
-    pub(super) fn subscribe_to_bookmark_store(
+    pub(super) fn set_bookmark_view(
         &mut self,
-        bookmark_store: Entity<BookmarkStore>,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::Subscription {
-        cx.subscribe_in(
-            &bookmark_store,
-            window,
-            |editor, bookmark_store, _event: &BookmarkStoreEvent, window, cx| {
-                editor.schedule_bookmark_refresh(bookmark_store.clone(), window, cx);
-            },
-        )
-    }
-
-    pub(super) fn schedule_bookmark_refresh(
-        &mut self,
-        bookmark_store: Entity<BookmarkStore>,
-        window: &Window,
+        bookmarks_view: Entity<BookmarksView>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.bookmark_refresh_task = Some(cx.spawn_in(window, async move |this, cx| {
-            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
-                .await
-                .log_err()
-            else {
-                return;
-            };
+        self.bookmark_view_subscription = Some(cx.subscribe_in(
+            &bookmarks_view,
+            window,
+            |editor, _bookmarks_view, event, window, cx| {
+                let BookmarksViewEvent::Populated(ranges) = event;
+                editor.on_bookmarks_populated(ranges, window, cx);
+            },
+        ));
 
-            this.update_in(cx, |editor, window, cx| {
-                let ranges = editor.apply_bookmark_locations(locations, cx);
-                if editor.bookmark_initial_selection_pending
-                    && let Some(first_range) = ranges.first()
-                {
-                    editor.bookmark_initial_selection_pending = false;
-                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                        s.clear_disjoint();
-                        s.select_anchor_ranges(std::iter::once(first_range.clone()));
-                    });
-                }
-            })
-            .log_err();
-        }));
+        // A split of an already populated tab has excerpts but has missed the event that
+        // produced them, so replay the last population into it.
+        let populated_ranges = bookmarks_view.read(cx).populated_ranges.clone();
+        self.bookmark_view = Some(bookmarks_view);
+        if !populated_ranges.is_empty() {
+            self.on_bookmarks_populated(&populated_ranges, window, cx);
+        }
     }
 
-    fn apply_bookmark_locations(
+    fn on_bookmarks_populated(
         &mut self,
-        locations: HashMap<Entity<Buffer>, Vec<Range<Point>>>,
+        ranges: &[Range<Anchor>],
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Vec<Range<Anchor>> {
-        let context_lines = multibuffer_context_lines(cx);
-        let mut ranges = <Vec<Range<Anchor>>>::new();
-
-        self.buffer.update(cx, |multibuffer, cx| {
-            let mut stale_paths: HashSet<PathKey> = multibuffer
-                .snapshot(cx)
-                .buffers_with_paths()
-                .map(|(_, path_key)| path_key.clone())
-                .collect();
-
-            for (buffer, mut buffer_ranges) in locations {
-                buffer_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
-                let path_key = PathKey::for_buffer(&buffer, cx);
-                stale_paths.remove(&path_key);
-
-                multibuffer.set_excerpts_for_path(
-                    path_key,
-                    buffer.clone(),
-                    buffer_ranges.clone(),
-                    context_lines,
-                    cx,
-                );
-
-                let snapshot = multibuffer.snapshot(cx);
-                let buffer_snapshot = buffer.read(cx).snapshot();
-                ranges.extend(buffer_ranges.into_iter().filter_map(|range| {
-                    let text_range = buffer_snapshot.anchor_range_inside(range);
-                    let start = snapshot.anchor_in_buffer(text_range.start)?;
-                    let end = snapshot.anchor_in_buffer(text_range.end)?;
-                    Some(start..end)
-                }));
-            }
-
-            for path_key in stale_paths {
-                multibuffer.remove_excerpts(path_key, cx);
-            }
-        });
-
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        ranges.sort_by(|a, b| a.start.cmp(&b.start, &snapshot));
-
+    ) {
         self.highlight_background(
             HighlightKey::Editor,
-            &ranges,
+            ranges,
             |_, theme| theme.colors().editor_highlighted_line_background,
             cx,
         );
 
-        ranges
+        if self.bookmark_initial_selection_pending
+            && let Some(first_range) = ranges.first()
+        {
+            self.bookmark_initial_selection_pending = false;
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.clear_disjoint();
+                s.select_anchor_ranges(std::iter::once(first_range.clone()));
+            });
+        }
     }
 
     fn bookmarks_in_range(
@@ -523,5 +470,117 @@ impl Editor {
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+}
+
+/// Owns the bookmark store subscription and the excerpt reconciliation for a Bookmarks tab.
+///
+/// Split clones of the tab share the tab's multibuffer, so they share this handle too: a
+/// single store event then triggers exactly one refresh regardless of how many editors are
+/// displaying that multibuffer. The view stays alive as long as any of them holds it, so
+/// closing the tab a split was made from does not stop the remaining tabs from refreshing.
+pub(crate) struct BookmarksView {
+    multibuffer: Entity<MultiBuffer>,
+    bookmark_store: Entity<BookmarkStore>,
+    /// Ranges delivered by the last population, replayed into editors that attach later.
+    populated_ranges: Vec<Range<Anchor>>,
+    refresh_task: Option<Task<()>>,
+    _store_subscription: Subscription,
+}
+
+pub(crate) enum BookmarksViewEvent {
+    Populated(Vec<Range<Anchor>>),
+}
+
+impl EventEmitter<BookmarksViewEvent> for BookmarksView {}
+
+impl BookmarksView {
+    fn new(
+        multibuffer: Entity<MultiBuffer>,
+        bookmark_store: Entity<BookmarkStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let store_subscription = cx.subscribe(
+            &bookmark_store,
+            |this, _bookmark_store, _event: &BookmarkStoreEvent, cx| {
+                this.schedule_refresh(cx);
+            },
+        );
+        let mut this = Self {
+            multibuffer,
+            bookmark_store,
+            populated_ranges: Vec::new(),
+            refresh_task: None,
+            _store_subscription: store_subscription,
+        };
+        this.schedule_refresh(cx);
+        this
+    }
+
+    fn schedule_refresh(&mut self, cx: &mut Context<Self>) {
+        let bookmark_store = self.bookmark_store.clone();
+        self.refresh_task = Some(cx.spawn(async move |this, cx| {
+            let Some(locations) = BookmarkStore::all_bookmark_locations(bookmark_store, cx)
+                .await
+                .log_err()
+            else {
+                return;
+            };
+
+            this.update(cx, |this, cx| {
+                this.populated_ranges = this.apply_bookmark_locations(locations, cx);
+                cx.emit(BookmarksViewEvent::Populated(this.populated_ranges.clone()));
+            })
+            .log_err();
+        }));
+    }
+
+    fn apply_bookmark_locations(
+        &mut self,
+        locations: HashMap<Entity<Buffer>, Vec<Range<Point>>>,
+        cx: &mut Context<Self>,
+    ) -> Vec<Range<Anchor>> {
+        let context_lines = multibuffer_context_lines(cx);
+        let mut ranges = <Vec<Range<Anchor>>>::new();
+
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            let mut stale_paths: HashSet<PathKey> = multibuffer
+                .snapshot(cx)
+                .buffers_with_paths()
+                .map(|(_, path_key)| path_key.clone())
+                .collect();
+
+            for (buffer, mut buffer_ranges) in locations {
+                buffer_ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                let path_key = PathKey::for_buffer(&buffer, cx);
+                stale_paths.remove(&path_key);
+
+                multibuffer.set_excerpts_for_path(
+                    path_key,
+                    buffer.clone(),
+                    buffer_ranges.clone(),
+                    context_lines,
+                    cx,
+                );
+
+                let snapshot = multibuffer.snapshot(cx);
+                let buffer_snapshot = buffer.read(cx).snapshot();
+                ranges.extend(buffer_ranges.into_iter().filter_map(|range| {
+                    let text_range = buffer_snapshot.anchor_range_inside(range);
+                    let start = snapshot.anchor_in_buffer(text_range.start)?;
+                    let end = snapshot.anchor_in_buffer(text_range.end)?;
+                    Some(start..end)
+                }));
+            }
+
+            for path_key in stale_paths {
+                multibuffer.remove_excerpts(path_key, cx);
+            }
+        });
+
+        let snapshot = self.multibuffer.read(cx).snapshot(cx);
+        ranges.sort_by(|a, b| a.start.cmp(&b.start, &snapshot));
+
+        ranges
     }
 }
