@@ -608,6 +608,7 @@ pub enum Event {
 
 struct DraggedProjectEntryView {
     selection: SelectedEntry,
+    chevron: Option<SharedString>,
     icon: Option<SharedString>,
     filename: String,
     click_offset: Point<Pixels>,
@@ -6015,6 +6016,7 @@ impl ProjectPanel {
                                 .as_ref()
                                 .unwrap_or_else(|| &details.filename);
                             cx.new(|_| DraggedProjectEntryView {
+                                chevron: details.chevron.clone(),
                                 icon: details.icon.clone(),
                                 filename: filename.clone(),
                                 click_offset,
@@ -7700,11 +7702,16 @@ impl Render for DraggedProjectEntryView {
                         if self.selections.len() > 1 && self.selections.contains(&self.selection) {
                             this.child(Label::new(format!("{} entries", self.selections.len())))
                         } else {
-                            this.child(if let Some(icon) = &self.icon {
-                                div().child(Icon::from_path(icon.clone()))
-                            } else {
-                                div()
-                            })
+                            this.child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .when_some(self.chevron.clone(), |this, chevron| {
+                                        this.child(Icon::from_path(chevron))
+                                    })
+                                    .when_some(self.icon.clone(), |this, icon| {
+                                        this.child(Icon::from_path(icon))
+                                    }),
+                            )
                             .child(Label::new(self.filename.clone()))
                         }
                     }),
