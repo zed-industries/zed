@@ -39,8 +39,8 @@ inline — the template language has no array literal syntax.
   Available tools: {{join available_tools ", "}}
   Platforms: {{join (array "linux" "windows" "macos") " / "}}
 
-Partials (imports): `{{> agents_md}}` splices your `AGENTS.md` in place.
-Every other `*.hbs` file under this directory (recursively) is importable by
+Partials (imports):
+Every other `*.hbs` file under this directory (recursively) is inplace-appendable by
 its relative path without the extension, `/`-separated on every platform —
 `partials/style.hbs` → `{{> partials/style}}`. Use `/` even on Windows:
 `\` is the template escape character and cannot appear in a partial name.
