@@ -1347,14 +1347,11 @@ fn default_bounds(display_id: Option<DisplayId>, cx: &mut App) -> WindowBounds {
 }
 
 impl Window {
-    pub(crate) fn new<Root: 'static>(
-        handle: WindowHandle<Root>,
+    pub(crate) fn new(
+        handle: AnyWindowHandle,
         options: WindowOptions,
         cx: &mut App,
     ) -> Result<Self> {
-        #[cfg(feature = "profiler")]
-        let root_entity_type_name = std::any::type_name::<Root>();
-        let handle = handle.into();
         let WindowOptions {
             window_bounds,
             titlebar,
@@ -1876,10 +1873,7 @@ impl Window {
             needs_present,
             input_rate_tracker,
             #[cfg(feature = "profiler")]
-            window_profiler: profiler::WindowProfiler::new(
-                handle.window_id(),
-                root_entity_type_name,
-            )?,
+            window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
             refreshing: false,
             activation_observers: SubscriberSet::new(),
@@ -6428,6 +6422,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             any_handle: AnyWindowHandle {
                 id,
                 state_type: TypeId::of::<V>(),
+                root_entity_type_name: std::any::type_name::<V>(),
             },
             state_type: PhantomData,
         }
@@ -6550,12 +6545,18 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+    root_entity_type_name: &'static str,
 }
 
 impl AnyWindowHandle {
     /// Get the ID of this window.
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    /// Returns the name of the window's declared root entity type.
+    pub fn root_entity_type_name(&self) -> &'static str {
+        self.root_entity_type_name
     }
 
     /// Attempt to convert this handle to a window handle with a specific root view type.
@@ -6955,21 +6956,6 @@ mod tests {
         // subsequent draws of both windows work against a fresh arena.
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
-    }
-
-    #[cfg(feature = "profiler")]
-    #[gpui::test]
-    fn test_frame_duration_snapshot_identifies_root_entity_type(cx: &mut TestAppContext) {
-        let window = cx.add_window(|_, _| EmptyView);
-
-        window
-            .update(cx, |_, window, _| {
-                assert_eq!(
-                    window.frame_duration_snapshot().root_entity_type_name,
-                    std::any::type_name::<EmptyView>()
-                );
-            })
-            .expect("window should remain open");
     }
 
     /// Platforms that stop requesting frames for idle windows (currently web)
