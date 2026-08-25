@@ -881,7 +881,6 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         self.update_editor(cx, |_, editor, cx| {
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let max_point = display_map.buffer_snapshot().max_point();
             let mut selections = editor.selections.all_display(&display_map);
             let buffer_snapshot = display_map.buffer_snapshot();
 
@@ -889,9 +888,7 @@ impl Vim {
                 // Start always goes to column 0 of the first selected line
                 let buffer_point = movement::line_beginning(&display_map, selection.start, false)
                     .to_point(&display_map);
-                let current_end_row = movement::line_end(&display_map, selection.end, false)
-                    .to_point(&display_map)
-                    .row;
+                let current_end_row = movement::line_end(&display_map, selection.end, false).row();
 
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(buffer_point);
@@ -902,14 +899,13 @@ impl Vim {
                     0
                 };
 
-                let end_row = current_end_row + count as u32 + extra_line;
+                let rows_to_select = count as u32 + extra_line;
 
                 selection.start = buffer_point.to_display_point(&display_map);
-                selection.end = if end_row > max_point.row {
-                    max_point.to_display_point(&display_map)
-                } else {
-                    Point::new(end_row, 0).to_display_point(&display_map)
-                };
+                selection.end = display_map.start_of_relative_buffer_row(
+                    DisplayPoint::new(current_end_row, 0),
+                    rows_to_select as isize,
+                );
                 selection.reversed = false;
             }
 
@@ -3222,6 +3218,58 @@ mod test {
         cx.assert_state(
             indoc! {"
                 «impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }
+                ˇ»"},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                // This line should be cover
+                impl Foo ˇ{
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }
+            "},
+            Mode::HelixNormal,
+        );
+        cx.update_editor(|editor, window, cx| {
+            editor.fold(&editor::actions::Fold, window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "// This line should be cover\nimpl Foo {⋯}\n"
+            );
+        });
+
+        cx.simulate_keystrokes("k 2 x");
+        cx.assert_state(
+            indoc! {"
+                «// This line should be cover
+                impl Foo {
                     // Hello!
 
                     fn a() {
