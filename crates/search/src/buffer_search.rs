@@ -331,7 +331,7 @@ impl Render for BufferSearchBar {
                         query_focus.clone(),
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(div().ml_2().min_w(rems_from_px(40.)).child(
+                        this.child(div().ml_2().min_w(rems_from_px(40_f32)).child(
                             Label::new(match_text).size(LabelSize::Small).color(
                                 if self.active_match_index.is_some() {
                                     Color::Default
@@ -951,7 +951,7 @@ impl BufferSearchBar {
     }
 
     fn deployed_toolbar_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.needs_expand_collapse_option(cx) && !self.uses_hidden_splittable_editor(cx) {
+        if self.needs_expand_collapse_option(cx) {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Secondary
@@ -976,10 +976,11 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        self.active_searchable_item.as_ref().is_some_and(|item| {
-            item.buffer_kind(cx) == ItemBufferKind::Multibuffer
-                && !item.supported_options(cx).find_in_results
-        })
+        !self.uses_hidden_splittable_editor(cx)
+            && self.active_searchable_item.as_ref().is_some_and(|item| {
+                item.buffer_kind(cx) == ItemBufferKind::Multibuffer
+                    && !item.supported_options(cx).find_in_results
+            })
     }
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
@@ -3171,6 +3172,83 @@ mod tests {
             for "find" or "find and replace" operations on strings, or for input validation.
             "#
             .unindent(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_lookaround(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("316227766016837933199\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(\d)(?=(\d{4})+$)",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "$1,",
+            replace_all: true,
+            expected_text: "3,1622,7766,0168,3793,3199\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Xfoo\nbar\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"foo\n(?<=Xfoo\n)bar",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "BAZ",
+            replace_all: true,
+            expected_text: "Xfoo\nbar\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("food: bar\nfoo: bar\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(?<=foo: )bar",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "BAZ",
+            replace_all: false,
+            expected_text: "food: bar\nfoo: BAZ\n".to_string(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_lookaround_in_multibuffer(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"\w+(?= expression)",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "SOME",
+            replace_all: true,
+            expected_text: r#"
+            A SOME expression (shortened as regex or regexp;[1] also referred to as
+            SOME expression[2][3]) is a sequence of characters that specifies a search
+            pattern in text. Usually such patterns are used by string-searching algorithms
+            for "find" or "find and replace" operations on strings, or for input validation.
+            Some Additional text with the term SOME expression in it.
+            There two lines."#
+                .unindent(),
         })
         .await;
     }

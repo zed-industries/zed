@@ -72,7 +72,7 @@
             rustToolchain # cargo, rustc, and rust-toolchain.toml components included
             cargo-nextest
             cargo-hakari
-            cargo-machete
+            cargo-shear
             cargo-zigbuild
             # TODO: package protobuf-language-server for editing zed.proto
             # TODO: add other tools used in our scripts

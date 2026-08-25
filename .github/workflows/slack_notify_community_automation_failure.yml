@@ -13,12 +13,14 @@ on:
       - "Comment on potential duplicate bug/crash reports"
       - "Track duplicate bot effectiveness"
       - "Community PR Board"
+      - "Community PR Cleanup"
       - "PR Board Meta Fields Refresh"
       - "PR Issue Labeler"
       - "Guild Assignment Status"
       - "Guild Stale Assignments"
       - "Guild Weekly Shipped"
       - "Guild New PR Notification"
+      - "Issue Triage Queue Board"
     types: [completed]
 
 permissions:

@@ -20,6 +20,7 @@ use path::rel_path::RelPathBuf;
 pub use path::PathStyle;
 
 /// Returns the path to the user's home directory.
+#[cfg(not(target_family = "wasm"))]
 pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     HOME_DIR.get_or_init(|| {
@@ -1467,8 +1468,6 @@ impl UrlExt for url::Url {
 
 #[cfg(test)]
 mod tests {
-    use path::rel_path::rel_path;
-
     use super::*;
     use util_macros::perf;
 
@@ -1480,34 +1479,6 @@ mod tests {
         let parsed = PathWithPosition::parse_str("/root/Test (3)");
         assert_eq!(parsed.path, PathBuf::from("/root/Test "));
         assert_eq!(parsed.row, Some(3));
-    }
-
-    #[test]
-    fn test_join_path_uses_path_style_separator() {
-        let posix_path = PathStyle::Unix
-            .join_path(Path::new("/home/user/dev"), "worktrees")
-            .unwrap();
-        let windows_path = PathStyle::Windows
-            .join_path(Path::new("C:\\Users\\user\\dev"), "worktrees")
-            .unwrap();
-
-        assert_eq!(posix_path, PathBuf::from("/home/user/dev/worktrees"));
-        assert_eq!(
-            windows_path.to_string_lossy(),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
-    }
-
-    #[test]
-    fn test_normalize_uses_path_style_separator() {
-        assert_eq!(
-            PathStyle::Unix.normalize("/home/user/dev/../worktrees/./zed"),
-            "/home/user/worktrees/zed"
-        );
-        assert_eq!(
-            PathStyle::Windows.normalize("C:\\Users\\user\\dev\\worktrees"),
-            "C:\\Users\\user\\dev\\worktrees"
-        );
     }
 
     fn rel_path_entry(path: &'static str, is_file: bool) -> (&'static RelPath, bool) {
@@ -3066,89 +3037,6 @@ mod tests {
         let base = Path::new("/a/b/c/long.app.tar.gz");
         let suffix = Path::new("app.tar.gz");
         assert_eq!(strip_path_suffix(base, suffix), None);
-    }
-
-    #[test]
-    fn test_strip_prefix() {
-        let expected = [
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Unix, "/a/b/c", "", None),
-            (PathStyle::Unix, "/a/b//c", "/a/b/", None),
-            (PathStyle::Unix, "/a/bc", "/a/b", None),
-            (
-                PathStyle::Unix,
-                "/a/b/c",
-                "/a/b/c",
-                Some(rel_path("").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b\\c",
-                "C:\\",
-                Some(rel_path("a/b/c").into_arc()),
-            ),
-            (PathStyle::Windows, "C:\\a\\b\\c", "", None),
-            (PathStyle::Windows, "C:\\a\\b\\\\c", "C:\\a\\b\\", None),
-            (PathStyle::Windows, "C:\\a\\bc", "C:\\a\\b", None),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b\\",
-                Some(rel_path("c").into_arc()),
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\a\\b/c",
-                "C:\\a\\b/",
-                Some(rel_path("c").into_arc()),
-            ),
-        ];
-        let actual = expected.clone().map(|(style, child, parent, _)| {
-            (
-                style,
-                child,
-                parent,
-                style
-                    .strip_prefix(child.as_ref(), parent.as_ref())
-                    .map(|rel_path| rel_path.into_arc()),
-            )
-        });
-        pretty_assertions::assert_eq!(actual, expected);
     }
 
     #[cfg(target_os = "windows")]

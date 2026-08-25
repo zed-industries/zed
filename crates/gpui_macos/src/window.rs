@@ -497,6 +497,94 @@ struct TrafficLightButtons {
     zoom: Retained<Objc2NSButton>,
 }
 
+// `NSApplicationPresentationOptions` bits (see `NSApplication.PresentationOptions`).
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK: NSUInteger = 1 << 0;
+const NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR: NSUInteger = 1 << 2;
+
+// State captured when entering simple (borderless) fullscreen, used to restore
+// the window on exit.
+struct SimpleFullscreenState {
+    frame: NSRect,
+    bounds: Bounds<Pixels>,
+    style_mask: NSWindowStyleMask,
+}
+
+enum SimpleFullscreenPlan {
+    Enter { screen_frame: NSRect },
+    Exit(SimpleFullscreenState),
+}
+
+struct SimpleFullscreenAppState {
+    window_count: usize,
+    saved_presentation_options: NSUInteger,
+}
+
+static SIMPLE_FULLSCREEN_APP_STATE: Mutex<Option<SimpleFullscreenAppState>> = Mutex::new(None);
+
+unsafe fn push_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    match app_state.as_mut() {
+        Some(app_state) => app_state.window_count += 1,
+        None => unsafe {
+            let app = NSApplication::sharedApplication(nil);
+            let saved_presentation_options: NSUInteger = msg_send![app, presentationOptions];
+            let _: () = msg_send![
+                app,
+                setPresentationOptions: NS_APPLICATION_PRESENTATION_AUTO_HIDE_DOCK
+                    | NS_APPLICATION_PRESENTATION_AUTO_HIDE_MENU_BAR
+            ];
+            *app_state = Some(SimpleFullscreenAppState {
+                window_count: 1,
+                saved_presentation_options,
+            });
+        },
+    }
+}
+
+unsafe fn pop_simple_fullscreen_presentation_options() {
+    let mut app_state = SIMPLE_FULLSCREEN_APP_STATE.lock();
+    if let Some(state) = app_state.as_mut() {
+        state.window_count = state.window_count.saturating_sub(1);
+        if state.window_count == 0 {
+            unsafe {
+                let app = NSApplication::sharedApplication(nil);
+                let _: () = msg_send![
+                    app,
+                    setPresentationOptions: state.saved_presentation_options
+                ];
+            }
+            *app_state = None;
+        }
+    }
+}
+
+unsafe fn apply_simple_fullscreen_plan(
+    native_window: id,
+    native_view: id,
+    plan: SimpleFullscreenPlan,
+) {
+    unsafe {
+        match plan {
+            SimpleFullscreenPlan::Exit(saved) => {
+                pop_simple_fullscreen_presentation_options();
+                native_window.setStyleMask_(saved.style_mask);
+                native_window.setFrame_display_(saved.frame, YES);
+            }
+            SimpleFullscreenPlan::Enter { screen_frame } => {
+                push_simple_fullscreen_presentation_options();
+                native_window.setStyleMask_(NSWindowStyleMask::NSBorderlessWindowMask);
+                native_window.setFrame_display_(screen_frame, YES);
+            }
+        }
+
+        // Changing the style mask makes AppKit resign the window's key status and
+        // first responder, so keyboard input stops reaching the editor. Re-make the
+        // window key and restore the GPUI view as first responder.
+        native_window.makeKeyAndOrderFront_(nil);
+        native_window.makeFirstResponder_(native_view);
+    }
+}
+
 struct MacWindowState {
     handle: AnyWindowHandle,
     foreground_executor: ForegroundExecutor,
@@ -536,6 +624,7 @@ struct MacWindowState {
     // windows draw their own titlebar and move the window via `start_window_move`.
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    simple_fullscreen_state: Option<SimpleFullscreenState>,
     move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
     merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
@@ -715,6 +804,33 @@ impl MacWindowState {
         }
     }
 
+    fn toggle_simple_fullscreen(&mut self) -> Option<SimpleFullscreenPlan> {
+        // If the window is in native fullscreen, simple fullscreen would conflict
+        // with AppKit's own fullscreen handling, so ignore the request.
+        if self.is_fullscreen() {
+            return None;
+        }
+
+        if let Some(saved) = self.simple_fullscreen_state.take() {
+            Some(SimpleFullscreenPlan::Exit(saved))
+        } else {
+            let screen = unsafe { self.native_window.screen() };
+            if screen == nil {
+                return None;
+            }
+            let screen_frame = unsafe { NSScreen::frame(screen) };
+            let bounds = self.bounds();
+
+            self.simple_fullscreen_state = Some(SimpleFullscreenState {
+                frame: unsafe { NSWindow::frame(self.native_window) },
+                bounds,
+                style_mask: unsafe { self.native_window.styleMask() },
+            });
+
+            Some(SimpleFullscreenPlan::Enter { screen_frame })
+        }
+    }
+
     fn bounds(&self) -> Bounds<Pixels> {
         let mut window_frame = unsafe { NSWindow::frame(self.native_window) };
         let screen = unsafe { NSWindow::screen(self.native_window) };
@@ -752,6 +868,8 @@ impl MacWindowState {
     fn window_bounds(&self) -> WindowBounds {
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
+        } else if let Some(state) = &self.simple_fullscreen_state {
+            WindowBounds::Windowed(state.bounds)
         } else {
             WindowBounds::Windowed(self.bounds())
         }
@@ -937,6 +1055,7 @@ impl MacWindow {
                 first_mouse: false,
                 app_owns_titlebar_drag,
                 fullscreen_restore_bounds: Bounds::default(),
+                simple_fullscreen_state: None,
                 move_tab_to_new_window_callback: None,
                 merge_all_windows_callback: None,
                 select_next_tab_callback: None,
@@ -1651,6 +1770,35 @@ impl PlatformWindow for MacWindow {
             .detach();
     }
 
+    fn toggle_simple_fullscreen(&self) {
+        let state = self.0.clone();
+        let (foreground_executor, closed) = {
+            let this = self.0.lock();
+            (this.foreground_executor.clone(), this.closed.clone())
+        };
+        foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, move || {
+                    let (native_window, native_view, plan) = {
+                        let mut lock = state.lock();
+                        (
+                            lock.native_window,
+                            lock.native_view.as_ptr() as id,
+                            lock.toggle_simple_fullscreen(),
+                        )
+                    };
+                    if let Some(plan) = plan {
+                        unsafe { apply_simple_fullscreen_plan(native_window, native_view, plan) };
+                    }
+                })
+            })
+            .detach();
+    }
+
+    fn is_simple_fullscreen(&self) -> bool {
+        self.0.lock().simple_fullscreen_state.is_some()
+    }
+
     fn is_fullscreen(&self) -> bool {
         let this = self.0.lock();
         let window = this.native_window;
@@ -1784,8 +1932,11 @@ impl PlatformWindow for MacWindow {
             .detach()
     }
 
-    fn titlebar_double_click(&self) {
+    fn titlebar_double_click(&self, is_resizable: bool, is_minimizable: bool) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
         let closed = this.closed.clone();
         this.foreground_executor
@@ -1814,17 +1965,25 @@ impl PlatformWindow for MacWindow {
                                 // "Do Nothing" selected, so do no action
                             }
                             "Minimize" => {
-                                window.miniaturize_(nil);
+                                if is_minimizable {
+                                    window.miniaturize_(nil);
+                                }
                             }
                             "Maximize" => {
-                                window.zoom_(nil);
+                                if is_resizable {
+                                    window.zoom_(nil);
+                                }
                             }
                             "Fill" => {
                                 // There is no documented API for "Fill" action, so we'll just zoom the window
-                                window.zoom_(nil);
+                                if is_resizable {
+                                    window.zoom_(nil);
+                                }
                             }
                             _ => {
-                                window.zoom_(nil);
+                                if is_resizable {
+                                    window.zoom_(nil);
+                                }
                             }
                         }
                     }
@@ -1835,6 +1994,9 @@ impl PlatformWindow for MacWindow {
 
     fn start_window_move(&self) {
         let this = self.0.lock();
+        if this.simple_fullscreen_state.is_some() {
+            return;
+        }
         let window = this.native_window;
 
         unsafe {
@@ -2743,12 +2905,19 @@ extern "C" fn window_should_close(this: &Object, _: Sel, _: id) -> BOOL {
 
 extern "C" fn close_window(this: &Object, _: Sel) {
     unsafe {
-        let close_callback = {
+        let (close_callback, simple_fullscreen_state) = {
             let window_state = get_window_state(this);
             let mut lock = window_state.as_ref().lock();
             lock.closed.store(true, Ordering::Release);
-            lock.close_callback.take()
+            (
+                lock.close_callback.take(),
+                lock.simple_fullscreen_state.take(),
+            )
         };
+
+        if simple_fullscreen_state.is_some() {
+            pop_simple_fullscreen_presentation_options();
+        }
 
         if let Some(callback) = close_callback {
             callback();
@@ -3070,45 +3239,42 @@ fn is_drag_from_this_window(this: &Object, dragging_info: id) -> bool {
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
-    if is_drag_from_this_window(this, dragging_info) {
-        return NSDragOperationNone;
-    }
+    let is_source_window = is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     let paths = external_paths_from_event(dragging_info);
     if let Some(event) = paths.map(|paths| FileDropEvent::Entered { position, paths })
         && send_file_drop_event(window_state, event)
     {
+        if is_source_window {
+            return NSDragOperationMove;
+        }
         return NSDragOperationCopy;
     }
     NSDragOperationNone
 }
 
 extern "C" fn dragging_updated(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
-    if is_drag_from_this_window(this, dragging_info) {
-        return NSDragOperationNone;
-    }
+    let is_source_window = is_drag_from_this_window(this, dragging_info);
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     if send_file_drop_event(window_state, FileDropEvent::Pending { position }) {
-        NSDragOperationCopy
+        if is_source_window {
+            NSDragOperationMove
+        } else {
+            NSDragOperationCopy
+        }
     } else {
         NSDragOperationNone
     }
 }
 
-extern "C" fn dragging_exited(this: &Object, _: Sel, dragging_info: id) {
-    if is_drag_from_this_window(this, dragging_info) {
-        return;
-    }
+extern "C" fn dragging_exited(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     send_file_drop_event(window_state, FileDropEvent::Exited);
 }
 
 extern "C" fn perform_drag_operation(this: &Object, _: Sel, dragging_info: id) -> BOOL {
-    if is_drag_from_this_window(this, dragging_info) {
-        return NO;
-    }
     let window_state = unsafe { get_window_state(this) };
     let position = drag_event_position(&window_state, dragging_info);
     send_file_drop_event(window_state, FileDropEvent::Submit { position }).to_objc()
@@ -3166,9 +3332,12 @@ extern "C" fn dragging_session_ended(
     // SAFETY: AppKit invokes this selector on the GPUIWindow instance registered in build_classes,
     // which always has WINDOW_STATE_IVAR initialized to the owning MacWindowState.
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.lock();
-    lock.synthetic_drag_counter += 1;
-    lock.last_left_mouse_down_event = None;
+    {
+        let mut lock = window_state.lock();
+        lock.synthetic_drag_counter += 1;
+        lock.last_left_mouse_down_event = None;
+    }
+    send_file_drop_event(window_state, FileDropEvent::Ended);
 }
 
 async fn synthetic_drag(
@@ -3202,7 +3371,7 @@ fn send_file_drop_event(
 ) -> bool {
     let external_files_dragged = match file_drop_event {
         FileDropEvent::Entered { .. } => Some(true),
-        FileDropEvent::Exited => Some(false),
+        FileDropEvent::Exited | FileDropEvent::Ended => Some(false),
         _ => None,
     };
 

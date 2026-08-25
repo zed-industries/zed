@@ -60,7 +60,10 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-use project::{DirectoryLister, DisableAiSettings, ProjectItem};
+use project::{
+    DirectoryLister, DisableAiSettings, ProjectItem,
+    project_settings::{SettingsObserver, SettingsObserverEvent},
+};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_remote_project;
@@ -436,6 +439,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
     init_cursor_hide_mode(cx);
     init_app_appearance(cx);
     init_reduce_motion(cx);
+    init_global_config_error_notifications(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
@@ -476,6 +480,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
                 if cx
                     .update(|window, cx| {
                         input_latency_ui::report_input_latency_telemetry(window, cx);
+                        input_latency_ui::report_frame_duration_telemetry(window, cx);
                     })
                     .is_err()
                 {
@@ -803,8 +808,12 @@ fn initialize_panels(window: &mut Window, cx: &mut Context<Workspace>) -> Task<a
             add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(channels_panel, workspace_handle.clone(), cx.clone()),
             add_panel_when_ready(debug_panel, workspace_handle.clone(), cx.clone()),
-            initialize_agent_panel(workspace_handle, cx.clone()).map(|r| r.log_err()),
+            initialize_agent_panel(workspace_handle.clone(), cx.clone()).map(|r| r.log_err()),
         );
+
+        workspace_handle.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        })?;
 
         anyhow::Ok(())
     })
@@ -1020,9 +1029,26 @@ fn register_actions(
         .register_action(|_, _: &Zoom, window, _| {
             window.zoom_window();
         })
-        .register_action(|_, _: &ToggleFullScreen, window, _| {
-            window.toggle_fullscreen();
+        .register_action(|_, _: &ToggleFullScreen, window, cx| {
+            let use_simple_fullscreen = PlatformStyle::platform() == PlatformStyle::Mac
+                && (window.is_simple_fullscreen()
+                    || (!window.is_fullscreen()
+                        && WorkspaceSettings::get_global(cx).fullscreen_mode
+                            == settings::FullscreenMode::Simple));
+            if use_simple_fullscreen {
+                window.toggle_simple_fullscreen();
+            } else {
+                window.toggle_fullscreen();
+            }
         })
+        .register_action(|_, _: &zed_actions::dev::ToggleFpsOverlay, window, _| {
+            window.cycle_debug_frame_overlay_mode();
+        })
+        .register_action(
+            |_, _: &zed_actions::dev::ResetFrameOverlayStats, window, _| {
+                window.reset_debug_frame_overlay_stats();
+            },
+        )
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
                 urls: vec![String::from(&*action.url)],
@@ -1098,6 +1124,12 @@ fn register_actions(
             if workspace.project().read(cx).is_local() {
                 return;
             }
+            let create_new_window = action.create_new_window.unwrap_or_else(|| {
+                matches!(
+                    WorkspaceSettings::get_global(cx).default_open_behavior,
+                    DefaultOpenBehavior::NewWindow
+                )
+            });
             telemetry::event!("Project Opened");
             let paths = workspace.prompt_for_open_path(
                 PathPromptOptions {
@@ -1116,7 +1148,13 @@ fn register_actions(
                 };
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
-                        open_new_ssh_project_from_project(this, paths, window, cx)
+                        open_new_ssh_project_from_project(
+                            this,
+                            paths,
+                            create_new_window,
+                            window,
+                            cx,
+                        )
                     })
                     .log_err()
                 {
@@ -1832,13 +1870,7 @@ fn quit(_: &Quit, cx: &mut App) {
         for window in &workspace_windows {
             window
                 .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
-                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
-                    flush_tasks.push(multi_workspace.flush_serialization());
+                    flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
                 })
                 .log_err();
         }
@@ -2031,6 +2063,46 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
             }
         }
     };
+}
+
+fn init_global_config_error_notifications(cx: &mut App) {
+    cx.observe_new(|_: &mut SettingsObserver, _, cx| {
+        cx.subscribe_self::<SettingsObserverEvent>(|_, event, cx| {
+            let (result, file_kind, on_click): (_, _, fn(&mut Window, &mut App)) = match event {
+                SettingsObserverEvent::GlobalTasksUpdated(result) => {
+                    (result, "tasks", |window, cx| {
+                        window.dispatch_action(OpenTasks.boxed_clone(), cx)
+                    })
+                }
+                SettingsObserverEvent::GlobalDebugScenariosUpdated(result) => {
+                    (result, "debug scenarios", |window, cx| {
+                        window.dispatch_action(OpenDebugTasks.boxed_clone(), cx)
+                    })
+                }
+                _ => return,
+            };
+            let id = NotificationId::Named(format!("invalid-global-{file_kind}-file").into());
+            match result {
+                Ok(_) => dismiss_app_notification(&id, cx),
+                Err(error) => {
+                    let message = format!("Invalid global {file_kind} file\n{error}");
+                    show_app_notification(id, cx, move |cx| {
+                        cx.new(|cx| {
+                            MessageNotification::new(message.clone(), cx)
+                                .primary_message("Open File")
+                                .primary_icon(IconName::Settings)
+                                .primary_on_click(move |window, cx| {
+                                    on_click(window, cx);
+                                    cx.emit(DismissEvent);
+                                })
+                        })
+                    });
+                }
+            }
+        })
+        .detach();
+    })
+    .detach();
 }
 
 #[derive(Copy, Clone, Debug, settings::RegisterSetting)]
@@ -2413,6 +2485,7 @@ fn filter_disabled_ai_bindings(bindings: Vec<KeyBinding>, cx: &App) -> Vec<KeyBi
 pub fn open_new_ssh_project_from_project(
     workspace: &mut Workspace,
     paths: Vec<PathBuf>,
+    create_new_window: bool,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<anyhow::Result<()>> {
@@ -2421,6 +2494,11 @@ pub fn open_new_ssh_project_from_project(
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();
+    let requesting_window = if create_new_window {
+        None
+    } else {
+        window.window_handle().downcast::<MultiWorkspace>()
+    };
     cx.spawn_in(window, async move |_, cx| {
         open_remote_project(
             connection_options,
@@ -2428,6 +2506,7 @@ pub fn open_new_ssh_project_from_project(
             app_state,
             workspace::OpenOptions {
                 workspace_matching: workspace::WorkspaceMatching::None,
+                requesting_window,
                 ..Default::default()
             },
             cx,
@@ -2841,18 +2920,24 @@ mod tests {
     use editor::{
         DisplayPoint, Editor, MultiBufferOffset, SelectionEffects, display_map::DisplayRow,
     };
+    use extension::ExtensionHostProxy;
+    use fs::FakeFs;
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, Modifiers, TestAppContext,
         UpdateGlobal, VisualTestContext, WindowHandle, actions, point, px,
     };
+    use http_client::BlockedHttpClient;
     use language::LanguageRegistry;
     use languages::{markdown_lang, rust_lang};
+    use node_runtime::NodeRuntime;
     use pretty_assertions::{assert_eq, assert_ne};
     use project::{Project, ProjectPath};
     use prompt_store::PromptBuilder;
+    use remote::RemoteClient;
+    use remote_server::{HeadlessAppState, HeadlessProject};
     use semver::Version;
     use serde_json::json;
-    use settings::{SaturatingBool, SettingsStore, watch_config_file};
+    use settings::{SaturatingBool, SettingsStore, SplicingVec, watch_config_file};
     use std::{
         path::{Path, PathBuf},
         sync::Arc,
@@ -2895,6 +2980,87 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_partial_file_index_status_bar_message(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_file_scan_depth(cx, 1);
+
+        let fs = app_state.fs.as_fake();
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "junk": {
+                    "a": {
+                        "b": {
+                            "deep.txt": ""
+                        }
+                    }
+                },
+                "top.txt": ""
+            }),
+        )
+        .await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        let languages = project.read_with(cx, |project, _| project.languages().clone());
+        let indicator = workspace.update_in(cx, |workspace, window, cx| {
+            activity_indicator::ActivityIndicator::new(workspace, languages, window, cx)
+        });
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(
+                indicator.message_to_render(cx),
+                Some("Partial file index".to_string())
+            );
+        });
+
+        set_file_scan_depth(cx, 0);
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(indicator.message_to_render(cx), None);
+        });
+
+        set_file_scan_depth(cx, 1);
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(
+                indicator.message_to_render(cx),
+                Some("Partial file index".to_string())
+            );
+        });
+
+        cx.executor().advance_clock(
+            activity_indicator::DEFERRED_SCAN_MESSAGE_TIMEOUT + Duration::from_secs(1),
+        );
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(indicator.message_to_render(cx), None);
+        });
+
+        fs.insert_tree(
+            path!("/root/other"),
+            json!({
+                "x": {
+                    "y": ""
+                }
+            }),
+        )
+        .await;
+        cx.run_until_parked();
+
+        indicator.update(cx, |indicator, cx| {
+            assert_eq!(indicator.message_to_render(cx), None);
+        });
+    }
+
+    #[gpui::test]
     async fn test_open_non_existing_file(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         app_state
@@ -2929,6 +3095,116 @@ mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_open_remote_from_existing_connection_reuses_window(
+        cx: &mut TestAppContext,
+        server_cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let executor = cx.executor();
+
+        server_cx.update(|cx| {
+            release_channel::init(Version::new(0, 0, 0), cx);
+        });
+
+        let (connection_options, server_session, connect_guard) =
+            RemoteClient::fake_server(cx, server_cx);
+        let remote_fs = FakeFs::new(server_cx.executor());
+        remote_fs
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "project": {},
+                    "other-project": {},
+                }),
+            )
+            .await;
+
+        server_cx.update(HeadlessProject::init);
+        let http_client = Arc::new(BlockedHttpClient);
+        let node_runtime = NodeRuntime::unavailable();
+        let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+        let extension_host_proxy = Arc::new(ExtensionHostProxy::new());
+        let _headless = server_cx.new(|cx| {
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session: server_session,
+                    fs: remote_fs,
+                    http_client,
+                    node_runtime,
+                    languages,
+                    extension_host_proxy,
+                    startup_time: std::time::Instant::now(),
+                },
+                false,
+                cx,
+            )
+        });
+        drop(connect_guard);
+
+        let mut async_cx = cx.to_async();
+        open_remote_project(
+            connection_options,
+            vec![PathBuf::from(path!("/project"))],
+            app_state,
+            OpenOptions::default(),
+            &mut async_cx,
+        )
+        .await
+        .expect("opening the initial remote project should succeed");
+        executor.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+        let window = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let remote_client = workspace
+                        .project()
+                        .read(cx)
+                        .remote_client()
+                        .expect("initial project should have a remote client");
+                    remote_client.update(cx, |remote_client, cx| {
+                        remote_client.force_server_not_running(cx);
+                    });
+                });
+            })
+            .unwrap();
+        executor.run_until_parked();
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.workspace().update(cx, |workspace, _cx| {
+                    workspace.set_prompt_for_open_path(Box::new(|_, _, _, _| {
+                        let (sender, receiver) = futures::channel::oneshot::channel();
+                        sender
+                            .send(Some(vec![PathBuf::from(path!("/other-project"))]))
+                            .expect("path prompt receiver should be open");
+                        receiver
+                    }));
+                });
+                window.dispatch_action(
+                    Box::new(zed_actions::OpenRemote {
+                        from_existing_connection: true,
+                        create_new_window: Some(false),
+                    }),
+                    cx,
+                );
+            })
+            .unwrap();
+        executor.run_until_parked();
+
+        assert_eq!(
+            cx.update(|cx| cx.windows().len()),
+            1,
+            "create_new_window: false should reuse the current window"
+        );
+        cx.simulate_prompt_answer("Cancel");
+        executor.run_until_parked();
     }
 
     #[gpui::test]
@@ -4006,7 +4282,10 @@ mod tests {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |project_settings| {
                     project_settings.project.worktree.file_scan_exclusions =
-                        Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
+                        Some(SplicingVec::from(vec![
+                            "excluded_dir".to_string(),
+                            "**/.git".to_string(),
+                        ]));
                 });
             });
         });
@@ -5637,7 +5916,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
-                "csv",
+                "copilot_edit_predictions",
                 "debug_panel",
                 "debugger",
                 "dev",
@@ -5691,6 +5970,7 @@ mod tests {
                 "svg",
                 "syntax_tree_view",
                 "tab_switcher",
+                "tabular_data",
                 "task",
                 "terminal",
                 "terminal_panel",
@@ -5862,6 +6142,16 @@ mod tests {
         init_test_with_state(cx, cx.update(AppState::test))
     }
 
+    fn set_file_scan_depth(cx: &mut TestAppContext, depth: u32) {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_depth = Some(depth);
+                });
+            });
+        });
+    }
+
     fn init_test_with_state(
         cx: &mut TestAppContext,
         mut app_state: Arc<AppState>,
@@ -5889,9 +6179,10 @@ mod tests {
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
+            let credentials_provider = zed_credentials_provider::global(cx);
             copilot_chat::init(
-                app_state.fs.clone(),
                 app_state.client.http_client(),
+                credentials_provider,
                 copilot_chat::CopilotChatConfiguration::default(),
                 cx,
             );
@@ -6030,7 +6321,7 @@ mod tests {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |worktree_settings| {
                 worktree_settings.project.worktree.file_scan_exclusions =
-                    Some(vec![".zed".to_string()]);
+                    Some(SplicingVec::from(vec![".zed".to_string()]));
             });
         });
 
@@ -6118,6 +6409,71 @@ mod tests {
         cx.run_until_parked();
 
         // If this panics, the test has failed
+    }
+
+    #[gpui::test]
+    async fn test_invalid_global_tasks_file_shows_notification_on_startup(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        let tasks_file_path = paths::tasks_file().as_path();
+        app_state
+            .fs
+            .create_dir(tasks_file_path.parent().unwrap())
+            .await
+            .unwrap();
+        app_state
+            .fs
+            .save(
+                tasks_file_path,
+                &r#"[{ "label": "first" }] [{ "label": "trailing garbage" }]"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        cx.run_until_parked();
+
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let notification_id = NotificationId::Named("invalid-global-tasks-file".into());
+        let shown_notifications = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .notification_ids()
+                .into_iter()
+                .filter(|id| *id == notification_id)
+                .count()
+        });
+        assert_eq!(
+            shown_notifications, 1,
+            "invalid global tasks file at startup should show an app notification"
+        );
+
+        app_state
+            .fs
+            .save(
+                tasks_file_path,
+                &r#"[{ "label": "first", "command": "echo" }]"#.into(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let shown_notifications = workspace.read_with(cx, |workspace, _| {
+            workspace
+                .notification_ids()
+                .into_iter()
+                .filter(|id| *id == notification_id)
+                .count()
+        });
+        assert_eq!(
+            shown_notifications, 0,
+            "fixing the global tasks file should dismiss the notification"
+        );
     }
 
     #[gpui::test]
