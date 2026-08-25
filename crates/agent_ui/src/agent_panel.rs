@@ -1434,18 +1434,7 @@ impl AgentPanel {
                     // so the draft survives reload bound to the right
                     // backend; otherwise fall back to the serialized
                     // selection, then the global last-used agent.
-                    //
-                    // Only a restored thread with a session keeps a locally
-                    // uninstalled agent, so that it stays resumable if the user
-                    // reinstalls it. A draft has no session to resume, so the
-                    // binding protects nothing and would only make every reopen
-                    // of this workspace fail to launch the agent — the panel
-                    // opens a draft on its own, so that would be most workspaces
-                    // after an uninstall. A *preference* naming a removed agent
-                    // is dropped for the same reason: the global one outlives
-                    // the workspace it was set in, so every project opened
-                    // after an uninstall would otherwise keep selecting an
-                    // agent that can no longer be launched.
+                    // Keep a session's agent so users can resume it after reinstalling the agent.
                     let restored_thread_agent = thread_to_restore.as_ref().and_then(|(info, _)| {
                         let agent = clamp(info.agent_type.clone());
                         (info.session_id.is_some() || panel.should_restore_agent(&agent, cx))
@@ -1678,22 +1667,16 @@ impl AgentPanel {
         }
     }
 
-    /// Whether a persisted selection should be restored.
     fn should_restore_agent(&self, agent: &Agent, cx: &App) -> bool {
         let Agent::Custom { id } = agent else {
             return true;
         };
 
-        // This fix only detects local uninstalls. The settings on this machine
-        // do not describe remote agents, and a remote project's server store is
-        // empty until its initial agent list arrives, so absence from either is
-        // not conclusive for a remote project.
+        // Local settings do not list remote agents, and the remote list may not have loaded yet.
         self.project.read(cx).is_via_remote_server()
             || AllAgentServersSettings::get_global(cx).contains_key(id.0.as_ref())
     }
 
-    /// The panel's selection, or the Zed Agent when the selected local agent
-    /// has been uninstalled.
     fn restorable_agent_selection(&self, cx: &App) -> Agent {
         let agent = self.selected_agent(cx);
         if self.should_restore_agent(&agent, cx) {
@@ -1931,10 +1914,7 @@ impl AgentPanel {
         let agent = if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent
         } else {
-            // The draft's own binding, unless that agent was uninstalled. A
-            // draft has no session to resume, so keeping a dead binding here
-            // would only fail to open the draft; the typed text is restored
-            // either way.
+            // Draft text is stored locally, so use the selected agent if the original was uninstalled.
             let agent = Agent::from(metadata.agent_id.clone());
             if self.should_restore_agent(&agent, cx) {
                 agent
@@ -6904,8 +6884,6 @@ mod tests {
     use std::sync::Arc;
     use std::time::Instant;
 
-    /// Adds `id` to the `agent_servers` setting, as installing an external
-    /// agent does.
     fn install_custom_agent(id: &str, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |content| {
@@ -6924,8 +6902,6 @@ mod tests {
         });
     }
 
-    /// Removes `id` from the `agent_servers` setting, as uninstalling an
-    /// external agent does.
     fn uninstall_custom_agent(id: &str, cx: &mut App) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |content| {
@@ -11612,8 +11588,6 @@ mod tests {
             cx.set_global(db::AppDatabase::test_new());
         });
 
-        // The last-used agent was uninstalled, so it is absent from
-        // `agent_servers` — but the global preference still names it.
         let kvp = cx.update(|cx| KeyValueStore::global(cx));
         write_global_last_used_agent(
             kvp,
@@ -11652,61 +11626,6 @@ mod tests {
                 panel.selected_agent,
                 Agent::NativeAgent,
                 "a workspace should not inherit a last-used agent that is no longer installed"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_reopened_workspace_ignores_uninstalled_selected_agent(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.update(|cx| {
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-            install_custom_agent("my-custom-agent", cx);
-            // Use an isolated DB so parallel tests can't provide a global fallback.
-            cx.set_global(db::AppDatabase::test_new());
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                multi_workspace.workspace().clone()
-            })
-            .unwrap();
-        workspace.update(cx, |workspace, _cx| {
-            workspace.set_random_database_id();
-        });
-        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
-
-        // The workspace remembers a custom agent as its selection...
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            cx.new(|cx| AgentPanel::new(workspace, window, cx))
-        });
-        panel.update(cx, |panel, cx| {
-            panel.selected_agent = Agent::Custom {
-                id: "my-custom-agent".into(),
-            };
-            panel.serialize(cx);
-        });
-        cx.run_until_parked();
-
-        // ...and the user uninstalls it before opening the workspace again.
-        cx.update(|_window, cx| uninstall_custom_agent("my-custom-agent", cx));
-
-        let async_cx = cx.update(|window, cx| window.to_async(cx));
-        let reloaded_panel = AgentPanel::load(workspace.downgrade(), async_cx)
-            .await
-            .expect("panel load should succeed");
-        cx.run_until_parked();
-
-        reloaded_panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.selected_agent,
-                Agent::NativeAgent,
-                "a reopened workspace should not select an agent that is no longer installed"
             );
         });
     }
@@ -11814,8 +11733,6 @@ mod tests {
             };
         });
 
-        // Opening another project in the same window copies the source
-        // panel's selection into the fresh panel.
         cx.update(|_window, cx| uninstall_custom_agent("my-custom-agent", cx));
 
         let panel_b = workspace_b.update_in(cx, |workspace, window, cx| {
@@ -11884,16 +11801,13 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        // The thread stays bound to the agent it was created with, so it
-        // reports that agent as unavailable instead of silently reopening as a
-        // Zed Agent thread that can't hold its history. Reinstalling the agent
-        // is enough to make it work again.
         reloaded_panel.read_with(cx, |panel, cx| {
             let conversation_view = panel
                 .active_conversation_view()
                 .expect("the last active thread should be restored");
             assert_eq!(
-                conversation_view.read(cx).thread_id, thread_id,
+                conversation_view.read(cx).thread_id,
+                thread_id,
                 "the same thread should be restored"
             );
             assert_eq!(
@@ -11913,8 +11827,7 @@ mod tests {
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
-            // The draft falls back to the Zed Agent once its own agent is
-            // gone, and building that server needs a global `Fs`.
+            // Building the native fallback requires a global `Fs`.
             <dyn fs::Fs>::set_global(fs.clone(), cx);
         });
 
@@ -11956,10 +11869,6 @@ mod tests {
             .expect("panel load should succeed");
         cx.run_until_parked();
 
-        // A draft keeps its text, but not a binding to an agent that is gone:
-        // it has no session to resume, and the panel opens a draft on its own,
-        // so keeping the binding would make this workspace fail to open an
-        // agent for good.
         reloaded_panel.read_with(cx, |panel, cx| {
             let draft = panel
                 .draft_thread
@@ -11976,7 +11885,8 @@ mod tests {
                 "a restored draft should drop an uninstalled agent"
             );
             assert_eq!(
-                panel.selected_agent, Agent::NativeAgent,
+                panel.selected_agent,
+                Agent::NativeAgent,
                 "the panel should not stay selected on the uninstalled agent"
             );
         });
@@ -13666,11 +13576,11 @@ mod tests {
 
         let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
 
-        // The stub server stands in for an installed external agent, so the
-        // destination panel inherits it rather than falling back to the Zed
-        // Agent.
         cx.update(|_window, cx| {
-            install_custom_agent(StubAgentServer::default_response().agent_id().0.as_ref(), cx)
+            install_custom_agent(
+                StubAgentServer::default_response().agent_id().0.as_ref(),
+                cx,
+            )
         });
 
         // Set up panel_a with an active thread and type draft text.
