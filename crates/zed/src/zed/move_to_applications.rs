@@ -306,13 +306,15 @@ async fn copy_app_bundle(source: &Path, destination: &Path) -> Result<()> {
 }
 
 async fn restart_into(app_path: PathBuf, cx: &mut AsyncWindowContext) -> Result<()> {
-    let workspace_windows = cx.update(|_window, cx| {
-        cx.windows()
-            .into_iter()
-            .filter_map(|window| window.downcast::<MultiWorkspace>())
-            .collect::<Vec<_>>()
-    })?;
-    if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await? {
+    let workspace_windows = cx
+        .update(|_window, cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect::<Vec<_>>()
+        })
+        .context("collecting workspace windows before restarting")?;
+    if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await {
         return Ok(());
     }
     cx.update(|_window, cx| {

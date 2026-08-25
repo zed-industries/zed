@@ -60,12 +60,13 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
+    Bounds, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView,
+    MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful,
+    Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds,
+    WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
+    transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -3639,11 +3640,11 @@ impl Workspace {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
                 if allow_hot_exit_serialization {
-                    workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         for (pane, item) in dirty_items {
                             if let Some(task) = item
                                 .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                                .and_then(|handle| handle.serialize(workspace, true, cx))
                             {
                                 serialize_tasks.push((pane, item, task));
                             } else {
@@ -7135,7 +7136,14 @@ impl Workspace {
             });
         let item_tasks = serializable_items
             .into_values()
-            .filter_map(|item| item.serialize(self, false, window, cx))
+            .filter_map(|item| {
+                let item_id = item.item_id();
+                let task = item.serialize(self, false, cx)?;
+                Some(async move {
+                    task.await
+                        .with_context(|| format!("flushing serialization of item {item_id:?}"))
+                })
+            })
             .collect::<Vec<_>>();
         let bounds_task = self.save_window_bounds(window, cx);
         let serialize_task = self.serialize_workspace_internal(window, cx);
@@ -7397,9 +7405,9 @@ impl Workspace {
             // We use into_iter() here so that the references to the items are moved into
             // the tasks and not kept alive while we're sleeping.
             for (_, item) in unique_items.into_iter() {
-                if let Ok(Some(task)) = this.update_in(cx, |workspace, window, cx| {
-                    item.serialize(workspace, false, window, cx)
-                }) {
+                if let Ok(Some(task)) =
+                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
+                {
                     cx.background_spawn(async move { task.await.log_err() })
                         .detach();
                 }
@@ -11230,7 +11238,7 @@ pub fn reload(cx: &mut App) {
             }
         }
 
-        if !prepare_windows_to_quit(&workspace_windows, cx).await? {
+        if !prepare_windows_to_quit(&workspace_windows, cx).await {
             return anyhow::Ok(());
         }
         cx.update(|cx| cx.restart());
@@ -11242,7 +11250,7 @@ pub fn reload(cx: &mut App) {
 pub async fn prepare_windows_to_quit(
     workspace_windows: &[WindowHandle<MultiWorkspace>],
     cx: &mut AsyncApp,
-) -> Result<bool> {
+) -> bool {
     // If the user cancels any save prompt, then keep the app open.
     let mut prepared_windows = Vec::new();
     let mut cancelled = false;
@@ -11254,7 +11262,10 @@ pub async fn prepare_windows_to_quit(
                 break;
             }
             Err(error) => {
-                log::error!("failed to prepare a window to close before quitting: {error:#}");
+                log::error!(
+                    "failed to prepare window {:?} to close before quitting: {error:#}",
+                    window.window_id()
+                );
                 cancelled = true;
                 break;
             }
@@ -11270,14 +11281,14 @@ pub async fn prepare_windows_to_quit(
                 })
                 .log_err();
         }
-        return Ok(false);
+        return false;
     }
 
     // Flush all pending workspace serialization before quitting so that
     // session_id/window_id are up-to-date in the database.
     flush_windows_serialization(workspace_windows, cx).await;
 
-    Ok(true)
+    true
 }
 
 pub(crate) async fn prepare_window_to_close(
@@ -11310,15 +11321,16 @@ pub(crate) async fn prepare_window_to_close(
         }) {
             Ok(task) => task.await,
             Err(error) => Err(error),
-        };
+        }
+        .with_context(|| format!("preparing workspace {:?} to close", workspace.entity_id()));
         if !matches!(prepared, Ok(true)) {
             break;
         }
     }
 
-    // Re-activate the workspace the user
-    // actually had focused so it is the one serialized (and restored on
-    // next launch) as active, rather than whichever happened to be last.
+    // Re-activate the workspace the user actually had focused so it is the
+    // one serialized (and restored on next launch) as active, rather than
+    // whichever happened to be last.
     window
         .update(cx, |multi_workspace, window, cx| {
             if !matches!(prepared, Ok(true)) {
@@ -11339,33 +11351,41 @@ pub async fn flush_windows_serialization(
     workspace_windows: &[WindowHandle<MultiWorkspace>],
     cx: &mut AsyncApp,
 ) {
+    let flush_tasks = collect_flush_tasks(workspace_windows, cx);
+    futures::future::join_all(flush_tasks).await;
+}
+
+fn flush_windows_serialization_on_quit(cx: &mut App) -> impl Future<Output = ()> + use<> {
+    let workspace_windows = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
+        .collect::<Vec<_>>();
+    let flush_tasks = collect_flush_tasks(&workspace_windows, cx);
+    async move {
+        futures::future::join_all(flush_tasks).await;
+    }
+}
+
+fn collect_flush_tasks(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut impl AppContext,
+) -> Vec<Task<()>> {
     let mut flush_tasks = Vec::new();
     for window in workspace_windows {
         window
             .update(cx, |multi_workspace, window, cx| {
                 flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
             })
+            .with_context(|| {
+                format!(
+                    "flushing pending serialization for window {:?}",
+                    window.window_id()
+                )
+            })
             .log_err();
     }
-    futures::future::join_all(flush_tasks).await;
-}
-
-fn flush_windows_serialization_on_quit(cx: &mut App) -> impl Future<Output = ()> + use<> {
-    let mut flush_tasks = Vec::new();
-    for window in cx.windows() {
-        if let Some(window) = window.downcast::<MultiWorkspace>()
-            && let Some(tasks) = window
-                .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.flush_pending_serialization(window, cx)
-                })
-                .log_err()
-        {
-            flush_tasks.extend(tasks);
-        }
-    }
-    async move {
-        futures::future::join_all(flush_tasks).await;
-    }
+    flush_tasks
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {

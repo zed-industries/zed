@@ -1805,7 +1805,7 @@ fn quit(_: &Quit, cx: &mut App) {
             }
         }
 
-        if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await? {
+        if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await {
             return Ok(());
         }
 

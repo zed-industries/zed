@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use fs::Fs;
 
 use gpui::{
@@ -558,15 +558,20 @@ impl MultiWorkspace {
             return;
         };
         cx.spawn(async move |_, cx| {
-            if !crate::prepare_window_to_close(window_handle, CloseIntent::CloseWindow, cx).await? {
+            if !crate::prepare_window_to_close(window_handle, CloseIntent::CloseWindow, cx)
+                .await
+                .context("preparing the window to close")?
+            {
                 return anyhow::Ok(());
             }
 
             crate::flush_windows_serialization(&[window_handle], cx).await;
 
-            window_handle.update(cx, |_, window, _cx| {
-                window.remove_window();
-            })?;
+            window_handle
+                .update(cx, |_, window, _cx| {
+                    window.remove_window();
+                })
+                .context("removing the closed window")?;
 
             anyhow::Ok(())
         })
@@ -1717,7 +1722,7 @@ impl MultiWorkspace {
                 }));
             }
         }
-        self.serialize(cx);
+        tasks.push(self.flush_serialization(cx));
         tasks
     }
 

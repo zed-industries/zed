@@ -4306,7 +4306,6 @@ impl workspace::SerializableItem for GitGraph {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
