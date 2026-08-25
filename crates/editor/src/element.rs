@@ -1226,7 +1226,6 @@ impl EditorElement {
                                 },
                                 target_bounds,
                                 cursor_viewport,
-                                animation_settings,
                                 animation_now,
                             );
                             request_animation_frame |= cursor.animated_corners.is_some();

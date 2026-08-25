@@ -76,9 +76,6 @@ pub struct EditorSettings {
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct CursorAnimationSettings {
     pub enabled: bool,
-    pub duration_ms: u64,
-    pub short_duration_ms: u64,
-    pub trail_size: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -230,9 +227,6 @@ impl Settings for EditorSettings {
             cursor_shape: editor.cursor_shape.map(Into::into),
             cursor_animation: CursorAnimationSettings {
                 enabled: cursor_animation.enabled.unwrap(),
-                duration_ms: cursor_animation.duration_ms.unwrap(),
-                short_duration_ms: cursor_animation.short_duration_ms.unwrap(),
-                trail_size: cursor_animation.trail_size.unwrap(),
             },
             current_line_highlight: editor.current_line_highlight.unwrap(),
             selection_highlight: editor.selection_highlight.unwrap(),

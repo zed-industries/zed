@@ -1,4 +1,3 @@
-use crate::editor_settings::CursorAnimationSettings;
 use collections::HashMap;
 use gpui::{Bounds, Pixels, Point, point, px};
 use std::time::{Duration, Instant};
@@ -14,6 +13,9 @@ const SNAP_ANIMATION_LENGTH_SECONDS: f32 = 0.02;
 const ANIMATION_RESET_THRESHOLD_SECONDS: f32 = 0.075;
 const MAX_TRAIL_DISTANCE_FACTOR: f32 = 100.0;
 const RANK_TRAIL_FACTORS: [f32; 4] = [1.0, 0.9, 0.5, 0.3];
+const ANIMATION_LENGTH_SECONDS: f32 = 0.125;
+const SHORT_ANIMATION_LENGTH_SECONDS: f32 = 0.05;
+const TRAIL_SIZE: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LogicalCursorPosition {
@@ -252,12 +254,7 @@ impl Corner {
         self.vertical_animation.reset();
     }
 
-    fn retarget(
-        &mut self,
-        geometry: CursorGeometry,
-        rank: usize,
-        settings: CursorAnimationSettings,
-    ) {
+    fn retarget(&mut self, geometry: CursorGeometry, rank: usize) {
         let destination = self.destination(geometry);
         let horizontal_jump =
             (destination.x - self.target_position.x) / geometry.width.max(f32::EPSILON);
@@ -274,21 +271,18 @@ impl Corner {
         let is_short_jump = horizontal_jump.abs() <= SHORT_MOVE_THRESHOLD
             && vertical_jump.abs() <= SPRING_RESET_EPSILON;
 
-        let full_animation_length = settings.duration_ms as f32 / 1000.0;
-        let short_animation_length = settings.short_duration_ms as f32 / 1000.0;
         let base_animation_length = if is_short_jump {
-            full_animation_length.min(short_animation_length)
+            ANIMATION_LENGTH_SECONDS.min(SHORT_ANIMATION_LENGTH_SECONDS)
         } else {
-            full_animation_length
+            ANIMATION_LENGTH_SECONDS
         };
         let reference_animation_length = if leading_alignment > LEADING_SNAP_THRESHOLD {
             SNAP_ANIMATION_LENGTH_SECONDS
         } else {
             base_animation_length * RANK_TRAIL_FACTORS[rank.min(3)]
         };
-        let trail_size = settings.trail_size.clamp(0.0, 1.0);
         self.animation_length = base_animation_length
-            + (reference_animation_length - base_animation_length) * trail_size;
+            + (reference_animation_length - base_animation_length) * TRAIL_SIZE;
 
         if self.animation_length > ANIMATION_RESET_THRESHOLD_SECONDS {
             self.horizontal_animation.reset();
@@ -376,14 +370,12 @@ impl CursorAnimationStates {
         logical_position: LogicalCursorPosition,
         target_bounds: Bounds<Pixels>,
         viewport: CursorViewport,
-        settings: CursorAnimationSettings,
         now: Instant,
     ) -> Option<[Point<Pixels>; 4]> {
         self.states.entry(selection_id).or_default().update(
             logical_position,
             target_bounds,
             viewport,
-            settings,
             now,
         )
     }
@@ -429,7 +421,6 @@ impl CursorAnimationState {
         logical_position: LogicalCursorPosition,
         target_bounds: Bounds<Pixels>,
         viewport: CursorViewport,
-        settings: CursorAnimationSettings,
         now: Instant,
     ) -> Option<[Point<Pixels>; 4]> {
         let target_geometry = CursorGeometry::from_bounds(target_bounds);
@@ -442,11 +433,6 @@ impl CursorAnimationState {
             self.snap(logical_position, target_geometry, viewport, now);
             return None;
         };
-
-        if !settings.enabled {
-            self.snap(logical_position, target_geometry, viewport, now);
-            return None;
-        }
 
         let logical_position_changed = self.last_logical_position != Some(logical_position);
         let target_origin_changed = !previous_geometry.has_same_origin(target_geometry);
@@ -471,7 +457,7 @@ impl CursorAnimationState {
             } else {
                 Duration::ZERO
             };
-            self.retarget(target_geometry, settings);
+            self.retarget(target_geometry);
             self.advance(elapsed);
             self.last_frame_at = Some(now);
         } else if self.active {
@@ -515,7 +501,7 @@ impl CursorAnimationState {
         self.active = false;
     }
 
-    fn retarget(&mut self, geometry: CursorGeometry, settings: CursorAnimationSettings) {
+    fn retarget(&mut self, geometry: CursorGeometry) {
         let mut aligned_corners: [(usize, f32); 4] =
             std::array::from_fn(|index| (index, self.corners[index].direction_alignment(geometry)));
         aligned_corners.sort_by(|left, right| left.1.total_cmp(&right.1));
@@ -525,7 +511,7 @@ impl CursorAnimationState {
         }
 
         for (index, corner) in self.corners.iter_mut().enumerate() {
-            corner.retarget(geometry, ranks[index], settings);
+            corner.retarget(geometry, ranks[index]);
         }
         self.active = self.corners.iter().any(|corner| {
             corner.horizontal_animation.position != 0.0 || corner.vertical_animation.position != 0.0
@@ -567,15 +553,6 @@ fn nearly_equal(left: f32, right: f32) -> bool {
 mod tests {
     use super::*;
     use gpui::size;
-
-    fn settings() -> CursorAnimationSettings {
-        CursorAnimationSettings {
-            enabled: true,
-            duration_ms: 125,
-            short_duration_ms: 50,
-            trail_size: 1.0,
-        }
-    }
 
     fn bounds(x: f32, y: f32) -> Bounds<Pixels> {
         Bounds {
@@ -627,7 +604,6 @@ mod tests {
                     logical_position(1, 1),
                     bounds(10.0, 20.0),
                     viewport(0.0),
-                    settings(),
                     now,
                 )
                 .is_none()
@@ -644,27 +620,17 @@ mod tests {
     fn mid_flight_retarget_starts_from_current_geometry() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        let mut no_trail_settings = settings();
-        no_trail_settings.trail_size = 0.0;
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
         state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
+            logical_position(0, 10),
+            bounds(100.0, 0.0),
             viewport(0.0),
-            no_trail_settings,
             now,
         );
         state.update(
             logical_position(0, 10),
             bounds(100.0, 0.0),
             viewport(0.0),
-            no_trail_settings,
-            now,
-        );
-        state.update(
-            logical_position(0, 10),
-            bounds(100.0, 0.0),
-            viewport(0.0),
-            no_trail_settings,
             now + Duration::from_millis(16),
         );
         let position_before_retarget = state.corners.map(|corner| corner.current_position);
@@ -673,7 +639,6 @@ mod tests {
             logical_position(0, 20),
             bounds(200.0, 0.0),
             viewport(0.0),
-            no_trail_settings,
             now + Duration::from_millis(16),
         );
         assert_eq!(
@@ -686,7 +651,6 @@ mod tests {
                 logical_position(0, 20),
                 bounds(200.0, 0.0),
                 viewport(0.0),
-                no_trail_settings,
                 now + Duration::from_millis(frame * 16),
             );
         }
@@ -698,20 +662,8 @@ mod tests {
     fn short_horizontal_movement_uses_short_duration() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
-        state.update(
-            logical_position(0, 1),
-            bounds(4.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
+        state.update(logical_position(0, 1), bounds(4.0, 0.0), viewport(0.0), now);
 
         assert!((state.corners[0].animation_length - 0.05).abs() < f32::EPSILON);
         assert!((state.corners[3].animation_length - 0.045).abs() < f32::EPSILON);
@@ -723,25 +675,12 @@ mod tests {
     fn short_mid_flight_retarget_preserves_momentum() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
+        state.update(logical_position(0, 1), bounds(4.0, 0.0), viewport(0.0), now);
         state.update(
             logical_position(0, 1),
             bounds(4.0, 0.0),
             viewport(0.0),
-            settings(),
-            now,
-        );
-        state.update(
-            logical_position(0, 1),
-            bounds(4.0, 0.0),
-            viewport(0.0),
-            settings(),
             now + Duration::from_millis(16),
         );
         let velocity_before_retarget = state.corners[0].horizontal_animation.velocity;
@@ -751,7 +690,6 @@ mod tests {
             logical_position(0, 2),
             bounds(8.0, 0.0),
             viewport(0.0),
-            settings(),
             now + Duration::from_millis(16),
         );
 
@@ -765,20 +703,13 @@ mod tests {
     fn movement_after_idle_starts_from_previous_geometry() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
 
         let corners = state
             .update(
                 logical_position(0, 1),
                 bounds(4.0, 0.0),
                 viewport(0.0),
-                settings(),
                 now + Duration::from_secs(5),
             )
             .unwrap();
@@ -789,7 +720,6 @@ mod tests {
                 logical_position(0, 1),
                 bounds(4.0, 0.0),
                 viewport(0.0),
-                settings(),
                 now + Duration::from_secs(5) + Duration::from_millis(16),
             )
             .unwrap();
@@ -801,18 +731,11 @@ mod tests {
     fn long_movement_ranks_leading_corners_ahead_of_trailing_corners() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
         state.update(
             logical_position(0, 20),
             bounds(100.0, 0.0),
             viewport(0.0),
-            settings(),
             now,
         );
 
@@ -824,18 +747,11 @@ mod tests {
     fn diagonal_bar_jump_keeps_dimensionally_leading_edge_together() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
         state.update(
             logical_position(10, 25),
             bounds(200.0, 200.0),
             viewport(0.0),
-            settings(),
             now,
         );
 
@@ -858,7 +774,6 @@ mod tests {
             logical_position(10, 25),
             bounds(200.0, 200.0),
             viewport(0.0),
-            settings(),
             now + Duration::from_millis(16),
         );
         let leading_edge_height =
@@ -870,18 +785,11 @@ mod tests {
     fn viewport_movement_snaps_even_during_animation() {
         let now = Instant::now();
         let mut state = CursorAnimationState::default();
-        state.update(
-            logical_position(0, 0),
-            bounds(0.0, 0.0),
-            viewport(0.0),
-            settings(),
-            now,
-        );
+        state.update(logical_position(0, 0), bounds(0.0, 0.0), viewport(0.0), now);
         state.update(
             logical_position(0, 10),
             bounds(100.0, 0.0),
             viewport(0.0),
-            settings(),
             now,
         );
         assert!(state.active);
@@ -892,7 +800,6 @@ mod tests {
                     logical_position(0, 10),
                     bounds(100.0, -20.0),
                     viewport(1.0),
-                    settings(),
                     now + Duration::from_millis(16),
                 )
                 .is_none()
@@ -931,7 +838,6 @@ mod tests {
                         logical_position(0, selection_id as u32),
                         bounds(x, 0.0),
                         viewport(0.0),
-                        settings(),
                         now,
                     )
                     .is_none()
@@ -943,7 +849,6 @@ mod tests {
                         logical_position(0, selection_id as u32 + 1),
                         bounds(x + 4.0, 0.0),
                         viewport(0.0),
-                        settings(),
                         now,
                     )
                     .is_some()
@@ -963,7 +868,6 @@ mod tests {
             logical_position(0, 3),
             bounds(8.0, 0.0),
             viewport(0.0),
-            settings(),
             now + Duration::from_millis(16),
         );
 
@@ -997,7 +901,6 @@ mod tests {
                     logical_position(0, 0),
                     bounds(0.0, 0.0),
                     viewport(0.0),
-                    settings(),
                     now,
                 )
                 .is_none()
@@ -1016,7 +919,6 @@ mod tests {
                     logical_position(4, 8),
                     bounds(80.0, 80.0),
                     viewport(0.0),
-                    settings(),
                     now,
                 )
                 .is_some()
@@ -1034,7 +936,6 @@ mod tests {
             logical_position(0, 0),
             bounds(0.0, 0.0),
             viewport(0.0),
-            settings(),
             now,
         );
 
@@ -1049,7 +950,6 @@ mod tests {
                     logical_position(4, 8),
                     bounds(80.0, 80.0),
                     viewport(0.0),
-                    settings(),
                     now,
                 )
                 .is_some()
@@ -1071,7 +971,6 @@ mod tests {
             logical_position(0, 0),
             bounds(0.0, 0.0),
             viewport(0.0),
-            settings(),
             now,
         );
         states.capture_newest_state();
@@ -1087,7 +986,6 @@ mod tests {
                     logical_position(4, 8),
                     bounds(80.0, 80.0),
                     viewport(0.0),
-                    settings(),
                     now,
                 )
                 .is_some()
