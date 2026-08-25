@@ -60,15 +60,30 @@ use project::{
     trusted_worktrees::TrustedWorktrees,
 };
 use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
+use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
+
+const MAXIMUM_RETRY_JITTER_FRACTION: f64 = 0.1;
+
+pub(crate) fn jitter_retry_delay(delay: Duration) -> Duration {
+    let jitter = delay.mul_f64(rand::rng().random_range(0.0..MAXIMUM_RETRY_JITTER_FRACTION));
+    delay.checked_add(jitter).unwrap_or(Duration::MAX)
+}
+
+#[cfg(test)]
+pub(crate) fn maximum_retry_delay_with_jitter(delay: Duration) -> Duration {
+    let maximum_jitter = delay.mul_f64(MAXIMUM_RETRY_JITTER_FRACTION);
+    delay.checked_add(maximum_jitter).unwrap_or(Duration::MAX)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
@@ -2234,6 +2249,49 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.authorize_tool_call(tool_call_id, outcome, cx);
                                 })?;
+                            }
+                            ThreadEvent::Elicitation(ElicitationRequest {
+                                tool_call_id,
+                                message,
+                                schema,
+                                response,
+                            }) => {
+                                let request_result = acp_thread.update(cx, |thread, cx| {
+                                    let scope = acp::ElicitationSessionScope::new(
+                                        thread.session_id().clone(),
+                                    )
+                                    .tool_call_id(tool_call_id);
+                                    let request = acp::CreateElicitationRequest::new(
+                                        acp::ElicitationFormMode::new(scope, schema),
+                                        message,
+                                    );
+                                    thread.request_elicitation(request, cx)
+                                })?;
+                                match request_result {
+                                    Ok(response_task) => {
+                                        cx.background_spawn(async move {
+                                            let elicitation_response = response_task.await;
+                                            response
+                                                .send(elicitation_response)
+                                                .map_err(|_| {
+                                                    anyhow!("elicitation receiver was dropped")
+                                                })
+                                                .log_err();
+                                        })
+                                        .detach();
+                                    }
+                                    Err(error) => {
+                                        log::error!("Failed to request elicitation: {error:?}");
+                                        // Resolve the tool's pending request so it
+                                        // doesn't hang waiting on a form that will
+                                        // never render.
+                                        response
+                                            .send(acp::CreateElicitationResponse::new(
+                                                acp::ElicitationAction::Cancel,
+                                            ))
+                                            .ok();
+                                    }
+                                }
                             }
                             ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {

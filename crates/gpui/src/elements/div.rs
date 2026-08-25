@@ -30,7 +30,6 @@ use collections::HashMap;
 use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use stacksafe::{StackSafe, stacksafe};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -44,6 +43,11 @@ use std::{
 };
 
 use super::ImageCacheProvider;
+
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
@@ -1777,8 +1781,11 @@ impl InteractiveElement for Div {
 
 impl ParentElement for Div {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        #[cfg(feature = "stacker")]
         self.children
-            .extend(elements.into_iter().map(StackSafe::new))
+            .extend(elements.into_iter().map(StackSafe::new));
+        #[cfg(not(feature = "stacker"))]
+        self.children.extend(elements);
     }
 }
 
@@ -1816,7 +1823,7 @@ impl Element for Div {
         }
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1852,7 +1859,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1947,7 +1954,7 @@ impl Element for Div {
         )
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -5154,5 +5161,44 @@ mod tests {
             .unwrap();
 
         assert_eq!(focused, Some(item_b.id));
+    }
+
+    struct ContentSizedGrid;
+
+    impl Render for ContentSizedGrid {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let widths = [px(100.), px(200.), px(50.)];
+            div().size_full().child(
+                div()
+                    .w_full()
+                    .grid()
+                    .grid_cols_max_content(widths.len() as u16)
+                    .children(widths.into_iter().enumerate().map(|(index, width)| {
+                        div()
+                            .debug_selector(move || format!("cell-{index}"))
+                            .w(width)
+                            .h(px(10.))
+                    })),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn grid_cols_max_content_sizes_columns_to_their_content(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| ContentSizedGrid);
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        let mut bounds = |selector: &'static str| {
+            cx.update_window(window.into(), |_, window, _| {
+                window.rendered_frame.debug_bounds.get(selector).copied()
+            })
+            .unwrap()
+            .unwrap_or_else(|| panic!("{selector} was not rendered"))
+        };
+
+        assert_eq!(bounds("cell-0").origin.x, px(0.));
+        assert_eq!(bounds("cell-1").origin.x, px(100.));
+        assert_eq!(bounds("cell-2").origin.x, px(300.));
     }
 }

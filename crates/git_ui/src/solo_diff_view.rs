@@ -12,8 +12,8 @@ use git::{
     repository::RepoPath, status::StageStatus,
 };
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
+    Action, App, AppContext as _, Context, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
 use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
@@ -32,7 +32,7 @@ use util::paths::{PathExt as _, PathStyle};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions},
     notifications::NotifyTaskExt,
     searchable::SearchableItemHandle,
 };
@@ -269,7 +269,7 @@ impl SoloDiffView {
         let editor = self.editor.read(cx).rhs_editor().read(cx);
         let multibuffer = editor.buffer().read(cx);
         let snapshot = multibuffer.snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let mut selection = true;
 
         let mut ranges = editor
@@ -375,16 +375,6 @@ impl Item for SoloDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {

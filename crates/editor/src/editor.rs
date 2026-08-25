@@ -106,7 +106,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::BlameRenderer;
+pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
     DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
     RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
@@ -158,7 +158,7 @@ use futures::{
     future::{self, Shared},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{GitBlame, GlobalBlameRenderer};
+use git::blame::GlobalBlameRenderer;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
@@ -2076,7 +2076,12 @@ impl Editor {
                         }
                     }
 
-                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
+                    project::Event::EntryRenamed {
+                        transaction,
+                        new_project_path,
+                        new_abs_path,
+                        ..
+                    } => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -2095,8 +2100,8 @@ impl Editor {
                                         p.update(cx, |pane, _| {
                                             pane.nav_history_mut().rename_item(
                                                 entity_id,
-                                                project_path.clone(),
-                                                abs_path.clone().into(),
+                                                new_project_path.clone(),
+                                                new_abs_path.clone().into(),
                                             );
                                         })
                                     });
@@ -2167,6 +2172,12 @@ impl Editor {
                         editor.refresh_inline_values(cx);
                     }
                     _ => {}
+                },
+            ));
+            project_subscriptions.push(cx.observe(
+                &project.read(cx).bookmark_store(),
+                |_, _, cx| {
+                    cx.notify();
                 },
             ));
             let git_store = project.read(cx).git_store().clone();
@@ -2787,6 +2798,14 @@ impl Editor {
             key_context.add("diffs_expanded");
         }
 
+        if self
+            .nav_history
+            .as_ref()
+            .is_some_and(ItemNavHistory::is_preview_item)
+        {
+            key_context.add("in_preview");
+        }
+
         key_context
     }
 
@@ -3330,7 +3349,12 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.show_git_blame_gutter {
+        if self.show_git_blame_gutter
+            && !self
+                .blame
+                .as_ref()
+                .is_some_and(|blame| blame.read(cx).is_static())
+        {
             self.show_git_blame_gutter = false;
             cx.notify();
             return;
@@ -3530,7 +3554,7 @@ impl Editor {
 
         let provider = self.semantics_provider.clone()?;
         let buffer = self.buffer.read(cx);
-        let newest_selection = self.selections.newest_anchor().clone();
+        let newest_selection = *self.selections.newest_anchor();
         let cursor_position = newest_selection.head();
         let (cursor_buffer, cursor_buffer_position) =
             buffer.text_anchor_for_position(cursor_position, cx)?;
@@ -6249,10 +6273,33 @@ impl Editor {
         }
 
         let display_snapshot = self.display_snapshot(cx);
+        let text_layout_details = self.text_layout_details(window, cx);
+
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_layout_details.editor_style.text.font());
+        let font_size = text_layout_details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(text_layout_details.rem_size);
+        let Ok(space_width) = text_layout_details
+            .text_system
+            .advance(font_id, font_size, ' ')
+            .map(|advance| advance.width)
+        else {
+            return;
+        };
+        if space_width <= px(0.) {
+            return;
+        }
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let tab_size = display_snapshot.tab_snapshot().tab_size.get();
 
         struct CursorData {
             anchor: Anchor,
-            point: Point,
+            row: u32,
+            x: Pixels,
         }
         let cursor_data: Vec<CursorData> = self
             .selections
@@ -6264,29 +6311,50 @@ impl Editor {
                 } else {
                     selection.tail()
                 };
+                let point = anchor.to_point(buffer_snapshot);
+                let mut prefix = String::new();
+                let mut column = 0;
+                for chunk in buffer_snapshot.text_for_range(Point::new(point.row, 0)..point) {
+                    for ch in chunk.chars() {
+                        if ch == '\t' {
+                            let tab_len = tab_size - column % tab_size;
+                            prefix.extend(iter::repeat_n(' ', tab_len as usize));
+                            column += tab_len;
+                        } else {
+                            prefix.push(ch);
+                            column += 1;
+                        }
+                    }
+                }
+                let run = text_layout_details.editor_style.text.to_run(prefix.len());
+                let x = text_layout_details
+                    .text_system
+                    .layout_line(&prefix, font_size, &[run], None)
+                    .width;
                 CursorData {
-                    anchor: anchor,
-                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
+                    anchor,
+                    row: point.row,
+                    x,
                 }
             })
             .collect();
 
         let rows_anchors_count: Vec<usize> = cursor_data
             .iter()
-            .map(|cursor| cursor.point.row)
+            .map(|cursor| cursor.row)
             .chunk_by(|&row| row)
             .into_iter()
             .map(|(_, group)| group.count())
             .collect();
         let max_columns = rows_anchors_count.iter().max().copied().unwrap_or(0);
-        let mut rows_column_offset = vec![0; rows_anchors_count.len()];
+        let mut rows_x_offset = vec![px(0.); rows_anchors_count.len()];
         let mut edits = Vec::new();
 
         for column_idx in 0..max_columns {
             let mut cursor_index = 0;
 
-            // Calculate target_column => position that the selections will go
-            let mut target_column = 0;
+            // Calculate target_x => position that the selections will go
+            let mut target_x = px(0.);
             for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
                 // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
@@ -6294,10 +6362,9 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let adjusted_column = point.column + rows_column_offset[row_idx];
-                if adjusted_column > target_column {
-                    target_column = adjusted_column;
+                let adjusted_x = cursor_data[cursor_index + column_idx].x + rows_x_offset[row_idx];
+                if adjusted_x > target_x {
+                    target_x = adjusted_x;
                 }
                 cursor_index += cursor_count;
             }
@@ -6311,15 +6378,15 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                let cursor = &cursor_data[cursor_index + column_idx];
+                let spaces_needed = ((target_x - cursor.x - rows_x_offset[row_idx]) / space_width)
+                    .round()
+                    .max(0.) as u32;
                 if spaces_needed > 0 {
-                    let anchor = cursor_data[cursor_index + column_idx]
-                        .anchor
-                        .bias_left(&display_snapshot);
+                    let anchor = cursor.anchor.bias_left(&display_snapshot);
                     edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
                 }
-                rows_column_offset[row_idx] += spaces_needed;
+                rows_x_offset[row_idx] += space_width * spaces_needed as f32;
 
                 cursor_index += *cursor_count;
             }
@@ -7787,7 +7854,7 @@ impl Editor {
             return None;
         }
         let provider = self.semantics_provider.clone()?;
-        let selection = self.selections.newest_anchor().clone();
+        let selection = *self.selections.newest_anchor();
         let cursor = self.rename_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
@@ -7983,6 +8050,11 @@ impl Editor {
             return None;
         }
         let rename = self.take_rename(false, window, cx)?;
+        let new_name = rename.editor.read(cx).text(cx);
+        if new_name.trim().is_empty() {
+            return Some(Task::ready(Ok(())));
+        }
+
         let workspace = self.workspace()?.downgrade();
         let (buffer, start) = self
             .buffer
@@ -7997,7 +8069,6 @@ impl Editor {
         }
 
         let old_name = rename.old_name;
-        let new_name = rename.editor.read(cx).text(cx);
 
         let rename = self.semantics_provider.as_ref()?.perform_rename(
             &buffer,
@@ -8158,8 +8229,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         let buffer = self.buffer.clone();
-        let (buffers, target) = match target {
+        let (mut buffers, target) = match target {
             FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
             FormatTarget::Ranges(selection_ranges) => {
                 let multi_buffer = buffer.read(cx);
@@ -8184,6 +8258,8 @@ impl Editor {
                 (buffers, LspFormatTarget::Ranges(buffer_id_to_ranges))
             }
         };
+
+        buffers.retain(|buffer| !buffer.read(cx).read_only());
 
         let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
         let selections_prev = transaction_id_prev
@@ -9751,6 +9827,10 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
+            }
+            multi_buffer::Event::CapabilityChanged => {
+                cx.emit(EditorEvent::CapabilityChanged);
+                cx.notify();
             }
             multi_buffer::Event::Reloaded | multi_buffer::Event::BufferDiffChanged => {
                 cx.emit(EditorEvent::TitleChanged)
@@ -11528,14 +11608,14 @@ fn consume_contiguous_rows(
     display_map: &DisplaySnapshot,
     selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
-    contiguous_row_selections.push(selection.clone());
+    contiguous_row_selections.push(*selection);
     let start_row = starting_row(selection, display_map);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
         if next_selection.start.row <= end_row.0 {
             end_row = ending_row(next_selection, display_map);
-            contiguous_row_selections.push(selections.next().unwrap().clone());
+            contiguous_row_selections.push(*selections.next().unwrap());
         } else {
             break;
         }
@@ -11895,6 +11975,7 @@ pub enum EditorEvent {
     Blurred,
     DirtyChanged,
     Saved,
+    CapabilityChanged,
     TitleChanged,
     FileHandleChanged,
     SelectionsChanged {
