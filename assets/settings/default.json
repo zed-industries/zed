@@ -2469,7 +2469,7 @@
       },
     },
     "SystemVerilog": {
-      "language_servers": ["!slang", "..."],
+      "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],
       "use_on_type_format": false,
     },
     "Vue.js": {
