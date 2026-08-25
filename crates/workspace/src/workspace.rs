@@ -7114,20 +7114,35 @@ impl Workspace {
         })
     }
 
-    /// Bypass the 200ms serialization throttle and write workspace state to
-    /// the DB immediately. Returns a task the caller can await to ensure the
-    /// write completes. Used by the quit handler so the most recent state
-    /// isn't lost to a pending throttle timer when the process exits.
+    /// Bypass the serialization throttles and write workspace and item state
+    /// to the DB immediately. Returns a task the caller can await to ensure the
+    /// writes complete before the process exits.
     pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self._schedule_serialize_workspace.take();
         self._serialize_workspace_task.take();
         self.bounds_save_task_queued.take();
 
+        let serializable_items = self
+            .panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items())
+            .filter_map(|item| item.to_serializable_item_handle(cx))
+            .fold(HashMap::default(), |mut items, item| {
+                items.entry(item.item_id()).or_insert(item);
+                items
+            });
+        let item_tasks = serializable_items
+            .into_values()
+            .filter_map(|item| item.serialize(self, false, window, cx))
+            .collect::<Vec<_>>();
         let bounds_task = self.save_window_bounds(window, cx);
         let serialize_task = self.serialize_workspace_internal(window, cx);
         cx.spawn(async move |_| {
             bounds_task.await;
             serialize_task.await;
+            for result in futures::future::join_all(item_tasks).await {
+                result.log_err();
+            }
         })
     }
 
@@ -11213,22 +11228,75 @@ pub fn reload(cx: &mut App) {
             }
         }
 
-        // If the user cancels any save prompt, then keep the app open.
-        for window in workspace_windows {
-            if let Ok(should_close) = window.update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().clone();
-                workspace.update(cx, |workspace, cx| {
-                    workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-                })
-            }) && !should_close.await?
-            {
-                return anyhow::Ok(());
-            }
+        if !prepare_workspace_windows_for_app_close(&workspace_windows, cx).await? {
+            return anyhow::Ok(());
         }
+
         cx.update(|cx| cx.restart());
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+pub async fn prepare_workspace_windows_for_app_close(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut AsyncApp,
+) -> Result<bool> {
+    for window in workspace_windows {
+        let window = *window;
+        let active_and_workspaces = window
+            .update(cx, |multi_workspace, _, _cx| {
+                (
+                    multi_workspace.workspace().clone(),
+                    multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                )
+            })
+            .log_err();
+
+        let Some((originally_active, workspaces)) = active_and_workspaces else {
+            continue;
+        };
+
+        for workspace in workspaces {
+            if let Some(should_close) = window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(workspace.clone(), None, window, cx);
+                    window.activate_window();
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.prepare_to_close(CloseIntent::Quit, window, cx)
+                    })
+                })
+                .log_err()
+            {
+                if !should_close.await? {
+                    window
+                        .update(cx, |multi_workspace, window, cx| {
+                            multi_workspace.activate(originally_active.clone(), None, window, cx);
+                        })
+                        .log_err();
+                    return Ok(false);
+                }
+            }
+        }
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(originally_active, None, window, cx);
+            })
+            .log_err();
+    }
+
+    let mut flush_tasks = Vec::new();
+    for window in workspace_windows {
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
+            })
+            .log_err();
+    }
+    futures::future::join_all(flush_tasks).await;
+
+    Ok(true)
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {

@@ -1496,8 +1496,7 @@ impl MultiWorkspace {
     }
 
     /// Returns the in-flight serialization task (if any) so the caller can
-    /// await it. Used by the quit handler to ensure pending DB writes
-    /// complete before the process exits.
+    /// await it so pending DB writes complete before the process exits.
     pub fn flush_serialization(&mut self) -> Task<()> {
         self._serialize_task.take().unwrap_or(Task::ready(()))
     }
