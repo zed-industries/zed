@@ -2166,6 +2166,124 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_level_chain_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let text = "
+            fn foo(
+                a: i32,
+            ) {
+                if true {
+                    let b = a;
+                } else {
+                    let b = a;
+                }
+            }
+        "
+        .unindent();
+        let buffer = cx.new(|cx| Buffer::local(&text, cx).with_language(rust_lang(), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(⋯) {⋯}
+            "
+                .unindent(),
+            );
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(
+                    a: i32,
+                ) {
+                    if true {⋯} else {⋯}
+                }
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_single_row_crease(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\n@file.txt and more\ncccccc\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
+
+            editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                aaaaaa
+                ⋯ and more
+                cccccc
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd eee\nfff\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let outer =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 7));
+            let inner =
+                snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 3));
+
+            editor.insert_creases(
+                [
+                    Crease::simple(outer, FoldPlaceholder::test()),
+                    Crease::simple(inner, FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\n⋯\nfff\n");
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\nbbb\nccc\nddd eee\nfff\n");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -33418,6 +33536,120 @@ async fn test_active_bookmarks(cx: &mut TestAppContext) {
     assert!(active.contains(&DisplayRow(5)));
     assert!(!active.contains(&DisplayRow(1)));
     assert!(!active.contains(&DisplayRow(8)));
+}
+
+#[gpui::test]
+async fn test_clearing_bookmark_store_notifies_editor(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new("Line 0\nLine 1\nLine 2\nLine 3", cx).await;
+
+    ctx.toggle_bookmarks_at_rows(&[1, 3]);
+
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.contains(&DisplayRow(1)));
+    assert!(active.contains(&DisplayRow(3)));
+
+    let editor = ctx.editor.clone();
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = ctx.cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    // `workspace::ClearBookmarks` mutates only the store, so the editor's gutter
+    // repaint relies entirely on its observation of the bookmark store.
+    ctx.project.update(&mut ctx.cx, |project, cx| {
+        project.bookmark_store().update(cx, |bookmark_store, cx| {
+            bookmark_store.clear_bookmarks(cx);
+        });
+    });
+    ctx.cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "clearing the bookmark store should notify the editor so its gutter repaints"
+    );
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.is_empty());
+}
+
+#[gpui::test]
+async fn test_clear_bookmarks_action_repaints_workspace_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({ "main.rs": "Line 0\nLine 1\nLine 2\nLine 3" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let workspace = window
+        .read_with(&mut cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let worktree_id = workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(&mut cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx.run_until_parked();
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.contains(&DisplayRow(1)));
+
+    // Drain the effects still pending from the toggle above, so that the only
+    // thing that can notify the editor below is the action dispatch.
+    cx.run_until_parked();
+
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    cx.dispatch_action(workspace::ClearBookmarks);
+    cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "workspace::ClearBookmarks should notify the editor so its gutter repaints"
+    );
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.is_empty());
 }
 
 #[gpui::test]

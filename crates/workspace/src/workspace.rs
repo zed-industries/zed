@@ -157,7 +157,7 @@ use uuid::Uuid;
 pub use workspace_settings::{
     AccessibleMode, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
     RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
-    observe_accessible_mode,
+    closing_last_window_quits_app, observe_accessible_mode,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -3391,29 +3391,27 @@ impl Workspace {
                     .count()
             })?;
 
-            #[cfg(target_os = "macos")]
-            let save_last_workspace = false;
-
-            // On Linux and Windows, closing the last window should restore the last workspace.
-            #[cfg(not(target_os = "macos"))]
-            let save_last_workspace = {
-                let remaining_workspaces = cx.update(|_window, cx| {
+            let (remaining_workspaces, closing_last_window_quits) = cx.update(|window, cx| {
+                let current_window = window.window_handle();
+                let remaining_workspaces =
                     cx.windows()
-                        .iter()
+                        .into_iter()
+                        .filter(|window| *window != current_window)
                         .filter_map(|window| window.downcast::<MultiWorkspace>())
                         .filter_map(|multi_workspace| {
-                            multi_workspace
-                                .update(cx, |multi_workspace, _, cx| {
-                                    multi_workspace.workspace().read(cx).removing
-                                })
-                                .ok()
+                            multi_workspace.read(cx).ok().map(|multi_workspace| {
+                                multi_workspace.workspace().read(cx).removing
+                            })
                         })
                         .filter(|removing| !removing)
-                        .count()
-                })?;
+                        .count();
 
-                close_intent != CloseIntent::ReplaceWindow && remaining_workspaces == 0
-            };
+                (remaining_workspaces, closing_last_window_quits_app(cx))
+            })?;
+
+            let save_last_workspace = close_intent != CloseIntent::ReplaceWindow
+                && remaining_workspaces == 0
+                && closing_last_window_quits;
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
@@ -7299,14 +7297,16 @@ impl Workspace {
                 let db = WorkspaceDb::global(cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
                 window.spawn(cx, async move |_| {
-                    db.set_window_open_status(
+                    let open_status_write = db.set_window_open_status(
                         database_id,
                         window_bounds,
                         display.unwrap_or_default(),
-                    )
-                    .await
-                    .log_err();
-                    db.set_session_id(database_id, None).await.log_err();
+                    );
+                    let session_id_write = db.set_session_id(database_id, None);
+                    let (open_status, session_id) =
+                        futures::join!(open_status_write, session_id_write);
+                    open_status.log_err();
+                    session_id.log_err();
                     persistence::write_default_dock_state(&kvp, docks)
                         .await
                         .log_err();
@@ -12335,6 +12335,78 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert!(task.await.unwrap());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_cancelled_close_window_resets_removing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.close_window(&CloseWindow, window, cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.executor().run_until_parked();
+
+        assert!(!workspace.read_with(cx, |workspace, _| workspace.removing));
+        let remaining_windows = cx.update(|_window, cx| cx.windows().len());
+        assert_eq!(remaining_windows, 1);
+    }
+
+    #[gpui::test]
+    async fn test_failed_close_window_resets_removing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_save_error("simulated save failure")
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.close_window(&CloseWindow, window, cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Save");
+        cx.executor().run_until_parked();
+
+        assert!(!workspace.read_with(cx, |workspace, _| workspace.removing));
+        let remaining_windows = cx.update(|_window, cx| cx.windows().len());
+        assert_eq!(remaining_windows, 1);
     }
 
     #[gpui::test]
