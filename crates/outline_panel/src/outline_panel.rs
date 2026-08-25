@@ -7,7 +7,7 @@ use editor::{
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, ExcerptRange, MultiBufferSnapshot,
     RangeToAnchorExt, SelectionEffects,
     display_map::ToDisplayPoint,
-    items::{entry_git_aware_label_color, entry_label_color, folder_indicator_element},
+    items::{entry_git_aware_label_color, entry_label_color},
     scroll::{Autoscroll, ScrollAnchor},
 };
 use file_icons::FileIcons;
@@ -5323,11 +5323,35 @@ fn empty_icon() -> AnyElement {
         .into_any_element()
 }
 
-/// Reserves the width of a directory's chevron ahead of `icon`.
+fn folder_indicator_element(
+    indicator: FolderIndicator,
+    expanded: bool,
+    path: &Path,
+    color: Color,
+    cx: &App,
+) -> Option<AnyElement> {
+    let indicators = FileIcons::get_folder_indicators(indicator, expanded, path, cx);
+    let render_indicator = |icon_path| Icon::from_path(icon_path).color(color);
+
+    match (indicators.chevron, indicators.icon) {
+        (Some(chevron), Some(icon)) => Some(
+            h_flex()
+                .flex_none()
+                .gap_0p5()
+                .child(render_indicator(chevron))
+                .child(render_indicator(icon))
+                .into_any_element(),
+        ),
+        (Some(only), None) | (None, Some(only)) => Some(render_indicator(only).into_any_element()),
+        (None, None) => None,
+    }
+}
+
+/// Adds a blank as wide as a chevron in front of `icon` in `both` mode. Leaves `icon`
+/// alone in the other modes.
 ///
-/// In `FolderIndicator::Both` a directory draws a chevron and an icon, so file rows
-/// hold the chevron's width open to line up with the folder icons rather than the
-/// chevrons.
+/// Directories show a chevron and an icon in `both` mode. Without the blank, a file's
+/// icon would line up under the folder chevrons instead of the folder icons.
 fn reserve_chevron_slot(indicator: FolderIndicator, icon: AnyElement) -> AnyElement {
     if indicator.shows_chevron() && indicator.shows_icon() {
         h_flex()
