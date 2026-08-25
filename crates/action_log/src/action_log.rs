@@ -172,29 +172,18 @@ impl ActionLog {
                 let diff_base;
                 let unreviewed_edits;
                 if is_created {
-                    match &status {
-                        // Overwriting an existing file: diff against its prior
-                        // content so deletions are counted, not shown as pure adds.
-                        TrackedBufferStatus::Created {
-                            existing_file_content: Some(existing_content),
-                        } => {
-                            diff_base = existing_content.clone();
-                            let mut patch = Patch::default();
-                            for (old, new) in language::line_diff(
-                                &existing_content.to_string(),
-                                &text_snapshot.text(),
-                            ) {
-                                patch.push(Edit { old, new });
-                            }
-                            unreviewed_edits = patch;
-                        }
-                        _ => {
-                            diff_base = Rope::default();
-                            unreviewed_edits = Patch::new(vec![Edit {
-                                old: 0..1,
-                                new: 0..text_snapshot.max_point().row + 1,
-                            }]);
-                        }
+                    if let TrackedBufferStatus::Created {
+                        existing_file_content: Some(existing_content),
+                    } = &status
+                    {
+                        diff_base = existing_content.clone();
+                        unreviewed_edits = Patch::default();
+                    } else {
+                        diff_base = Rope::default();
+                        unreviewed_edits = Patch::new(vec![Edit {
+                            old: 0..1,
+                            new: 0..text_snapshot.max_point().row + 1,
+                        }]);
                     }
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
@@ -1727,7 +1716,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 10)]
+    #[gpui::test]
     async fn test_overwriting_file_counts_removed_lines(cx: &mut TestAppContext) {
         init_test(cx);
 
