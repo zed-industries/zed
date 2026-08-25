@@ -7617,6 +7617,139 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_reload_restores_project_windows_and_tabs(cx: &mut TestAppContext) {
+        use session::Session;
+
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let first_dir = format!("reload-restore-{}", uuid::Uuid::new_v4());
+        let second_dir = format!("reload-restore-{}", uuid::Uuid::new_v4());
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    first_dir.clone(): {
+                        "a.txt": "a",
+                        "b.txt": "b"
+                    },
+                    second_dir.clone(): {
+                        "c.txt": "c",
+                        "d.txt": "d"
+                    }
+                }),
+            )
+            .await;
+        let mut first_dir = PathBuf::from(path!("/")).join(first_dir);
+        let mut second_dir = PathBuf::from(path!("/")).join(second_dir);
+        if second_dir < first_dir {
+            std::mem::swap(&mut first_dir, &mut second_dir);
+        }
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+        let first_window = open_test_project_window_with_tabs(
+            &app_state,
+            &first_dir,
+            &[rel_path("a.txt"), rel_path("b.txt")],
+            cx,
+        )
+        .await;
+        let second_window = open_test_project_window_with_tabs(
+            &app_state,
+            &second_dir,
+            &[rel_path("c.txt"), rel_path("d.txt")],
+            cx,
+        )
+        .await;
+
+        let restart = cx.expect_restart();
+        cx.update(workspace::reload);
+        let (restart_path, restart_arguments) = restart.await.expect("restart was not requested");
+        assert_eq!(restart_path, None);
+        assert!(restart_arguments.is_empty());
+
+        let database = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let locations = workspace::last_session_workspace_locations(
+            &database,
+            &session_id,
+            None,
+            app_state.fs.as_ref(),
+        )
+        .await
+        .expect("failed to read session workspaces");
+        assert_eq!(locations.len(), 2);
+
+        for window in [first_window, second_window] {
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("workspace window was closed");
+        }
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        let mut restored_tabs = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .map(|window| {
+                    window
+                        .read_with(cx, |multi_workspace, cx| {
+                            let workspace = multi_workspace.workspace().read(cx);
+                            let root_path = workspace
+                                .root_paths(cx)
+                                .into_iter()
+                                .next()
+                                .expect("restored project should have a root path")
+                                .as_ref()
+                                .to_path_buf();
+                            let tab_paths = workspace
+                                .active_pane()
+                                .read(cx)
+                                .items()
+                                .map(|item| {
+                                    item.project_path(cx)
+                                        .expect("restored tab should have a project path")
+                                        .path
+                                })
+                                .collect::<Vec<_>>();
+                            (root_path, tab_paths)
+                        })
+                        .expect("restored workspace window was closed")
+                })
+                .collect::<Vec<_>>()
+        });
+        restored_tabs.sort_by(|left, right| left.0.cmp(&right.0));
+
+        assert_eq!(
+            restored_tabs,
+            vec![
+                (
+                    first_dir,
+                    vec![rel_path("a.txt").into(), rel_path("b.txt").into()]
+                ),
+                (
+                    second_dir,
+                    vec![rel_path("c.txt").into(), rel_path("d.txt").into()]
+                ),
+            ]
+        );
+    }
+
+    #[gpui::test]
     async fn test_restored_project_groups_survive_workspace_key_change(cx: &mut TestAppContext) {
         use session::Session;
         use util::path_list::PathList;
@@ -7910,5 +8043,55 @@ mod tests {
             !active_paths.is_empty(),
             "active workspace should contain the remaining project, not be empty: {active_paths:?}"
         );
+    }
+
+    async fn open_test_project_window_with_tabs(
+        app_state: &Arc<AppState>,
+        root_path: &Path,
+        tab_paths: &[&RelPath],
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<MultiWorkspace> {
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![root_path.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    workspace::OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open project workspace");
+
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace window was closed");
+        let worktree_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+
+        for tab_path in tab_paths {
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.open_path((worktree_id, *tab_path), None, true, window, cx)
+                    })
+                })
+                .expect("workspace window was closed")
+                .await
+                .expect("failed to open project tab");
+        }
+
+        window
     }
 }
