@@ -515,6 +515,25 @@ mod tests {
             expected_efforts.as_slice()
         );
     }
+
+    #[test]
+    fn stream_usage_with_null_prompt_cache_tokens_is_not_an_error() {
+        let chunk = r#"{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":null}}}"#;
+
+        let super::ResponseStreamResult::Ok(event) =
+            serde_json::from_str::<super::ResponseStreamResult>(chunk).unwrap()
+        else {
+            panic!("usage-only chunk with null cache token fields must not fail to parse");
+        };
+
+        let details = event
+            .usage
+            .unwrap()
+            .prompt_tokens_details
+            .expect("prompt_tokens_details should be present");
+        assert_eq!(details.cached_tokens, Some(0));
+        assert_eq!(details.cache_write_tokens, None);
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -754,11 +773,9 @@ pub struct FunctionChunk {
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct PromptTokensDetails {
     /// Tokens read from a prompt cache.
-    #[serde(default)]
-    pub cached_tokens: u64,
+    pub cached_tokens: Option<u64>,
     /// Tokens written to a prompt cache.
-    #[serde(default)]
-    pub cache_write_tokens: u64,
+    pub cache_write_tokens: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -803,9 +820,10 @@ pub enum RequestError {
         #[source]
         error: http_client::http::Error,
     },
-    #[error("error sending HTTP request to {provider}'s API")]
+    #[error("error sending HTTP request to {host} for {provider}")]
     HttpSend {
         provider: String,
+        host: String,
         #[source]
         error: anyhow::Error,
     },
@@ -877,11 +895,13 @@ where
     RequestBody: Serialize + ?Sized,
 {
     let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_string(),
+            host,
             error,
         })?;
     if !response.status().is_success() {
@@ -945,11 +965,13 @@ where
     RequestBody: Serialize + ?Sized,
 {
     let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_string(),
+            host,
             error,
         })?;
     if !response.status().is_success() {
@@ -1185,8 +1207,13 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                 provider: provider.into(),
                 error,
             },
-            RequestError::HttpSend { provider, error } => Self::HttpSend {
+            RequestError::HttpSend {
+                provider,
+                host,
+                error,
+            } => Self::HttpSend {
                 provider: provider.into(),
+                host,
                 error,
             },
             RequestError::ReadResponse { provider, error } => Self::ApiReadResponseError {

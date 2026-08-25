@@ -42,6 +42,9 @@ ui.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zed_actions.workspace = true
 
+[package.metadata.cargo-shear]
+ignored = ["gpui_platform"]
+
 [[bench]]
 name = "editor_render"
 harness = false
