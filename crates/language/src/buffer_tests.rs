@@ -18,6 +18,7 @@ use std::{
     env,
     ops::Range,
     sync::LazyLock,
+    sync::atomic::{AtomicUsize, Ordering::SeqCst},
     time::{Duration, Instant},
 };
 use syntax_map::{MAX_BYTES_TO_QUERY, TreeSitterOptions};
@@ -559,6 +560,281 @@ fn file(path: &str) -> Arc<dyn File> {
         root_name: "zed".into(),
         local_root: None,
     })
+}
+
+fn highlight_captures(language: &Language) -> Vec<&str> {
+    language
+        .grammar()
+        .unwrap()
+        .highlights_config
+        .as_ref()
+        .unwrap()
+        .query
+        .capture_names()
+        .to_vec()
+}
+
+fn loaded_json_language(name: &'static str, queries: LanguageQueries) -> LoadedLanguage {
+    LoadedLanguage {
+        config: LanguageConfig {
+            name: name.into(),
+            grammar: Some("json".into()),
+            ..LanguageConfig::default()
+        },
+        queries,
+        context_provider: None,
+        toolchain_provider: None,
+        manifest_name: None,
+    }
+}
+
+#[gpui::test]
+async fn test_inherited_queries(cx: &mut TestAppContext) {
+    let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    languages.register_native_grammars([("json", tree_sitter_json::LANGUAGE)]);
+
+    let register = |name: &'static str, highlights: &'static str| {
+        languages.register_language(
+            name.into(),
+            Some("json".into()),
+            Arc::new(LanguageMatcher::default()),
+            false,
+            None,
+            Arc::new(move || {
+                async move {
+                    Ok(loaded_json_language(
+                        name,
+                        LanguageQueries {
+                            highlights: Some(highlights.into()),
+                            ..LanguageQueries::default()
+                        },
+                    ))
+                }
+                .boxed()
+            }),
+        )
+    };
+
+    register("JSON", "(string) @string");
+    register("JSONC", "; inherits: json\n(number) @number");
+    register("JSON5", "; inherits: jsonc\n(null) @constant");
+    register("FlatJSON", "; inherits: (jsonc)\n(true) @boolean");
+    register("BadJSON", "; inherits: nonexistent\n(false) @boolean");
+    register("MultiJSON", "; inherits: json, jsonc\n(false) @boolean");
+    register("CycleA", "; inherits: cycleb\n(true) @boolean");
+    register("CycleB", "; inherits: cyclea\n(false) @constant");
+
+    let json5 = languages.language_for_name("JSON5").await.unwrap();
+    assert_eq!(highlight_captures(&json5), ["string", "number", "constant"]);
+
+    // A parenthesized name splices the base query without expanding the base's
+    // own `inherits` comments, so JSON's captures are not included.
+    let flat_json = languages.language_for_name("FlatJSON").await.unwrap();
+    assert_eq!(highlight_captures(&flat_json), ["number", "boolean"]);
+
+    // Inheriting from an unknown language logs a warning but still loads the
+    // language with the queries it defines itself.
+    let bad_json = languages.language_for_name("BadJSON").await.unwrap();
+    assert_eq!(highlight_captures(&bad_json), ["boolean"]);
+
+    // With multiple comma-separated bases, JSON is included only once even
+    // though JSONC also inherits from it.
+    let multi_json = languages.language_for_name("MultiJSON").await.unwrap();
+    assert_eq!(
+        highlight_captures(&multi_json),
+        ["string", "number", "boolean"]
+    );
+
+    // Cyclic inheritance includes each language's own queries once.
+    let cycle_a = languages.language_for_name("CycleA").await.unwrap();
+    assert_eq!(highlight_captures(&cycle_a), ["constant", "boolean"]);
+}
+
+#[gpui::test]
+async fn test_inherited_queries_reloaded_on_registration_change(cx: &mut TestAppContext) {
+    let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    languages.register_native_grammars([("json", tree_sitter_json::LANGUAGE)]);
+
+    let register = |name: &'static str, highlights: &'static str| {
+        languages.register_extension_language(
+            name.into(),
+            Some("json".into()),
+            Arc::new(LanguageMatcher::default()),
+            false,
+            None,
+            Arc::new(move || {
+                async move {
+                    Ok(loaded_json_language(
+                        name,
+                        LanguageQueries {
+                            highlights: Some(highlights.into()),
+                            ..LanguageQueries::default()
+                        },
+                    ))
+                }
+                .boxed()
+            }),
+        );
+    };
+
+    // JSONC loads before its base language is registered, so it only gets its
+    // own queries.
+    register("JSONC", "; inherits: json\n(number) @number");
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["number"]);
+
+    // Registering the base evicts JSONC, and the next load picks up the
+    // inherited queries.
+    register("JSON", "(string) @string");
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["string", "number"]);
+
+    // Removing the base evicts JSONC again. Only extension languages can be
+    // removed, so every language here is registered as one.
+    languages.remove_languages(&["JSON".into()], &[]);
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["number"]);
+}
+
+#[gpui::test]
+async fn test_inherited_queries_load_base_once(cx: &mut TestAppContext) {
+    let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    languages.register_native_grammars([("json", tree_sitter_json::LANGUAGE)]);
+
+    let json_loads = Arc::new(AtomicUsize::new(0));
+    languages.register_language(
+        "JSON".into(),
+        Some("json".into()),
+        Arc::new(LanguageMatcher::default()),
+        false,
+        None,
+        Arc::new({
+            let json_loads = json_loads.clone();
+            move || {
+                json_loads.fetch_add(1, SeqCst);
+                async move {
+                    Ok(loaded_json_language(
+                        "JSON",
+                        LanguageQueries {
+                            highlights: Some("(string) @string".into()),
+                            brackets: Some("(\"{\" @open \"}\" @close)".into()),
+                            ..LanguageQueries::default()
+                        },
+                    ))
+                }
+                .boxed()
+            }
+        }),
+    );
+    languages.register_language(
+        "JSONC".into(),
+        Some("json".into()),
+        Arc::new(LanguageMatcher::default()),
+        false,
+        None,
+        Arc::new(move || {
+            async move {
+                Ok(loaded_json_language(
+                    "JSONC",
+                    LanguageQueries {
+                        highlights: Some("; inherits: json\n(number) @number".into()),
+                        brackets: Some("; inherits: json".into()),
+                        ..LanguageQueries::default()
+                    },
+                ))
+            }
+            .boxed()
+        }),
+    );
+
+    // Both query fields inherit from JSON, but its queries are only loaded
+    // once per expansion.
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["string", "number"]);
+    assert_eq!(json_loads.load(SeqCst), 1);
+}
+
+#[gpui::test]
+async fn test_inherited_queries_racing_registration(cx: &mut TestAppContext) {
+    let languages = Arc::new(LanguageRegistry::test(cx.executor()));
+    languages.register_native_grammars([("json", tree_sitter_json::LANGUAGE)]);
+
+    languages.register_language(
+        "JSON".into(),
+        Some("json".into()),
+        Arc::new(LanguageMatcher::default()),
+        false,
+        None,
+        Arc::new(move || {
+            async move {
+                Ok(loaded_json_language(
+                    "JSON",
+                    LanguageQueries {
+                        highlights: Some("(string) @string".into()),
+                        ..LanguageQueries::default()
+                    },
+                ))
+            }
+            .boxed()
+        }),
+    );
+
+    let jsonc_loads = Arc::new(AtomicUsize::new(0));
+    languages.register_language(
+        "JSONC".into(),
+        Some("json".into()),
+        Arc::new(LanguageMatcher::default()),
+        false,
+        None,
+        Arc::new({
+            let jsonc_loads = jsonc_loads.clone();
+            let languages = languages.clone();
+            move || {
+                // Simulates a language registration racing with the first load.
+                if jsonc_loads.fetch_add(1, SeqCst) == 0 {
+                    languages.register_language(
+                        "Late".into(),
+                        Some("json".into()),
+                        Arc::new(LanguageMatcher::default()),
+                        false,
+                        None,
+                        Arc::new(move || {
+                            async move {
+                                Ok(loaded_json_language("Late", LanguageQueries::default()))
+                            }
+                            .boxed()
+                        }),
+                    );
+                }
+                async move {
+                    Ok(loaded_json_language(
+                        "JSONC",
+                        LanguageQueries {
+                            highlights: Some("; inherits: json\n(number) @number".into()),
+                            ..LanguageQueries::default()
+                        },
+                    ))
+                }
+                .boxed()
+            }
+        }),
+    );
+
+    // The registration set changed mid-load, so the result is handed to the
+    // waiter but not cached.
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["string", "number"]);
+    assert_eq!(jsonc_loads.load(SeqCst), 1);
+
+    // The next request reloads; this time no registration change occurs, so
+    // the result is cached.
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["string", "number"]);
+    assert_eq!(jsonc_loads.load(SeqCst), 2);
+
+    let jsonc = languages.language_for_name("JSONC").await.unwrap();
+    assert_eq!(highlight_captures(&jsonc), ["string", "number"]);
+    assert_eq!(jsonc_loads.load(SeqCst), 2);
 }
 
 #[gpui::test]

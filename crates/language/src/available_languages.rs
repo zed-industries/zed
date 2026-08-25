@@ -1,5 +1,5 @@
 use crate::{LanguageId, LanguageLoader, LanguageMatcher, LanguageName, ManifestName};
-use collections::FxHashMap;
+use collections::{FxHashMap, HashSet};
 use globset::GlobSet;
 use smallvec::SmallVec;
 use std::{cell::LazyCell, path::Path, sync::Arc};
@@ -175,6 +175,14 @@ impl AvailableLanguages {
     pub(super) fn mark_all_unloaded(&mut self) {
         for language in &mut self.0 {
             language.loaded = false;
+        }
+    }
+
+    pub(super) fn mark_unloaded(&mut self, names: &HashSet<LanguageName>) {
+        for language in &mut self.0 {
+            if names.contains(&language.name) {
+                language.loaded = false;
+            }
         }
     }
 

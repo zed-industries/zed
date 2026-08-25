@@ -31,5 +31,7 @@ pub use code_label::{CodeLabel, CodeLabelBuilder, Symbol, SymbolKind};
 pub use language_name::{LanguageId, LanguageName};
 pub use lsp_adapter::{BinaryStatus, LanguageServerStatusUpdate, ServerHealth};
 pub use manifest::ManifestName;
-pub use queries::{LanguageQueries, QueryFile, QueryFileContents, QueryFiles};
+pub use queries::{
+    LanguageQueries, QUERY_INHERITS_PREFIX, QueryFile, QueryFileContents, QueryFiles,
+};
 pub use toolchain::{Toolchain, ToolchainList, ToolchainMetadata, ToolchainScope};

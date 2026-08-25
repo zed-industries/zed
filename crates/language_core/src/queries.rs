@@ -3,6 +3,8 @@ use std::borrow::Cow;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use strum::IntoEnumIterator;
 
+pub const QUERY_INHERITS_PREFIX: &str = "; inherits:";
+
 #[derive(
     Clone, Copy, Debug, Eq, PartialEq, strum::EnumIter, strum::EnumString, strum::IntoStaticStr,
 )]
@@ -32,6 +34,10 @@ pub enum QueryFile {
 impl QueryFile {
     pub fn file_name(self) -> &'static str {
         self.into()
+    }
+
+    pub fn all() -> impl Iterator<Item = QueryFile> {
+        Self::iter()
     }
 }
 
@@ -138,21 +144,24 @@ impl LanguageQueries {
             contents,
         } in files
         {
-            let field = match query_file {
-                QueryFile::Highlights => &mut queries.highlights,
-                QueryFile::Brackets => &mut queries.brackets,
-                QueryFile::Outline => &mut queries.outline,
-                QueryFile::Indents => &mut queries.indents,
-                QueryFile::Injections => &mut queries.injections,
-                QueryFile::Overrides => &mut queries.overrides,
-                QueryFile::Redactions => &mut queries.redactions,
-                QueryFile::Runnables => &mut queries.runnables,
-                QueryFile::Debugger => &mut queries.debugger,
-                QueryFile::TextObjects => &mut queries.text_objects,
-            };
-            *field = Some(contents);
+            *queries.file_mut(query_file) = Some(contents);
         }
         queries
+    }
+
+    pub fn file_mut(&mut self, query_file: QueryFile) -> &mut Option<Cow<'static, str>> {
+        match query_file {
+            QueryFile::Highlights => &mut self.highlights,
+            QueryFile::Brackets => &mut self.brackets,
+            QueryFile::Outline => &mut self.outline,
+            QueryFile::Indents => &mut self.indents,
+            QueryFile::Injections => &mut self.injections,
+            QueryFile::Overrides => &mut self.overrides,
+            QueryFile::Redactions => &mut self.redactions,
+            QueryFile::Runnables => &mut self.runnables,
+            QueryFile::Debugger => &mut self.debugger,
+            QueryFile::TextObjects => &mut self.text_objects,
+        }
     }
 }
 

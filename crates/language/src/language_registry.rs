@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
+use language_core::QUERY_INHERITS_PREFIX;
 pub use language_core::{
     BinaryStatus, LanguageName, LanguageQueries, LanguageServerStatusUpdate, QueryFile,
     QueryFileContents, QueryFiles, ServerHealth,
@@ -25,7 +26,9 @@ use parking_lot::{Mutex, RwLock};
 use postage::watch;
 
 use std::{
+    borrow::Cow,
     ffi::OsStr,
+    mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -52,10 +55,16 @@ struct LanguageRegistryState {
     available_lsp_adapters:
         HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
+    languages_with_inherited_queries: HashSet<LanguageName>,
     subscription: (watch::Sender<()>, watch::Receiver<()>),
     theme: Option<Arc<Theme>>,
     version: usize,
     reload_count: usize,
+    /// Incremented only when the set of registered languages changes, unlike
+    /// `version`, which is also bumped by loads and adapter changes. Used to
+    /// detect when a language's inherited queries were expanded against a
+    /// registration set that changed while the language was loading.
+    registration_generation: usize,
 
     #[cfg(any(test, feature = "test-support"))]
     fake_server_entries: HashMap<LanguageServerName, FakeLanguageServerEntry>,
@@ -115,6 +124,7 @@ impl LanguageRegistry {
                 grammars: Default::default(),
                 language_settings: Default::default(),
                 loading_languages: Default::default(),
+                languages_with_inherited_queries: Default::default(),
                 lsp_adapters: Default::default(),
                 all_lsp_adapters: Default::default(),
                 available_lsp_adapters: HashMap::default(),
@@ -122,6 +132,7 @@ impl LanguageRegistry {
                 theme: Default::default(),
                 version: 0,
                 reload_count: 0,
+                registration_generation: 0,
 
                 #[cfg(any(test, feature = "test-support"))]
                 fake_server_entries: Default::default(),
@@ -445,8 +456,10 @@ impl LanguageRegistry {
             state.languages.retain(|language| language.name() != name);
         }
 
+        state.evict_languages_with_inherited_queries();
         state.version += 1;
         state.reload_count += 1;
+        state.registration_generation += 1;
         *state.subscription.0.borrow_mut() = ();
         true
     }
@@ -695,8 +708,16 @@ impl LanguageRegistry {
 
                 self.executor
                     .spawn(async move {
+                        let registration_generation = this.state.read().registration_generation;
+                        let mut uses_inherited_queries = false;
                         let language = async {
-                            let loaded_language = (language_load)().await?;
+                            let mut loaded_language = (language_load)().await?;
+                            uses_inherited_queries = this
+                                .expand_inherited_queries(
+                                    &loaded_language.config.name,
+                                    &mut loaded_language.queries,
+                                )
+                                .await?;
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
@@ -731,10 +752,24 @@ impl LanguageRegistry {
                                 .get_language(language_id)
                                 .is_some();
                             if is_current {
-                                if let Ok(language) = &language {
-                                    state.add(language.clone());
+                                // If the set of registered languages changed while this
+                                // language was loading, its inherited queries may have
+                                // been expanded against a stale registration set. Hand
+                                // the result to the current waiters but skip caching, so
+                                // the next request re-expands.
+                                let stale_inherited_queries = uses_inherited_queries
+                                    && state.registration_generation != registration_generation;
+                                if !stale_inherited_queries {
+                                    if let Ok(language) = &language {
+                                        state.add(language.clone());
+                                        if uses_inherited_queries {
+                                            state
+                                                .languages_with_inherited_queries
+                                                .insert(language.name());
+                                        }
+                                    }
+                                    state.mark_language_loaded(language_id);
                                 }
-                                state.mark_language_loaded(language_id);
                                 if let Some(txs) = state.loading_languages.remove(&language_id) {
                                     for tx in txs {
                                         let _ = tx.send(match &language {
@@ -799,6 +834,131 @@ impl LanguageRegistry {
 
         drop(state);
         rx
+    }
+
+    /// Returns whether any query contained an `; inherits:` comment, whether
+    /// or not its base languages resolved, so that the language can be evicted
+    /// and re-expanded when the set of registered languages changes.
+    async fn expand_inherited_queries(
+        self: &Arc<Self>,
+        language_name: &LanguageName,
+        queries: &mut LanguageQueries,
+    ) -> Result<bool> {
+        let mut uses_inheritance = false;
+        let mut base_queries_cache = HashMap::default();
+        for query_file in QueryFile::all() {
+            if let Some(text) = queries.file_mut(query_file).take() {
+                uses_inheritance |= text.contains(QUERY_INHERITS_PREFIX);
+                let mut visited = vec![language_name.clone()];
+                *queries.file_mut(query_file) = Some(
+                    self.expand_query_text(
+                        language_name.clone(),
+                        text,
+                        query_file,
+                        &mut visited,
+                        &mut base_queries_cache,
+                    )
+                    .await?,
+                );
+            }
+        }
+        Ok(uses_inheritance)
+    }
+
+    fn expand_query_text<'a>(
+        self: &'a Arc<Self>,
+        language_name: LanguageName,
+        text: Cow<'static, str>,
+        query_file: QueryFile,
+        visited: &'a mut Vec<LanguageName>,
+        base_queries_cache: &'a mut HashMap<LanguageName, LanguageQueries>,
+    ) -> BoxFuture<'a, Result<Cow<'static, str>>> {
+        async move {
+            if !text.contains(QUERY_INHERITS_PREFIX) {
+                return Ok(text);
+            }
+
+            let mut result = String::new();
+
+            for line in text.lines() {
+                let Some(base_names) = line.trim().strip_prefix(QUERY_INHERITS_PREFIX) else {
+                    result.push_str(line);
+                    result.push('\n');
+                    continue;
+                };
+
+                for base_name in base_names.split(',') {
+                    let base_name = base_name.trim();
+
+                    let (base_name, recursive) = match base_name
+                        .strip_prefix('(')
+                        .and_then(|name| name.strip_suffix(')'))
+                    {
+                        Some(inner) => (inner.trim(), false),
+                        None => (base_name, true),
+                    };
+
+                    if base_name.is_empty() {
+                        continue;
+                    }
+
+                    let base_language = {
+                        let state = self.state.read();
+                        // Several languages can share a grammar, so prefer a language name
+                        // match over `find_by_modeline_name`'s grammar name match.
+                        state
+                            .available_languages
+                            .find_by_name(base_name)
+                            .and_then(|id| state.available_languages.get_language(id).cloned())
+                            .or_else(|| state.available_languages.find_by_modeline_name(base_name))
+                    };
+                    let Some(base_language) = base_language else {
+                        log::warn!(
+                            "{language_name} query inherits from unknown language {base_name:?}"
+                        );
+                        continue;
+                    };
+
+                    // A language reachable twice is either a cycle or a diamond. Both
+                    // resolve to including each language's query once.
+                    if visited.contains(&base_language.name) {
+                        continue;
+                    }
+
+                    visited.push(base_language.name.clone());
+
+                    let base_queries = match base_queries_cache.entry(base_language.name.clone()) {
+                        hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                        hash_map::Entry::Vacant(entry) => {
+                            let loaded_base = (base_language.load)().await.with_context(|| {
+                                format!("loading inherited queries from {:?}", base_language.name.0)
+                            })?;
+                            entry.insert(loaded_base.queries)
+                        }
+                    };
+
+                    if let Some(base_text) = base_queries.file_mut(query_file).take() {
+                        let base_text = if recursive {
+                            self.expand_query_text(
+                                base_language.name.clone(),
+                                base_text,
+                                query_file,
+                                visited,
+                                base_queries_cache,
+                            )
+                            .await?
+                        } else {
+                            base_text
+                        };
+
+                        result.push_str(&base_text);
+                        result.push('\n');
+                    }
+                }
+            }
+            Ok(Cow::Owned(result))
+        }
+        .boxed()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -985,10 +1145,25 @@ impl LanguageRegistryState {
 
     fn reload(&mut self) {
         self.languages.clear();
+        self.languages_with_inherited_queries.clear();
         self.version += 1;
         self.reload_count += 1;
+        self.registration_generation += 1;
         self.available_languages.mark_all_unloaded();
         *self.subscription.0.borrow_mut() = ();
+    }
+
+    /// Evicts loaded languages whose queries were expanded via `; inherits:`,
+    /// so they are re-expanded against the current registration set on next
+    /// load. Callers are responsible for bumping the registry version.
+    fn evict_languages_with_inherited_queries(&mut self) {
+        let names = mem::take(&mut self.languages_with_inherited_queries);
+        if names.is_empty() {
+            return;
+        }
+        self.languages
+            .retain(|language| !names.contains(&language.name()));
+        self.available_languages.mark_unloaded(&names);
     }
 
     /// Reorders the list of language servers for the given language.
@@ -1030,6 +1205,7 @@ impl LanguageRegistryState {
             return;
         }
 
+        self.evict_languages_with_inherited_queries();
         let removed_languages = self
             .available_languages
             .remove_extension_languages(languages_to_remove);
@@ -1040,6 +1216,7 @@ impl LanguageRegistryState {
         });
         self.version += 1;
         self.reload_count += 1;
+        self.registration_generation += 1;
         *self.subscription.0.borrow_mut() = ();
     }
 
