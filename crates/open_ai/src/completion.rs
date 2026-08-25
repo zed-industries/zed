@@ -820,11 +820,13 @@ impl OpenAiEventMapper {
             let cache_creation_input_tokens = usage
                 .prompt_tokens_details
                 .as_ref()
-                .map_or(0, |details| details.cache_write_tokens);
+                .and_then(|details| details.cache_write_tokens)
+                .unwrap_or(0);
             let cache_read_input_tokens = usage
                 .prompt_tokens_details
                 .as_ref()
-                .map_or(0, |details| details.cached_tokens);
+                .and_then(|details| details.cached_tokens)
+                .unwrap_or(0);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
                 input_tokens: prompt_tokens
                     .saturating_sub(cache_creation_input_tokens)
