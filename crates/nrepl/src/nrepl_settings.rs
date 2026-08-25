@@ -10,7 +10,7 @@ pub struct NreplSettings {
     /// Whether to automatically connect to a discovered nREPL server on
     /// workspace open.
     ///
-    /// Default: true
+    /// Default: false
     pub auto_connect: bool,
     /// File name (relative to the workspace root) to read the nREPL port
     /// from for auto-discovery. Common build tools (Leiningen, deps.edn,
@@ -56,7 +56,7 @@ mod tests {
         let nrepl = NreplSettings::from_settings(&content);
 
         assert_eq!(nrepl.default_host, "localhost");
-        assert!(nrepl.auto_connect);
+        assert!(!nrepl.auto_connect);
         assert_eq!(nrepl.port_file, ".nrepl-port");
     }
 }

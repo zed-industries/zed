@@ -154,11 +154,9 @@ pub struct NreplEditorSession {
     /// invalidation logic in `on_buffer_event` stays straightforward.
     result_inlays: HashMap<String, (InlayId, Range<Anchor>, usize)>,
     next_inlay_id: usize,
-    /// Most recent in-flight request id, used by `Interrupt`. We track
-    /// only the latest because Interrupt's UX is "stop what I'm running
-    /// now"; for finer-grained control the user clicks the per-block
-    /// close button.
-    last_in_flight: Option<String>,
+    /// Request ids in submission order. `Interrupt` targets the newest
+    /// request that is still active.
+    in_flight: InFlightRequests,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -177,6 +175,34 @@ struct EditorBlock {
     /// reply forwarding too — so we don't keep updating an entity whose
     /// block is already gone from the editor.
     _stream_task: Task<()>,
+    _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Default)]
+struct InFlightRequests {
+    request_ids: Vec<String>,
+}
+
+impl InFlightRequests {
+    fn insert(&mut self, request_id: String) {
+        self.request_ids.push(request_id);
+    }
+
+    fn remove(&mut self, request_id: &str) {
+        self.request_ids.retain(|candidate| candidate != request_id);
+    }
+
+    fn most_recent(&self) -> Option<&str> {
+        self.request_ids.last().map(String::as_str)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.request_ids.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.request_ids.clear();
+    }
 }
 
 type CloseBlockFn =
@@ -203,7 +229,7 @@ impl NreplEditorSession {
             blocks: HashMap::default(),
             result_inlays: HashMap::default(),
             next_inlay_id: 0,
-            last_in_flight: None,
+            in_flight: InFlightRequests::default(),
             _subscriptions: vec![buffer_subscription],
         };
         session.refresh_namespace(cx);
@@ -243,15 +269,20 @@ impl NreplEditorSession {
         let mut blocks_to_remove: HashSet<CustomBlockId> = HashSet::default();
         let mut gutter_ranges_to_remove: Vec<Range<Anchor>> = Vec::new();
 
-        self.blocks.retain(|_id, block| {
+        let mut request_ids_to_remove = Vec::new();
+        self.blocks.retain(|request_id, block| {
             if block.invalidation_anchor.is_valid(&snapshot) {
                 true
             } else {
+                request_ids_to_remove.push(request_id.clone());
                 blocks_to_remove.insert(block.block_id);
                 gutter_ranges_to_remove.push(block.code_range.clone());
                 false
             }
         });
+        for request_id in request_ids_to_remove {
+            self.in_flight.remove(&request_id);
+        }
 
         let mut inlays_to_remove: Vec<InlayId> = Vec::new();
         self.result_inlays
@@ -290,7 +321,7 @@ impl NreplEditorSession {
                     );
                 }
             })
-            .ok();
+            .log_err();
         cx.notify();
     }
 
@@ -365,6 +396,7 @@ impl NreplEditorSession {
                 if let Some(session) = session_view.upgrade() {
                     session.update(cx, |session, cx| {
                         session.blocks.remove(&request_key);
+                        session.remove_in_flight(&request_key);
                         cx.notify();
                     });
                 }
@@ -428,26 +460,27 @@ impl NreplEditorSession {
         // Collapse-on-finish subscriptions. These mirror the Jupyter side:
         // an empty completion drops the block entirely (gutter highlight
         // stays) and a small single-line value collapses to an inlay.
+        let mut finish_subscriptions = Vec::with_capacity(2);
         {
             let key = request_id.clone();
-            let sub = cx.subscribe(
+            let subscription = cx.subscribe(
                 &output_view,
                 move |session, _view, _ev: &OutputViewFinishedEmpty, cx| {
                     session.replace_block_with_inlay(&key, "", cx);
                 },
             );
-            self._subscriptions.push(sub);
+            finish_subscriptions.push(subscription);
         }
         {
             let key = request_id.clone();
-            let sub = cx.subscribe(
+            let subscription = cx.subscribe(
                 &output_view,
                 move |session, _view, ev: &OutputViewFinishedSmall, cx| {
                     let text = ev.0.clone();
                     session.replace_block_with_inlay(&key, &text, cx);
                 },
             );
-            self._subscriptions.push(sub);
+            finish_subscriptions.push(subscription);
         }
 
         let stream_task = cx.spawn({
@@ -456,15 +489,13 @@ impl NreplEditorSession {
             async move |this, cx| {
                 pump_stream(stream, view, cx).await;
                 this.update(cx, |session, _cx| {
-                    if session.last_in_flight.as_deref() == Some(key.as_str()) {
-                        session.last_in_flight = None;
-                    }
+                    session.remove_in_flight(&key);
                 })
-                .ok();
+                .log_err();
             }
         });
 
-        self.last_in_flight = Some(request_id.clone());
+        self.in_flight.insert(request_id.clone());
         self.blocks.insert(
             request_id,
             EditorBlock {
@@ -473,6 +504,7 @@ impl NreplEditorSession {
                 block_id,
                 _output_view: output_view,
                 _stream_task: stream_task,
+                _subscriptions: finish_subscriptions,
             },
         );
         cx.notify();
@@ -490,14 +522,19 @@ impl NreplEditorSession {
         let mut inlays_to_remove: Vec<InlayId> = Vec::new();
         let mut gutter_ranges_to_remove: Vec<Range<Anchor>> = Vec::new();
 
-        self.blocks.retain(|_key, block| {
+        let mut request_ids_to_remove = Vec::new();
+        self.blocks.retain(|request_id, block| {
             if anchor_range.overlaps(&block.code_range, &buffer) {
+                request_ids_to_remove.push(request_id.clone());
                 blocks_to_remove.insert(block.block_id);
                 false
             } else {
                 true
             }
         });
+        for request_id in request_ids_to_remove {
+            self.in_flight.remove(&request_id);
+        }
         self.result_inlays
             .retain(|_key, (inlay_id, inlay_range, _)| {
                 if anchor_range.overlaps(inlay_range, &buffer) {
@@ -533,6 +570,7 @@ impl NreplEditorSession {
         let Some(block) = self.blocks.remove(request_id) else {
             return;
         };
+        self.remove_in_flight(request_id);
         let Some(editor) = self.editor.upgrade() else {
             return;
         };
@@ -587,10 +625,15 @@ impl NreplEditorSession {
                 editor.splice_inlays(&inlays_to_remove, vec![], cx);
                 editor.clear_gutter_highlights::<NreplExecutedRange>(cx);
             })
-            .ok();
+            .log_err();
         self.blocks.clear();
         self.result_inlays.clear();
+        self.in_flight.clear();
         cx.notify();
+    }
+
+    fn remove_in_flight(&mut self, request_id: &str) {
+        self.in_flight.remove(request_id);
     }
 
     /// Resolves the workspace's nREPL connection into a `(client,
@@ -618,7 +661,7 @@ impl NreplEditorSession {
     }
 
     pub fn interrupt(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        let Some(request_id) = self.last_in_flight.clone() else {
+        let Some(request_id) = self.in_flight.most_recent().map(str::to_owned) else {
             return Ok(());
         };
         let (client, session_id) = self.connection_handles(cx)?;
@@ -639,11 +682,7 @@ impl NreplEditorSession {
 
 async fn pump_stream(mut stream: RequestStream, view: WeakEntity<OutputView>, cx: &mut AsyncApp) {
     let mut saw_done = false;
-    loop {
-        let Some(msg) = stream.next().await else {
-            break;
-        };
-
+    while let Some(msg) = stream.next().await {
         let value_chunk = msg.get("value").and_then(Value::as_str).map(str::to_string);
         let stdout_chunk = msg.get("out").and_then(Value::as_str).map(str::to_string);
         let stderr_chunk = msg.get("err").and_then(Value::as_str).map(str::to_string);
@@ -725,7 +764,7 @@ async fn pump_stream(mut stream: RequestStream, view: WeakEntity<OutputView>, cx
         }
     }
 
-    let _ = view.update(cx, |view, cx| {
+    view.update(cx, |view, cx| {
         if saw_done {
             // Don't trample a Failed/Interrupted status that arrived
             // alongside `done` (some middleware reports both in the same
@@ -739,7 +778,8 @@ async fn pump_stream(mut stream: RequestStream, view: WeakEntity<OutputView>, cx
         } else {
             fail_in_flight(view, "connection closed before reply finished", cx);
         }
-    });
+    })
+    .log_err();
 }
 
 fn create_renderer(view: Entity<OutputView>, on_close: CloseBlockFn) -> RenderBlock {
@@ -974,7 +1014,7 @@ pub fn interrupt(editor: WeakEntity<Editor>, cx: &mut App) -> Result<()> {
         anyhow::bail!("nothing to interrupt — no eval has run in this editor yet");
     };
     let had_in_flight = session.update(cx, |session, cx| {
-        let was_running = session.last_in_flight.is_some();
+        let was_running = !session.in_flight.is_empty();
         session.interrupt(cx).map(|_| was_running)
     })?;
     if !had_in_flight {
@@ -1044,3 +1084,31 @@ pub fn workspace_for_editor(
 }
 
 struct NreplEditorToast;
+
+#[cfg(test)]
+mod tests {
+    use super::InFlightRequests;
+
+    #[test]
+    fn in_flight_requests_fall_back_to_previous_request() {
+        let mut requests = InFlightRequests::default();
+        requests.insert("first".to_string());
+        requests.insert("second".to_string());
+
+        assert_eq!(requests.most_recent(), Some("second"));
+        requests.remove("second");
+        assert_eq!(requests.most_recent(), Some("first"));
+        requests.remove("first");
+        assert!(requests.is_empty());
+    }
+
+    #[test]
+    fn in_flight_requests_remove_non_latest_request() {
+        let mut requests = InFlightRequests::default();
+        requests.insert("first".to_string());
+        requests.insert("second".to_string());
+
+        requests.remove("first");
+        assert_eq!(requests.most_recent(), Some("second"));
+    }
+}

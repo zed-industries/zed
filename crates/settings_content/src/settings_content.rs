@@ -1402,7 +1402,7 @@ pub struct NreplSettingsContent {
     /// Whether to automatically connect to a discovered nREPL server on
     /// workspace open.
     ///
-    /// Default: true
+    /// Default: false
     pub auto_connect: Option<bool>,
     /// File name (relative to the workspace root) used for auto-discovering
     /// a running nREPL server.

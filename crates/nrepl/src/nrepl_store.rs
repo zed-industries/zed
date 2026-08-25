@@ -344,7 +344,7 @@ async fn connect_inner(
                         )
                     })?;
                 (
-                    port.socket_addr(&settings.default_host),
+                    port.socket_addr(&settings.default_host)?,
                     Some(port.port_file),
                 )
             }
@@ -388,5 +388,5 @@ async fn connect_inner(
         };
         cx.notify();
     })
-    .ok();
+    .log_err();
 }

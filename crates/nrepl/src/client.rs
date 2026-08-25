@@ -25,7 +25,7 @@ use std::{
     net::SocketAddr,
     pin::Pin,
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicU64, Ordering},
     },
     task::{Context, Poll},
@@ -102,7 +102,9 @@ impl NreplClient {
             .with_context(|| format!("connecting to nREPL at {addr}"))?;
         // Disable Nagle: nREPL is request/response with small frames, and
         // 40ms of delay per eval is very visible in interactive use.
-        stream.set_nodelay(true).ok();
+        stream
+            .set_nodelay(true)
+            .context("disabling Nagle on nREPL socket")?;
         Ok(Self::from_stream(stream, executor))
     }
 
@@ -134,9 +136,13 @@ impl NreplClient {
             }
         });
 
-        let write_task = executor.spawn(async move {
-            if let Err(e) = write_loop(writer, outgoing_rx).await {
-                log::debug!("nrepl: write loop ended: {e:#}");
+        let write_task = executor.spawn({
+            let inner = inner.clone();
+            async move {
+                if let Err(e) = write_loop(writer, outgoing_rx).await {
+                    log::debug!("nrepl: write loop ended: {e:#}");
+                    inner.shutdown(e);
+                }
             }
         });
 
@@ -188,7 +194,11 @@ impl NreplClient {
             bail!("nREPL client write loop closed");
         }
 
-        Ok(RequestStream { id, rx })
+        Ok(RequestStream {
+            id,
+            rx,
+            inner: Arc::downgrade(&self.inner),
+        })
     }
 
     /// Issues `{:op "clone"}` and returns the new session id.
@@ -310,6 +320,15 @@ impl Inner {
 pub struct RequestStream {
     id: String,
     rx: UnboundedReceiver<Value>,
+    inner: Weak<Inner>,
+}
+
+impl Drop for RequestStream {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.upgrade() {
+            inner.pending.lock().map.remove(&self.id);
+        }
+    }
 }
 
 impl RequestStream {
@@ -343,19 +362,13 @@ async fn read_loop(mut reader: futures::io::ReadHalf<TcpStream>, inner: &Inner) 
         }
         buffer.extend_from_slice(&chunk[..n]);
 
+        validate_frame_size(buffer.len())?;
+
         // Drain as many complete messages as we have. A single TCP read
         // can deliver several frames at once.
         loop {
             match bencode::decode_one(&buffer)? {
-                DecodeOutcome::Incomplete => {
-                    if buffer.len() > MAX_FRAME_BYTES {
-                        bail!(
-                            "nREPL frame exceeded {MAX_FRAME_BYTES} bytes without parsing; \
-                             treating connection as poisoned"
-                        );
-                    }
-                    break;
-                }
+                DecodeOutcome::Incomplete => break,
                 DecodeOutcome::Value { value, consumed } => {
                     buffer.drain(..consumed);
                     inner.dispatch(value);
@@ -363,6 +376,13 @@ async fn read_loop(mut reader: futures::io::ReadHalf<TcpStream>, inner: &Inner) 
             }
         }
     }
+}
+
+fn validate_frame_size(buffer_length: usize) -> Result<()> {
+    if buffer_length > MAX_FRAME_BYTES {
+        bail!("nREPL frame exceeded {MAX_FRAME_BYTES} bytes; treating connection as poisoned");
+    }
+    Ok(())
 }
 
 async fn write_loop(
@@ -397,7 +417,7 @@ mod tests {
         H: FnMut(Value) -> Vec<Value> + Send + 'static,
     {
         let (stream, _) = listener.accept().await?;
-        stream.set_nodelay(true).ok();
+        stream.set_nodelay(true)?;
         let (mut reader, mut writer) = stream.split();
         let mut buffer: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 4096];
@@ -429,6 +449,34 @@ mod tests {
         (listener, addr)
     }
 
+    #[test]
+    fn frame_size_limit_rejects_oversized_frames() {
+        assert!(validate_frame_size(MAX_FRAME_BYTES).is_ok());
+        assert!(validate_frame_size(MAX_FRAME_BYTES + 1).is_err());
+    }
+
+    #[gpui::test]
+    async fn dropping_request_stream_removes_pending_request(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        let (listener, addr) = bind_loopback().await;
+        let server = cx
+            .executor()
+            .spawn(run_fake_server(listener, |_request| Vec::new()));
+        let client = NreplClient::connect(addr, &cx.executor())
+            .await
+            .expect("connect to fake server");
+
+        let stream = client
+            .send(dict([("op", Value::str("eval"))]))
+            .expect("send request");
+        assert_eq!(client.inner.pending.lock().map.len(), 1);
+        drop(stream);
+        assert!(client.inner.pending.lock().map.is_empty());
+
+        drop(client);
+        server.await.expect("fake server exits cleanly");
+    }
+
     #[gpui::test]
     async fn clone_session_returns_new_session_id(cx: &mut TestAppContext) {
         // The fake server uses real loopback TCP, which parks the executor
@@ -452,7 +500,7 @@ mod tests {
 
         drop(client);
         // Server task wraps up once the client closes the socket.
-        server.await.ok();
+        server.await.expect("fake server exits cleanly");
     }
 
     #[gpui::test]
@@ -522,7 +570,7 @@ mod tests {
         assert!(stream.next().await.is_none());
 
         drop(client);
-        server.await.ok();
+        server.await.expect("fake server exits cleanly");
     }
 
     #[gpui::test]
@@ -605,14 +653,14 @@ mod tests {
         );
 
         // Drain `done` markers and confirm both streams close.
-        let _ = s1.next().await;
+        assert!(s1.next().await.is_some());
         assert!(s1.next().await.is_none());
-        let _ = s2.next().await;
+        assert!(s2.next().await.is_some());
         assert!(s2.next().await.is_none());
 
         drop(client);
-        server.await.ok();
-        let _ = pending; // keep the Arc alive until here
+        server.await.expect("fake server exits cleanly");
+        drop(pending);
     }
 
     #[gpui::test]
@@ -714,7 +762,7 @@ mod tests {
         assert_eq!(interrupt_count.load(Ordering::Relaxed), 1);
 
         drop(client);
-        server.await.ok();
+        server.await.expect("fake server exits cleanly");
     }
 
     #[gpui::test]
@@ -727,8 +775,11 @@ mod tests {
             // close cleanly rather than hang forever.
             let (stream, _) = listener.accept().await.unwrap();
             let (mut reader, _writer) = stream.split();
-            let mut buf = [0u8; 1024];
-            let _ = reader.read(&mut buf).await;
+            let mut buffer = [0u8; 1];
+            reader
+                .read_exact(&mut buffer)
+                .await
+                .expect("read request before disconnect");
             // drop happens here
         });
 

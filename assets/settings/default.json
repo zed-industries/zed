@@ -2683,7 +2683,7 @@
     "default_host": "localhost",
     // Whether to automatically connect to a discovered nREPL server on
     // workspace open.
-    "auto_connect": true,
+    "auto_connect": false,
     // File name (relative to the workspace root) used for auto-discovering
     // a running nREPL server. Common build tools (Leiningen, deps.edn,
     // shadow-cljs, babashka) write `.nrepl-port` by default.

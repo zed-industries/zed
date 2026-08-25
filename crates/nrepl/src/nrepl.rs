@@ -23,8 +23,8 @@ pub use crate::editor_session::{
 };
 pub use crate::form_at_cursor::{TopLevelForm, parse_namespace, top_level_form_at_offset};
 pub use crate::nrepl_sessions_ui::{
-    Connect, Disconnect, Eval, EvalBuffer, EvalSelection, Interrupt, LoadFile, NreplSessionsPage,
-    Sessions, SwitchNamespace,
+    ClearOutputs, Connect, Disconnect, Eval, EvalBuffer, EvalSelection, Interrupt, LoadFile,
+    NreplSessionsPage, Sessions, SwitchNamespace,
 };
 pub use crate::nrepl_settings::NreplSettings;
 pub use crate::nrepl_store::{ConnectTarget, ConnectionState, NreplConnection, NreplStore};

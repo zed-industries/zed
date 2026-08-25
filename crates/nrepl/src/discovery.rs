@@ -13,7 +13,7 @@
 
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
@@ -30,23 +30,18 @@ pub struct DiscoveredPort {
 }
 
 impl DiscoveredPort {
-    /// Convenience: build a `SocketAddr` for `host:port`. The host is
-    /// resolved synchronously via `parse` for `IpAddr`s and falls back to
-    /// `127.0.0.1` for the common `"localhost"` case so we don't pull in a
-    /// DNS resolver for the MVP. Callers that need real DNS can resolve
-    /// `host` themselves and pair it with `self.port`.
-    pub fn socket_addr(&self, host: &str) -> SocketAddr {
+    /// Builds a `SocketAddr` for an IP address or `localhost`.
+    pub fn socket_addr(&self, host: &str) -> Result<SocketAddr> {
         let ip = if let Ok(ip) = host.parse::<IpAddr>() {
             ip
         } else if host.eq_ignore_ascii_case("localhost") {
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         } else {
-            // For now we only auto-connect to localhost. Non-IP hosts are
-            // accepted in the user-facing manual-connect path, where
-            // `TcpStream::connect((host, port))` does its own resolution.
-            IpAddr::V4(Ipv4Addr::LOCALHOST)
+            return Err(anyhow!(
+                "unsupported nREPL host {host:?}; use `localhost` or an IP address"
+            ));
         };
-        SocketAddr::new(ip, self.port)
+        Ok(SocketAddr::new(ip, self.port))
     }
 }
 
@@ -60,6 +55,7 @@ pub async fn discover_port_in(
     worktree_root: &Path,
     port_file: &str,
 ) -> Result<Option<DiscoveredPort>> {
+    validate_port_file(port_file)?;
     let path = worktree_root.join(port_file);
 
     // Distinguish "missing" from "unreadable" before calling `load`, so
@@ -81,6 +77,22 @@ pub async fn discover_port_in(
         port_file: path,
         port,
     }))
+}
+
+fn validate_port_file(port_file: &str) -> Result<()> {
+    let path = Path::new(port_file);
+    if port_file.is_empty() {
+        return Err(anyhow!("nREPL port file path cannot be empty"));
+    }
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(anyhow!(
+            "nREPL port file must be a relative path within the worktree"
+        ));
+    }
+    Ok(())
 }
 
 /// Walks `roots` in order, returning the first `.nrepl-port` we find.
@@ -166,6 +178,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result, None);
+    }
+
+    #[gpui::test]
+    async fn discover_port_in_rejects_paths_outside_worktree(cx: &mut TestAppContext) {
+        let fs: Arc<dyn Fs> = FakeFs::new(cx.executor());
+
+        assert!(
+            discover_port_in(&fs, Path::new("/project"), "../.nrepl-port")
+                .await
+                .is_err()
+        );
+        assert!(
+            discover_port_in(&fs, Path::new("/project"), "/tmp/.nrepl-port")
+                .await
+                .is_err()
+        );
+        assert!(
+            discover_port_in(&fs, Path::new("/project"), "")
+                .await
+                .is_err()
+        );
     }
 
     #[gpui::test]
@@ -276,16 +309,18 @@ mod tests {
             port: 1234,
         };
         assert_eq!(
-            p.socket_addr("127.0.0.1"),
+            p.socket_addr("127.0.0.1").expect("valid IPv4 address"),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1234),
         );
         assert_eq!(
-            p.socket_addr("localhost"),
+            p.socket_addr("localhost").expect("localhost is supported"),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
         );
         assert_eq!(
-            p.socket_addr("LOCALHOST"),
+            p.socket_addr("LOCALHOST")
+                .expect("localhost is case-insensitive"),
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
         );
+        assert!(p.socket_addr("example.com").is_err());
     }
 }

@@ -10,6 +10,7 @@ use gpui::{
     AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Subscription, actions,
     prelude::*,
 };
+use settings::Settings;
 use ui::{ButtonLike, KeyBinding, prelude::*};
 
 use workspace::item::ItemEvent;
@@ -47,12 +48,14 @@ actions!(
         /// Re-parses the buffer's `(ns ...)` form and updates the
         /// editor session's cached namespace.
         SwitchNamespace,
+        /// Removes all nREPL output blocks and inlays from the current editor.
+        ClearOutputs,
     ]
 );
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
+        |workspace: &mut Workspace, _window, cx: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 show_sessions_page(workspace, window, cx);
             });
@@ -94,6 +97,21 @@ pub fn init(cx: &mut App) {
                 // disconnected state is visible.
                 show_sessions_page(workspace, window, cx);
             });
+
+            let workspace_id = cx.entity_id();
+            cx.on_release(move |_workspace, cx| {
+                NreplStore::global(cx).update(cx, |store, cx| {
+                    store.disconnect(workspace_id, cx);
+                });
+            })
+            .detach();
+
+            if NreplSettings::enabled(cx) && NreplSettings::get_global(cx).auto_connect {
+                let workspace = cx.entity().downgrade();
+                NreplStore::global(cx).update(cx, |store, cx| {
+                    store.connect(workspace, ConnectTarget::Auto, cx);
+                });
+            }
         },
     )
     .detach();
@@ -122,6 +140,15 @@ pub fn init(cx: &mut App) {
                             editor_session::eval_form_at_cursor(editor_handle.clone(), window, cx),
                             cx,
                         );
+                    }
+                })
+                .detach();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &ClearOutputs, _window, cx| {
+                        editor_session::clear_outputs(editor_handle.clone(), cx);
                     }
                 })
                 .detach();
@@ -180,7 +207,7 @@ pub fn init(cx: &mut App) {
 
             editor
                 .register_action({
-                    let editor_handle = editor_handle;
+                    let editor_handle = editor_handle.clone();
                     move |_: &SwitchNamespace, _window, cx| {
                         report(
                             &editor_handle,
@@ -190,6 +217,11 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .detach();
+
+            cx.on_release(move |_editor, cx| {
+                editor_session::forget_editor(&editor_handle, cx);
+            })
+            .detach();
         },
     )
     .detach();
