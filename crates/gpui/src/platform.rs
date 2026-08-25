@@ -200,7 +200,7 @@ pub trait Platform: 'static {
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>);
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
 
@@ -861,7 +861,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn on_button_layout_changed(&self, _callback: Box<dyn FnMut()>) {}
     fn draw(&self, scene: &Scene);
-    fn completed_frame(&self) {}
+    fn schedule_frame(&self) {}
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 
@@ -1075,6 +1075,8 @@ pub trait PlatformTextSystem: Send + Sync {
     fn all_font_names(&self) -> Vec<String>;
     /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
+    /// Prewarm any system font caches needed to shape text.
+    fn prewarm_fonts(&self, _font_ids: &[FontId]) {}
     /// Get metrics for a font.
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     /// Get typographic bounds for a glyph.
