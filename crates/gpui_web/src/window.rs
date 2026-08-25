@@ -46,7 +46,7 @@ pub(crate) struct WebWindowMutableState {
 pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
-    pub(crate) input_element: web_sys::HtmlInputElement,
+    pub(crate) input_element: web_sys::HtmlTextAreaElement,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
@@ -56,6 +56,32 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
+    /// Set while `sync_virtual_keyboard` blur/focus-cycles the hidden input.
+    /// The cycle is a keyboard-visibility hint, not a real activity change;
+    /// letting the focus/blur listeners report it would re-enter GPUI
+    /// synchronously from inside an input dispatch, and a `RefCell`
+    /// double-borrow panic on wasm never unwinds, wedging the app.
+    pub(crate) suppress_focus_status_events: Cell<bool>,
+    /// The mirror text most recently synced to (or observed in) the hidden
+    /// input. `input` events diff the element's new value against this to
+    /// recover what edit the IME performed.
+    pub(crate) ime_mirror_text: RefCell<String>,
+    /// The hidden input's selection (in element-local UTF-16 offsets) as of
+    /// the last sync or imported edit. Gives IME edits their position
+    /// relative to the caret; deliberately element-local, never document
+    /// coordinates, which go stale in a collaborative document.
+    pub(crate) ime_mirror_selection: Cell<(u32, u32)>,
+    /// Document offset where the mirror window starts — as a *hint only*.
+    /// It is never trusted for edits: every use first re-verifies the
+    /// stored window text against the document at this alignment, so a
+    /// stale hint costs a window rebuild instead of a misplaced edit.
+    pub(crate) ime_mirror_window_hint: Cell<usize>,
+    /// Whether a coalesced mirror sync is already scheduled for the next
+    /// task. Multiple sync requests within one gesture must collapse into a
+    /// single element write after the gesture: keyboards sample the field
+    /// between writes, and a mid-gesture barrage desynchronizes their word
+    /// model.
+    pub(crate) ime_mirror_sync_scheduled: Cell<bool>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
@@ -138,11 +164,14 @@ impl WebWindow {
         };
         let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
-        let input_element: web_sys::HtmlInputElement = document
-            .create_element("input")
-            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
+        // A textarea rather than an input: single-line inputs silently strip
+        // newlines from assigned values, which would make the IME mirror text
+        // disagree with what was written into it.
+        let input_element: web_sys::HtmlTextAreaElement = document
+            .create_element("textarea")
+            .map_err(|e| anyhow::anyhow!("Failed to create textarea element: {e:?}"))?
             .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
+            .map_err(|e| anyhow::anyhow!("Created element is not a textarea: {e:?}"))?;
         let input_style = input_element.style();
         input_style.set_property("position", "fixed").ok();
         input_style.set_property("top", "0").ok();
@@ -150,6 +179,16 @@ impl WebWindow {
         input_style.set_property("width", "1px").ok();
         input_style.set_property("height", "1px").ok();
         input_style.set_property("opacity", "0").ok();
+        // Android Chrome zooms the visual viewport onto a focused text input
+        // whose font is smaller than 16px; with page zoom disabled the user
+        // can never zoom back out, so keep the hidden IME input at 16px.
+        input_style.set_property("font-size", "16px").ok();
+        // The element is an IME conduit, not a form field: browser-side text
+        // assistance would mutate it behind the app's back.
+        input_element.set_spellcheck(false);
+        input_element.set_attribute("autocomplete", "off").ok();
+        input_element.set_attribute("autocapitalize", "off").ok();
+        input_element.set_attribute("autocorrect", "off").ok();
         body.append_child(&input_element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         input_element.focus().ok();
@@ -191,6 +230,11 @@ impl WebWindow {
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
+            suppress_focus_status_events: Cell::new(false),
+            ime_mirror_text: RefCell::new(String::new()),
+            ime_mirror_selection: Cell::new((0, 0)),
+            ime_mirror_window_hint: Cell::new(0),
+            ime_mirror_sync_scheduled: Cell::new(false),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),

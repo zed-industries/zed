@@ -130,6 +130,8 @@ impl WebWindowInner {
             self.register_drop(),
             self.register_key_down(),
             self.register_key_up(),
+            self.register_before_input(),
+            self.register_input(),
             self.register_paste(),
             self.register_composition_start(),
             self.register_composition_update(),
@@ -189,6 +191,7 @@ impl WebWindowInner {
         self.listen("pointerdown", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
+
             this.input_element.focus().ok();
 
             // Capture the pointer so drags that leave the canvas keep
@@ -246,7 +249,327 @@ impl WebWindowInner {
                 modifiers,
                 click_count,
             }));
+
+            if event.pointer_type() == "touch" {
+                this.sync_virtual_keyboard();
+            }
+            this.schedule_ime_mirror_sync();
         })
+    }
+
+    /// Schedules a coalesced `sync_ime_mirror` for the next task.
+    ///
+    /// Event handlers must not write to the mirror element mid-gesture:
+    /// every write (value, selection) is observed by the IME, and a
+    /// sequence of writes inside one gesture desynchronizes its model of
+    /// the field (every native-behaving reference — a plain textarea —
+    /// performs at most one such change per gesture). Deferring to a
+    /// zero-delay timeout coalesces all sync requests from one gesture into
+    /// a single write that lands after the browser has finished processing
+    /// the gesture's events.
+    fn schedule_ime_mirror_sync(self: &Rc<Self>) {
+        if self.ime_mirror_sync_scheduled.replace(true) {
+            return;
+        }
+        let this = Rc::clone(self);
+        let closure = wasm_bindgen::closure::Closure::once_into_js(move || {
+            this.ime_mirror_sync_scheduled.set(false);
+            this.sync_ime_mirror();
+        });
+        self.browser_window
+            .set_timeout_with_callback(closure.unchecked_ref())
+            .ok();
+    }
+
+    /// Mirrors the text surrounding the selection into the hidden input.
+    ///
+    /// IMEs decide what backspace, autocorrect, and suggestions mean by
+    /// inspecting the editable element's value and selection: with an empty
+    /// element, Gboard deletes against its private buffer (the keypress
+    /// reaches the page only as an `"Unidentified"` placeholder) and its
+    /// suggestion strip has no context. Mirroring a window of real text
+    /// makes those operations arrive as interpretable `beforeinput` events.
+    ///
+    /// All offsets are UTF-16 code units on both sides: GPUI's input-handler
+    /// protocol and JavaScript string indexing agree by construction.
+    ///
+    /// Writing to the element is a last resort: any rewrite of its value or
+    /// selection makes the browser restart the IME's input connection,
+    /// which resets the keyboard's state — fatal in the middle of a
+    /// keyboard's multi-step edit sequence (suggestion picks arrive as
+    /// delete-then-insert pairs). After `register_input` imports an edit,
+    /// the element already *is* a faithful — if off-center — window of the
+    /// document, so this first verifies the element against the document at
+    /// its current alignment and skips every write while that holds. The
+    /// window is rebuilt only when the app changed independently (caret
+    /// moved by tap or keybinding, remote edit inside the window) or the
+    /// selection drifted too close to the window's edge to give the IME
+    /// context.
+    fn sync_ime_mirror(&self) {
+        if self.is_composing.get() {
+            return;
+        }
+        let selection = self
+            .with_input_handler(|handler| handler.selected_text_range(false))
+            .flatten();
+        let Some(selection) = selection else {
+            if !self.ime_mirror_text.borrow().is_empty() {
+                self.input_element.set_value("");
+                self.ime_mirror_text.borrow_mut().clear();
+            }
+            self.ime_mirror_selection.set((0, 0));
+            return;
+        };
+
+        const IME_MIRROR_CONTEXT_CHARS: usize = 512;
+        /// The element is left alone until the selection gets this close to
+        /// the mirrored window's edge (unless it desynchronizes outright).
+        const IME_MIRROR_MIN_EDGE_CHARS: usize = 64;
+
+        if self.ime_mirror_is_consistent(&selection.range, IME_MIRROR_MIN_EDGE_CHARS) {
+            return;
+        }
+
+        // A caret move within the existing window (a tap into nearby text)
+        // must update only the element's selection, like a native tap in a
+        // plain textarea. Rewriting the value restarts the IME connection,
+        // which desynchronizes the keyboard's word model right when it is
+        // about to act on the tapped word.
+        if self.ime_mirror_move_selection_within_window(&selection.range, IME_MIRROR_MIN_EDGE_CHARS)
+        {
+            return;
+        }
+
+        let window_range = selection
+            .range
+            .start
+            .saturating_sub(IME_MIRROR_CONTEXT_CHARS)
+            ..selection.range.end + IME_MIRROR_CONTEXT_CHARS;
+        let mut adjusted = None;
+        let text = self
+            .with_input_handler(|handler| {
+                handler.text_for_range(window_range.clone(), &mut adjusted)
+            })
+            .flatten()
+            .unwrap_or_default();
+        let window_start = adjusted.unwrap_or(window_range).start;
+
+        if *self.ime_mirror_text.borrow() != text || self.input_element.value() != text {
+            self.input_element.set_value(&text);
+            *self.ime_mirror_text.borrow_mut() = text;
+        }
+
+        self.ime_mirror_window_hint.set(window_start);
+        let selection_start = selection.range.start.saturating_sub(window_start) as u32;
+        let selection_end = selection.range.end.saturating_sub(window_start) as u32;
+        if self.input_element.selection_start().ok().flatten() != Some(selection_start)
+            || self.input_element.selection_end().ok().flatten() != Some(selection_end)
+        {
+            self.input_element
+                .set_selection_range(selection_start, selection_end)
+                .ok();
+        }
+        // Read the selection back rather than trusting the computed values:
+        // the browser clamps out-of-bounds positions, and a stored selection
+        // the element doesn't actually have would corrupt the next diff.
+        let actual_start = self.input_element.selection_start().ok().flatten();
+        let actual_end = self.input_element.selection_end().ok().flatten();
+        self.ime_mirror_selection.set((
+            actual_start.unwrap_or(selection_start),
+            actual_end.unwrap_or(selection_end),
+        ));
+    }
+
+    /// Attempts to represent a changed app selection as a pure element
+    /// selection move within the existing mirror window.
+    ///
+    /// The stored window-start hint is re-verified textually against the
+    /// document before use, so a stale hint (remote edit, any drift) fails
+    /// verification and falls through to a full window rebuild rather than
+    /// mispositioning the selection.
+    fn ime_mirror_move_selection_within_window(
+        &self,
+        app_selection: &std::ops::Range<usize>,
+        min_edge: usize,
+    ) -> bool {
+        let stored_text = self.ime_mirror_text.borrow().clone();
+        let stored_length = stored_text.encode_utf16().count();
+        if stored_length == 0 || self.input_element.value() != stored_text {
+            return false;
+        }
+        let window_start = self.ime_mirror_window_hint.get();
+
+        // The new selection must sit inside the window with enough context
+        // on both sides — except where the window is pinned to a document
+        // boundary, where less context is all the context there is. This is
+        // the common case: a chat thread's caret usually sits at the end of
+        // the document, where the window has no right margin at all.
+        let Some(selection_start) = app_selection.start.checked_sub(window_start) else {
+            return false;
+        };
+        let selection_end = selection_start + (app_selection.end - app_selection.start);
+        if selection_end > stored_length {
+            return false;
+        }
+        if selection_start < min_edge && window_start != 0 {
+            return false;
+        }
+
+        // Verify the hint: the stored window text must still equal the
+        // document at this alignment. Asking for one unit extra also
+        // determines whether the window reaches the document's end, which
+        // excuses a missing right margin.
+        let mut adjusted = None;
+        let document_text = self
+            .with_input_handler(|handler| {
+                handler.text_for_range(
+                    window_start..window_start + stored_length + 1,
+                    &mut adjusted,
+                )
+            })
+            .flatten()
+            .unwrap_or_default();
+        let document_text_length = document_text.encode_utf16().count();
+        let window_at_document_end = document_text_length == stored_length;
+        if selection_end + min_edge > stored_length && !window_at_document_end {
+            return false;
+        }
+        if !document_text.starts_with(stored_text.as_str())
+            || document_text_length > stored_length + 1
+        {
+            return false;
+        }
+
+        self.input_element
+            .set_selection_range(selection_start as u32, selection_end as u32)
+            .ok();
+        let actual_start = self.input_element.selection_start().ok().flatten();
+        let actual_end = self.input_element.selection_end().ok().flatten();
+        if actual_start != Some(selection_start as u32) || actual_end != Some(selection_end as u32)
+        {
+            return false;
+        }
+        self.ime_mirror_selection
+            .set((selection_start as u32, selection_end as u32));
+        true
+    }
+
+    /// Whether the hidden input, at its current window alignment, is still
+    /// an accurate mirror of the document around the app selection with
+    /// enough context on both sides. When this holds, a sync must not touch
+    /// the element (see `sync_ime_mirror` on why writes are harmful).
+    fn ime_mirror_is_consistent(
+        &self,
+        app_selection: &std::ops::Range<usize>,
+        min_edge: usize,
+    ) -> bool {
+        let (element_selection_start, element_selection_end) = self.ime_mirror_selection.get();
+        let element_selection_start = element_selection_start as usize;
+        let element_selection_end = element_selection_end as usize;
+        let stored_text = self.ime_mirror_text.borrow().clone();
+        let stored_length = stored_text.encode_utf16().count();
+
+        if stored_length == 0 {
+            return false;
+        }
+        // The element's real selection must match what we believe it is.
+        if self.input_element.selection_start().ok().flatten()
+            != Some(element_selection_start as u32)
+            || self.input_element.selection_end().ok().flatten()
+                != Some(element_selection_end as u32)
+        {
+            return false;
+        }
+        // Enough context on both sides of the selection, unless the window
+        // is pinned to a document boundary (start of window at document
+        // offset 0, or window end at document end — approximated by the
+        // stored window being shorter than requested on that side).
+        let app_window_start = match app_selection.start.checked_sub(element_selection_start) {
+            Some(start) => start,
+            None => return false,
+        };
+        let has_left_context = element_selection_start >= min_edge || app_window_start == 0;
+        let right_context = stored_length.saturating_sub(element_selection_end);
+        if !has_left_context || right_context < min_edge {
+            // A short right side is fine when the window genuinely reaches
+            // the end of the document; verify by asking for one unit past
+            // the stored window.
+            let mut adjusted = None;
+            let past_end = app_window_start + stored_length;
+            let more = self
+                .with_input_handler(|handler| {
+                    handler.text_for_range(past_end..past_end + 1, &mut adjusted)
+                })
+                .flatten()
+                .unwrap_or_default();
+            if !has_left_context || !more.is_empty() {
+                return false;
+            }
+        }
+        // The stored window must still equal the document at this alignment
+        // (a remote edit inside the window invalidates it), and the element
+        // must still hold exactly the stored text.
+        let mut adjusted = None;
+        let document_text = self
+            .with_input_handler(|handler| {
+                handler.text_for_range(
+                    app_window_start..app_window_start + stored_length,
+                    &mut adjusted,
+                )
+            })
+            .flatten()
+            .unwrap_or_default();
+        if document_text != stored_text {
+            return false;
+        }
+        if self.input_element.value() != stored_text {
+            return false;
+        }
+        // The element selection corresponds to the app selection end too?
+        app_selection.end.checked_sub(app_window_start) == Some(element_selection_end)
+    }
+
+    /// Aligns the software keyboard with GPUI's focus after a touch tap.
+    ///
+    /// Mobile browsers show the keyboard only when an editable element is
+    /// focused from within a user gesture, so this runs while the tap's
+    /// `pointerup` is still on the stack (by which point GPUI has usually
+    /// painted a frame since the `MouseDown`, so the input handler reflects
+    /// the tap's focus change). `readOnly` suppresses the keyboard while
+    /// keeping hardware key events flowing to the hidden input; the
+    /// blur/focus cycle is what makes the browser re-evaluate keyboard
+    /// visibility, since `focus()` on an already-focused element is a no-op.
+    fn sync_virtual_keyboard(&self) {
+        let editable = self.state.borrow().input_handler.is_some();
+        let was_editable = !self.input_element.read_only();
+        self.input_element.set_read_only(!editable);
+        // Cycle only on an actual editability transition. Cycling on every
+        // tap would restart the IME connection right as the keyboard reads
+        // the tapped caret's context, racing its word segmentation.
+        if editable != was_editable {
+            self.suppress_focus_status_events.set(true);
+            self.input_element.blur().ok();
+            self.input_element.focus().ok();
+            self.suppress_focus_status_events.set(false);
+        }
+    }
+
+    /// Dispatches a full key press for editing intents that arrive without a
+    /// usable key event (Android IMEs send `key: "Unidentified"` placeholders
+    /// and express backspace/enter through `beforeinput` instead), so they
+    /// run through the same keybinding path as hardware keys.
+    fn dispatch_synthetic_keystroke(&self, key: &str, modifiers: Modifiers) {
+        let keystroke = Keystroke {
+            modifiers,
+            key: key.to_string(),
+            key_char: None,
+        };
+        self.dispatch_input(PlatformInput::KeyDown(KeyDownEvent {
+            keystroke: keystroke.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        }));
+        self.dispatch_input(PlatformInput::KeyUp(KeyUpEvent { keystroke }));
     }
 
     fn register_pointer_move(self: &Rc<Self>) -> EventListenerHandle {
@@ -402,6 +725,7 @@ impl WebWindowInner {
             if let Some(result) = result {
                 if !result.propagate {
                     event.prevent_default();
+                    this.schedule_ime_mirror_sync();
                     return;
                 }
             }
@@ -423,6 +747,7 @@ impl WebWindowInner {
                 // through so browser shortcuts keep their defaults.
                 event.prevent_default();
             }
+            this.schedule_ime_mirror_sync();
         })
     }
 
@@ -460,6 +785,168 @@ impl WebWindowInner {
                 if !result.propagate {
                     event.prevent_default();
                 }
+            }
+        })
+    }
+
+    /// Imports IME edits from the hidden input into the app.
+    ///
+    /// Text-editing `beforeinput` events are deliberately left uncancelled,
+    /// so the browser applies them to the mirror element exactly as the IME
+    /// expects (cancelling them and echoing the edit back programmatically
+    /// restarts the IME connection on every keystroke, which desynchronizes
+    /// the keyboard's internal state — e.g. Gboard then swallows backspaces
+    /// against a stale private buffer). The resulting `input` event is
+    /// diffed against the last known mirror text; IME edits are contiguous,
+    /// so a common prefix/suffix diff recovers them exactly.
+    ///
+    /// The diff supplies only the *shape* of the edit — how many UTF-16
+    /// units were removed before/after the element's pre-edit selection and
+    /// what text replaced them. It never supplies document coordinates:
+    /// mirror offsets captured at sync time go stale whenever the document
+    /// changes underneath (this is a live collaborative document). The
+    /// position comes from `selected_text_range()` queried in this same
+    /// synchronous callback — the editor resolves its selection through
+    /// anchors, so the freshly-fetched offsets are exact, and nothing can
+    /// run between the query and the edit below.
+    fn register_input(self: &Rc<Self>) -> EventListenerHandle {
+        let this = Rc::clone(self);
+        self.listen_input("input", move |event: JsValue| {
+            let event: web_sys::InputEvent = event.unchecked_into();
+
+            // Composition text is delivered through the composition events;
+            // the mirror is reconciled once on compositionend.
+            if this.is_composing.get() || event.is_composing() {
+                return;
+            }
+
+            let new_value = this.input_element.value();
+            let old_value = this.ime_mirror_text.borrow().clone();
+            if new_value == old_value {
+                return;
+            }
+
+            let old_units: Vec<u16> = old_value.encode_utf16().collect();
+            let new_units: Vec<u16> = new_value.encode_utf16().collect();
+
+            // A prefix/suffix diff is ambiguous when the inserted text
+            // shares characters with what follows it (inserting "pactor "
+            // before "pact" also reads as inserting "or pact" four units
+            // later). The edit's true position is not ambiguous: the browser
+            // leaves the caret at the end of an IME edit, so the suffix is
+            // anchored as "everything after the post-edit caret", and the
+            // prefix is capped to fit. Greedy matching is only a fallback
+            // for edits where the anchored suffix doesn't verify.
+            let post_edit_caret = this
+                .input_element
+                .selection_start()
+                .ok()
+                .flatten()
+                .map(|caret| caret as usize);
+            let anchored_suffix_length = post_edit_caret
+                .map(|caret| new_units.len().saturating_sub(caret))
+                .filter(|&suffix_length| {
+                    suffix_length <= old_units.len()
+                        && old_units[old_units.len() - suffix_length..]
+                            == new_units[new_units.len() - suffix_length..]
+                });
+            let suffix_length = anchored_suffix_length.unwrap_or_else(|| {
+                old_units
+                    .iter()
+                    .rev()
+                    .zip(new_units.iter().rev())
+                    .take_while(|(old_unit, new_unit)| old_unit == new_unit)
+                    .count()
+            });
+            let prefix_length = old_units
+                .iter()
+                .zip(&new_units)
+                .take_while(|(old_unit, new_unit)| old_unit == new_unit)
+                .count()
+                .min(old_units.len() - suffix_length)
+                .min(new_units.len() - suffix_length);
+
+            let inserted_text = String::from_utf16_lossy(
+                &new_units[prefix_length..new_units.len() - suffix_length],
+            );
+            let replaced_old_end = old_units.len() - suffix_length;
+
+            // The edit's shape relative to the element's pre-edit selection.
+            // The element is private to the IME and these syncs, so the
+            // stored selection is exact.
+            let (element_selection_start, element_selection_end) = this.ime_mirror_selection.get();
+            let removed_before_selection =
+                (element_selection_start as usize).saturating_sub(prefix_length);
+            let removed_after_selection =
+                replaced_old_end.saturating_sub(element_selection_end as usize);
+
+            let applied = this.with_input_handler(|handler| {
+                let Some(selection) = handler.selected_text_range(false) else {
+                    return false;
+                };
+                let range = selection
+                    .range
+                    .start
+                    .saturating_sub(removed_before_selection)
+                    ..selection.range.end + removed_after_selection;
+                handler.replace_text_in_range(Some(range), &inserted_text);
+                true
+            });
+            if applied != Some(true) {
+                return;
+            }
+
+            *this.ime_mirror_text.borrow_mut() = new_value;
+            let post_edit_selection_start = this
+                .input_element
+                .selection_start()
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let post_edit_selection_end = this
+                .input_element
+                .selection_end()
+                .ok()
+                .flatten()
+                .unwrap_or(post_edit_selection_start);
+            this.ime_mirror_selection
+                .set((post_edit_selection_start, post_edit_selection_end));
+        })
+    }
+
+    /// Software keyboards (IMEs) express editing through `beforeinput`
+    /// rather than key events: Android IMEs emit only a placeholder key
+    /// event (`key: "Unidentified"`, `keyCode` 229). This handler only
+    /// intercepts the intents that must not mutate the mirror element;
+    /// ordinary edits deliberately proceed to the element and are imported
+    /// by `register_input`. Desktop keystrokes never reach this handler,
+    /// because `register_key_down` calls `preventDefault()` for every
+    /// keystroke it inserts, which cancels the corresponding `beforeinput`.
+    fn register_before_input(self: &Rc<Self>) -> EventListenerHandle {
+        let this = Rc::clone(self);
+        self.listen_input("beforeinput", move |event: JsValue| {
+            let event: web_sys::InputEvent = event.unchecked_into();
+
+            // During composition the composition{update,end} handlers own
+            // the text.
+            if this.is_composing.get() || event.is_composing() {
+                return;
+            }
+
+            match event.input_type().as_str() {
+                // Enter means "submit", not "insert a newline into the
+                // mirror": run it through the keybinding path instead of
+                // letting it mutate the element.
+                "insertLineBreak" | "insertParagraph" => {
+                    event.prevent_default();
+                    this.dispatch_synthetic_keystroke("enter", Modifiers::default());
+                    this.schedule_ime_mirror_sync();
+                }
+                // Everything else (insertText, deleteContent*, autocorrect's
+                // insertReplacementText, ...) is left to the browser's
+                // default action on the mirror element; `register_input`
+                // imports the resulting element diff into the editor.
+                _ => {}
             }
         })
     }
@@ -576,16 +1063,46 @@ impl WebWindowInner {
             let data = event.data().unwrap_or_default();
             this.is_composing.set(false);
             this.with_input_handler(|handler| {
-                handler.replace_text_in_range(None, &data);
+                // Only commit the final text when a marked range still
+                // exists. When a caret move ended the composition, the
+                // editor has already unmarked (keeping the composed text as
+                // committed content); inserting `data` at the selection
+                // would duplicate the word at the new caret position.
+                if handler.marked_text_range().is_some() {
+                    handler.replace_text_in_range(None, &data);
+                }
                 handler.unmark_text();
             });
-            this.input_element.set_value("");
+            // Adopt the element's post-composition state as the mirror
+            // baseline without writing anything: the browser applied the
+            // commit to the element itself, and a write here would restart
+            // the IME mid-commit. The deferred sync reconciles any
+            // app-side divergence afterwards.
+            *this.ime_mirror_text.borrow_mut() = this.input_element.value();
+            let selection_start = this
+                .input_element
+                .selection_start()
+                .ok()
+                .flatten()
+                .unwrap_or(0);
+            let selection_end = this
+                .input_element
+                .selection_end()
+                .ok()
+                .flatten()
+                .unwrap_or(selection_start);
+            this.ime_mirror_selection
+                .set((selection_start, selection_end));
+            this.schedule_ime_mirror_sync();
         })
     }
 
     fn register_focus(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("focus", move |_event: JsValue| {
+            if this.suppress_focus_status_events.get() {
+                return;
+            }
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = true;
@@ -600,6 +1117,9 @@ impl WebWindowInner {
     fn register_blur(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("blur", move |_event: JsValue| {
+            if this.suppress_focus_status_events.get() {
+                return;
+            }
             {
                 let mut state = this.state.borrow_mut();
                 state.is_active = false;
