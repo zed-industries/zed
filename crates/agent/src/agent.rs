@@ -204,7 +204,6 @@ struct ProjectState {
 /// messages (cheap `Arc` clones) so the background save can serialize without
 /// racing the foreground mutation of the live thread.
 struct PendingThreadSave {
-    id: acp::SessionId,
     folder_paths: PathList,
     db_thread: Task<DbThread>,
 }
@@ -219,9 +218,7 @@ struct Session {
     /// Latest snapshot to persist. Overwritten in place on every save request;
     /// the single save worker drains it, coalescing bursts into one write.
     pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
-    /// Wakes the save worker once a new snapshot has been written.
     save_wake: watch::Sender<()>,
-    /// The single coalescing save worker for this session.
     save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
     ref_count: usize,
@@ -844,8 +841,10 @@ impl NativeAgent {
         let thread_store = self.thread_store.clone();
         let save_worker = cx.spawn({
             let pending_save = pending_save.clone();
+            let session_id = session_id.clone();
             async move |_this, cx| {
                 Self::run_save_worker(
+                    session_id,
                     save_wake_rx,
                     pending_save,
                     database_future,
@@ -1782,7 +1781,6 @@ impl NativeAgent {
             return;
         };
         *session.pending_save.lock() = Some(PendingThreadSave {
-            id,
             folder_paths,
             db_thread,
         });
@@ -1790,33 +1788,36 @@ impl NativeAgent {
     }
 
     async fn run_save_worker(
+        id: acp::SessionId,
         mut wake: watch::Receiver<()>,
         pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
         database_future: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
         thread_store: Entity<ThreadStore>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
-            return Ok(());
-        };
         loop {
-            if wake.changed().await.is_err() {
-                break;
-            }
-            let Some(PendingThreadSave {
-                id,
+            let closed = wake.changed().await.is_err();
+            let payload = pending_save.lock().take();
+            if let Some(PendingThreadSave {
                 folder_paths,
                 db_thread,
-            }) = pending_save.lock().take()
-            else {
-                continue;
-            };
-            let db_thread = db_thread.await;
-            database
-                .save_thread(id, db_thread, folder_paths)
-                .await
-                .log_err();
-            thread_store.update(cx, |store, cx| store.reload(cx));
+            }) = payload
+                && let Some(database) = database_future
+                    .clone()
+                    .await
+                    .map_err(|err| anyhow!(err))
+                    .log_err()
+            {
+                let db_thread = db_thread.await;
+                database
+                    .save_thread(id.clone(), db_thread, folder_paths)
+                    .await
+                    .log_err();
+                thread_store.update(cx, |store, cx| store.reload(cx));
+            }
+            if closed {
+                break;
+            }
         }
         Ok(())
     }
@@ -6646,6 +6647,97 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_save_burst_preserves_in_flight_write(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "file.txt": "hello"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+
+        let model = Arc::new(FakeLanguageModel::default());
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+        });
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        model.send_last_completion_stream_text_chunk("world");
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let [first_draft, second_draft, third_draft] = ["draft one", "draft two", "draft three"]
+            .map(|text| vec![acp::ContentBlock::Text(acp::TextContent::new(text))]);
+
+        let (first_gate_tx, first_gate_rx) = oneshot::channel();
+        database.set_write_gate(first_gate_rx);
+        set_draft_and_save(&agent, &acp_thread, &thread, first_draft.clone(), cx);
+        cx.run_until_parked();
+
+        set_draft_and_save(&agent, &acp_thread, &thread, second_draft, cx);
+        set_draft_and_save(&agent, &acp_thread, &thread, third_draft.clone(), cx);
+        cx.run_until_parked();
+
+        let (second_gate_tx, second_gate_rx) = oneshot::channel();
+        database.set_write_gate(second_gate_rx);
+        first_gate_tx.send(()).ok();
+        cx.run_until_parked();
+
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db_thread.draft_prompt,
+            Some(first_draft),
+            "save requests arriving during an in-flight write must not cancel it"
+        );
+
+        second_gate_tx.send(()).ok();
+        cx.run_until_parked();
+
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db_thread.draft_prompt,
+            Some(third_draft),
+            "the save worker must persist the latest snapshot of a burst"
+        );
+    }
+
+    #[gpui::test]
     async fn test_thread_summary_releases_loaded_session(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -7002,6 +7094,21 @@ mod internal_tests {
         // block, the safe behavior is to return it unchanged rather than
         // silently mangling unrelated user text.
         assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
+    }
+
+    fn set_draft_and_save(
+        agent: &Entity<NativeAgent>,
+        acp_thread: &Entity<AcpThread>,
+        thread: &Entity<Thread>,
+        draft: Vec<acp::ContentBlock>,
+        cx: &mut TestAppContext,
+    ) {
+        acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.set_draft_prompt(Some(draft), cx);
+        });
+        agent.update(cx, |agent, cx| {
+            agent.save_thread(thread.clone(), cx);
+        });
     }
 }
 
