@@ -88,6 +88,8 @@ cargo build --release --target "${target_triple}" --package zed --package cli
 # from influencing dynamic libraries required by it.
 if [[ "$remote_server_triple" == "$musl_triple" ]]; then
     export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
+    musl_cc_var="CC_$(echo "$remote_server_triple" | tr '-' '_')"
+    export "$musl_cc_var"=musl-gcc
 fi
 cargo build --release --target "${remote_server_triple}" --package remote_server
 
@@ -153,10 +155,15 @@ cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 # Libs
 # Bundle libstdc++ so older supported systems can run binaries built with our
 # toolchain even when their system libstdc++.so.6 lacks required GLIBCXX symbols.
+#
+# Never bundle the GLib family or its private dependencies: host libraries that
+# get dlopen'd are built against the system GLib, and resolving them against an
+# older bundled copy fails with missing symbols.
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/zed |\
         cut -d' ' -f3 |\
-        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
+        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)' |\
+        grep -v '\<\(libglib-2.0.so\|libgobject-2.0.so\|libgio-2.0.so\|libgmodule-2.0.so\|libpcre.so\|libpcre2-8.so\|libmount.so\|libblkid.so\|libselinux.so\|libffi.so\|libresolv.so\|libz.so\)'
 }
 
 mkdir -p "${zed_dir}/lib"

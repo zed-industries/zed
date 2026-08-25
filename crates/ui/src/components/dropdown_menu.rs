@@ -35,6 +35,8 @@ pub struct DropdownMenu {
     tab_index: Option<isize>,
     chevron: bool,
     aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
+    aria_value: Option<SharedString>,
 }
 
 impl DropdownMenu {
@@ -59,6 +61,8 @@ impl DropdownMenu {
             tab_index: None,
             chevron: true,
             aria_label: None,
+            aria_description: None,
+            aria_value: None,
         }
     }
 
@@ -83,6 +87,8 @@ impl DropdownMenu {
             tab_index: None,
             chevron: true,
             aria_label: None,
+            aria_description: None,
+            aria_value: None,
         }
     }
 
@@ -147,6 +153,20 @@ impl DropdownMenu {
         self.aria_label = Some(label.into());
         self
     }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the combobox's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
+        self
+    }
+
+    /// Sets the current value announced by assistive technology (the selected
+    /// option). Defaults to the trigger's visible text label.
+    pub fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.aria_value = Some(value.into());
+        self
+    }
 }
 
 impl Disableable for DropdownMenu {
@@ -172,6 +192,15 @@ impl RenderOnce for DropdownMenu {
         // and AX on macOS; on Linux/AT-SPI the click action is used instead).
         let handle = self.handle.unwrap_or_default();
         let expanded = handle.is_deployed();
+
+        // A combobox should announce its current value (the selected option).
+        // Default to the trigger's visible text label when no explicit value
+        // is provided.
+        let aria_value = self.aria_value.clone().or_else(|| match &self.label {
+            LabelKind::Text(text) => Some(text.clone()),
+            LabelKind::Element(_) => None,
+        });
+        let aria_description = self.aria_description.clone();
 
         let a11y_actions = |button: Button| {
             let show_handle = handle.clone();
@@ -202,6 +231,10 @@ impl RenderOnce for DropdownMenu {
                     a11y_actions(Button::new(self.id.clone(), text))
                         .aria_role(Role::ComboBox)
                         .when_some(self.aria_label, |this, label| this.aria_label(label))
+                        .when_some(aria_description, |this, description| {
+                            this.aria_description(description)
+                        })
+                        .when_some(aria_value, |this, value| this.aria_value(value))
                         .aria_expanded(expanded)
                         .style(button_style)
                         .when_some(self.trigger_icon.filter(|_| self.chevron), |this, icon| {
@@ -222,6 +255,10 @@ impl RenderOnce for DropdownMenu {
                     a11y_actions_element(ButtonLike::new(self.id.clone()))
                         .aria_role(Role::ComboBox)
                         .when_some(self.aria_label, |this, label| this.aria_label(label))
+                        .when_some(aria_description, |this, description| {
+                            this.aria_description(description)
+                        })
+                        .when_some(aria_value, |this, value| this.aria_value(value))
                         .aria_expanded(expanded)
                         .child(element)
                         .style(button_style)
@@ -240,9 +277,19 @@ impl RenderOnce for DropdownMenu {
             ),
         };
 
+        // When the menu opens, move the selection to the current value (or the
+        // first item) so assistive technology announces a meaningful item
+        // immediately, instead of focusing the bare menu container and
+        // announcing only "menu". See the ARIA menu button pattern.
+        let menu_for_open = self.menu.clone();
         let mut popover = PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
             .with_handle(handle)
+            .on_open(std::rc::Rc::new(move |window, cx| {
+                menu_for_open.update(cx, |menu, cx| {
+                    menu.select_toggled_or_first(window, cx);
+                });
+            }))
             .menu(move |_window, _cx| Some(self.menu.clone()));
 
         popover = match (text_button, element_button, self.trigger_tooltip) {
