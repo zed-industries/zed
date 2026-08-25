@@ -8106,7 +8106,7 @@ impl GitPanel {
             .min_w_0()
             .gap_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
-            .children({
+            .child(h_flex().flex_none().gap_0p5().children({
                 let render_indicator = |themed: Option<SharedString>, fallback: IconName| {
                     themed
                         .map(Icon::from_path)
@@ -8129,7 +8129,7 @@ impl GitPanel {
                     ));
                 }
                 indicators
-            })
+            }))
             .child(self.entry_label(entry.name.clone(), label_color).truncate());
 
         h_flex()
