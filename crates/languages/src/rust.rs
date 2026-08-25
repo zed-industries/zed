@@ -440,11 +440,7 @@ impl LspAdapter for RustLspAdapter {
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     mk_label(text, &|| 0..label.len(), runs)
-                } else if completion
-                    .detail
-                    .as_ref()
-                    .is_some_and(|detail| detail.starts_with("macro_rules! "))
-                {
+                } else if detail_right.is_some_and(|detail| detail.starts_with("macro_rules! ")) {
                     let text = completion.label.clone();
                     let len = text.len();
                     let source = Rope::from(text.as_str());
