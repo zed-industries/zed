@@ -1700,11 +1700,12 @@ impl LocalWorktree {
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let fs = self.fs.clone();
-        let entry = self.refresh_entry(path.clone(), None, cx);
+        let snapshot_entry = self.entry_for_path(&path).cloned();
         let is_private = self.is_path_private(path.as_ref());
 
-        let this = cx.weak_entity();
-        cx.background_spawn(async move {
+        let load_fs = fs.clone();
+        let load_abs_path = abs_path.clone();
+        let load = cx.background_spawn(async move {
             // WARN: Temporary workaround for #27283.
             //       We are not efficient with our memory usage per file, and use in excess of 64GB for a 10GB file
             //       Therefore, as a temporary workaround to prevent system freezes, we just bail before opening a file
@@ -1712,18 +1713,39 @@ impl LocalWorktree {
             //       5GB seems to be more reasonable, peaking at ~16GB, while 6GB jumps up to >24GB which seems like a
             //       reasonable limit
             const FILE_SIZE_MAX: u64 = 6 * 1024 * 1024 * 1024; // 6GB
-            let metadata = fs.metadata(&abs_path).await?;
+            let metadata = load_fs.metadata(&load_abs_path).await?;
             if let Some(metadata) = metadata.as_ref()
                 && metadata.len >= FILE_SIZE_MAX
             {
                 anyhow::bail!("File is too large to load");
             }
             let (text, line_ending, encoding, has_bom) =
-                decode_file_text_to_rope(fs.as_ref(), &abs_path).await?;
+                decode_file_text_to_rope(load_fs.as_ref(), &load_abs_path).await?;
             let is_writable = metadata.is_some_and(|metadata| metadata.is_writable);
 
+            Ok((metadata, text, line_ending, encoding, has_bom, is_writable))
+        });
+
+        cx.spawn(async move |this, cx| {
+            let (metadata, text, line_ending, encoding, has_bom, is_writable) = load.await?;
+            let entry = if snapshot_entry.as_ref().is_some_and(|entry| {
+                metadata.is_some_and(|metadata| {
+                    entry.mtime == Some(metadata.mtime) && entry.size == metadata.len
+                })
+            }) {
+                snapshot_entry
+            } else {
+                this.update(cx, |this, cx| match this {
+                    Worktree::Local(worktree) => worktree.refresh_entry(path.clone(), None, cx),
+                    Worktree::Remote(_) => {
+                        Task::ready(Err(anyhow!("worktree changed from local to remote")))
+                    }
+                })?
+                .await?
+            };
+
             let worktree = this.upgrade().context("worktree was dropped")?;
-            let file = match entry.await? {
+            let file = match entry {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
                     let metadata = fs

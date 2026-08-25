@@ -5522,6 +5522,172 @@ async fn wait_for_condition(
 }
 
 #[gpui::test]
+async fn test_load_file_uses_current_snapshot_entry(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({ "file.txt": "contents" }))
+        .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs,
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let snapshot_entry = tree.read_with(cx, |tree, _| {
+        tree.entry_for_path(rel_path("file.txt")).unwrap().clone()
+    });
+    let loaded = tree
+        .update(cx, |tree, cx| tree.load_file(rel_path("file.txt"), cx))
+        .await
+        .unwrap();
+
+    assert_eq!(loaded.file.entry_id, Some(snapshot_entry.id));
+    assert_eq!(loaded.file.disk_state.mtime(), snapshot_entry.mtime);
+}
+
+#[gpui::test]
+async fn test_load_file_refreshes_stale_snapshot_entry(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({ "file.txt": "old" })).await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    fs.pause_events();
+    fs.write(Path::new("/root/file.txt"), b"new file contents")
+        .await
+        .unwrap();
+    let metadata = fs
+        .metadata(Path::new("/root/file.txt"))
+        .await
+        .unwrap()
+        .unwrap();
+
+    let loaded = tree
+        .update(cx, |tree, cx| tree.load_file(rel_path("file.txt"), cx))
+        .await
+        .unwrap();
+
+    assert_eq!(loaded.file.disk_state.mtime(), Some(metadata.mtime));
+    assert_eq!(loaded.file.disk_state.size(), Some(metadata.len));
+    tree.read_with(cx, |tree, _| {
+        let entry = tree.entry_for_path(rel_path("file.txt")).unwrap();
+        assert_eq!(entry.mtime, Some(metadata.mtime));
+        assert_eq!(entry.size, metadata.len);
+    });
+}
+
+#[gpui::test]
+async fn test_load_file_refreshes_missing_gitignored_entry(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored_dir\n",
+            "ignored_dir": { "file.txt": "contents" },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs,
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/file.txt"))
+                .is_none()
+        );
+    });
+
+    let loaded = tree
+        .update(cx, |tree, cx| {
+            tree.load_file(rel_path("ignored_dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    assert!(loaded.file.entry_id.is_some());
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("ignored_dir/file.txt"))
+                .is_some()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_load_file_excluded_path_has_no_entry(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["excluded.txt".to_string()]));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", json!({ "excluded.txt": "contents" }))
+        .await;
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs,
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("excluded.txt")).is_none());
+    });
+
+    let loaded = tree
+        .update(cx, |tree, cx| tree.load_file(rel_path("excluded.txt"), cx))
+        .await
+        .unwrap();
+
+    assert_eq!(loaded.file.entry_id, None);
+}
+
+#[gpui::test]
 async fn test_load_file_encoding(cx: &mut TestAppContext) {
     init_test(cx);
 
