@@ -10,6 +10,7 @@ use collections::HashMap;
 use futures_lite::future::yield_now;
 use gpui::{
     App, AppContext as _, Context, Entity, Font, FontId, LineWrapper, Pixels, Task, TextSystem,
+    WrapWidths,
 };
 use language::{LanguageAwareStyling, Point};
 use multi_buffer::RowInfo;
@@ -45,7 +46,7 @@ pub struct WrapMap {
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     interpolated_edits: WrapPatch,
     edits_since_sync: WrapPatch,
-    wrap_width: Option<Pixels>,
+    wrap_widths: Option<WrapWidths>,
     background_task: Option<Task<()>>,
     font_with_size: (Font, Pixels),
 }
@@ -182,20 +183,20 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         font: Font,
         font_size: Pixels,
-        wrap_width: Option<Pixels>,
+        wrap_widths: Option<WrapWidths>,
         cx: &mut App,
     ) -> (Entity<Self>, WrapSnapshot) {
         let handle = cx.new(|cx| {
             let mut this = Self {
                 font_with_size: (font, font_size),
-                wrap_width: None,
+                wrap_widths: None,
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
                 edits_since_sync: Default::default(),
                 snapshot: WrapSnapshot::new(tab_snapshot),
                 background_task: None,
             };
-            this.set_wrap_width(wrap_width, cx);
+            this.set_wrap_widths(wrap_widths, cx);
             mem::take(&mut this.edits_since_sync);
             this
         });
@@ -215,7 +216,7 @@ impl WrapMap {
         edits: Vec<TabEdit>,
         cx: &mut Context<Self>,
     ) -> (WrapSnapshot, WrapPatch) {
-        if self.wrap_width.is_some() {
+        if self.wrap_widths.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
         } else {
@@ -247,12 +248,16 @@ impl WrapMap {
     }
 
     #[ztracing::instrument(skip_all)]
-    pub fn set_wrap_width(&mut self, wrap_width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
-        if wrap_width == self.wrap_width {
+    pub fn set_wrap_widths(
+        &mut self,
+        wrap_widths: Option<WrapWidths>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if wrap_widths == self.wrap_widths {
             return false;
         }
 
-        self.wrap_width = wrap_width;
+        self.wrap_widths = wrap_widths;
         self.rewrap(cx);
         true
     }
@@ -263,7 +268,7 @@ impl WrapMap {
         self.interpolated_edits.clear();
         self.pending_edits.clear();
 
-        if let Some(wrap_width) = self.wrap_width {
+        if let Some(wrap_widths) = self.wrap_widths {
             let mut new_snapshot = self.snapshot.clone();
 
             let text_system = cx.text_system();
@@ -283,7 +288,7 @@ impl WrapMap {
                 let edits = gpui::block_on(new_snapshot.update(
                     tab_snapshot,
                     &tab_edits,
-                    wrap_width,
+                    wrap_widths,
                     &mut line_wrapper,
                     &mut fragment_builder,
                 ));
@@ -295,7 +300,7 @@ impl WrapMap {
                         .update(
                             tab_snapshot,
                             &tab_edits,
-                            wrap_width,
+                            wrap_widths,
                             &mut line_wrapper,
                             &mut fragment_builder,
                         )
@@ -365,7 +370,7 @@ impl WrapMap {
             return;
         }
 
-        if let Some(wrap_width) = self.wrap_width
+        if let Some(wrap_widths) = self.wrap_widths
             && self.background_task.is_none()
         {
             let mut pending_edits = self.pending_edits.clone();
@@ -386,7 +391,7 @@ impl WrapMap {
                 let wrap_edits = gpui::block_on(snapshot.update(
                     tab_snapshot,
                     &tab_edits,
-                    wrap_width,
+                    wrap_widths,
                     &mut line_wrapper,
                     &mut fragment_builder,
                 ));
@@ -400,7 +405,7 @@ impl WrapMap {
                             .update(
                                 tab_snapshot,
                                 &tab_edits,
-                                wrap_width,
+                                wrap_widths,
                                 &mut line_wrapper,
                                 &mut fragment_builder,
                             )
@@ -547,7 +552,7 @@ impl WrapSnapshot {
         &mut self,
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
-        wrap_width: Pixels,
+        wrap_widths: WrapWidths,
         line_wrapper: &mut LineWrapper,
         fragment_builder: &mut LineFragmentBuilder,
     ) -> WrapPatch {
@@ -642,7 +647,7 @@ impl WrapSnapshot {
                     }
 
                     let mut prev_boundary_ix = 0;
-                    for boundary in line_wrapper.wrap_line(&line_fragments, wrap_width) {
+                    for boundary in line_wrapper.wrap_line(&line_fragments, wrap_widths) {
                         let wrapped = &line[prev_boundary_ix..boundary.ix];
                         push_isomorphic(&mut edit_transforms, TextSummary::from(wrapped));
                         edit_transforms.push(Transform::wrap(boundary.next_indent));
@@ -1488,8 +1493,15 @@ mod tests {
             let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
             let (mut tab_map, _) = TabMap::new(fold_snapshot, tab_size);
             let tabs_snapshot = tab_map.set_max_expansion_column(32);
-            let (_wrap_map, wrap_snapshot) =
-                cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, soft_wrapping, cx));
+            let (_wrap_map, wrap_snapshot) = cx.update(|cx| {
+                WrapMap::new(
+                    tabs_snapshot,
+                    font,
+                    font_size,
+                    soft_wrapping.map(Into::into),
+                    cx,
+                )
+            });
 
             wrap_snapshot
         }
@@ -1611,8 +1623,8 @@ mod tests {
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, _) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         let tabs_snapshot = tab_map.set_max_expansion_column(32);
-        let (_wrap_map, wrap_snapshot) =
-            cx.update(|cx| WrapMap::new(tabs_snapshot, font, font_size, Some(wrap_width), cx));
+        let (_wrap_map, wrap_snapshot) = cx
+            .update(|cx| WrapMap::new(tabs_snapshot, font, font_size, Some(wrap_width.into()), cx));
 
         let wrapped_text = wrap_snapshot.text();
         for row in wrapped_text.split('\n') {
@@ -1686,8 +1698,15 @@ mod tests {
         let mut line_wrapper = text_system.line_wrapper(font.clone(), font_size);
         let expected_text = wrap_text(&tabs_snapshot, wrap_width, &mut line_wrapper);
 
-        let (wrap_map, _) =
-            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font, font_size, wrap_width, cx));
+        let (wrap_map, _) = cx.update(|cx| {
+            WrapMap::new(
+                tabs_snapshot.clone(),
+                font,
+                font_size,
+                wrap_width.map(Into::into),
+                cx,
+            )
+        });
         let mut notifications = observe(&wrap_map, cx);
 
         if wrap_map.read_with(cx, |map, _| map.is_rewrapping()) {
@@ -1722,7 +1741,9 @@ mod tests {
                         Some(px(rng.random_range(0.0..=1000.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
-                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    wrap_map.update(cx, |map, cx| {
+                        map.set_wrap_widths(wrap_width.map(Into::into), cx)
+                    });
                 }
                 20..=39 => {
                     for (fold_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {

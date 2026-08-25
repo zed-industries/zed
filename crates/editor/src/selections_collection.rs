@@ -1502,7 +1502,7 @@ mod tests {
                 buffer.clone(),
                 test_font(),
                 px(14.),
-                Some(px(rng.random_range(80.0..=180.0))),
+                Some(px(rng.random_range(80.0..=180.0)).into()),
                 1,
                 1,
                 FoldPlaceholder::test(),

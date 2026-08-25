@@ -96,7 +96,7 @@ pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 use collections::{HashMap, HashSet, IndexSet};
 use gpui::{
     App, Context, Entity, EntityId, Font, HighlightStyle, Hsla, LineLayout, Pixels, UnderlineStyle,
-    WeakEntity,
+    WeakEntity, WrapWidths,
 };
 use language::{
     LanguageAwareStyling, Point, Subscription as BufferSubscription,
@@ -369,7 +369,7 @@ impl DisplayMap {
         buffer: Entity<MultiBuffer>,
         font: Font,
         font_size: Pixels,
-        wrap_width: Option<Pixels>,
+        wrap_widths: Option<WrapWidths>,
         buffer_header_height: u32,
         excerpt_header_height: u32,
         fold_placeholder: FoldPlaceholder,
@@ -387,7 +387,7 @@ impl DisplayMap {
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
+        let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_widths, cx);
         let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
@@ -1243,9 +1243,9 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_font_with_size(font, font_size, cx))
     }
 
-    pub fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut Context<Self>) -> bool {
+    pub fn set_wrap_widths(&self, widths: Option<WrapWidths>, cx: &mut Context<Self>) -> bool {
         self.wrap_map
-            .update(cx, |map, cx| map.set_wrap_width(width, cx))
+            .update(cx, |map, cx| map.set_wrap_widths(widths, cx))
     }
 
     #[instrument(skip_all)]
@@ -2761,7 +2761,7 @@ pub mod tests {
                 buffer.clone(),
                 font,
                 font_size,
-                wrap_width,
+                wrap_width.map(Into::into),
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
                 FoldPlaceholder::test(),
@@ -2790,7 +2790,9 @@ pub mod tests {
                         Some(px(rng.random_range(0.0..=max_wrap_width)))
                     };
                     log::info!("setting wrap width to {:?}", wrap_width);
-                    map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                    map.update(cx, |map, cx| {
+                        map.set_wrap_widths(wrap_width.map(Into::into), cx)
+                    });
                 }
                 20..=29 => {
                     let mut tab_sizes = vec![1, 2, 3, 4];
@@ -3014,7 +3016,7 @@ pub mod tests {
                     buffer.clone(),
                     font("Helvetica"),
                     font_size,
-                    wrap_width,
+                    wrap_width.map(Into::into),
                     1,
                     1,
                     FoldPlaceholder::test(),
@@ -3733,7 +3735,7 @@ pub mod tests {
                 buffer,
                 font("Courier"),
                 font_size,
-                Some(px(40.0)),
+                Some(px(40.0).into()),
                 1,
                 1,
                 FoldPlaceholder::test(),
