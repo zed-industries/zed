@@ -578,7 +578,7 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CloseIntent {
     /// Quit the program entirely.
     Quit,
@@ -787,6 +787,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     theme_preview::init(cx);
     toast_layer::init(cx);
     history_manager::init(app_state.fs.clone(), cx);
+
+    cx.on_app_quit(flush_windows_serialization_on_quit).detach();
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
@@ -7125,7 +7127,7 @@ impl Workspace {
 
         let bounds_task = self.save_window_bounds(window, cx);
         let serialize_task = self.serialize_workspace_internal(window, cx);
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             bounds_task.await;
             serialize_task.await;
         })
@@ -7285,7 +7287,7 @@ impl Workspace {
                 };
 
                 let db = WorkspaceDb::global(cx);
-                window.spawn(cx, async move |_| {
+                cx.background_spawn(async move {
                     db.save_workspace(serialized_workspace).await;
                 })
             }
@@ -7296,7 +7298,7 @@ impl Workspace {
                 let docks = build_serialized_docks(self, window, cx);
                 let db = WorkspaceDb::global(cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
-                window.spawn(cx, async move |_| {
+                cx.background_spawn(async move {
                     let open_status_write = db.set_window_open_status(
                         database_id,
                         window_bounds,
@@ -7316,7 +7318,7 @@ impl Workspace {
                 // Save dock state for empty non-local workspaces
                 let docks = build_serialized_docks(self, window, cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
-                window.spawn(cx, async move |_| {
+                cx.background_spawn(async move {
                     persistence::write_default_dock_state(&kvp, docks)
                         .await
                         .log_err();
@@ -11213,22 +11215,142 @@ pub fn reload(cx: &mut App) {
             }
         }
 
-        // If the user cancels any save prompt, then keep the app open.
-        for window in workspace_windows {
-            if let Ok(should_close) = window.update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().clone();
-                workspace.update(cx, |workspace, cx| {
-                    workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-                })
-            }) && !should_close.await?
-            {
-                return anyhow::Ok(());
-            }
+        if !prepare_windows_to_quit(&workspace_windows, cx).await? {
+            return anyhow::Ok(());
         }
         cx.update(|cx| cx.restart());
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+pub async fn prepare_windows_to_quit(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut AsyncApp,
+) -> Result<bool> {
+    // If the user cancels any save prompt, then keep the app open.
+    let mut prepared_windows = Vec::new();
+    let mut cancelled = false;
+    for window in workspace_windows {
+        match prepare_window_to_close(*window, CloseIntent::Quit, cx).await {
+            Ok(true) => prepared_windows.push(*window),
+            Ok(false) => {
+                cancelled = true;
+                break;
+            }
+            Err(error) => {
+                log::error!("failed to prepare a window to close before quitting: {error:#}");
+                cancelled = true;
+                break;
+            }
+        }
+    }
+
+    if cancelled {
+        flush_windows_serialization(&prepared_windows, cx).await;
+        for window in prepared_windows {
+            window
+                .update(cx, |_, window, _cx| {
+                    window.remove_window();
+                })
+                .log_err();
+        }
+        return Ok(false);
+    }
+
+    // Flush all pending workspace serialization before quitting so that
+    // session_id/window_id are up-to-date in the database.
+    flush_windows_serialization(workspace_windows, cx).await;
+
+    Ok(true)
+}
+
+pub(crate) async fn prepare_window_to_close(
+    window: WindowHandle<MultiWorkspace>,
+    close_intent: CloseIntent,
+    cx: &mut AsyncApp,
+) -> Result<bool> {
+    let active_and_workspaces = window
+        .update(cx, |multi_workspace, window, _cx| {
+            if close_intent == CloseIntent::Quit {
+                window.activate_window();
+            }
+            (
+                multi_workspace.workspace().clone(),
+                multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+            )
+        })
+        .log_err();
+
+    let Some((originally_active, workspaces)) = active_and_workspaces else {
+        return Ok(true);
+    };
+
+    let mut prepared = anyhow::Ok(true);
+    for workspace in workspaces {
+        prepared = match window.update(cx, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.prepare_to_close(close_intent, window, cx)
+            })
+        }) {
+            Ok(task) => task.await,
+            Err(error) => Err(error),
+        };
+        if !matches!(prepared, Ok(true)) {
+            break;
+        }
+    }
+
+    // Re-activate the workspace the user
+    // actually had focused so it is the one serialized (and restored on
+    // next launch) as active, rather than whichever happened to be last.
+    window
+        .update(cx, |multi_workspace, window, cx| {
+            if !matches!(prepared, Ok(true)) {
+                for workspace in multi_workspace.workspaces() {
+                    workspace.update(cx, |workspace, _| {
+                        workspace.removing = false;
+                    });
+                }
+            }
+            multi_workspace.activate(originally_active, None, window, cx);
+        })
+        .log_err();
+
+    prepared
+}
+
+pub async fn flush_windows_serialization(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut AsyncApp,
+) {
+    let mut flush_tasks = Vec::new();
+    for window in workspace_windows {
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
+            })
+            .log_err();
+    }
+    futures::future::join_all(flush_tasks).await;
+}
+
+fn flush_windows_serialization_on_quit(cx: &mut App) -> impl Future<Output = ()> + use<> {
+    let mut flush_tasks = Vec::new();
+    for window in cx.windows() {
+        if let Some(window) = window.downcast::<MultiWorkspace>()
+            && let Some(tasks) = window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.flush_pending_serialization(window, cx)
+                })
+                .log_err()
+        {
+            flush_tasks.extend(tasks);
+        }
+    }
+    async move {
+        futures::future::join_all(flush_tasks).await;
+    }
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
