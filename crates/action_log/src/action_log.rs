@@ -177,7 +177,10 @@ impl ActionLog {
                     } = &status
                     {
                         diff_base = existing_content.clone();
-                        unreviewed_edits = Patch::default();
+                        unreviewed_edits = Patch::new(vec![Edit {
+                            old: 0..existing_content.max_point().row + 1,
+                            new: 0..text_snapshot.max_point().row + 1,
+                        }]);
                     } else {
                         diff_base = Rope::default();
                         unreviewed_edits = Patch::new(vec![Edit {
@@ -1716,7 +1719,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_overwriting_file_counts_removed_lines(cx: &mut TestAppContext) {
         init_test(cx);
 
