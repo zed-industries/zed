@@ -14,4 +14,3 @@ path = "src/credentials_provider.rs"
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-serde.workspace = true

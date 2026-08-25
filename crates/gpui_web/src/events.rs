@@ -1,10 +1,10 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, DispatchEventResult, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
-    TouchPhase, point, px,
+    Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, Image,
+    ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
+    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
 };
 use wasm_bindgen::prelude::*;
 
@@ -469,6 +469,12 @@ impl WebWindowInner {
     /// read API cannot fit that synchronous signature, while `ClipboardEvent`
     /// exposes `clipboardData` synchronously inside the event. It fires for
     /// any browser-initiated paste (keyboard, menu bar, context menu).
+    ///
+    /// Text-only pastes reach the input handler synchronously. Pasted image
+    /// files only expose their bytes through asynchronous blob reads, so
+    /// pastes containing images are delivered once those reads resolve — to
+    /// whichever input handler is focused at that point, matching how an
+    /// application-level paste action would behave.
     fn register_paste(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen_input("paste", move |event: JsValue| {
@@ -476,16 +482,70 @@ impl WebWindowInner {
             let Some(clipboard_data) = event.clipboard_data() else {
                 return;
             };
-            let Ok(text) = clipboard_data.get_data("text/plain") else {
+            let text = clipboard_data
+                .get_data("text/plain")
+                .ok()
+                .filter(|text| !text.is_empty());
+
+            // File handles must be collected synchronously: the browser
+            // clears `clipboardData`'s item list once this handler returns,
+            // while the `File`s themselves stay readable afterwards.
+            let mut image_files = Vec::new();
+            let items = clipboard_data.items();
+            for index in 0..items.length() {
+                let Some(item) = items.get(index) else {
+                    continue;
+                };
+                if item.kind() != "file" {
+                    continue;
+                }
+                let Some(format) = ImageFormat::from_mime_type(&item.type_()) else {
+                    continue;
+                };
+                if let Ok(Some(file)) = item.get_as_file() {
+                    image_files.push((format, file));
+                }
+            }
+
+            if text.is_none() && image_files.is_empty() {
                 return;
-            };
-            if text.is_empty() {
+            }
+            event.prevent_default();
+
+            if image_files.is_empty() {
+                if let Some(text) = text {
+                    this.with_input_handler(|handler| {
+                        handler.paste(ClipboardItem::new_string(text));
+                    });
+                }
                 return;
             }
 
-            event.prevent_default();
-            this.with_input_handler(|handler| {
-                handler.replace_text_in_range(None, &text);
+            let this = Rc::clone(&this);
+            wasm_bindgen_futures::spawn_local(async move {
+                let mut entries = Vec::new();
+                if let Some(text) = text {
+                    entries.push(ClipboardEntry::String(ClipboardString::new(text)));
+                }
+                for (format, file) in image_files {
+                    match crate::platform::read_blob_bytes(&file).await {
+                        Ok(bytes) => {
+                            entries.push(ClipboardEntry::Image(Image::from_bytes(format, bytes)));
+                        }
+                        Err(error) => {
+                            log::error!(
+                                "failed to read pasted image: {}",
+                                crate::platform::js_error_message(&error)
+                            );
+                        }
+                    }
+                }
+                if entries.is_empty() {
+                    return;
+                }
+                this.with_input_handler(|handler| {
+                    handler.paste(ClipboardItem { entries });
+                });
             });
         })
     }

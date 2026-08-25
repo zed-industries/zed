@@ -16,12 +16,21 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        mut edit_handler: impl FnMut(&mut V, &ErasedEditorEvent, &mut Window, &mut Context<V>) + 'static,
+        edit_handler: impl FnMut(&mut V, &ErasedEditorEvent, &mut Window, &mut Context<V>) + 'static,
         window: &mut Window,
         cx: &mut Context<V>,
     ) -> Self {
         let editor = (ui_input::ERASED_EDITOR_FACTORY.get().unwrap())(window, cx);
+        Self::with_editor(editor, placeholder_text, edit_handler, window, cx)
+    }
 
+    pub fn with_editor<V: 'static>(
+        editor: Arc<dyn ErasedEditor>,
+        placeholder_text: Arc<str>,
+        mut edit_handler: impl FnMut(&mut V, &ErasedEditorEvent, &mut Window, &mut Context<V>) + 'static,
+        window: &mut Window,
+        cx: &mut Context<V>,
+    ) -> Self {
         editor.set_placeholder_text(placeholder_text.as_ref(), window, cx);
         let this = cx.weak_entity();
         editor

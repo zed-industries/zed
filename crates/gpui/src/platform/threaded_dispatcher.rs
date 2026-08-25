@@ -370,6 +370,14 @@ impl ThreadedDispatcher {
         )
     }
 
+    /// Whether no main-thread work is queued, no background or timer
+    /// runnables are queued or running, and no armed timer is due. Timers
+    /// that aren't due yet are ignored, as in [`Self::run_until_idle`].
+    #[cfg(any(test, feature = "bench"))]
+    pub(crate) fn is_idle(&self) -> bool {
+        !self.main_queue_has_work() && !self.has_due_timer() && *self.idle.inflight.lock() == 0
+    }
+
     fn has_due_timer(&self) -> bool {
         let state = self.timers.state.lock();
         state
@@ -461,6 +469,32 @@ mod tests {
 
     use super::*;
     use crate::{BackgroundExecutor, ForegroundExecutor};
+
+    #[test]
+    fn is_idle_tracks_queued_work_but_ignores_undue_timers() {
+        let dispatcher = Arc::new(ThreadedDispatcher::new());
+        let foreground = ForegroundExecutor::new(dispatcher.clone());
+        assert!(dispatcher.is_idle());
+
+        foreground.spawn(async {}).detach();
+        assert!(!dispatcher.is_idle());
+        dispatcher.run_until_idle();
+        assert!(dispatcher.is_idle());
+
+        let background = BackgroundExecutor::new(dispatcher.clone());
+        let timer = background.timer(Duration::from_secs(60));
+        // The timer future's initial poll runs on a worker thread; wait for
+        // it so only the armed, not-yet-due timer remains.
+        dispatcher.run_until_idle();
+        assert!(
+            dispatcher.is_idle(),
+            "a timer that is not due yet should not count as pending work"
+        );
+        drop(timer);
+        dispatcher.cancel_pending_timers();
+        dispatcher.run_until_idle();
+        assert!(dispatcher.is_idle());
+    }
 
     #[test]
     fn run_ready_main_tasks_does_not_wait_for_background_handoffs() {
