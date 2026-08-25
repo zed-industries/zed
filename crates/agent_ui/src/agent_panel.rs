@@ -1174,6 +1174,7 @@ pub struct AgentPanel {
     _project_subscription: Subscription,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
+    persist_selected_agent_task: Task<()>,
     new_user_onboarding: Entity<AgentPanelOnboarding>,
     new_user_onboarding_upsell_dismissed: AtomicBool,
     selected_agent: Agent,
@@ -1567,6 +1568,7 @@ impl AgentPanel {
             focus_handle: cx.focus_handle(),
             context_server_registry,
             draft_thread: None,
+            persist_selected_agent_task: Task::ready(()),
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
             pending_terminal_spawn: None,
@@ -1927,13 +1929,12 @@ impl AgentPanel {
             self.serialize(cx);
         }
 
-        cx.background_spawn({
+        self.persist_selected_agent_task = cx.background_spawn({
             let kvp = KeyValueStore::global(cx);
             async move {
                 write_global_last_used_agent(kvp, agent).await;
             }
-        })
-        .detach();
+        });
     }
 
     /// Sets the panel's selected agent without opening the panel or focusing
@@ -11499,7 +11500,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 25)]
     async fn test_select_agent_action_updates_visible_draft(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
