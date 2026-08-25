@@ -402,5 +402,155 @@ mod tests {
                 file_name_or_extension: "gleam".into()
             })
         );
+        assert_eq!(
+            suggested_extension(rel_path("a/b/c/d/test.sol")),
+            Some(SuggestedExtension {
+                extension_id: "solidity".into(),
+                file_name_or_extension: "sol".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension(rel_path("a/b/c/d/test.jl")),
+            Some(SuggestedExtension {
+                extension_id: "julia".into(),
+                file_name_or_extension: "jl".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension(rel_path("script.pl")),
+            Some(SuggestedExtension {
+                extension_id: "perl".into(),
+                file_name_or_extension: "pl".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension(rel_path("app/uv.lock")),
+            Some(SuggestedExtension {
+                extension_id: "toml".into(),
+                file_name_or_extension: "uv.lock".into()
+            })
+        );
+        // Dotfiles have no `Path::extension`, so they match by name.
+        assert_eq!(
+            suggested_extension(rel_path(".envrc")),
+            Some(SuggestedExtension {
+                extension_id: "env".into(),
+                file_name_or_extension: ".envrc".into()
+            })
+        );
+        assert_eq!(
+            suggested_extension(rel_path(".gitattributes")),
+            Some(SuggestedExtension {
+                extension_id: "git-firefly".into(),
+                file_name_or_extension: ".gitattributes".into()
+            })
+        );
+    }
+
+    fn assert_suggests(path: &str, extension_id: &str, matched: &str) {
+        assert_eq!(
+            suggested_extension(rel_path(path)),
+            Some(SuggestedExtension {
+                extension_id: extension_id.into(),
+                file_name_or_extension: matched.into(),
+            }),
+            "unexpected suggestion for `{path}`",
+        );
+    }
+
+    #[test]
+    pub fn every_extension_has_a_representative_match() {
+        assert_suggests("doc.adoc", "asciidoc", "adoc");
+        assert_suggests("app.astro", "astro", "astro");
+        assert_suggests("ledger.bean", "beancount", "bean");
+        assert_suggests("deps.edn", "clojure", "edn");
+        assert_suggests("App.csproj", "csharp", "csproj");
+        assert_suggests("data.csv", "csv", "csv");
+        assert_suggests("lib.pyx", "cython", "pyx");
+        assert_suggests("main.dart", "dart", "dart");
+        assert_suggests("compose.yaml", "dockerfile", "compose.yaml");
+        assert_suggests("init.el", "elisp", "el");
+        assert_suggests("mix.lock", "elixir", "mix.lock");
+        assert_suggests("Main.elm", "elm", "elm");
+        assert_suggests("rebar.config", "erlang", "rebar.config");
+        assert_suggests("config.fish", "fish", "fish");
+        assert_suggests("main.gd", "gdscript", "gd");
+        assert_suggests("shader.frag", "glsl", "frag");
+        assert_suggests("schema.graphqls", "graphql", "graphqls");
+        assert_suggests("Jenkinsfile", "groovy", "Jenkinsfile");
+        assert_suggests("proj.cabal", "haskell", "cabal");
+        assert_suggests("index.html", "html", "html");
+        assert_suggests("app.ini", "ini", "ini");
+        assert_suggests("tsconfig.json5", "json5", "json5");
+        assert_suggests("Justfile", "just", "Justfile");
+        assert_suggests("build.gradle.kts", "kotlin", "kts");
+        assert_suggests("gradle.properties", "java", "properties");
+        assert_suggests("main.sty", "latex", "sty");
+        assert_suggests("server.log", "log", "log");
+        assert_suggests("init.lua", "lua", "lua");
+        assert_suggests("CMakeLists.txt", "neocmake", "CMakeLists.txt");
+        assert_suggests("shim.nimble", "nim", "nimble");
+        assert_suggests("flake.nix", "nix", "nix");
+        assert_suggests("script.nuon", "nu", "nuon");
+        assert_suggests("dune", "ocaml", "dune");
+        assert_suggests("main.odin", "odin", "odin");
+        assert_suggests("index.phtml", "php", "phtml");
+        assert_suggests("profile.ps1", "powershell", "ps1");
+        assert_suggests("schema.prisma", "prisma", "prisma");
+        assert_suggests("api.proto", "proto", "proto");
+        assert_suggests("Main.purs", "purescript", "purs");
+        assert_suggests("notebook.Rmd", "r", "Rmd");
+        assert_suggests("main.rkt", "racket", "rkt");
+        assert_suggests("App.res", "rescript", "res");
+        assert_suggests("index.rst", "rst", "rst");
+        assert_suggests("Gemfile", "ruby", "Gemfile");
+        assert_suggests("build.sbt", "scala", "sbt");
+        assert_suggests("main.ss", "scheme", "ss");
+        assert_suggests("styles.sass", "scss", "sass");
+        assert_suggests("query.sql", "sql", "sql");
+        assert_suggests("App.svelte", "svelte", "svelte");
+        assert_suggests("Model.swiftinterface", "swift", "swiftinterface");
+        assert_suggests("home.templ", "templ", "templ");
+        assert_suggests("terraform.tfvars", "terraform", "tfvars");
+        assert_suggests("main.typst", "typst", "typst");
+        assert_suggests("App.vue", "vue", "vue");
+        assert_suggests("shader.wgsl", "wgsl", "wgsl");
+        assert_suggests("run.bat", "windows-batch", "bat");
+        assert_suggests("Makefile", "make", "Makefile");
+        assert_suggests("nginx.conf", "nginx", "nginx.conf");
+        assert_suggests(
+            "requirements.txt",
+            "python-requirements",
+            "requirements.txt",
+        );
+        assert_suggests("lib.wit", "wit", "wit");
+        assert_suggests("pom.xml", "xml", "xml");
+        assert_suggests("build.zon", "zig", "zon");
+    }
+
+    #[test]
+    pub fn suggested_path_suffixes_are_unique() {
+        let mut claims: HashMap<&str, &str> = HashMap::new();
+        for (extension_id, path_suffixes) in SUGGESTIONS_BY_EXTENSION_ID {
+            for suffix in *path_suffixes {
+                let previous = claims.insert(suffix, extension_id);
+                assert!(
+                    previous.is_none(),
+                    "duplicate suffix `{suffix}` is claimed by both `{}` and `{extension_id}`",
+                    previous.unwrap_or("?"),
+                );
+            }
+        }
+    }
+
+    #[test]
+    pub fn table_is_sorted_by_extension_id() {
+        assert!(
+            SUGGESTIONS_BY_EXTENSION_ID
+                .iter()
+                .map(|(extension_id, _)| *extension_id)
+                .is_sorted(),
+            "suggested extensions must be sorted by id"
+        );
     }
 }
