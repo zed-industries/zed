@@ -22,6 +22,8 @@ pub struct EditorSettingsContent {
     ///
     /// Default: bar
     pub cursor_shape: Option<CursorShape>,
+    /// Cursor movement animation settings.
+    pub cursor_animation: Option<CursorAnimationSettingsContent>,
     /// Determines how snippets are sorted relative to other completion items.
     ///
     /// Default: inline
@@ -356,6 +358,28 @@ impl RelativeLineNumbers {
             RelativeLineNumbers::Wrapped => true,
         }
     }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CursorAnimationSettingsContent {
+    /// Whether cursor movement animation is enabled.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+    /// Duration in milliseconds for cursor movement across rows or over longer distances.
+    ///
+    /// Default: 125
+    pub duration_ms: Option<u64>,
+    /// Duration in milliseconds for short horizontal cursor movement.
+    ///
+    /// Default: 50
+    pub short_duration_ms: Option<u64>,
+    /// Difference in spring duration between leading and trailing cursor corners.
+    /// Values are clamped to the range 0 to 1.
+    ///
+    /// Default: 1.0
+    pub trail_size: Option<f32>,
 }
 
 // Toolbar related settings
