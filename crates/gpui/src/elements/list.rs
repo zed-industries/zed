@@ -1540,14 +1540,16 @@ impl Element for List {
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
-        // If the width of the list has changed, invalidate all cached item heights
+        // Width change can alter wrapped heights. Keep the last size as a hint
+        // so off-screen rows do not collapse to 0. First layout must not wipe
+        // with_uniform_item_height hints.
         if state
             .last_layout_bounds
-            .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
+            .is_some_and(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: None,
+                    size_hint: item.size().or(item.size_hint()),
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -2969,5 +2971,33 @@ mod test {
              the bottom of its track, even when content has grown during the drag \
              (so frozen_bottom < live_bottom)"
         );
+    }
+
+    #[gpui::test]
+    fn test_uniform_height_hints_survive_first_layout(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.))
+            .with_uniform_item_height(px(40.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(40.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(160.)), |_, cx| {
+            cx.new(|_| TestView(state.clone())).into_any_element()
+        });
+
+        state.scroll_to(crate::ListOffset {
+            item_ix: 80,
+            offset_in_item: px(0.),
+        });
+        assert_eq!(state.scroll_px_offset_for_scrollbar().y, px(-3200.));
     }
 }
