@@ -258,7 +258,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             &SETTINGS_QUERY_2026_05_04,
         ),
         MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
-        MigrationType::Json(migrations::m_2026_08_23::rename_folder_icons_to_folder_indicator),
+        MigrationType::Json(migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator),
     ];
     run_migrations(text, migrations)
 }
@@ -5487,7 +5487,7 @@ mod tests {
     fn test_rename_folder_icons_to_folder_indicator_in_all_panels() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_08_23::rename_folder_icons_to_folder_indicator,
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
             )],
             &r#"
             {
@@ -5529,7 +5529,7 @@ mod tests {
     fn test_rename_folder_icons_to_folder_indicator_preserves_comments_and_siblings() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_08_23::rename_folder_icons_to_folder_indicator,
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
             )],
             &r#"
             {
@@ -5562,7 +5562,7 @@ mod tests {
     fn test_rename_folder_icons_to_folder_indicator_in_platform_overrides() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_08_23::rename_folder_icons_to_folder_indicator,
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
             )],
             &r#"
             {
@@ -5593,7 +5593,7 @@ mod tests {
     fn test_rename_folder_icons_to_folder_indicator_does_not_clobber_new_key() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
-                migrations::m_2026_08_23::rename_folder_icons_to_folder_indicator,
+                migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
             )],
             &r#"
             {
@@ -5620,7 +5620,7 @@ mod tests {
     #[test]
     fn test_rename_folder_icons_to_folder_indicator_no_change_cases() {
         let migrations = &[MigrationType::Json(
-            migrations::m_2026_08_23::rename_folder_icons_to_folder_indicator,
+            migrations::m_2026_08_26::rename_folder_icons_to_folder_indicator,
         )];
 
         // Already migrated.
