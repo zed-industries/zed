@@ -5,7 +5,7 @@ mod paste;
 mod select;
 mod surround;
 
-use editor::display_map::{DisplayRow, DisplaySnapshot};
+use editor::display_map::{DisplayRow, DisplaySnapshot, ToDisplayPoint};
 use editor::{
     DisplayPoint, Editor, EditorSettings, MultiBufferOffset, NavigationOverlayLabel,
     NavigationTargetOverlay, SelectionEffects, ToOffset, ToPoint, movement,
@@ -881,17 +881,25 @@ impl Vim {
         let count = Vim::take_count(cx).unwrap_or(1);
         self.update_editor(cx, |_, editor, cx| {
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let mut selections = editor.selections.all::<Point>(&display_map);
             let max_point = display_map.buffer_snapshot().max_point();
-            let buffer_snapshot = &display_map.buffer_snapshot();
+            let mut selections = editor.selections.all_display(&display_map);
+            let buffer_snapshot = display_map.buffer_snapshot();
 
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line
-                let start_row = selection.start.row;
-                let current_end_row = selection.end.row;
+                let buffer_point = Point::new(
+                    DisplayPoint::new(selection.start.row(), 0)
+                        .to_point(&display_map)
+                        .row,
+                    0,
+                )
+                .to_point(buffer_snapshot);
+                let current_end_row = movement::line_end(&display_map, selection.end, false)
+                    .to_point(&display_map)
+                    .row;
 
                 // Check if cursor is on empty line by checking first character
-                let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
+                let line_start_offset = buffer_snapshot.point_to_offset(buffer_point);
                 let first_char = buffer_snapshot.chars_at(line_start_offset).next();
                 let extra_line = if first_char == Some('\n') && selection.is_empty() {
                     1
@@ -901,17 +909,21 @@ impl Vim {
 
                 let end_row = current_end_row + count as u32 + extra_line;
 
-                selection.start = Point::new(start_row, 0);
+                selection.start = buffer_point.to_display_point(&display_map);
                 selection.end = if end_row > max_point.row {
-                    max_point
+                    max_point.to_display_point(&display_map)
                 } else {
-                    Point::new(end_row, 0)
+                    Point::new(end_row, 0).to_display_point(&display_map)
                 };
                 selection.reversed = false;
             }
 
             editor.change_selections(Default::default(), window, cx, |s| {
-                s.select(selections);
+                s.select_display_ranges(
+                    selections
+                        .iter()
+                        .map(|selection| selection.start..selection.end),
+                );
             });
         });
     }
@@ -3133,6 +3145,133 @@ mod test {
         cx.set_state("oneˇ\ntwo\nthree", Mode::HelixNormal);
         cx.simulate_keystrokes("d u x");
         cx.assert_state("«one\nˇ»two\nthree", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines_fold(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }ˇ
+            "},
+            Mode::HelixNormal,
+        );
+        cx.update_editor(|editor, window, cx| {
+            editor.fold(&editor::actions::Fold, window, cx);
+            assert_eq!(editor.display_text(cx), "impl Foo {⋯}\n");
+        });
+
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+                «impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }
+                ˇ»"},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state(
+            indoc! {"
+                impl Foo ˇ{
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }
+            "},
+            Mode::HelixNormal,
+        );
+        cx.update_editor(|editor, window, cx| {
+            editor.fold(&editor::actions::Fold, window, cx);
+            assert_eq!(editor.display_text(cx), "impl Foo {⋯}\n");
+        });
+
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+                «impl Foo {
+                    // Hello!
+
+                    fn a() {
+                        1
+                    }
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }
+                ˇ»"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines_softwrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update_global(|settings: &mut SettingsStore, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.soft_wrap =
+                    Some(settings::SoftWrap::Bounded);
+                settings
+                    .project
+                    .all_languages
+                    .defaults
+                    .preferred_line_length = Some(12);
+            });
+        });
+
+        cx.set_state(
+            "12345678901234567890\n12345678901234ˇ567890\n12345678901234567890\n12345678901234567890",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 x");
+        cx.assert_state(
+            "12345678901234567890\n«12345678901234567890\n12345678901234567890\nˇ»12345678901234567890",
+            Mode::HelixNormal,
+        );
     }
 
     #[gpui::test]
