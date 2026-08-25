@@ -2769,9 +2769,9 @@ impl Element for MarkdownElement {
                             builder.push_list(*bullet_index);
                             let is_top_level = builder.list_stack.len() == 1;
                             builder.push_div(
-                                div().pl_2p5().when(is_top_level, |this| {
-                                    this.mb(self.style.list_spacing)
-                                }),
+                                div()
+                                    .pl_2p5()
+                                    .when(is_top_level, |this| this.mb(self.style.list_spacing)),
                                 range,
                                 markdown_end,
                             );
@@ -5328,7 +5328,11 @@ mod tests {
         render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx)
     }
 
-    fn rendered_code_chips(markdown: &str, style: MarkdownStyle, cx: &mut TestAppContext) -> Vec<(String, Hsla)> {
+    fn rendered_code_chips(
+        markdown: &str,
+        style: MarkdownStyle,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, Hsla)> {
         ensure_theme_initialized(cx);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
