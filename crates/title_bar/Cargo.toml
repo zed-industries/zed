@@ -46,7 +46,6 @@ git_ui_core.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 icons.workspace = true
 livekit_client.workspace = true
-notifications.workspace = true
 project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
@@ -65,17 +64,12 @@ workspace.workspace = true
 zed_actions.workspace = true
 arrayvec = "0.7.6"
 
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-notifications = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 recent_projects = { workspace = true, features = ["test-support"] }
-release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 semver.workspace = true

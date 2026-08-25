@@ -268,10 +268,15 @@ fn main() {
         return;
     }
 
-    // Set custom data directory.
-    if let Some(dir) = &args.user_data_dir {
-        paths::set_custom_data_dir(dir);
-    }
+    let restart_arguments = if let Some(directory) = args.user_data_dir.as_deref() {
+        let directory = paths::set_custom_data_dir(directory);
+        vec![
+            std::ffi::OsString::from("--user-data-dir"),
+            directory.as_os_str().to_owned(),
+        ]
+    } else {
+        Vec::new()
+    };
 
     #[cfg(target_os = "windows")]
     match util::get_zed_cli_path() {
@@ -340,7 +345,9 @@ fn main() {
     #[cfg(windows)]
     check_for_conpty_dll();
 
-    let app = build_application().with_assets(Assets);
+    let app = build_application()
+        .with_assets(Assets)
+        .with_restart_arguments(restart_arguments);
 
     let app_db = db::AppDatabase::new();
     let system_id = app.background_executor().spawn(system_id());
@@ -725,6 +732,8 @@ fn main() {
         dev_container::init(cx);
 
         load_embedded_fonts(cx);
+        #[cfg(target_os = "linux")]
+        prewarm_fonts(cx);
 
         editor::init(cx);
         image_viewer::init(cx);
@@ -772,7 +781,7 @@ fn main() {
         git_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
-        csv_preview::init(cx);
+        tabular_data_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
@@ -1846,6 +1855,50 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())
         .unwrap();
+}
+
+#[cfg(target_os = "linux")]
+fn prewarm_fonts(cx: &mut App) {
+    let theme_settings = theme::theme_settings(cx);
+    let ui_font = theme_settings.ui_font(cx).clone();
+    let buffer_font = theme_settings.buffer_font(cx).clone();
+    let mut fonts = vec![ui_font.clone(), buffer_font.clone()];
+    let mut add_variant = |base_font: &gpui::Font, weight, style| {
+        let mut font = base_font.clone();
+        font.weight = weight;
+        font.style = style;
+        fonts.push(font);
+    };
+
+    for weight in [
+        gpui::FontWeight::MEDIUM,
+        gpui::FontWeight::SEMIBOLD,
+        gpui::FontWeight::BOLD,
+    ] {
+        add_variant(&ui_font, weight, gpui::FontStyle::Normal);
+    }
+    add_variant(&ui_font, gpui::FontWeight::NORMAL, gpui::FontStyle::Italic);
+    add_variant(
+        &buffer_font,
+        gpui::FontWeight::BOLD,
+        gpui::FontStyle::Normal,
+    );
+    add_variant(
+        &buffer_font,
+        gpui::FontWeight::NORMAL,
+        gpui::FontStyle::Italic,
+    );
+    add_variant(
+        &buffer_font,
+        gpui::FontWeight::BOLD,
+        gpui::FontStyle::Italic,
+    );
+
+    let text_system = cx.text_system().clone();
+    cx.background_spawn(async move {
+        text_system.prewarm_fonts(&fonts);
+    })
+    .detach();
 }
 
 /// Spawns a background task to load the user themes from the themes directory.
