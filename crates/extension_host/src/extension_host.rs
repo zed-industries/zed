@@ -273,6 +273,8 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
+    ExtensionSettings::register(cx);
+
     let store_proxy = extension_host_proxy.clone();
     let store = cx.new(move |cx| {
         ExtensionStore::new(
