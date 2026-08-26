@@ -168,6 +168,14 @@ impl ImeMirror {
         self.element.focus().ok();
     }
 
+    pub(crate) fn is_focused(&self) -> bool {
+        let element: &web_sys::Element = self.element.as_ref();
+        web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.active_element())
+            .is_some_and(|active| &active == element)
+    }
+
     pub(crate) fn blur(&self) {
         self.element.blur().ok();
     }

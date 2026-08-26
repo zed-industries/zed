@@ -63,6 +63,16 @@ pub(crate) struct WebWindowInner {
     /// synchronously from inside an input dispatch, and a `RefCell`
     /// double-borrow panic on wasm never unwinds, wedging the app.
     pub(crate) suppress_focus_status_events: Cell<bool>,
+    /// The visual viewport's width and greatest height seen at that width,
+    /// in layout pixels. The keyboard-visibility probe compares the current
+    /// height against this maximum; the width detects rotation, which must
+    /// restart the calibration.
+    pub(crate) visual_viewport_probe: Cell<(f64, f64)>,
+    /// The visual viewport height when the current pointer gesture began.
+    /// A mid-gesture change means the software keyboard opened or closed and
+    /// reflowed the layout, so the release position no longer refers to what
+    /// the user aimed at.
+    pub(crate) gesture_start_visual_viewport_height: Cell<f64>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
@@ -185,6 +195,8 @@ impl WebWindow {
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
             suppress_focus_status_events: Cell::new(false),
+            visual_viewport_probe: Cell::new((0.0, 0.0)),
+            gesture_start_visual_viewport_height: Cell::new(0.0),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
