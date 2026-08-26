@@ -1,6 +1,7 @@
 use collections::HashMap;
 use extension::{
-    DownloadFileCapability, ExtensionCapability, NpmInstallPackageCapability, ProcessExecCapability,
+    DownloadFileCapability, ExtensionCapability, NpmInstallPackageCapability,
+    ProcessExecCapability, TcpConnectCapability,
 };
 use settings::{RegisterSetting, Settings};
 use std::sync::Arc;
@@ -57,6 +58,9 @@ impl Settings for ExtensionSettings {
                         ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
                             package,
                         })
+                    }
+                    settings::ExtensionCapabilityContent::TcpConnect { host, port } => {
+                        ExtensionCapability::TcpConnect(TcpConnectCapability { host, port })
                     }
                 })
                 .collect(),
