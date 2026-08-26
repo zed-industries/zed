@@ -22,6 +22,9 @@ pub struct WebEventListeners {
 /// text selection. This machine turns pans into `ScrollWheelEvent`s and
 /// holds mouse-down until a long press, matching iOS: tap focuses, drag
 /// scrolls, long-press then drag selects.
+///
+/// TODO: GPUI's portable touch arena does not include momentum yet. Use its
+/// momentum support when available instead of adding a second implementation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum TouchDrag {
     #[default]
