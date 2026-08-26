@@ -365,17 +365,17 @@ The `provider` field specifies which type of hosting service you're using. Suppo
 
 You can configure multiple custom providers if you work with several self-hosted instances.
 
-### Remote File URLs
+### Permalinks
 
 Zed can open or copy a permanent link to a file or code selection on your Git hosting service.
 These links are useful for sharing a specific line or range of lines in a file at a specific commit.
 
 For the current selection in the editor, use {#action editor::CopyPermalinkToLine} or
 {#action editor::OpenPermalinkToLine} from the [Command Palette](./getting-started.md#command-palette)
-(search for `remote`), via [custom key bindings](./key-bindings.md#custom-key-bindings),
-or by right-clicking and selecting **Copy Remote File URL**.
+(search for `permalink`), via [custom key bindings](./key-bindings.md#custom-key-bindings),
+or by right-clicking and selecting **Copy Permalink to Line**.
 
-From a file tab or the Project Panel, you can also **Open File on Remote** or **Copy Remote File URL**
+From a file tab or the Project Panel, you can also **Open File Permalink** or **Copy File Permalink**
 for the whole file (without a line selection).
 
 ## Diff Hunk Keyboard Shortcuts

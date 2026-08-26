@@ -622,29 +622,29 @@ impl Toast {
     }
 }
 
-/// Opens the selected file on its Git hosting provider in the browser.
-pub fn open_file_on_remote(
+/// Opens a permalink for the selected file on its Git hosting provider.
+pub fn open_file_permalink(
     project: Entity<Project>,
     project_path: ProjectPath,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    handle_remote_file_url(project, project_path, workspace, false, window, cx);
+    handle_file_permalink(project, project_path, workspace, false, window, cx);
 }
 
-/// Copies a remote URL for the selected file on its Git hosting provider.
-pub fn copy_remote_file_url(
+/// Copies a permalink for the selected file on its Git hosting provider.
+pub fn copy_file_permalink(
     project: Entity<Project>,
     project_path: ProjectPath,
     workspace: WeakEntity<Workspace>,
     window: &mut Window,
     cx: &mut App,
 ) {
-    handle_remote_file_url(project, project_path, workspace, true, window, cx);
+    handle_file_permalink(project, project_path, workspace, true, window, cx);
 }
 
-fn handle_remote_file_url(
+fn handle_file_permalink(
     project: Entity<Project>,
     project_path: ProjectPath,
     workspace: WeakEntity<Workspace>,
@@ -670,18 +670,18 @@ fn handle_remote_file_url(
             }
             Err(err) => {
                 let action = if copy {
-                    "copy remote file URL"
+                    "copy file permalink"
                 } else {
-                    "open file on remote"
+                    "open file permalink"
                 };
                 let message = format!("Failed to {action}: {err}");
                 anyhow::Result::<()>::Err(err).log_err();
 
                 workspace
                     .update(cx, |workspace, cx| {
-                        struct RemoteFileUrlAction;
+                        struct FilePermalinkAction;
                         workspace.show_toast(
-                            Toast::new(NotificationId::unique::<RemoteFileUrlAction>(), message),
+                            Toast::new(NotificationId::unique::<FilePermalinkAction>(), message),
                             cx,
                         );
                     })

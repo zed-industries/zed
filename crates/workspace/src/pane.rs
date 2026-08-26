@@ -17,7 +17,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
-use git::{CopyRemoteFileUrl, OpenFileOnRemote};
+use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
@@ -3353,32 +3353,28 @@ impl Pane {
                                         project_path.clone(),
                                         |menu, project_path| {
                                             menu.entry(
-                                                "Open File on Remote",
-                                                Some(OpenFileOnRemote.boxed_clone()),
-                                                window.handler_for(
-                                                    &pane,
-                                                    {
-                                                        let project_path = project_path.clone();
-                                                        move |pane, window, cx| {
-                                                            let Some(project) =
-                                                                pane.project.upgrade()
-                                                            else {
-                                                                return;
-                                                            };
-                                                            crate::open_file_on_remote(
-                                                                project,
-                                                                project_path.clone(),
-                                                                pane.workspace.clone(),
-                                                                window,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    },
-                                                ),
+                                                "Open File Permalink",
+                                                Some(OpenFilePermalink.boxed_clone()),
+                                                window.handler_for(&pane, {
+                                                    let project_path = project_path.clone();
+                                                    move |pane, window, cx| {
+                                                        let Some(project) = pane.project.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        crate::open_file_permalink(
+                                                            project,
+                                                            project_path.clone(),
+                                                            pane.workspace.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }),
                                             )
                                             .entry(
-                                                "Copy Remote File URL",
-                                                Some(CopyRemoteFileUrl.boxed_clone()),
+                                                "Copy File Permalink",
+                                                Some(CopyFilePermalink.boxed_clone()),
                                                 window.handler_for(
                                                     &pane,
                                                     move |pane, window, cx| {
@@ -3386,7 +3382,7 @@ impl Pane {
                                                         else {
                                                             return;
                                                         };
-                                                        crate::copy_remote_file_url(
+                                                        crate::copy_file_permalink(
                                                             project,
                                                             project_path.clone(),
                                                             pane.workspace.clone(),
