@@ -123,6 +123,7 @@ impl WebWindowInner {
         let mut handles = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
+            self.register_touch_end(),
             self.register_pointer_move(),
             self.register_pointer_leave(),
             self.register_wheel(),
@@ -193,7 +194,14 @@ impl WebWindowInner {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
 
-            this.ime_mirror.focus();
+            let pointer_type = event.pointer_type();
+            let position = pointer_position_in_element(&event);
+            if pointer_type != "touch" || this.pointer_targets_text_input(position) {
+                if pointer_type == "touch" {
+                    this.ime_mirror.set_read_only(false);
+                }
+                this.ime_mirror.focus();
+            }
 
             // Capture the pointer so drags that leave the canvas keep
             // delivering pointermove/pointerup here; otherwise a release
@@ -202,7 +210,6 @@ impl WebWindowInner {
             this.canvas.set_pointer_capture(event.pointer_id()).ok();
 
             let button = dom_mouse_button_to_gpui(event.button());
-            let position = pointer_position_in_element(&event);
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
             let time = js_sys::Date::now();
 
@@ -223,6 +230,16 @@ impl WebWindowInner {
                 first_mouse: false,
             }));
         })
+    }
+
+    fn pointer_targets_text_input(&self, position: Point<Pixels>) -> bool {
+        self.with_input_handler(|handler| {
+            handler.query_accepts_text_input()
+                && handler
+                    .element_bounds()
+                    .is_some_and(|bounds| bounds.contains(&position))
+        })
+        .unwrap_or(false)
     }
 
     fn register_pointer_up(self: &Rc<Self>) -> EventListenerHandle {
@@ -252,9 +269,18 @@ impl WebWindowInner {
             }));
 
             if event.pointer_type() == "touch" {
-                this.sync_virtual_keyboard();
+                this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
             }
             this.schedule_ime_mirror_sync();
+        })
+    }
+
+    /// Cancels touch default handling separately because iOS does not consistently
+    /// transfer pointer-event cancellation to the corresponding touch event.
+    fn register_touch_end(self: &Rc<Self>) -> EventListenerHandle {
+        self.listen_non_passive("touchend", move |event: JsValue| {
+            let event: web_sys::Event = event.unchecked_into();
+            event.prevent_default();
         })
     }
 
@@ -263,21 +289,21 @@ impl WebWindowInner {
         ImeMirror::schedule_sync(self);
     }
 
-    /// Aligns the software keyboard with GPUI's focus after a touch tap.
+    /// Aligns the software keyboard with the text input targeted by a touch tap.
     ///
     /// Mobile browsers show the keyboard only when an editable element is
     /// focused from within a user gesture, so this runs while the tap's
     /// `pointerup` is still on the stack (by which point GPUI has usually
     /// painted a frame since the `MouseDown`, so the input handler reflects
     /// the tap's focus change). `readOnly` suppresses the keyboard while
-    /// keeping hardware key events flowing to the hidden input; the
-    /// blur/focus cycle is what makes the browser re-evaluate keyboard
-    /// visibility, since `focus()` on an already-focused element is a no-op.
+    /// keeping the hidden input available to the IME. Leaving it blurred after
+    /// a non-editable tap lets the next editable tap establish a new input
+    /// session instead of relying on a same-task blur/focus cycle, which iOS
+    /// may coalesce.
     ///
     /// We don't use `navigator.virtualKeyboard` here because it's
     /// Chromium-only.
-    fn sync_virtual_keyboard(&self) {
-        let editable = self.state.borrow().input_handler.is_some();
+    fn sync_virtual_keyboard(self: &Rc<Self>, editable: bool) {
         let was_editable = !self.ime_mirror.read_only();
         self.ime_mirror.set_read_only(!editable);
         // Cycle only on an actual editability transition. Cycling on every
@@ -285,9 +311,31 @@ impl WebWindowInner {
         // the tapped caret's context, racing its word segmentation.
         if editable != was_editable {
             self.suppress_focus_status_events.set(true);
-            self.ime_mirror.blur();
-            self.ime_mirror.focus();
+            if editable {
+                self.ime_mirror.focus();
+            } else {
+                self.ime_mirror.blur();
+            }
             self.suppress_focus_status_events.set(false);
+
+            if editable {
+                let callback = wasm_bindgen::closure::Closure::once_into_js({
+                    let this = Rc::clone(self);
+                    move || {
+                        this.state.borrow_mut().is_active = true;
+                        this.with_callback(
+                            |callbacks| &mut callbacks.active_status_change,
+                            |callback| callback(true),
+                        );
+                    }
+                });
+                if let Err(error) = self
+                    .browser_window
+                    .set_timeout_with_callback(callback.unchecked_ref())
+                {
+                    log::warn!("failed to defer web window activation: {error:?}");
+                }
+            }
         }
     }
 
