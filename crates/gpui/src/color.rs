@@ -822,7 +822,7 @@ impl std::fmt::Debug for Background {
                 "LinearGradient({}, corner {}, {:?})",
                 self.gradient_angle_or_pattern_height,
                 self.corner,
-                &self.colors[..self.stop_count as usize]
+                self.live_stops()
             ),
             BackgroundTag::PatternSlash => write!(
                 f,
@@ -905,8 +905,12 @@ pub fn linear_gradient(
 /// Stop positions run from 0.0 to 1.0 along the gradient line and must not
 /// decrease. Fix them up before calling, as CSS Images 3 §3.4.3 describes.
 /// A gradient keeps at most [`MAX_GRADIENT_STOPS`] stops and drops the rest.
-/// Fewer than two stops paint the one color, or nothing at all.
+/// One stop paints that color. No stops paint nothing: the shaders index
+/// `stop_count - 1`, so a gradient tag must never carry zero stops.
 pub fn linear_gradient_stops(line: GradientLine, stops: &[LinearColorStop]) -> Background {
+    if stops.is_empty() {
+        return Background::default();
+    }
     let (angle, corner) = match line {
         GradientLine::Angle(angle) => (angle, 0),
         GradientLine::ToTopLeft => (0.0, 1),
@@ -924,13 +928,11 @@ pub fn linear_gradient_stops(line: GradientLine, stops: &[LinearColorStop]) -> B
     let mut colors = [LinearColorStop::default(); MAX_GRADIENT_STOPS];
     let kept = stops.len().min(MAX_GRADIENT_STOPS);
     colors[..kept].copy_from_slice(&stops[..kept]);
-    let stop_count = match kept {
-        0 => 0,
-        1 => {
-            colors[1] = colors[0];
-            2
-        }
-        n => n,
+    let stop_count = if kept == 1 {
+        colors[1] = colors[0];
+        2
+    } else {
+        kept
     };
     Background {
         tag: BackgroundTag::LinearGradient,
@@ -981,6 +983,13 @@ impl LinearColorStop {
 }
 
 impl Background {
+    /// The live color stops. The length clamps to the array, so a
+    /// deserialized `stop_count` past [`MAX_GRADIENT_STOPS`] cannot slice
+    /// out of bounds.
+    pub(crate) fn live_stops(&self) -> &[LinearColorStop] {
+        &self.colors[..(self.stop_count as usize).min(MAX_GRADIENT_STOPS)]
+    }
+
     /// Returns the solid color if this is a solid background, None otherwise.
     pub fn as_solid(&self) -> Option<Hsla> {
         if self.tag == BackgroundTag::Solid {
@@ -1012,9 +1021,9 @@ impl Background {
     pub fn is_transparent(&self) -> bool {
         match self.tag {
             BackgroundTag::Solid => self.solid.is_transparent(),
-            BackgroundTag::LinearGradient => self.colors[..self.stop_count as usize]
-                .iter()
-                .all(|c| c.color.is_transparent()),
+            BackgroundTag::LinearGradient => {
+                self.live_stops().iter().all(|c| c.color.is_transparent())
+            }
             BackgroundTag::PatternSlash => self.solid.is_transparent(),
             BackgroundTag::Checkerboard => self.solid.is_transparent(),
         }
@@ -1115,6 +1124,24 @@ mod tests {
         assert_eq!(background.opacity(0.5).colors[1], to.opacity(0.5));
         assert!(!background.is_transparent());
         assert!(background.opacity(0.0).is_transparent());
+    }
+
+    #[test]
+    fn test_empty_stops_make_a_solid_transparent_background() {
+        let background = linear_gradient_stops(GradientLine::Angle(90.0), &[]);
+        assert_eq!(background.tag, BackgroundTag::Solid);
+        assert!(background.is_transparent());
+    }
+
+    #[test]
+    fn test_a_stop_count_past_the_array_cannot_slice_out_of_bounds() {
+        let mut background = linear_gradient_stops(
+            GradientLine::Angle(90.0),
+            &[linear_color_stop(rgba(0xff0000ff), 0.0)],
+        );
+        background.stop_count = 99;
+        assert_eq!(format!("{background:?}").is_empty(), false);
+        assert!(!background.is_transparent());
     }
 
     #[test]
