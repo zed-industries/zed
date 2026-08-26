@@ -16059,6 +16059,7 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
+ "proto",
  "regex",
  "serde_json",
  "settings",
