@@ -110,6 +110,8 @@ extend-ignore-re = [
     "caf…",
     '\[elete\]',
     "GHIzJ",
+    # Intentionally non-matching query in project search tests
+    "NOTHINGmATCHEStHIS",
 ]
 check-filename = true
 
