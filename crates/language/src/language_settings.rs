@@ -612,6 +612,7 @@ pub enum EditPredictionPromptFormat {
     Codestral,
     Glm,
     Sweep,
+    Mellum,
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -637,6 +638,7 @@ impl From<EditPredictionPromptFormatContent> for EditPredictionPromptFormat {
             EditPredictionPromptFormatContent::Codestral => Self::Codestral,
             EditPredictionPromptFormatContent::Glm => Self::Glm,
             EditPredictionPromptFormatContent::Sweep => Self::Sweep,
+            EditPredictionPromptFormatContent::Mellum => Self::Mellum,
         }
     }
 }
