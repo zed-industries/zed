@@ -116,22 +116,23 @@ impl ExtensionHostProxy {
 }
 
 impl ExtensionPanelUiProxy for ExtensionHostProxy {
-    fn open_panel(&self, descriptor: ExtensionPanelDescriptor) -> Task<Result<()>> {
+    fn open_panel(&self, descriptor: ExtensionPanelDescriptor, cx: &mut App) -> Result<()> {
         let Some(proxy) = self.panel_ui_proxy.read().clone() else {
-            return Task::ready(Err(anyhow!("extension panels are not available")));
+            return Err(anyhow!("extension panels are not available"));
         };
-        proxy.open_panel(descriptor)
+        proxy.open_panel(descriptor, cx)
     }
 
     fn send_panel_event(
         &self,
         panel: ExtensionPanelId,
         event: ExtensionPanelEvent,
-    ) -> Task<Result<()>> {
+        cx: &mut App,
+    ) -> Result<()> {
         let Some(proxy) = self.panel_ui_proxy.read().clone() else {
-            return Task::ready(Err(anyhow!("extension panels are not available")));
+            return Err(anyhow!("extension panels are not available"));
         };
-        proxy.send_panel_event(panel, event)
+        proxy.send_panel_event(panel, event, cx)
     }
 }
 

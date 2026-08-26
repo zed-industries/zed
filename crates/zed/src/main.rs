@@ -568,6 +568,9 @@ fn main() {
         languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
+        extension_host_proxy.register_panel_ui_proxy(
+            workspace::extension_panel::ExtensionPanelsProxy::new(workspace_store.clone()),
+        );
 
         language_extension::init(
             language_extension::LspAccess::ViaWorkspaces({

@@ -1,0 +1,237 @@
+use std::collections::BTreeMap;
+
+use anyhow::{Result, anyhow};
+use extension::{
+    ExtensionPanelDescriptor, ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelLocation,
+    ExtensionPanelUiProxy,
+};
+use gpui::{
+    Action, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, ParentElement, Render, StatefulInteractiveElement as _,
+    Styled, Window, actions, div, px,
+};
+use ui::IconName;
+
+use crate::{Panel, Workspace, WorkspaceStore, dock::DockPosition, dock::PanelEvent};
+
+const EXTENSION_PANELS_KEY: &str = "extension-panels";
+
+actions!(extension_panels, [ToggleExtensionPanels]);
+
+/// A single dock panel which hosts the persistent views requested by extensions.
+///
+/// Keeping one native panel lets Zed persist dock placement while extensions own
+/// their independent identifiers and structured transcript events.
+pub struct ExtensionPanels {
+    panels: BTreeMap<ExtensionPanelId, ExtensionPanelContent>,
+    focus_handle: FocusHandle,
+    position: DockPosition,
+    is_zoomed: bool,
+}
+
+struct ExtensionPanelContent {
+    title: String,
+    events: Vec<ExtensionPanelEvent>,
+}
+
+impl ExtensionPanels {
+    fn new(location: ExtensionPanelLocation, cx: &mut Context<Self>) -> Self {
+        Self {
+            panels: BTreeMap::new(),
+            focus_handle: cx.focus_handle(),
+            position: match location {
+                ExtensionPanelLocation::Right => DockPosition::Right,
+                ExtensionPanelLocation::Bottom => DockPosition::Bottom,
+            },
+            is_zoomed: false,
+        }
+    }
+
+    fn open(&mut self, descriptor: ExtensionPanelDescriptor, cx: &mut Context<Self>) {
+        self.panels
+            .entry(descriptor.id)
+            .or_insert_with(|| ExtensionPanelContent {
+                title: descriptor.title,
+                events: Vec::new(),
+            });
+        cx.notify();
+    }
+
+    fn send_event(
+        &mut self,
+        panel: ExtensionPanelId,
+        event: ExtensionPanelEvent,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let content = self
+            .panels
+            .get_mut(&panel)
+            .ok_or_else(|| anyhow!("extension panel {} is not open", panel.panel_id))?;
+        content.events.push(event);
+        cx.notify();
+        Ok(())
+    }
+}
+
+impl EventEmitter<PanelEvent> for ExtensionPanels {}
+
+impl Focusable for ExtensionPanels {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Panel for ExtensionPanels {
+    fn persistent_name() -> &'static str {
+        "ExtensionPanels"
+    }
+
+    fn panel_key() -> &'static str {
+        EXTENSION_PANELS_KEY
+    }
+
+    fn position(&self, _window: &Window, _cx: &App) -> DockPosition {
+        self.position
+    }
+
+    fn position_is_valid(&self, _position: DockPosition) -> bool {
+        true
+    }
+
+    fn set_position(
+        &mut self,
+        position: DockPosition,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.position = position;
+        cx.notify();
+    }
+
+    fn default_size(&self, _window: &Window, _cx: &App) -> gpui::Pixels {
+        px(360.)
+    }
+
+    fn icon(&self, _window: &Window, _cx: &App) -> Option<IconName> {
+        None
+    }
+
+    fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
+        Some("Extension Panels")
+    }
+
+    fn toggle_action(&self) -> Box<dyn Action> {
+        Box::new(ToggleExtensionPanels)
+    }
+
+    fn activation_priority(&self) -> u32 {
+        7
+    }
+
+    fn starts_open(&self, _window: &Window, _cx: &App) -> bool {
+        true
+    }
+
+    fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
+        self.is_zoomed
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.is_zoomed = zoomed;
+        cx.notify();
+    }
+}
+
+impl Render for ExtensionPanels {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("extension-panels")
+            .track_focus(&self.focus_handle)
+            .size_full()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_2()
+            .children(self.panels.iter().map(|(id, content)| {
+                div()
+                    .id(format!(
+                        "extension-panel-{}-{}",
+                        id.extension_id, id.panel_id
+                    ))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(content.title.clone())
+                    .children(
+                        content
+                            .events
+                            .iter()
+                            .map(|event| div().child(format!("{} {}", event.kind, event.payload))),
+                    )
+            }))
+    }
+}
+
+/// Connects extension-host panel calls to the first active workspace window.
+pub struct ExtensionPanelsProxy {
+    workspace_store: Entity<WorkspaceStore>,
+}
+
+impl ExtensionPanelsProxy {
+    pub fn new(workspace_store: Entity<WorkspaceStore>) -> Self {
+        Self { workspace_store }
+    }
+
+    fn first_workspace(&self, cx: &App) -> Result<(gpui::AnyWindowHandle, Entity<Workspace>)> {
+        self.workspace_store
+            .read(cx)
+            .workspaces_with_windows()
+            .find_map(|(window, workspace)| {
+                workspace.upgrade().map(|workspace| (window, workspace))
+            })
+            .ok_or_else(|| anyhow!("no workspace is open for the extension panel"))
+    }
+
+    fn with_panel(
+        &self,
+        location: ExtensionPanelLocation,
+        cx: &mut App,
+        f: impl FnOnce(&Entity<ExtensionPanels>, &mut Context<Workspace>) -> Result<()>,
+    ) -> Result<()> {
+        let (window_handle, workspace_handle) = self.first_workspace(cx)?;
+        window_handle.update(cx, |_, window, cx| {
+            workspace_handle.update(cx, |workspace, cx| {
+                let panel = workspace.panel::<ExtensionPanels>(cx).unwrap_or_else(|| {
+                    let panel = cx.new(|cx| ExtensionPanels::new(location, cx));
+                    workspace.add_panel(panel.clone(), window, cx);
+                    panel
+                });
+                f(&panel, cx)
+            })
+        })??;
+        Ok(())
+    }
+}
+
+impl ExtensionPanelUiProxy for ExtensionPanelsProxy {
+    fn open_panel(&self, descriptor: ExtensionPanelDescriptor, cx: &mut App) -> Result<()> {
+        self.with_panel(descriptor.location, cx, |panel, cx| {
+            panel.update(cx, |panel, cx| panel.open(descriptor, cx));
+            Ok(())
+        })
+    }
+
+    fn send_panel_event(
+        &self,
+        panel: ExtensionPanelId,
+        event: ExtensionPanelEvent,
+        cx: &mut App,
+    ) -> Result<()> {
+        self.with_panel(ExtensionPanelLocation::Right, cx, |extension_panels, cx| {
+            extension_panels.update(cx, |extension_panels, cx| {
+                extension_panels.send_event(panel, event, cx)
+            })
+        })
+    }
+}

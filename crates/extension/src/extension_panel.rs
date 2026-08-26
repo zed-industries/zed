@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use gpui::Task;
+use gpui::{App, Task};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -14,7 +14,7 @@ pub enum ExtensionPanelLocation {
 }
 
 /// Identifies one persistent panel owned by an extension.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ExtensionPanelId {
     pub extension_id: Arc<str>,
     pub panel_id: Arc<str>,
@@ -49,12 +49,13 @@ pub struct ExtensionPanelAction {
 
 /// Implemented by the application UI to host persistent extension panels.
 pub trait ExtensionPanelUiProxy: Send + Sync + 'static {
-    fn open_panel(&self, descriptor: ExtensionPanelDescriptor) -> Task<Result<()>>;
+    fn open_panel(&self, descriptor: ExtensionPanelDescriptor, cx: &mut App) -> Result<()>;
     fn send_panel_event(
         &self,
         panel: ExtensionPanelId,
         event: ExtensionPanelEvent,
-    ) -> Task<Result<()>>;
+        cx: &mut App,
+    ) -> Result<()>;
 }
 
 /// Implemented by the extension host to deliver user actions to the owning

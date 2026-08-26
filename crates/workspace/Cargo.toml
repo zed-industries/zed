@@ -26,6 +26,7 @@ test-support = [
 ]
 
 [dependencies]
+extension.workspace = true
 any_vec.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true

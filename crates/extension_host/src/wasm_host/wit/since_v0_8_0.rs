@@ -650,12 +650,13 @@ impl panel::Host for WasmState {
             location,
         };
 
-        Ok(self
-            .host
-            .proxy
-            .open_panel(descriptor)
-            .await
-            .map_err(|error| error.to_string()))
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.open_panel(descriptor, cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
     }
 
     async fn send_event(
@@ -686,12 +687,14 @@ impl panel::Host for WasmState {
             payload,
         };
 
-        Ok(self
-            .host
-            .proxy
-            .send_panel_event(panel, event)
-            .await
-            .map_err(|error| error.to_string()))
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.send_panel_event(panel, event, cx)) }
+                    .boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
     }
 }
 
