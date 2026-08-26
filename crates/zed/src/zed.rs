@@ -474,7 +474,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         }
 
         cx.spawn_in(window, async move |_this, cx| {
-            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
             loop {
                 cx.background_executor().timer(TELEMETRY_INTERVAL).await;
                 if cx
