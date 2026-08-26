@@ -11205,12 +11205,9 @@ impl ThreadView {
     }
 
     fn uses_zed_provider(&self, cx: &App) -> bool {
-        self.as_native_connection(cx).is_some()
-            && self
-                .model_selector
-                .as_ref()
-                .and_then(|selector| selector.read(cx).active_model(cx))
-                .is_some_and(|model| model.provider_id() == ZED_CLOUD_PROVIDER_ID)
+        self.as_native_thread(cx)
+            .and_then(|thread| thread.read(cx).model())
+            .map_or(false, |model| model.provider_id() == ZED_CLOUD_PROVIDER_ID)
     }
 
     fn render_error_callout(
