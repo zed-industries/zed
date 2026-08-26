@@ -737,7 +737,6 @@ impl SerializableItem for ImageView {
         workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
         let workspace_id = workspace.database_id()?;
