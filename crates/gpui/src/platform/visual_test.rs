@@ -1,7 +1,7 @@
-//! Visual test platform that combines real rendering (macOs-only for now) with controllable TestDispatcher.
+//! Visual test platform that combines native rendering with a controllable TestDispatcher.
 //!
 //! This platform is used for visual tests that need:
-//! - Real rendering (e.g. Metal/compositor) for accurate screenshots
+//! - Native Metal or DirectX rendering for accurate screenshots
 //! - Deterministic task scheduling via TestDispatcher
 //! - Controllable time via `advance_clock`
 
@@ -22,10 +22,10 @@ use std::{
     sync::Arc,
 };
 
-/// A platform that combines real Mac rendering with controllable TestDispatcher.
+/// A platform that combines native rendering with a controllable TestDispatcher.
 ///
 /// This allows visual tests to:
-/// - Render real UI via Metal for accurate screenshots
+/// - Render real UI via Metal or DirectX for accurate screenshots
 /// - Control task scheduling deterministically via TestDispatcher
 /// - Advance simulated time for testing time-based behaviors (tooltips, animations, etc.)
 pub struct VisualTestPlatform {

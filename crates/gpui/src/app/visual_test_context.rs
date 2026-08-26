@@ -9,14 +9,14 @@ use anyhow::anyhow;
 use image::RgbaImage;
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
-/// A test context that uses real macOS rendering instead of mocked rendering.
+/// A test context that uses native rendering instead of mocked rendering.
 /// This is used for visual tests that need to capture actual screenshots.
 ///
 /// Unlike `TestAppContext` which uses `TestPlatform` with mocked rendering,
-/// `VisualTestAppContext` uses the real `MacPlatform` to produce actual rendered output.
+/// `VisualTestAppContext` uses the native platform to produce actual rendered output.
 ///
 /// Windows created through this context are positioned off-screen (at coordinates like -10000, -10000)
-/// so they are invisible to the user but still fully rendered by the compositor.
+/// so they are invisible to the user but still fully rendered by the platform renderer.
 #[derive(Clone)]
 pub struct VisualTestAppContext {
     /// The underlying app cell
@@ -32,11 +32,11 @@ pub struct VisualTestAppContext {
 }
 
 impl VisualTestAppContext {
-    /// Creates a new `VisualTestAppContext` with real macOS platform rendering
+    /// Creates a new `VisualTestAppContext` with native platform rendering
     /// but deterministic task scheduling via TestDispatcher.
     ///
     /// This provides:
-    /// - Real Metal/compositor rendering for accurate screenshots
+    /// - Real Metal or DirectX rendering for accurate screenshots
     /// - Deterministic task scheduling via TestDispatcher
     /// - Controllable time via `advance_clock`
     ///
@@ -60,8 +60,6 @@ impl VisualTestAppContext {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
 
-        // Create a visual test platform that combines real Mac rendering
-        // with controllable TestDispatcher for deterministic task scheduling
         let platform = Rc::new(VisualTestPlatform::new(platform, seed));
 
         // Get the dispatcher and executors from the platform
@@ -89,7 +87,7 @@ impl VisualTestAppContext {
     /// Opens a window positioned off-screen for invisible rendering.
     ///
     /// The window is positioned at (-10000, -10000) so it's not visible on any display,
-    /// but it's still fully rendered by the compositor and can be captured via ScreenCaptureKit.
+    /// but it is still fully rendered by the platform renderer.
     ///
     /// # Arguments
     /// * `size` - The size of the window to create
@@ -378,7 +376,7 @@ impl VisualTestAppContext {
 
     /// Captures a screenshot of the specified window using direct texture capture.
     ///
-    /// This renders the scene to a Metal texture and reads the pixels directly,
+    /// This renders the scene to a GPU texture and reads the pixels directly,
     /// which does not require the window to be visible on screen.
     #[cfg(any(test, feature = "test-support"))]
     pub fn capture_screenshot(&mut self, window: AnyWindowHandle) -> Result<RgbaImage> {

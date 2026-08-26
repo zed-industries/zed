@@ -38,7 +38,10 @@ use smallvec::SmallVec;
 pub use test_app::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "windows"),
+    any(test, feature = "test-support")
+))]
 pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
@@ -70,7 +73,10 @@ mod headless_app_context;
 mod test_app;
 #[cfg(any(test, feature = "test-support"))]
 mod test_context;
-#[cfg(all(target_os = "macos", any(test, feature = "test-support")))]
+#[cfg(all(
+    any(target_os = "macos", target_os = "windows"),
+    any(test, feature = "test-support")
+))]
 mod visual_test_context;
 
 /// The duration for which futures returned from [Context::on_app_quit] can run before the application fully quits.
