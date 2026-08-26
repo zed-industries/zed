@@ -137,11 +137,11 @@ impl ExtensionPanelUiProxy for ExtensionHostProxy {
 }
 
 impl ExtensionPanelActionProxy for ExtensionHostProxy {
-    fn dispatch_panel_action(&self, action: ExtensionPanelAction) -> Task<Result<()>> {
+    fn dispatch_panel_action(&self, action: ExtensionPanelAction, cx: &mut App) -> Task<Result<()>> {
         let Some(proxy) = self.panel_action_proxy.read().clone() else {
             return Task::ready(Err(anyhow!("extension panel actions are not available")));
         };
-        proxy.dispatch_panel_action(action)
+        proxy.dispatch_panel_action(action, cx)
     }
 }
 

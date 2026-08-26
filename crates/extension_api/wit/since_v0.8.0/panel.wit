@@ -12,6 +12,14 @@ interface panel {
         panel-id: string,
         title: string,
         location: panel-location,
+        actions: list<panel-action>,
+    }
+
+    record panel-action {
+        /// Stable action id returned to the extension when clicked.
+        id: string,
+        /// Human-readable label rendered by Zed.
+        label: string,
     }
 
     /// Creates the extension's persistent panel, or focuses its existing view.

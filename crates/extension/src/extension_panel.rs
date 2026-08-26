@@ -26,6 +26,14 @@ pub struct ExtensionPanelDescriptor {
     pub id: ExtensionPanelId,
     pub title: String,
     pub location: ExtensionPanelLocation,
+    pub actions: Vec<ExtensionPanelActionDescriptor>,
+}
+
+/// A button rendered by Zed in an extension-owned panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExtensionPanelActionDescriptor {
+    pub id: Arc<str>,
+    pub label: String,
 }
 
 /// A structured event sent by an extension to one of its panels.
@@ -61,5 +69,5 @@ pub trait ExtensionPanelUiProxy: Send + Sync + 'static {
 /// Implemented by the extension host to deliver user actions to the owning
 /// extension. A UI must not execute extension-provided code directly.
 pub trait ExtensionPanelActionProxy: Send + Sync + 'static {
-    fn dispatch_panel_action(&self, action: ExtensionPanelAction) -> Task<Result<()>>;
+    fn dispatch_panel_action(&self, action: ExtensionPanelAction, cx: &mut App) -> Task<Result<()>>;
 }

@@ -11,7 +11,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
-    ExtensionLanguageServerProxy, ExtensionPanelDescriptor, ExtensionPanelEvent, ExtensionPanelId,
+    ExtensionLanguageServerProxy, ExtensionPanelActionDescriptor, ExtensionPanelDescriptor, ExtensionPanelEvent, ExtensionPanelId,
     ExtensionPanelLocation, ExtensionPanelUiProxy, KeyValueStoreDelegate, ProjectDelegate,
     WorktreeDelegate,
 };
@@ -650,6 +650,14 @@ impl panel::Host for WasmState {
             },
             title: descriptor.title,
             location,
+            actions: descriptor
+                .actions
+                .into_iter()
+                .map(|action| ExtensionPanelActionDescriptor {
+                    id: action.id.into(),
+                    label: action.label,
+                })
+                .collect(),
         };
 
         let proxy = self.host.proxy.clone();

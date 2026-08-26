@@ -2,15 +2,15 @@ use std::collections::BTreeMap;
 
 use anyhow::{Result, anyhow};
 use extension::{
-    ExtensionPanelDescriptor, ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelLocation,
-    ExtensionPanelUiProxy,
+    ExtensionHostProxy, ExtensionPanelAction, ExtensionPanelActionProxy, ExtensionPanelDescriptor,
+    ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelLocation, ExtensionPanelUiProxy,
 };
 use gpui::{
     Action, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement, Render, StatefulInteractiveElement as _,
     Styled, Window, actions, div, px,
 };
-use ui::IconName;
+use ui::{Button, Clickable, IconName};
 
 use crate::{Panel, Workspace, WorkspaceStore, dock::DockPosition, dock::PanelEvent};
 
@@ -31,6 +31,7 @@ pub struct ExtensionPanels {
 
 struct ExtensionPanelContent {
     title: String,
+    actions: Vec<extension::ExtensionPanelActionDescriptor>,
     events: Vec<ExtensionPanelEvent>,
 }
 
@@ -52,6 +53,7 @@ impl ExtensionPanels {
             .entry(descriptor.id)
             .or_insert_with(|| ExtensionPanelContent {
                 title: descriptor.title,
+                actions: descriptor.actions,
                 events: Vec::new(),
             });
         cx.notify();
@@ -163,6 +165,27 @@ impl Render for ExtensionPanels {
                     .flex_col()
                     .gap_1()
                     .child(content.title.clone())
+                    .children(content.actions.iter().map(|descriptor| {
+                        let action = ExtensionPanelAction {
+                            panel: id.clone(),
+                            action: descriptor.id.clone(),
+                            payload: serde_json::json!({}),
+                        };
+                        Button::new(
+                            format!("extension-panel-action-{}-{}-{}", id.extension_id, id.panel_id, descriptor.id),
+                            descriptor.label.clone(),
+                        )
+                        .on_click(move |_, _, cx| {
+                            let task = ExtensionHostProxy::global(cx)
+                                .dispatch_panel_action(action.clone(), cx);
+                            cx.spawn(async move |_| {
+                                if let Err(error) = task.await {
+                                    log::error!("extension panel action failed: {error:#}");
+                                }
+                            })
+                            .detach();
+                        })
+                    }))
                     .children(
                         content
                             .events

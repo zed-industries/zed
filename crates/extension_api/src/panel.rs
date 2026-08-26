@@ -2,7 +2,7 @@
 
 use crate::serde_json::Value;
 
-pub use crate::wit::zed::extension::panel::{PanelDescriptor, PanelLocation};
+pub use crate::wit::zed::extension::panel::{PanelAction, PanelDescriptor, PanelLocation};
 
 /// Opens a persistent extension panel in the requested dock.
 pub fn open_panel(descriptor: &PanelDescriptor) -> Result<(), String> {
