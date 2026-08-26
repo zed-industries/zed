@@ -8,11 +8,11 @@ use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
-    Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, Edges,
+    GpuSpecs, Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    WindowControlArea, WindowControls, WindowDecorations, WindowInsets, WindowParams, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -333,6 +333,27 @@ impl WebWindow {
 }
 
 impl WebWindowInner {
+    fn window_insets(&self) -> WindowInsets {
+        let Some(viewport) = self.browser_window.visual_viewport() else {
+            return WindowInsets::default();
+        };
+        let Ok(layout_height) = self.browser_window.inner_height() else {
+            return WindowInsets::default();
+        };
+        let Some(layout_height) = layout_height.as_f64() else {
+            return WindowInsets::default();
+        };
+        let visible_bottom = viewport.offset_top() + viewport.height();
+        let keyboard_height = (layout_height - visible_bottom).max(0.0) as f32;
+        WindowInsets {
+            safe_area: Edges::default(),
+            ime: Edges {
+                bottom: px(keyboard_height),
+                ..Edges::default()
+            },
+        }
+    }
+
     /// Invokes a registered callback with take/call/restore semantics.
     ///
     /// The callback is removed from the slot for the duration of the call, so
@@ -817,6 +838,10 @@ impl PlatformWindow for WebWindow {
 
     fn update_ime_position(&self, bounds: Bounds<Pixels>) {
         self.inner.ime_mirror.set_caret_bounds(bounds);
+    }
+
+    fn insets(&self) -> WindowInsets {
+        self.inner.window_insets()
     }
 
     fn request_decorations(&self, _decorations: WindowDecorations) {}
