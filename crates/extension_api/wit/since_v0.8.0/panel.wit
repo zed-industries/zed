@@ -1,0 +1,22 @@
+package zed:extension;
+
+/// The host-rendered persistent panel API for extensions.
+interface panel {
+    enum panel-location {
+        right,
+        bottom,
+    }
+
+    record panel-descriptor {
+        /// Unique within the owning extension.
+        panel-id: string,
+        title: string,
+        location: panel-location,
+    }
+
+    /// Creates the extension's persistent panel, or focuses its existing view.
+    open-panel: func(descriptor: panel-descriptor) -> result<_, string>;
+
+    /// Sends one structured JSON-object event to the extension's panel.
+    send-event: func(panel-id: string, kind: string, payload: string) -> result<_, string>;
+}

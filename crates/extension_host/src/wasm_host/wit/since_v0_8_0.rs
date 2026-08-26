@@ -11,7 +11,9 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
-    ExtensionLanguageServerProxy, KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
+    ExtensionLanguageServerProxy, ExtensionPanelDescriptor, ExtensionPanelEvent, ExtensionPanelId,
+    ExtensionPanelLocation, ExtensionPanelUiProxy, KeyValueStoreDelegate, ProjectDelegate,
+    WorktreeDelegate,
 };
 use futures::{AsyncReadExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
@@ -629,6 +631,69 @@ impl HostWorktree for WasmState {
 }
 
 impl common::Host for WasmState {}
+
+impl panel::Host for WasmState {
+    async fn open_panel(
+        &mut self,
+        descriptor: panel::PanelDescriptor,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let location = match descriptor.location {
+            panel::PanelLocation::Right => ExtensionPanelLocation::Right,
+            panel::PanelLocation::Bottom => ExtensionPanelLocation::Bottom,
+        };
+        let descriptor = ExtensionPanelDescriptor {
+            id: ExtensionPanelId {
+                extension_id: self.manifest.id.clone(),
+                panel_id: descriptor.panel_id.into(),
+            },
+            title: descriptor.title,
+            location,
+        };
+
+        Ok(self
+            .host
+            .proxy
+            .open_panel(descriptor)
+            .await
+            .map_err(|error| error.to_string()))
+    }
+
+    async fn send_event(
+        &mut self,
+        panel_id: String,
+        kind: String,
+        payload: String,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let payload = match serde_json::from_str::<serde_json::Value>(&payload) {
+            Ok(payload) if payload.is_object() => payload,
+            Ok(_) => {
+                return Ok(Err(
+                    "extension panel event payload must be a JSON object".into()
+                ));
+            }
+            Err(error) => {
+                return Ok(Err(format!(
+                    "invalid extension panel event payload: {error}"
+                )));
+            }
+        };
+        let panel = ExtensionPanelId {
+            extension_id: self.manifest.id.clone(),
+            panel_id: panel_id.into(),
+        };
+        let event = ExtensionPanelEvent {
+            kind: kind.into(),
+            payload,
+        };
+
+        Ok(self
+            .host
+            .proxy
+            .send_panel_event(panel, event)
+            .await
+            .map_err(|error| error.to_string()))
+    }
+}
 
 impl http_client::Host for WasmState {
     async fn fetch(
