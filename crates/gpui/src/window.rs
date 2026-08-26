@@ -1433,7 +1433,7 @@ impl Window {
         // creation. On Windows, re-applying the accent policy to an already
         // visible window makes DWM briefly drop and re-enable the backdrop,
         // causing a visible flash.
-        if platform_window.background_appearance() != window_background {
+        if cfg!(windows) && platform_window.background_appearance() != window_background {
             platform_window.set_background_appearance(window_background);
         }
 
