@@ -4,7 +4,7 @@ use collections::HashMap;
 use settings::RegisterSetting;
 
 use crate::provider::{
-    anthropic, anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
+    aimlapi, aimlapi::AimlapiSettings, anthropic, anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
     bedrock, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
     google::GoogleSettings, llama_cpp::LlamaCppSettings, lmstudio::LmStudioSettings, mistral,
     mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
@@ -15,6 +15,7 @@ use crate::provider::{
 
 #[derive(Debug, RegisterSetting)]
 pub struct AllLanguageModelSettings {
+    pub aimlapi: AimlapiSettings,
     pub anthropic: AnthropicSettings,
     pub anthropic_compatible: HashMap<Arc<str>, AnthropicCompatibleSettings>,
     pub bedrock: AmazonBedrockSettings,
@@ -44,11 +45,45 @@ fn custom_headers_from(
         .unwrap_or_default()
 }
 
+/// aimlapi.com's attribution pair, prepended to whatever custom headers the
+/// user configured. Doing it here — at settings-resolution time — is what makes
+/// "every aimlapi.com request is attributed" true by construction: every
+/// outbound call in the provider reads these resolved headers, so a new call
+/// site cannot forget them.
+///
+/// The pair is filtered out of the user's own map first (it is listed in the
+/// provider's `RESERVED_HEADER_NAMES`), so a settings entry can neither
+/// override nor duplicate it.
+fn aimlapi_headers_from(raw: Option<HashMap<String, String>>) -> http_client::CustomHeaders {
+    use http_client::http::{HeaderName, HeaderValue};
+
+    let mut headers: Vec<(HeaderName, HeaderValue)> = Vec::new();
+    for (name, value) in [
+        (aimlapi::AIMLAPI_SOURCE_HEADER, aimlapi::AIMLAPI_SOURCE),
+        (
+            aimlapi::AIMLAPI_PARTNER_ID_HEADER,
+            aimlapi::AIMLAPI_PARTNER_ID,
+        ),
+    ] {
+        match (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+            (Ok(name), Ok(value)) => headers.push((name, value)),
+            _ => log::warn!("aimlapi.com attribution header `{name}` is not a valid header"),
+        }
+    }
+    headers.extend(
+        custom_headers_from("aimlapi.com", raw, aimlapi::RESERVED_HEADER_NAMES)
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone())),
+    );
+    http_client::CustomHeaders::new(headers)
+}
+
 impl settings::Settings for AllLanguageModelSettings {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     fn from_settings(content: &settings::SettingsContent) -> Self {
         let language_models = content.language_models.clone().unwrap();
+        let aimlapi = language_models.aimlapi.unwrap();
         let anthropic = language_models.anthropic.unwrap();
         let anthropic_compatible = language_models.anthropic_compatible.unwrap();
         let bedrock = language_models.bedrock.unwrap();
@@ -66,6 +101,11 @@ impl settings::Settings for AllLanguageModelSettings {
         let x_ai = language_models.x_ai.unwrap();
         let zed_dot_dev = language_models.zed_dot_dev.unwrap();
         Self {
+            aimlapi: AimlapiSettings {
+                api_url: aimlapi.api_url.unwrap(),
+                available_models: aimlapi.available_models.unwrap_or_default(),
+                custom_headers: aimlapi_headers_from(aimlapi.custom_headers),
+            },
             anthropic: AnthropicSettings {
                 api_url: anthropic.api_url.unwrap(),
                 available_models: anthropic.available_models.unwrap_or_default(),
@@ -209,5 +249,78 @@ impl settings::Settings for AllLanguageModelSettings {
                 available_models: zed_dot_dev.available_models.unwrap_or_default(),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod aimlapi_tests {
+    use super::*;
+
+    fn header_pairs(headers: &http_client::CustomHeaders) -> Vec<(String, String)> {
+        headers
+            .iter()
+            .map(|(name, value)| {
+                (
+                    // `HeaderName` lowercases on construction (the HTTP/2 rule
+                    // the `http` crate enforces), so compare on the lowercase
+                    // form rather than the constant's display casing.
+                    name.as_str().to_ascii_lowercase(),
+                    value.to_str().unwrap_or_default().to_string(),
+                )
+            })
+            .collect()
+    }
+
+    fn lower(name: &str) -> String {
+        name.to_ascii_lowercase()
+    }
+
+    /// HEADERS.md requires the attribution pair on EVERY aimlapi.com request.
+    /// The provider reads these resolved headers from three separate call
+    /// sites, so proving they exist here proves it for all of them.
+    #[test]
+    fn attribution_pair_is_present_without_any_user_config() {
+        let pairs = header_pairs(&aimlapi_headers_from(None));
+
+        assert!(pairs.contains(&(
+            lower(aimlapi::AIMLAPI_SOURCE_HEADER),
+            "agent/zed".to_string()
+        )));
+        assert!(pairs.contains(&(
+            lower(aimlapi::AIMLAPI_PARTNER_ID_HEADER),
+            aimlapi::AIMLAPI_PARTNER_ID.to_string()
+        )));
+    }
+
+    /// The pair is listed in the provider's RESERVED_HEADER_NAMES, so a user
+    /// entry must not be able to spoof the partner id or blank the source —
+    /// that would silently misattribute or drop the traffic.
+    #[test]
+    fn user_settings_cannot_override_the_attribution_pair() {
+        let mut raw = HashMap::default();
+        raw.insert(
+            lower(aimlapi::AIMLAPI_PARTNER_ID_HEADER),
+            "part_somebody_else".to_string(),
+        );
+        raw.insert(lower(aimlapi::AIMLAPI_SOURCE_HEADER), "web".to_string());
+        raw.insert("X-Custom".to_string(), "kept".to_string());
+
+        let pairs = header_pairs(&aimlapi_headers_from(Some(raw)));
+
+        // the caller's own header survives
+        assert!(pairs.contains(&("x-custom".to_string(), "kept".to_string())));
+        // ours are untouched and appear exactly once each
+        assert_eq!(
+            pairs
+                .iter()
+                .filter(|(name, _)| name.eq_ignore_ascii_case(aimlapi::AIMLAPI_PARTNER_ID_HEADER))
+                .count(),
+            1
+        );
+        assert!(pairs.contains(&(
+            lower(aimlapi::AIMLAPI_PARTNER_ID_HEADER),
+            aimlapi::AIMLAPI_PARTNER_ID.to_string()
+        )));
+        assert!(!pairs.iter().any(|(_, value)| value == "part_somebody_else"));
     }
 }
