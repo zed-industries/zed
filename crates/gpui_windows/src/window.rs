@@ -1573,12 +1573,12 @@ fn dwm_set_window_cloak(hwnd: HWND, cloak: bool) {
         DwmSetWindowAttribute(
             hwnd,
             DWMWA_CLOAK,
-            &value as *const _ as *const _,
+            &raw const value as *const _,
             std::mem::size_of::<BOOL>() as u32,
         )
     };
-    if !result.is_ok() {
-        log::error!("DwmSetWindowAttribute(DWMWA_CLOAK) failed: {result:?}");
+    if let Err(e) = result  {
+        log::error!("DwmSetWindowAttribute(DWMWA_CLOAK) failed: {e:#}");
     }
 }
 
