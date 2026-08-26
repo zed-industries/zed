@@ -46,18 +46,9 @@ fn normalize_url(url: &str) -> Cow<'_, str> {
     }
 }
 
-/// Fetches a URL and returns the content as Markdown.
-///
-/// This tool is not run inside the terminal OS sandbox, but it still refuses to
-/// reach any host that hasn't been granted network access. It shares the same
-/// per-host grants as the `terminal` tool: approving a host for one authorizes
-/// it for the other, whether the grant is for this thread or saved permanently.
-/// HTTP redirects are followed one hop at a time, and each hop's host must be
-/// granted the same way, so a granted host can't redirect the request to a host
-/// that hasn't been approved.
-/// When unsandboxed access has been granted, these restrictions are lifted
-/// entirely, matching the terminal, which is also how loopback and IP-literal
-/// hosts (which can't be granted individually) become reachable.
+// The model-facing description for this tool is rendered from
+// `src/tool_guidance/fetch.hbs` at request-build time, so the schema
+// description here is intentionally empty rather than duplicating it.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FetchToolInput {
     /// The URL to fetch.

@@ -4049,41 +4049,51 @@ impl Thread {
         let model = self
             .model()
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
-        let sandboxing_enabled = crate::sandboxing::sandboxing_enabled(cx);
+        let available_tools: Vec<SharedString> = self
+            .running_turn
+            .as_ref()
+            .map(|turn| turn.tools.keys().cloned().collect())
+            .unwrap_or_default();
         let tools = if let Some(turn) = self.running_turn.as_ref() {
+            let model_name = model.name().0.to_string();
+            let date = Local::now().format("%Y-%m-%d").to_string();
+            let guidance_context = agent_settings::ToolGuidanceContext {
+                available_tools: &available_tools,
+                model_name: Some(model_name.as_str()),
+                date: &date,
+                is_linux: cfg!(target_os = "linux"),
+                is_windows: cfg!(target_os = "windows"),
+                is_macos: cfg!(target_os = "macos"),
+                // The same gate the system prompt applies to its sandbox
+                // section, so guidance text only describes behavior the
+                // session's runtime paths actually provide.
+                sandboxing: sandboxing_enabled_for_project(self.project.read(cx), cx),
+            };
             turn.tools
                 .iter()
                 .filter_map(|(tool_name, tool)| {
                     log::trace!("Including tool: {}", tool_name);
                     let mut description = tool.description().to_string();
                     let mut schema = tool.input_schema(model.tool_input_format()).log_err()?;
-                    // TEMPORARY (sandboxing feature flag): with the flag off,
-                    // the fetch and create_directory descriptions/schemas must
-                    // not advertise sandbox-dependent behavior (host grants,
-                    // out-of-project creation via the `reason` field), since
-                    // the corresponding runtime paths are disabled. Restore
-                    // the pre-sandboxing model-facing surface here rather than
-                    // forking the tools; delete this when the flag is removed
-                    // again.
-                    if !sandboxing_enabled {
-                        if tool_name.as_ref() == FetchTool::NAME {
-                            description =
-                                "Fetches a URL and returns the content as Markdown.".to_string();
-                        } else if tool_name.as_ref() == CreateDirectoryTool::NAME {
-                            description = "Creates a new directory at the specified path within \
-                                the project. Returns confirmation that the directory was \
-                                created.\n\nThis tool creates a directory and all necessary \
-                                parent directories. It should be used whenever you need to \
-                                create new directories within the project.\nThe only supported \
-                                path outside the project is `~/.agents/skills` or a descendant, \
-                                for global agent skills."
-                                .to_string();
-                            if let Some(properties) = schema
-                                .get_mut("properties")
-                                .and_then(|value| value.as_object_mut())
-                            {
-                                properties.remove("reason");
-                            }
+                    if let Some(guidance) =
+                        crate::tool_guidance::render(tool_name.as_ref(), &guidance_context)
+                    {
+                        description = guidance.to_string();
+                    }
+                    // The schema-level counterpart to the guidance tier:
+                    // `create_directory`'s `reason` input only justifies
+                    // out-of-project creation, which exists under the same
+                    // sandboxing conditions the guidance template gates on.
+                    // Schemas aren't templates, so the field is stripped here
+                    // to keep the schema consistent with the description.
+                    if !guidance_context.sandboxing
+                        && tool_name.as_ref() == CreateDirectoryTool::NAME
+                    {
+                        if let Some(properties) = schema
+                            .get_mut("properties")
+                            .and_then(|value| value.as_object_mut())
+                        {
+                            properties.remove("reason");
                         }
                     }
                     Some(LanguageModelRequestTool::function(
@@ -4100,12 +4110,6 @@ impl Thread {
 
         log::debug!("Building completion request");
         log::debug!("Completion intent: {:?}", completion_intent);
-
-        let available_tools: Vec<_> = self
-            .running_turn
-            .as_ref()
-            .map(|turn| turn.tools.keys().cloned().collect())
-            .unwrap_or_default();
 
         log::debug!("Request includes {} tools", available_tools.len());
         let messages = self.build_request_messages(available_tools, cx);
