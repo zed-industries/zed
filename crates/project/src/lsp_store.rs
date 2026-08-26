@@ -14265,7 +14265,7 @@ fn completion_trigger_characters_for_buffer(
     let text_document_registrations = registrations.text_documents.get("textDocument/completion");
     let mut triggers = BTreeSet::new();
     let mut static_options = initial_options;
-    let mut global_dynamic_options = None;
+    let mut has_global_dynamic_registration = false;
     for (source, options) in &registrations.completion {
         match source {
             RegistrationSource::Static => static_options = Some(options),
@@ -14283,13 +14283,14 @@ fn completion_trigger_characters_for_buffer(
                         extend_triggers(&mut triggers, options);
                     }
                 } else {
-                    global_dynamic_options = Some(options);
+                    has_global_dynamic_registration = true;
+                    extend_triggers(&mut triggers, options);
                 }
             }
         }
     }
 
-    if let Some(options) = global_dynamic_options.or(static_options) {
+    if !has_global_dynamic_registration && let Some(options) = static_options {
         extend_triggers(&mut triggers, options);
     }
     triggers

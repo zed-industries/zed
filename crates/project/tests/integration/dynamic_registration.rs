@@ -683,8 +683,8 @@ async fn test_multi_registration_completion_triggers(cx: &mut gpui::TestAppConte
     cx.executor().run_until_parked();
     assert_eq!(
         buffer_triggers(cx),
-        BTreeSet::from([":".to_string()]),
-        "expected the second registration's triggers to replace the first ones",
+        BTreeSet::from([".".to_string(), ":".to_string()]),
+        "expected global dynamic registrations to union their triggers",
     );
 
     let options_a_replacement = lsp::CompletionOptions {
@@ -701,8 +701,8 @@ async fn test_multi_registration_completion_triggers(cx: &mut gpui::TestAppConte
     cx.executor().run_until_parked();
     assert_eq!(
         buffer_triggers(cx),
-        BTreeSet::from([":".to_string()]),
-        "expected the active registration's triggers to stay applied after a duplicate ID replaced an inactive one",
+        BTreeSet::from(["!".to_string(), ":".to_string()]),
+        "expected replacing a registration to update its triggers without dropping the others",
     );
 
     unregister_capabilities(&fake_server, method, &["completion-b"]).await;
