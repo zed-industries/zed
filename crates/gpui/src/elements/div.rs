@@ -750,16 +750,23 @@ pub trait InteractiveElement: Sized {
         Stateful { element: self }
     }
 
-    /// Observe this element's own bounds every time it is prepainted.
+    /// Observe this element's own bounds every time it is painted.
     ///
     /// Unlike `Div::on_children_prepainted`, this needs no extra wrapper element,
     /// so it can record the bounds of a leaf such as an image or an SVG without
     /// changing how that leaf participates in layout.
-    fn on_prepainted(
+    ///
+    /// It reports from paint rather than prepaint because prepaint is
+    /// speculative: `List::prepaint` prepaints a range of rows, and can then roll
+    /// the window back through `Window::transact` and prepaint a different range.
+    /// A listener that ran in prepaint would keep the bounds of a row that is not
+    /// on screen. It does not fire for an element whose style is
+    /// `Visibility::Hidden`, which paints nothing.
+    fn on_painted(
         mut self,
         listener: impl Fn(Bounds<Pixels>, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.interactivity().prepaint_listener = Some(Box::new(listener));
+        self.interactivity().paint_bounds_listener = Some(Box::new(listener));
         self
     }
 
@@ -2106,7 +2113,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
-    pub(crate) prepaint_listener: Option<Box<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>>,
+    pub(crate) paint_bounds_listener: Option<Box<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>>,
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) capture_pointer: bool,
     pub(crate) tab_index: Option<isize>,
@@ -2233,10 +2240,6 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
-
-        if let Some(listener) = self.prepaint_listener.take() {
-            listener(bounds, window, cx);
-        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
@@ -2455,6 +2458,10 @@ impl Interactivity {
 
                 if style.visibility == Visibility::Hidden {
                     return ((), element_state);
+                }
+
+                if let Some(listener) = self.paint_bounds_listener.take() {
+                    listener(bounds, window, cx);
                 }
 
                 let mut tab_group = None;
@@ -4595,11 +4602,12 @@ mod tests {
         assert_eq!(painted_width.get(), px(10.));
     }
 
-    struct PrepaintedBoundsTestView {
+    struct PaintedBoundsTestView {
+        hidden: bool,
         recorded: Rc<RefCell<Vec<Bounds<Pixels>>>>,
     }
 
-    impl Render for PrepaintedBoundsTestView {
+    impl Render for PaintedBoundsTestView {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             let recorded = self.recorded.clone();
             div().relative().size_full().child(
@@ -4608,30 +4616,49 @@ mod tests {
                     .top(px(4.))
                     .left(px(8.))
                     .size(px(16.))
-                    .on_prepainted(move |bounds, _, _| recorded.borrow_mut().push(bounds)),
+                    .when(self.hidden, |this| this.invisible())
+                    .on_painted(move |bounds, _, _| recorded.borrow_mut().push(bounds)),
             )
         }
     }
 
     #[gpui::test]
-    fn on_prepainted_reports_the_bounds_of_a_leaf_element(cx: &mut TestAppContext) {
+    fn on_painted_reports_the_bounds_of_a_leaf_element(cx: &mut TestAppContext) {
         let recorded = Rc::new(RefCell::new(Vec::new()));
         let window = cx.add_window({
             let recorded = recorded.clone();
-            move |_, _| PrepaintedBoundsTestView { recorded }
+            move |_, _| PaintedBoundsTestView {
+                hidden: false,
+                recorded,
+            }
         });
+        let any_window = AnyWindowHandle::from(window);
 
-        cx.update_window(AnyWindowHandle::from(window), |_, window, cx| {
-            window.draw(cx).clear(cx)
-        })
-        .unwrap();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
 
-        // A draw can prepaint more than once, so only the reported geometry is
-        // asserted here, not the call count.
-        let recorded = recorded.borrow();
-        let last = recorded.last().expect("the listener ran at least once");
+        // A draw can repaint, so only the reported geometry is asserted here,
+        // not the call count.
+        let last = *recorded
+            .borrow()
+            .last()
+            .expect("the listener ran at least once");
         assert_eq!(last.origin, point(px(8.), px(4.)));
         assert_eq!(last.size, size(px(16.), px(16.)));
+
+        window
+            .update(cx, |view, _, cx| {
+                view.hidden = true;
+                cx.notify();
+            })
+            .unwrap();
+        recorded.borrow_mut().clear();
+        cx.update_window(any_window, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        assert!(
+            recorded.borrow().is_empty(),
+            "a hidden element paints nothing and must report no bounds"
+        );
     }
 
     struct TestTooltipView;
