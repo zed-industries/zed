@@ -2277,11 +2277,11 @@ pub enum CursorStyle {
     ResizeUpDown,
 
     /// A resize cursor directing up-left and down-right
-    /// corresponds to the CSS cursor value `nesw-resize`
+    /// corresponds to the CSS cursor value `nwse-resize`
     ResizeUpLeftDownRight,
 
     /// A resize cursor directing up-right and down-left
-    /// corresponds to the CSS cursor value `nwse-resize`
+    /// corresponds to the CSS cursor value `nesw-resize`
     ResizeUpRightDownLeft,
 
     /// A cursor indicating that the item/column can be resized horizontally.
