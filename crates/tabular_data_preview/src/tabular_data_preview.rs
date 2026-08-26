@@ -1,49 +1,36 @@
 use editor::{Editor, EditorEvent};
-use gpui::{
-    AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
-};
+use gpui::{AppContext, Entity, EventEmitter, FocusHandle, Focusable, Task, actions};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
 };
 
-use crate::table_data_engine::{DisplayToDataMapping, TableDataEngine};
-use ui::{
-    AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
-    TableResizeBehavior, prelude::*,
-};
+use ui::{SharedString, prelude::*};
 use workspace::{Item, Pane, Workspace};
 
-use crate::{parser::EditorState, settings::TabularDataPreviewSettings, types::TableLikeContent};
+use crate::parser::EditorState;
+
+pub use crate::table_view::TableView;
 
 mod parser;
 mod renderer;
 mod settings;
 mod table_data_engine;
-mod types;
+mod table_view;
+pub mod types;
 
 actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
 
+/// Editor-backed adapter: watches an [`Editor`], parses its buffer into a
+/// [`crate::types::TableLikeContent`], and feeds the result to an embedded [`TableView`] that owns
+/// all grid rendering. This keeps the editor/file/parsing concerns here and the reusable grid in
+/// [`TableView`].
 pub struct TabularDataPreviewPane {
-    pub(crate) engine: TableDataEngine,
-
+    /// The reusable tabular viewer this adapter drives.
+    pub(crate) table: Entity<TableView>,
     pub(crate) focus_handle: FocusHandle,
     active_editor_state: EditorState,
-    pub(crate) table_interaction_state: Entity<TableInteractionState>,
-    pub(crate) column_widths: ColumnWidths,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
-    pub(crate) is_parsing: bool,
-    /// Background task computing the display-to-data mapping after a filter/sort change.
-    /// Stored here so that a new change cancels the previous in-flight computation.
-    pub(crate) filter_sort_task: Option<Task<()>>,
-    pub(crate) settings: TabularDataPreviewSettings,
-    /// Performance metrics for debugging and monitoring tabular data operations.
-    pub(crate) performance_metrics: PerformanceMetrics,
-    pub(crate) list_state: gpui::ListState,
-    /// Cached row height, refreshed from the actual text line height on every render.
-    /// Used to size not-yet-rendered rows for the scrollbar without a full `.measure_all()`
-    /// pass, so it tracks the real row height instead of a hardcoded guess.
-    pub(crate) row_height: Pixels,
     /// Time when the last parsing operation ended, used for smart debouncing
     pub(crate) last_parse_end_time: Option<std::time::Instant>,
 }
@@ -56,30 +43,6 @@ pub fn init(cx: &mut App) {
 }
 
 impl TabularDataPreviewPane {
-    pub(crate) fn sync_column_widths(&self, cx: &mut Context<Self>) {
-        // plus 1 for the row identifier column
-        let cols = self.engine.contents.headers.cols() + 1;
-        let line_number_width = self.calculate_row_identifier_column_width();
-
-        let mut widths: Vec<AbsoluteLength> = vec![AbsoluteLength::Pixels(px(150.)); cols];
-        widths[0] = AbsoluteLength::Pixels(px(line_number_width));
-
-        let mut resize_behaviors = vec![TableResizeBehavior::Resizable; cols];
-        resize_behaviors[0] = TableResizeBehavior::None;
-
-        self.column_widths.widths.update(cx, |state, _cx| {
-            if state.cols() != cols {
-                *state = ResizableColumnsState::new(cols, widths, resize_behaviors);
-            } else {
-                state.set_column_configuration(
-                    0,
-                    AbsoluteLength::Pixels(px(line_number_width)),
-                    TableResizeBehavior::None,
-                );
-            }
-        });
-    }
-
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action_renderer(|div, _, _, cx| {
             div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
@@ -156,13 +119,6 @@ impl TabularDataPreviewPane {
     }
 
     fn new(editor: &Entity<Editor>, window: &Window, cx: &mut Context<Workspace>) -> Entity<Self> {
-        let contents = TableLikeContent::default();
-        let table_interaction_state = cx.new(|cx| {
-            TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
-                editor::EditorSettingsScrollbarProxy,
-            >())
-        });
-
         cx.new(|cx| {
             let subscription = cx.subscribe(
                 editor,
@@ -176,25 +132,17 @@ impl TabularDataPreviewPane {
                 },
             );
 
-            let row_height = window.pixel_snap(window.line_height());
+            let table = cx.new(|cx| TableView::new(window, cx));
+
             let mut view = TabularDataPreviewPane {
                 focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
                     editor: editor.clone(),
                     _subscription: subscription,
                 },
-                table_interaction_state,
-                column_widths: ColumnWidths::new(cx, 1),
+                table,
                 parsing_task: None,
-                is_parsing: false,
-                filter_sort_task: None,
-                performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(row_height),
-                row_height,
-                settings: TabularDataPreviewSettings::default(),
                 last_parse_end_time: None,
-                engine: TableDataEngine::default(),
             };
 
             view.parse_from_active_editor(false, cx);
@@ -204,54 +152,6 @@ impl TabularDataPreviewPane {
 
     pub(crate) fn editor_state(&self) -> &EditorState {
         &self.active_editor_state
-    }
-    pub(crate) fn apply_sort(&mut self, cx: &mut Context<Self>) {
-        self.apply_filter_sort(cx);
-    }
-
-    pub fn clear_filters(&mut self, col: types::AnyColumn, cx: &mut Context<Self>) {
-        self.engine.clear_filters_for_col(col);
-        self.apply_filter_sort(cx);
-    }
-
-    pub fn toggle_filter(
-        &mut self,
-        col: types::AnyColumn,
-        value: Option<SharedString>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Err(err) = self.engine.toggle_filter(col, value) {
-            log::error!("Failed to toggle filter: {err}");
-            return;
-        }
-        self.apply_filter_sort(cx);
-    }
-
-    /// Spawns a background task to recompute the display-to-data mapping after a filter or sort
-    /// change. Storing the task cancels any previous in-flight computation automatically.
-    pub(crate) fn apply_filter_sort(&mut self, cx: &mut Context<Self>) {
-        let contents = self.engine.contents.clone();
-        let filter_stack = self.engine.filter_stack.clone();
-        let sorting = self.engine.applied_sorting;
-
-        self.filter_sort_task = Some(cx.spawn(async move |this, cx| {
-            let mapping = cx
-                .background_spawn(async move {
-                    DisplayToDataMapping::compute(&contents, &filter_stack, sorting)
-                })
-                .await;
-
-            this.update(cx, |view, cx| {
-                view.engine.set_d2d_mapping(mapping);
-                let visible_rows = view.engine.d2d_mapping().visible_row_count();
-                // Uses the row height measured on the last render. Cheaper than a full
-                // `.measure_all()` pass; exact row heights are re-measured on scrolling.
-                view.list_state
-                    .reset_with_uniform_height(visible_rows, view.row_height);
-                cx.notify();
-            })
-            .ok();
-        }));
     }
 
     pub fn resolve_active_item_as_tabular_data_editor(
@@ -272,6 +172,12 @@ impl TabularDataPreviewPane {
 impl Focusable for TabularDataPreviewPane {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+impl Render for TabularDataPreviewPane {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div().size_full().child(self.table.clone())
     }
 }
 

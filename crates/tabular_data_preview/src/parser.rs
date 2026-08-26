@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{
     TabularDataPreviewPane,
     types::TableLikeContent,
@@ -69,7 +67,7 @@ impl TabularDataPreviewPane {
         cx: &mut Context<Self>,
     ) {
         let editor = self.active_editor_state.editor.clone();
-        self.is_parsing = true;
+        self.table.update(cx, |table, cx| table.set_loading(true, cx));
         self.parsing_task = Some(self.parse_in_background(wait_for_debounce, editor, cx));
     }
 
@@ -136,18 +134,16 @@ impl TabularDataPreviewPane {
             let parse_end_time: Instant = Instant::now();
             log::debug!("Parsed data in {}ms", parse_duration.as_millis());
             view.update(cx, move |view, cx| {
-                view.performance_metrics
-                    .timings
-                    .insert("Parsing", (parse_duration, Instant::now()));
-
                 log::debug!("Parsed {} rows", parsed_contents.rows.len());
-                view.engine.contents = Arc::new(parsed_contents);
-                view.engine.calculate_available_filters();
-                view.sync_column_widths(cx);
                 view.last_parse_end_time = Some(parse_end_time);
-
-                view.is_parsing = false;
-                view.apply_filter_sort(cx);
+                view.table.update(cx, |table, cx| {
+                    table
+                        .performance_metrics
+                        .timings
+                        .insert("Parsing", (parse_duration, Instant::now()));
+                    // `set_contents` recomputes filters/widths/mapping and clears the loading state.
+                    table.set_contents(parsed_contents, cx);
+                });
                 cx.notify();
             })
         })
