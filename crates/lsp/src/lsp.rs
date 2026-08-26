@@ -365,12 +365,12 @@ where
 }
 
 /// Combined capabilities of the server and the adapter.
-#[derive(Debug, Clone)]
-pub struct AdapterServerCapabilities {
+#[derive(Debug, Clone, Copy)]
+pub struct AdapterServerCapabilities<'a> {
     // Reported capabilities by the server
-    pub server_capabilities: ServerCapabilities,
+    pub server_capabilities: &'a ServerCapabilities,
     // List of code actions supported by the LspAdapter matching the server
-    pub code_action_kinds: Option<Vec<CodeActionKind>>,
+    pub code_action_kinds: Option<&'a [CodeActionKind]>,
 }
 
 // See the VSCode docs [1] and the LSP Spec [2]
@@ -640,8 +640,8 @@ impl LanguageServer {
     }
 
     /// List of code action kinds this language server reports being able to emit.
-    pub fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
+    pub fn code_action_kinds(&self) -> Option<&[CodeActionKind]> {
+        self.code_action_kinds.as_deref()
     }
 
     async fn handle_incoming_messages<Stdout>(

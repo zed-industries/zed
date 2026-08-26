@@ -100,12 +100,12 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     }
 
     /// Returns whether the given static or dynamic capability supports this request.
-    fn check_capabilities(&self, _: &AdapterServerCapabilities) -> bool;
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool;
 
-    fn response_without_request(
-        &self,
-        _applicable_capabilities: &[AdapterServerCapabilities],
-    ) -> Option<Self::Response> {
+    fn response_without_request<'a, I>(&self, _applicable_capabilities: I) -> Option<Self::Response>
+    where
+        I: Iterator<Item = AdapterServerCapabilities<'a>>,
+    {
         None
     }
 
@@ -953,7 +953,7 @@ impl LspCommand for PrepareRename {
         "Prepare rename"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .rename_provider
@@ -964,11 +964,14 @@ impl LspCommand for PrepareRename {
             })
     }
 
-    fn response_without_request(
+    fn response_without_request<'a, I>(
         &self,
-        applicable_capabilities: &[AdapterServerCapabilities],
-    ) -> Option<Self::Response> {
-        (!applicable_capabilities.iter().any(|capabilities| {
+        mut applicable_capabilities: I,
+    ) -> Option<Self::Response>
+    where
+        I: Iterator<Item = AdapterServerCapabilities<'a>>,
+    {
+        (!applicable_capabilities.any(|capabilities| {
             matches!(
                 capabilities.server_capabilities.rename_provider.as_ref(),
                 Some(lsp::OneOf::Right(RenameOptions {
@@ -1131,7 +1134,7 @@ impl LspCommand for PerformRename {
         "Rename"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .rename_provider
@@ -1261,7 +1264,7 @@ impl LspCommand for GetDefinitions {
         "Get definition"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .definition_provider
@@ -1364,7 +1367,7 @@ impl LspCommand for GetEditPredictionDefinitions {
         "Get edit prediction definition"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .definition_provider
@@ -1465,7 +1468,7 @@ impl LspCommand for GetDeclarations {
         "Get declaration"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .declaration_provider
@@ -1569,7 +1572,7 @@ impl LspCommand for GetImplementations {
         "Get implementation"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .implementation_provider
@@ -1672,7 +1675,7 @@ impl LspCommand for GetTypeDefinitions {
         "Get type definition"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         !matches!(
             &capabilities.server_capabilities.type_definition_provider,
             None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
@@ -1771,7 +1774,7 @@ impl LspCommand for GetEditPredictionTypeDefinitions {
         "Get edit prediction type definition"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         !matches!(
             &capabilities.server_capabilities.type_definition_provider,
             None | Some(lsp::TypeDefinitionProviderCapability::Simple(false))
@@ -2251,7 +2254,7 @@ impl LspCommand for GetReferences {
         Some("Finding references...".to_owned())
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         match &capabilities.server_capabilities.references_provider {
             Some(OneOf::Left(has_support)) => *has_support,
             Some(OneOf::Right(_)) => true,
@@ -2426,7 +2429,7 @@ impl LspCommand for GetDocumentHighlights {
         "Get document highlights"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .document_highlight_provider
@@ -2583,7 +2586,7 @@ impl LspCommand for GetDocumentSymbols {
         "Get document symbols"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .document_symbol_provider
@@ -2781,7 +2784,7 @@ impl LspCommand for GetSignatureHelp {
         "Get signature help"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .signature_help_provider
@@ -2905,7 +2908,7 @@ impl LspCommand for GetHover {
         "Get hover"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         match capabilities.server_capabilities.hover_provider.as_ref() {
             Some(lsp::HoverProviderCapability::Simple(enabled)) => *enabled,
             Some(lsp::HoverProviderCapability::Options(_)) => true,
@@ -3145,7 +3148,7 @@ impl LspCommand for GetCompletions {
         "Get completion"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .completion_provider
@@ -3509,7 +3512,7 @@ impl LspCommand for GetCodeActions {
         "Get code actions"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         match &capabilities.server_capabilities.code_action_provider {
             None => false,
             Some(lsp::CodeActionProviderCapability::Simple(false)) => false,
@@ -3716,9 +3719,9 @@ impl LspCommand for GetCodeActions {
 }
 
 impl GetCodeActions {
-    fn supported_code_action_kinds(
-        capabilities: &AdapterServerCapabilities,
-    ) -> Option<&[CodeActionKind]> {
+    fn supported_code_action_kinds<'a>(
+        capabilities: AdapterServerCapabilities<'a>,
+    ) -> Option<&'a [CodeActionKind]> {
         match capabilities
             .server_capabilities
             .code_action_provider
@@ -3728,7 +3731,7 @@ impl GetCodeActions {
                 code_action_kinds: Some(supported_action_kinds),
                 ..
             })) => Some(supported_action_kinds),
-            _ => capabilities.code_action_kinds.as_deref(),
+            _ => capabilities.code_action_kinds,
         }
     }
 
@@ -3771,7 +3774,7 @@ impl LspCommand for OnTypeFormatting {
         "Formatting on typing"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         Self::supports_on_type_formatting(&self.trigger, &capabilities.server_capabilities)
     }
 
@@ -4277,7 +4280,7 @@ impl LspCommand for InlayHints {
         "Inlay hints"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         Self::check_capabilities(&capabilities.server_capabilities)
     }
 
@@ -4429,7 +4432,7 @@ impl LspCommand for SemanticTokensFull {
         "Semantic tokens full"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .semantic_tokens_provider
@@ -4580,7 +4583,7 @@ impl LspCommand for SemanticTokensDelta {
         "Semantic tokens delta"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .semantic_tokens_provider
@@ -4733,7 +4736,7 @@ impl LspCommand for GetCodeLens {
         "Code Lens"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .code_lens_provider
@@ -4871,7 +4874,7 @@ impl LspCommand for LinkedEditingRange {
         "Linked editing range"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         Self::check_server_capabilities(&capabilities.server_capabilities)
     }
 
@@ -5322,7 +5325,7 @@ impl LspCommand for GetDocumentDiagnostics {
         "Get diagnostics"
     }
 
-    fn check_capabilities(&self, capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
             .diagnostic_provider
@@ -5514,7 +5517,7 @@ impl LspCommand for GetDocumentColor {
         "Document color"
     }
 
-    fn check_capabilities(&self, server_capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities<'_>) -> bool {
         server_capabilities
             .server_capabilities
             .color_provider
@@ -5657,7 +5660,7 @@ impl LspCommand for GetFoldingRanges {
         "Folding ranges"
     }
 
-    fn check_capabilities(&self, server_capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities<'_>) -> bool {
         server_capabilities
             .server_capabilities
             .folding_range_provider
@@ -5813,7 +5816,7 @@ impl LspCommand for GetDocumentLinks {
         "Document links"
     }
 
-    fn check_capabilities(&self, server_capabilities: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities<'_>) -> bool {
         server_capabilities
             .server_capabilities
             .document_link_provider

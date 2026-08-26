@@ -1,4 +1,4 @@
-use std::{collections::hash_map, ops::Range, slice::ChunksExact, sync::Arc};
+use std::{ops::Range, slice::ChunksExact, sync::Arc};
 
 use anyhow::Result;
 
@@ -26,12 +26,17 @@ use crate::{
         LspCommand, SemanticTokensDelta, SemanticTokensEdit, SemanticTokensFull,
         SemanticTokensResponse,
     },
-    lsp_store::missing_servers_to_query,
+    lsp_store::{
+        LanguageServerState, document_selector_context_for_language, document_selector_matches,
+        dynamic_registration::RegistrationSource, missing_servers_to_query,
+    },
     project_settings::ProjectSettings,
 };
 
+type StylizerKey = (LanguageServerId, Option<LanguageName>);
+
 pub(super) struct SemanticTokenConfig {
-    stylizers: HashMap<(LanguageServerId, Option<LanguageName>), SemanticTokenStylizer>,
+    stylizers: HashMap<StylizerKey, (lsp::SemanticTokensLegend, SemanticTokenStylizer)>,
     rules: SemanticTokenRules,
     global_mode: settings::SemanticTokens,
 }
@@ -468,34 +473,79 @@ impl LspStore {
         language: Option<&LanguageName>,
         cx: &mut App,
     ) -> Option<&SemanticTokenStylizer> {
-        let stylizer = match self
+        let key = (server_id, language.cloned());
+        let legend = self.semantic_tokens_legend(server_id, language)?;
+        let up_to_date = self
             .semantic_token_config
             .stylizers
-            .entry((server_id, language.cloned()))
+            .get(&key)
+            .is_some_and(|(cached_legend, _)| cached_legend == legend);
+        if !up_to_date {
+            let legend = legend.clone();
+            let language_rules = language.and_then(|language| {
+                SettingsStore::global(cx).language_semantic_token_rules(language.as_ref())
+            });
+            let stylizer = SemanticTokenStylizer::new(server_id, &legend, language_rules, cx);
+            self.semantic_token_config
+                .stylizers
+                .insert(key.clone(), (legend, stylizer));
+        }
+        self.semantic_token_config
+            .stylizers
+            .get(&key)
+            .map(|(_, stylizer)| stylizer)
+    }
+
+    fn semantic_tokens_legend(
+        &self,
+        server_id: LanguageServerId,
+        language: Option<&LanguageName>,
+    ) -> Option<&lsp::SemanticTokensLegend> {
+        if let Some(local) = self.as_local()
+            && let Some(language) = language
+            && let Some(LanguageServerState::Running { adapter, .. }) =
+                local.language_servers.get(&server_id)
+            && let Some(registrations) = local.language_server_dynamic_registrations.get(&server_id)
         {
-            hash_map::Entry::Occupied(o) => o.into_mut(),
-            hash_map::Entry::Vacant(v) => {
-                let tokens_provider = self
-                    .lsp_server_capabilities
-                    .get(&server_id)?
-                    .semantic_tokens_provider
-                    .as_ref()?;
-                let legend = match tokens_provider {
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(opts) => {
-                        &opts.legend
-                    }
-                    lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(
-                        opts,
-                    ) => &opts.semantic_tokens_options.legend,
+            let context = document_selector_context_for_language(language, adapter);
+            let selectors = registrations
+                .text_documents
+                .get("textDocument/semanticTokens");
+            for (source, options) in registrations.semantic_tokens.iter().rev() {
+                let matches = match source {
+                    RegistrationSource::Static => true,
+                    RegistrationSource::Dynamic(registration_id) => selectors
+                        .and_then(|selectors| selectors.get(registration_id))
+                        .is_none_or(|registration| {
+                            document_selector_matches(
+                                registration.document_selector.as_ref(),
+                                &context,
+                            )
+                        }),
                 };
-                let language_rules = language.and_then(|language| {
-                    SettingsStore::global(cx).language_semantic_token_rules(language.as_ref())
-                });
-                let stylizer = SemanticTokenStylizer::new(server_id, legend, language_rules, cx);
-                v.insert(stylizer)
+                if matches {
+                    return Some(semantic_tokens_provider_legend(options));
+                }
             }
-        };
-        Some(stylizer)
+        }
+
+        let tokens_provider = self
+            .lsp_server_capabilities
+            .get(&server_id)?
+            .semantic_tokens_provider
+            .as_ref()?;
+        Some(semantic_tokens_provider_legend(tokens_provider))
+    }
+}
+
+fn semantic_tokens_provider_legend(
+    provider: &lsp::SemanticTokensServerCapabilities,
+) -> &lsp::SemanticTokensLegend {
+    match provider {
+        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => &options.legend,
+        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+            &options.semantic_tokens_options.legend
+        }
     }
 }
 

@@ -6174,6 +6174,57 @@ async fn test_unregistering_dynamic_completion_preserves_static_capability(
     );
 
     fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "global-completion".to_string(),
+                    method: "textDocument/completion".to_string(),
+                    register_options: serde_json::to_value(lsp::CompletionRegistrationOptions {
+                        text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                            document_selector: None,
+                        },
+                        completion_options: lsp::CompletionOptions {
+                            trigger_characters: Some(vec!["@".to_string()]),
+                            ..Default::default()
+                        },
+                    })
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+        BTreeSet::from([".".to_string(), ":".to_string(), "@".to_string()]),
+        "expected static triggers to stay active alongside a global dynamic registration",
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "global-completion".to_string(),
+                    method: "textDocument/completion".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone()),
+        BTreeSet::from([".".to_string(), ":".to_string()])
+    );
+
+    fake_server
         .request::<lsp::request::UnregisterCapability>(
             lsp::UnregistrationParams {
                 unregisterations: vec![lsp::Unregistration {
@@ -8878,6 +8929,321 @@ async fn test_dynamic_rename_registration_without_prepare_provider_skips_prepare
     assert_eq!(
         prepare_rename_request_count.load(atomic::Ordering::SeqCst),
         0
+    );
+}
+
+#[gpui::test]
+async fn test_prepare_rename_prefers_server_with_prepare_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut unprepared_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "unprepared-rename-server",
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(false),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let mut prepared_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "prepared-rename-server",
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let unprepared_server = unprepared_servers.next().await.unwrap();
+    let prepared_server = prepared_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let unprepared_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _unprepared_requests = unprepared_server
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>({
+            let unprepared_request_count = unprepared_request_count.clone();
+            move |_, _| {
+                unprepared_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let _prepared_requests = prepared_server
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 9),
+            ))))
+        });
+
+    let response = project
+        .update(cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), 7, cx)
+        })
+        .await
+        .unwrap();
+
+    let PrepareRenameResponse::Success(range) = response else {
+        panic!("expected the prepare-capable server to serve the request, got {response:?}");
+    };
+    let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
+    assert_eq!(range, 6..9);
+    assert_eq!(unprepared_request_count.load(atomic::Ordering::SeqCst), 0);
+}
+
+#[gpui::test]
+async fn test_dynamic_formatting_registrations_honor_document_selectors(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let  value = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _format_requests = fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
+        let format_request_count = format_request_count.clone();
+        move |_, _| {
+            format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(None) }
+        }
+    });
+    let format_buffer = |cx: &mut gpui::TestAppContext| {
+        project.update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+    };
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "untitled-formatting".to_string(),
+                    method: "textDocument/formatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "untitled" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    format_buffer(cx).await.unwrap();
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no formatting request for a buffer outside the registration's selector",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "file-formatting".to_string(),
+                    method: "textDocument/formatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    format_buffer(cx).await.unwrap();
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected a formatting request once a matching registration exists",
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_range_formatting_registrations_honor_document_selectors(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let  value = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let range_format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _range_format_requests = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>({
+            let range_format_request_count = range_format_request_count.clone();
+            move |_, _| {
+                range_format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let (buffer_id, range) = buffer.read_with(cx, |buffer, _| {
+        (
+            buffer.remote_id(),
+            buffer.anchor_before(0)..buffer.anchor_after(buffer.len()),
+        )
+    });
+    let format_ranges = |cx: &mut gpui::TestAppContext| {
+        let ranges = std::collections::BTreeMap::from_iter([(buffer_id, vec![range.clone()])]);
+        project.update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Ranges(ranges),
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+    };
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "untitled-range-formatting".to_string(),
+                    method: "textDocument/rangeFormatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "untitled" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    format_ranges(cx).await.unwrap();
+    assert_eq!(
+        range_format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no range formatting request for a buffer outside the registration's selector",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "file-range-formatting".to_string(),
+                    method: "textDocument/rangeFormatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    format_ranges(cx).await.unwrap();
+    assert_eq!(
+        range_format_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected a range formatting request once a matching registration exists",
     );
 }
 

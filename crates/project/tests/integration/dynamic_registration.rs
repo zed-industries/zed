@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use pretty_assertions::assert_eq;
+use project::lsp_store::TokenType;
 
 use super::*;
 
@@ -177,7 +178,7 @@ async fn test_local_semantic_tokens_request_uses_matching_dynamic_registration(
         },
         semantic_tokens_options: lsp::SemanticTokensOptions {
             legend: lsp::SemanticTokensLegend {
-                token_types: vec!["keyword".into()],
+                token_types: vec!["comment".into()],
                 token_modifiers: Vec::new(),
             },
             full: Some(lsp::SemanticTokensFullOptions::Bool(false)),
@@ -246,6 +247,53 @@ async fn test_local_semantic_tokens_request_uses_matching_dynamic_registration(
         semantic_token_request_count.load(atomic::Ordering::SeqCst),
         1,
         "expected the matching registration to route a full semantic tokens request",
+    );
+
+    let stylizer_token_type = |cx: &mut gpui::TestAppContext| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            let language = buffer.read(cx).language().map(|language| language.name());
+            lsp_store
+                .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
+                .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
+        })
+    };
+    assert_eq!(
+        stylizer_token_type(cx).as_deref(),
+        Some("keyword"),
+        "expected the stylizer to use the matching registration's legend instead of the aggregate one",
+    );
+
+    let updated_matching_options = lsp::SemanticTokensRegistrationOptions {
+        text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+            document_selector: Some(vec![lsp::DocumentFilter {
+                language: Some("rust".to_string()),
+                scheme: Some("file".to_string()),
+                pattern: None,
+            }]),
+        },
+        semantic_tokens_options: lsp::SemanticTokensOptions {
+            legend: lsp::SemanticTokensLegend {
+                token_types: vec!["function".into()],
+                token_modifiers: Vec::new(),
+            },
+            full: Some(lsp::SemanticTokensFullOptions::Delta { delta: Some(true) }),
+            ..lsp::SemanticTokensOptions::default()
+        },
+        static_registration_options: lsp::StaticRegistrationOptions::default(),
+    };
+    register_capability(
+        &fake_server,
+        method,
+        "file-semantic-tokens-2",
+        serde_json::to_value(updated_matching_options).ok(),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        stylizer_token_type(cx).as_deref(),
+        Some("function"),
+        "expected the cached stylizer to be rebuilt for the newest matching registration's legend",
     );
 }
 
@@ -937,8 +985,8 @@ async fn test_multi_registration_completion_static_restore(cx: &mut gpui::TestAp
     cx.executor().run_until_parked();
     assert_eq!(
         buffer_triggers(cx),
-        BTreeSet::from([":".to_string()]),
-        "expected the dynamic registration's triggers to override the static ones",
+        BTreeSet::from([".".to_string(), ":".to_string()]),
+        "expected the dynamic registration's triggers to union with the static ones",
     );
 
     unregister_capabilities(&fake_server, method, &["completion-dynamic"]).await;

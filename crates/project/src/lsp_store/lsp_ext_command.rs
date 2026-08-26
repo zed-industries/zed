@@ -68,7 +68,7 @@ impl LspCommand for ExpandMacro {
         "Expand macro"
     }
 
-    fn check_capabilities(&self, _: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
     }
 
@@ -200,7 +200,7 @@ impl LspCommand for OpenDocs {
         "Open docs"
     }
 
-    fn check_capabilities(&self, _: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
     }
 
@@ -334,7 +334,7 @@ impl LspCommand for SwitchSourceHeader {
         "Switch source header"
     }
 
-    fn check_capabilities(&self, _: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
     }
 
@@ -416,7 +416,7 @@ impl LspCommand for GoToParentModule {
         "Go to parent module"
     }
 
-    fn check_capabilities(&self, _: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
     }
 
@@ -673,7 +673,7 @@ impl LspCommand for GetLspRunnables {
         "LSP Runnables"
     }
 
-    fn check_capabilities(&self, _: &AdapterServerCapabilities) -> bool {
+    fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool {
         true
     }
 

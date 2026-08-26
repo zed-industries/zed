@@ -17,7 +17,6 @@ use lsp::{
 use crate::lsp_store::{
     LanguageServerState, LspStore, RenamePathsWatchedForServer,
     completion_trigger_characters_for_buffer, lsp_workspace_diagnostics_refresh,
-    notify_server_capabilities_updated,
 };
 
 #[derive(Debug)]
@@ -55,17 +54,20 @@ impl CapabilityUnregistration {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct DynamicTextDocumentRegistration {
     pub(super) document_selector: Option<lsp::DocumentSelector>,
     pub(super) server_capabilities: lsp::ServerCapabilities,
 }
 
+pub(super) type TextDocumentRegistrations =
+    HashMap<String, HashMap<String, DynamicTextDocumentRegistration>>;
+
 #[derive(Default, Debug)]
 pub(super) struct DynamicRegistrations {
     pub(super) did_change_watched_files: HashSet<String>,
     pub(super) diagnostics: CapabilityRegistrations<DiagnosticServerCapabilities>,
-    pub(super) text_documents: HashMap<String, HashMap<String, DynamicTextDocumentRegistration>>,
+    pub(super) text_documents: TextDocumentRegistrations,
     workspace_folders: CapabilityRegistrations<lsp::WorkspaceFoldersServerCapabilities>,
     workspace_symbol: CapabilityRegistrations<OneOf<bool, lsp::WorkspaceSymbolOptions>>,
     file_operations: CapabilityRegistrations<lsp::WorkspaceFileOperationsServerCapabilities>,
@@ -82,7 +84,7 @@ pub(super) struct DynamicRegistrations {
     color: CapabilityRegistrations<lsp::ColorProviderCapability>,
     folding_range: CapabilityRegistrations<lsp::FoldingRangeProviderCapability>,
     document_link: CapabilityRegistrations<lsp::DocumentLinkOptions>,
-    semantic_tokens: CapabilityRegistrations<lsp::SemanticTokensServerCapabilities>,
+    pub(super) semantic_tokens: CapabilityRegistrations<lsp::SemanticTokensServerCapabilities>,
     inlay_hint: CapabilityRegistrations<OneOf<bool, lsp::InlayHintServerCapabilities>>,
     code_lens: CapabilityRegistrations<lsp::CodeLensOptions>,
     document_symbol: CapabilityRegistrations<OneOf<bool, lsp::DocumentSymbolOptions>>,
@@ -143,17 +145,21 @@ impl LspStore {
             registrations.push((RegistrationSource::Dynamic(registration_id), options));
         }
         let active = registrations.last().map(|(_, options)| options.clone());
+        let mut registration_changed = false;
         if let Some((registration_id, registration)) = text_document_registration {
-            dynamic_registrations
+            let registrations = dynamic_registrations
                 .text_documents
                 .entry(method.to_owned())
-                .or_default()
-                .insert(registration_id, registration);
+                .or_default();
+            registration_changed = registrations.get(&registration_id) != Some(&registration);
+            registrations.insert(registration_id, registration);
         }
         let active_changed = active != previously_active;
         if active_changed {
             server.update_capabilities(|capabilities| *capability_of(capabilities) = active);
-            notify_server_capabilities_updated(server, cx);
+        }
+        if active_changed || registration_changed {
+            self.notify_server_capabilities_updated(server, cx);
         }
         Ok(active_changed)
     }
@@ -198,20 +204,21 @@ impl LspStore {
             let restored = registrations.last().map(|(_, options)| options.clone());
             (removed_active, removed_options, restored)
         };
-        if unregistration.method.starts_with("textDocument/")
-            && let Some(registrations) = dynamic_registrations
+        let registration_removed = unregistration.method.starts_with("textDocument/")
+            && dynamic_registrations
                 .text_documents
                 .get_mut(&unregistration.method)
-        {
-            registrations.remove(&unregistration.id);
-        }
+                .is_some_and(|registrations| registrations.remove(&unregistration.id).is_some());
         if !removed_active || restored.as_ref() == Some(&removed_options) {
+            if registration_removed {
+                self.notify_server_capabilities_updated(server, cx);
+            }
             return Ok(CapabilityUnregistration::Removed {
                 active_capability_changed: false,
             });
         }
         server.update_capabilities(|capabilities| *capability_of(capabilities) = restored);
-        notify_server_capabilities_updated(server, cx);
+        self.notify_server_capabilities_updated(server, cx);
         Ok(CapabilityUnregistration::Removed {
             active_capability_changed: true,
         })
@@ -301,7 +308,7 @@ impl LspStore {
                             false
                         };
                         if notify {
-                            notify_server_capabilities_updated(&server, cx);
+                            self.notify_server_capabilities_updated(&server, cx);
                         }
                     }
                 }
@@ -604,7 +611,7 @@ impl LspStore {
                             capabilities.text_document_sync =
                                 Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                         });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/didSave" => {
@@ -632,7 +639,7 @@ impl LspStore {
                             capabilities.text_document_sync =
                                 Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                         });
-                        notify_server_capabilities_updated(&server, cx);
+                        self.notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "textDocument/codeLens" => {
@@ -836,7 +843,7 @@ impl LspStore {
                         false
                     };
                     if notify {
-                        notify_server_capabilities_updated(&server, cx);
+                        self.notify_server_capabilities_updated(&server, cx);
                     }
                 }
                 "workspace/didChangeConfiguration" => {
@@ -1009,7 +1016,7 @@ impl LspStore {
                         capabilities.text_document_sync =
                             Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                     });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/didSave" => {
                     server.update_capabilities(|capabilities| {
@@ -1018,7 +1025,7 @@ impl LspStore {
                         capabilities.text_document_sync =
                             Some(lsp::TextDocumentSyncCapability::Options(sync_options));
                     });
-                    notify_server_capabilities_updated(&server, cx);
+                    self.notify_server_capabilities_updated(&server, cx);
                 }
                 "textDocument/inlayHint" => {
                     if self

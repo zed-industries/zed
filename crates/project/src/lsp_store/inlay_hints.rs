@@ -259,7 +259,8 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_if_capable_for_proto_request(&buffer, InlayHints::can_resolve_inlays, cx)
+            if !self
+                .check_server_capable_for_proto_request(server_id, InlayHints::can_resolve_inlays)
             {
                 hint.resolve_state = ResolveState::Resolved;
                 return Task::ready(Ok(hint));
