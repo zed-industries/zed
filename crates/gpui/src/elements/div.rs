@@ -2317,6 +2317,11 @@ impl Interactivity {
             || self.tracked_focus_handle.is_some()
             || self.hover_style.is_some()
             || self.group_hover_style.is_some()
+            // `.active(..)` reads `clicked_state`, which `paint_mouse_listeners` only
+            // maintains when a hitbox exists. Without this, an active style silently
+            // did nothing unless the element also had a click listener or a hover style.
+            || self.active_style.is_some()
+            || self.group_active_style.is_some()
             || self.hover_listener.is_some()
             || !self.mouse_up_listeners.is_empty()
             || !self.mouse_pressure_listeners.is_empty()
@@ -4495,6 +4500,81 @@ mod tests {
         })
         .unwrap();
         assert_eq!(*hover_transitions.borrow(), [true]);
+    }
+
+    struct ActiveStyleTestView {
+        painted_width: Rc<Cell<Pixels>>,
+    }
+
+    impl Render for ActiveStyleTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let painted_width = self.painted_width.clone();
+            div().relative().size_full().child(
+                div()
+                    .id("active-target")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size(px(10.))
+                    .active(|style| style.size(px(20.)))
+                    .child(canvas(
+                        move |bounds, _, _| painted_width.set(bounds.size.width),
+                        |_, _, _, _| {},
+                    )),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn active_styles_apply_without_a_click_listener(cx: &mut TestAppContext) {
+        let painted_width = Rc::new(Cell::new(px(0.)));
+        let window = cx.add_window({
+            let painted_width = painted_width.clone();
+            move |_, _| ActiveStyleTestView { painted_width }
+        });
+        let any_window = AnyWindowHandle::from(window);
+        let mouse_position = point(px(5.), px(5.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(mouse_position, cx);
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(painted_width.get(), px(10.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(painted_width.get(), px(20.));
+
+        cx.update_window(any_window, |_, window, cx| {
+            window.dispatch_event(
+                MouseUpEvent {
+                    position: mouse_position,
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert_eq!(painted_width.get(), px(10.));
     }
 
     struct TestTooltipView;
