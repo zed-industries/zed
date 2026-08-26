@@ -5525,6 +5525,11 @@ impl Window {
         self.active_pending_input().is_some()
     }
 
+    #[cfg(test)]
+    pub(crate) fn pending_input_is_none(&self) -> bool {
+        self.pending_input.is_none()
+    }
+
     pub(crate) fn clear_pending_keystrokes(&mut self, cx: &mut App) {
         if self.pending_input.take().is_some() {
             self.defer_pending_input_changed(cx);

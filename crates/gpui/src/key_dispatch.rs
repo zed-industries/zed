@@ -1043,7 +1043,7 @@ mod tests {
             assert!(window.has_pending_keystrokes());
             window.blur(cx);
             assert!(!window.has_pending_keystrokes());
-            assert!(window.pending_input_keystrokes().is_none());
+            assert!(window.pending_input_is_none());
         });
 
         cx.update(|_, _| {
@@ -1244,7 +1244,7 @@ mod tests {
             cx.update(|window, cx| {
                 window.blur(cx);
                 assert!(!window.has_pending_keystrokes());
-                assert!(window.pending_input_keystrokes().is_none());
+                assert!(window.pending_input_is_none());
             });
             let prefers_ime = input_handler
                 .as_mut()
