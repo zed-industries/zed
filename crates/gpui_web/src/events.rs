@@ -377,7 +377,12 @@ impl WebWindowInner {
         }
     }
 
-    fn end_touch(&self, position: Point<Pixels>, button: MouseButton, modifiers: Modifiers) {
+    fn end_touch(
+        self: &Rc<Self>,
+        position: Point<Pixels>,
+        button: MouseButton,
+        modifiers: Modifiers,
+    ) {
         self.cancel_long_press();
         self.pressed_button.set(None);
         {
