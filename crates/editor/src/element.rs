@@ -11146,6 +11146,7 @@ mod tests {
                         summary: None,
                         previous: None,
                         filename: String::new(),
+                        boundary: false,
                     }],
                     ..Default::default()
                 },
