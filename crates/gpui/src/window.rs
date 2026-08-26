@@ -5088,6 +5088,8 @@ impl Window {
                         position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
+                        // A mouse reports full pressure; tablets override this.
+                        pressure: 1.0,
                     })
                 }
                 FileDropEvent::Pending { position } => {
@@ -5096,6 +5098,8 @@ impl Window {
                         position,
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Modifiers::default(),
+                        // A mouse reports full pressure; tablets override this.
+                        pressure: 1.0,
                     })
                 }
                 FileDropEvent::Submit { position } => {
@@ -5106,6 +5110,8 @@ impl Window {
                         position,
                         modifiers: Modifiers::default(),
                         click_count: 1,
+                        // A mouse reports full pressure; tablets override this.
+                        pressure: 1.0,
                     })
                 }
                 FileDropEvent::Exited => {
@@ -6136,12 +6142,14 @@ impl Window {
                         modifiers: Modifiers::default(),
                         click_count: 1,
                         first_mouse: false,
+                        pressure: 1.0,
                     });
                     let mouse_up = PlatformInput::MouseUp(MouseUpEvent {
                         button: MouseButton::Left,
                         position: center,
                         modifiers: Modifiers::default(),
                         click_count: 1,
+                        pressure: 1.0,
                     });
                     self.dispatch_event(mouse_down, cx);
                     self.dispatch_event(mouse_up, cx);
@@ -6372,6 +6380,7 @@ impl Window {
             position,
             modifiers: self.modifiers,
             pressed_button: None,
+            pressure: 1.0,
         });
         let _ = self.dispatch_event(event, cx);
     }
@@ -7300,6 +7309,7 @@ mod tests {
                         modifiers: Default::default(),
                         click_count: 1,
                         first_mouse: false,
+                        pressure: 1.0,
                     }
                     .to_platform_input(),
                     cx,
@@ -7309,6 +7319,7 @@ mod tests {
                         position: point(px(20.), px(20.)),
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Default::default(),
+                        pressure: 1.0,
                     }
                     .to_platform_input(),
                     cx,
@@ -7337,6 +7348,7 @@ mod tests {
                     position: outside_position,
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Default::default(),
+                    pressure: 1.0,
                 }
                 .to_platform_input(),
                 cx,
@@ -7465,6 +7477,7 @@ mod tests {
                     position: outside_position,
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Default::default(),
+                    pressure: 1.0,
                 }
                 .to_platform_input(),
                 cx,
@@ -7502,6 +7515,7 @@ mod tests {
                     position: outside_position,
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Default::default(),
+                    pressure: 1.0,
                 }
                 .to_platform_input(),
                 cx,
@@ -7524,6 +7538,7 @@ mod tests {
                         position: point(px(x_position), px(20.)),
                         pressed_button: Some(MouseButton::Left),
                         modifiers: Default::default(),
+                        pressure: 1.0,
                     }
                     .to_platform_input(),
                     cx,

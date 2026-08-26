@@ -228,6 +228,8 @@ impl WebWindowInner {
                 modifiers,
                 click_count,
                 first_mouse: false,
+                // The web backend does not read PointerEvent pressure yet.
+                pressure: 1.0,
             }));
         })
     }
@@ -266,6 +268,8 @@ impl WebWindowInner {
                 position,
                 modifiers,
                 click_count,
+                // The web backend does not read PointerEvent pressure yet.
+                pressure: 1.0,
             }));
 
             if event.pointer_type() == "touch" {
@@ -377,6 +381,8 @@ impl WebWindowInner {
                 position,
                 pressed_button: current_pressed,
                 modifiers,
+                // The web backend does not read PointerEvent pressure yet.
+                pressure: 1.0,
             }));
         })
     }

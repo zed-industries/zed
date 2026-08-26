@@ -3827,6 +3827,7 @@ mod tests {
             modifiers: Modifiers::none(),
             click_count: 1,
             first_mouse: true,
+            pressure: 1.0,
         };
         terminal.mouse_down(&mouse_down, cx);
     }
@@ -3841,6 +3842,7 @@ mod tests {
             position,
             modifiers: Modifiers::none(),
             click_count: 1,
+            pressure: 1.0,
         };
         terminal.mouse_up(&mouse_up, cx);
     }
@@ -3855,6 +3857,7 @@ mod tests {
             position,
             pressed_button: Some(MouseButton::Left),
             modifiers: Modifiers::none(),
+            pressure: 1.0,
         };
         terminal.mouse_drag(&drag_event, region, cx);
     }
@@ -3932,6 +3935,7 @@ mod tests {
                     modifiers: shift,
                     click_count: 1,
                     first_mouse: true,
+                    pressure: 1.0,
                 },
                 cx,
             );
@@ -3953,6 +3957,7 @@ mod tests {
                     position: point(px(90.0), px(10.0)),
                     pressed_button: Some(MouseButton::Left),
                     modifiers: shift,
+                    pressure: 1.0,
                 },
                 region,
                 cx,
@@ -3994,6 +3999,7 @@ mod tests {
                     },
                     click_count: 1,
                     first_mouse: true,
+                    pressure: 1.0,
                 },
                 cx,
             );
@@ -4724,6 +4730,7 @@ mod tests {
                 modifiers: Modifiers::secondary_key(),
                 click_count: 1,
                 first_mouse: true,
+                pressure: 1.0,
             };
             terminal.mouse_down(&mouse_down, cx);
         }
@@ -4738,6 +4745,7 @@ mod tests {
                 position,
                 pressed_button: Some(MouseButton::Left),
                 modifiers: Modifiers::secondary_key(),
+                pressure: 1.0,
             };
             terminal.mouse_drag(&drag_event, terminal_bounds, cx);
         }
@@ -4752,6 +4760,7 @@ mod tests {
                 position,
                 modifiers: Modifiers::secondary_key(),
                 click_count: 1,
+                pressure: 1.0,
             };
             terminal.mouse_up(&mouse_up, cx);
         }
@@ -4822,6 +4831,7 @@ mod tests {
                     position: up_position,
                     pressed_button: Some(MouseButton::Left),
                     modifiers: Modifiers::secondary_key(),
+                    pressure: 1.0,
                 },
                 cx,
             );
