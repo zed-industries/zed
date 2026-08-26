@@ -214,7 +214,7 @@ fn should_offer_to_move(app_path: &Path) -> bool {
 
 async fn move_to_applications(app_path: &Path, cx: &mut AsyncWindowContext) -> Result<()> {
     let destination_path = install_destination(app_path).await?;
-    restart_into(destination_path, cx)
+    restart_into(destination_path, cx).await
 }
 
 async fn install_destination(app_path: &Path) -> Result<PathBuf> {
@@ -305,7 +305,18 @@ async fn copy_app_bundle(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn restart_into(app_path: PathBuf, cx: &mut AsyncWindowContext) -> Result<()> {
+async fn restart_into(app_path: PathBuf, cx: &mut AsyncWindowContext) -> Result<()> {
+    let workspace_windows = cx
+        .update(|_window, cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect::<Vec<_>>()
+        })
+        .context("collecting workspace windows before restarting")?;
+    if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await {
+        return Ok(());
+    }
     cx.update(|_window, cx| {
         cx.set_restart_path(app_path);
         cx.restart();
