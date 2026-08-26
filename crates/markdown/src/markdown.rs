@@ -5,7 +5,7 @@ mod path_range;
 mod selection;
 
 use base64::Engine as _;
-use futures::{AsyncReadExt as _, FutureExt as _};
+use futures::AsyncReadExt as _;
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
