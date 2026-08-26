@@ -17,6 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use gpui::{Autocapitalize, TextInputAction, TextInputConfiguration};
 use wasm_bindgen::JsCast;
 
 use crate::window::WebWindowInner;
@@ -100,23 +101,63 @@ impl ImeMirror {
         // whose font is smaller than 16px; with page zoom disabled the user
         // can never zoom back out, so keep the hidden IME input at 16px.
         style.set_property("font-size", "16px").ok();
-        // The element is an IME conduit, not a form field: browser-side text
-        // assistance would mutate it behind the app's back.
-        element.set_spellcheck(false);
-        element.set_attribute("autocomplete", "off").ok();
-        element.set_attribute("autocapitalize", "off").ok();
-        element.set_attribute("autocorrect", "off").ok();
         body.append_child(&element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         element.focus().ok();
 
-        Ok(Self {
+        let this = Self {
             element,
             text: RefCell::new(String::new()),
             selection: Cell::new((0, 0)),
             window_hint: Cell::new(0),
             sync_scheduled: Cell::new(false),
-        })
+        };
+        // Until an input handler asks otherwise, the element is an IME
+        // conduit, not a form field: browser-side text assistance would
+        // mutate it behind the app's back.
+        this.apply_configuration(&TextInputConfiguration::default());
+        Ok(this)
+    }
+
+    /// Maps a [`TextInputConfiguration`] onto the element's text-assistance
+    /// attributes. Callers must only invoke this on actual configuration
+    /// changes (GPUI diffs before forwarding): mutating the focused element
+    /// can restart the IME's input connection.
+    pub(crate) fn apply_configuration(&self, configuration: &TextInputConfiguration) {
+        let element: &web_sys::Element = self.element.as_ref();
+        self.element.set_spellcheck(configuration.suggestions);
+        let on_off = |enabled: bool| if enabled { "on" } else { "off" };
+        element
+            .set_attribute("autocomplete", on_off(configuration.suggestions))
+            .ok();
+        element
+            .set_attribute("autocorrect", on_off(configuration.autocorrect))
+            .ok();
+        element
+            .set_attribute(
+                "autocapitalize",
+                match configuration.autocapitalize {
+                    Autocapitalize::None => "off",
+                    Autocapitalize::Words => "words",
+                    Autocapitalize::Sentences => "sentences",
+                    Autocapitalize::Characters => "characters",
+                },
+            )
+            .ok();
+        let enter_key_hint = match configuration.input_action {
+            TextInputAction::Unspecified => None,
+            TextInputAction::Enter => Some("enter"),
+            TextInputAction::Done => Some("done"),
+            TextInputAction::Go => Some("go"),
+            TextInputAction::Next => Some("next"),
+            TextInputAction::Previous => Some("previous"),
+            TextInputAction::Search => Some("search"),
+            TextInputAction::Send => Some("send"),
+        };
+        match enter_key_hint {
+            Some(hint) => element.set_attribute("enterkeyhint", hint).ok(),
+            None => element.remove_attribute("enterkeyhint").ok(),
+        };
     }
 
     pub(crate) fn event_target(&self) -> &web_sys::EventTarget {
@@ -125,6 +166,14 @@ impl ImeMirror {
 
     pub(crate) fn focus(&self) {
         self.element.focus().ok();
+    }
+
+    pub(crate) fn is_focused(&self) -> bool {
+        let element: &web_sys::Element = self.element.as_ref();
+        web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.active_element())
+            .is_some_and(|active| &active == element)
     }
 
     pub(crate) fn blur(&self) {

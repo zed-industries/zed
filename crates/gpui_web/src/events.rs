@@ -196,12 +196,8 @@ impl WebWindowInner {
 
             let pointer_type = event.pointer_type();
             let position = pointer_position_in_element(&event);
-            if pointer_type != "touch" || this.pointer_targets_text_input(position) {
-                if pointer_type == "touch" {
-                    this.ime_mirror.set_read_only(false);
-                }
-                this.ime_mirror.focus();
-            }
+            this.gesture_start_visual_viewport_height
+                .set(this.visual_viewport_height());
 
             // Capture the pointer so drags that leave the canvas keep
             // delivering pointermove/pointerup here; otherwise a release
@@ -229,6 +225,17 @@ impl WebWindowInner {
                 click_count,
                 first_mouse: false,
             }));
+
+            // Decide focus after dispatching the MouseDown so text-input
+            // acceptance reflects the selection produced by this tap rather
+            // than the previous one. This still runs within the user
+            // gesture, so focusing here is allowed to show the keyboard.
+            if pointer_type != "touch" || this.pointer_targets_text_input(position) {
+                if pointer_type == "touch" {
+                    this.ime_mirror.set_read_only(false);
+                }
+                this.ime_mirror.focus();
+            }
         })
     }
 
@@ -268,11 +275,66 @@ impl WebWindowInner {
                 click_count,
             }));
 
-            if event.pointer_type() == "touch" {
+            // A keyboard opening or closing mid-gesture reflows the layout,
+            // so the release position no longer refers to the content the
+            // user aimed at (a tap that summoned the keyboard often ends up
+            // below the shrunken layout, which would immediately dismiss it
+            // again). Let the pointerdown decision stand instead.
+            let viewport_stable =
+                this.gesture_start_visual_viewport_height.get() == this.visual_viewport_height();
+            if event.pointer_type() == "touch" && viewport_stable {
                 this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
             }
             this.schedule_ime_mirror_sync();
         })
+    }
+
+    /// The visual viewport's current height in layout pixels, or zero when
+    /// the API is unavailable.
+    fn visual_viewport_height(&self) -> f64 {
+        self.browser_window
+            .visual_viewport()
+            .map_or(0.0, |viewport| viewport.height() * viewport.scale())
+    }
+
+    /// Whether the software keyboard is likely hidden — a heuristic, since
+    /// no cross-browser keyboard-visibility signal exists. It infers from
+    /// the visual viewport: a shown keyboard shrinks its height well below
+    /// the greatest height seen at the current width (the width only changes
+    /// on rotation, which restarts the calibration). `window.innerHeight`
+    /// can't serve as the reference because Android shrinks it along with
+    /// the keyboard. Unknown states err toward "visible" so ordinary
+    /// editable taps don't gratuitously restart the IME session.
+    ///
+    /// Restricted to coarse-pointer environments: elsewhere (desktop
+    /// browsers, including touchscreen laptops) viewport height tracks
+    /// user window resizes rather than a software keyboard, so the
+    /// calibration would misfire. Split-screen resizes on mobile can still
+    /// fool it; tracking `visualViewport` resize events around focus
+    /// transitions would be sturdier.
+    fn keyboard_likely_dismissed(&self) -> bool {
+        let coarse_pointer = self
+            .browser_window
+            .match_media("(pointer: coarse)")
+            .ok()
+            .flatten()
+            .is_some_and(|media_query_list| media_query_list.matches());
+        if !coarse_pointer {
+            return false;
+        }
+        let Some(viewport) = self.browser_window.visual_viewport() else {
+            return false;
+        };
+        let width = viewport.width() * viewport.scale();
+        let height = viewport.height() * viewport.scale();
+        let (probe_width, probe_height) = self.visual_viewport_probe.get();
+        let max_height = if width == probe_width {
+            probe_height.max(height)
+        } else {
+            height
+        };
+        self.visual_viewport_probe.set((width, max_height));
+        height >= max_height * 0.85
     }
 
     /// Cancels touch default handling separately because iOS does not consistently
@@ -306,12 +368,24 @@ impl WebWindowInner {
     fn sync_virtual_keyboard(self: &Rc<Self>, editable: bool) {
         let was_editable = !self.ime_mirror.read_only();
         self.ime_mirror.set_read_only(!editable);
-        // Cycle only on an actual editability transition. Cycling on every
-        // tap would restart the IME connection right as the keyboard reads
-        // the tapped caret's context, racing its word segmentation.
-        if editable != was_editable {
+        // Trigger a focus event only when the keyboard actually needs
+        // summoning. Cycling focus on every tap would restart the IME
+        // connection right as the keyboard reads the tapped caret's context,
+        // racing its word segmentation. But `focus()` on an already-focused
+        // element is a no-op, so a dismissed keyboard would otherwise never
+        // return for taps that stay within editable content: detect that
+        // through the visual viewport and force a fresh focus event.
+        let editable_needs_focus_event = editable
+            && (!was_editable || !self.ime_mirror.is_focused() || self.keyboard_likely_dismissed());
+        if editable_needs_focus_event || (!editable && was_editable) {
             self.suppress_focus_status_events.set(true);
             if editable {
+                // A same-task blur/focus cycle may be coalesced by iOS, but
+                // this branch only runs when the keyboard is already gone,
+                // so a coalesced cycle loses nothing.
+                if self.ime_mirror.is_focused() {
+                    self.ime_mirror.blur();
+                }
                 self.ime_mirror.focus();
             } else {
                 self.ime_mirror.blur();
