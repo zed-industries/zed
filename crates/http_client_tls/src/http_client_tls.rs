@@ -16,6 +16,7 @@ pub fn tls_config() -> ClientConfig {
                 .ok();
 
             ClientConfig::with_platform_verifier()
+                .expect("failed to load platform TLS certificate verifier")
         })
         .clone()
 }

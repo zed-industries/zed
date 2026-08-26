@@ -617,7 +617,7 @@ fn deserialize_anchor(anchor: proto::EditorAnchor, buffer: &MultiBufferSnapshot)
         let text_anchor = language::proto::deserialize_anchor(anchor)?;
         buffer.anchor_in_buffer(text_anchor)
     } else {
-        match proto::Bias::from_i32(anchor.bias)? {
+        match proto::Bias::try_from(anchor.bias).ok()? {
             proto::Bias::Left => Some(Anchor::Min),
             proto::Bias::Right => Some(Anchor::Max),
         }

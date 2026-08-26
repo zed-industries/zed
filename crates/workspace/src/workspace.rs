@@ -6099,7 +6099,7 @@ impl Workspace {
                         state.active_view_id = response
                             .active_view
                             .as_ref()
-                            .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
+                            .and_then(|view| ViewId::from_proto(view.id?).ok());
                         anyhow::Ok(())
                     })??;
                     if let Some(view) = response.active_view {
@@ -6556,7 +6556,7 @@ impl Workspace {
     ) -> Result<()> {
         match update.variant.context("invalid update")? {
             proto::update_followers::Variant::CreateView(view) => {
-                let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
+                let view_id = ViewId::from_proto(view.id.context("invalid view id")?)?;
                 let should_add_view = this.update(cx, |this, _| {
                     if let Some(state) = this.follower_states.get_mut(&leader_id.into()) {
                         anyhow::Ok(!state.items_by_leader_view_id.contains_key(&view_id))
@@ -6575,7 +6575,7 @@ impl Workspace {
                         state.active_view_id = update_active_view
                             .view
                             .as_ref()
-                            .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
+                            .and_then(|view| ViewId::from_proto(view.id?).ok());
 
                         if state.active_view_id.is_some_and(|view_id| {
                             !state.items_by_leader_view_id.contains_key(&view_id)
@@ -6600,7 +6600,7 @@ impl Workspace {
                 this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
                     if let Some(state) = this.follower_states.get(&leader_id.into()) {
-                        let view_id = ViewId::from_proto(id.clone())?;
+                        let view_id = ViewId::from_proto(id)?;
                         if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
                             tasks.push(item.view.apply_update_proto(
                                 &project,
@@ -6629,11 +6629,13 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
-        let Some(id) = view.id.clone() else {
+        let Some(id) = view.id else {
             anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
-        let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
+        let panel_id = view
+            .panel_id
+            .and_then(|value| proto::PanelId::try_from(value).ok());
 
         let pane = this.update(cx, |this, _cx| {
             let state = this
