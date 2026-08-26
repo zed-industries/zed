@@ -15,6 +15,7 @@ mod workspace;
 
 pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
+use anyhow::Context;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -1524,7 +1525,6 @@ impl merge_from::MergeFrom for SaturatingBool {
     Deserialize,
     MergeFrom,
     JsonSchema,
-    derive_more::FromStr,
 )]
 #[serde(transparent)]
 pub struct DelayMs(pub u64);
@@ -1538,5 +1538,18 @@ impl From<u64> for DelayMs {
 impl std::fmt::Display for DelayMs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}ms", self.0)
+    }
+}
+
+impl std::str::FromStr for DelayMs {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.trim()
+            .strip_suffix("ms")
+            .unwrap_or(s.trim())
+            .parse::<u64>()
+            .map(DelayMs)
+            .with_context(|| format!("failed to parse delay duration: {s}"))
     }
 }

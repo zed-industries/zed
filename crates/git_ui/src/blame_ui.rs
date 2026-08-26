@@ -555,13 +555,8 @@ fn deploy_blame_entry_context_menu(
         .and_then(|blame| blame.read(cx).highlighted_sha());
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
-        let blame_revision = (!blame_entry.sha.is_zero()
-            && Some(blame_entry.sha) != highlighted_sha)
-            .then_some(blame_entry.sha)
-            .zip(RepoPath::new(&blame_entry.filename).ok());
-        let blame_previous_revision = blame_entry
-            .previous_sha_and_filename()
-            .and_then(|(sha, filename)| Some((sha, RepoPath::new(filename).ok()?)));
+        let blame_revision = blame_entry.revision_target(highlighted_sha);
+        let blame_previous_revision = blame_entry.previous_revision_target();
         let has_blame_targets = blame_revision.is_some() || blame_previous_revision.is_some();
         menu.on_blur_subscription(Subscription::new(|| {}))
             .entry("Copy Commit SHA", None, move |_, cx| {

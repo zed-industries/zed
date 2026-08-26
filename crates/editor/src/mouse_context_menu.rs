@@ -257,8 +257,11 @@ pub fn deploy_context_menu(
                     |builder| builder.separator(),
                 )
                 .action("Go to Definition", Box::new(GoToDefinition::default()))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                .action("Go to Declaration", Box::new(GoToDeclaration::default()))
+                .action(
+                    "Go to Type Definition",
+                    Box::new(GoToTypeDefinition::default()),
+                )
                 .action(
                     "Go to Implementation",
                     Box::new(GoToImplementation::default()),

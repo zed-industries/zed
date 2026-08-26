@@ -1,5 +1,4 @@
 use editor::{Editor, EditorEvent};
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
@@ -24,14 +23,6 @@ mod table_data_engine;
 mod types;
 
 actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
-
-pub struct TabularDataPreviewFeatureFlag;
-
-impl FeatureFlag for TabularDataPreviewFeatureFlag {
-    const NAME: &'static str = "tabular-data-preview";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(TabularDataPreviewFeatureFlag);
 
 pub struct TabularDataPreviewPane {
     pub(crate) engine: TableDataEngine,
@@ -91,28 +82,24 @@ impl TabularDataPreviewPane {
 
     pub fn register(workspace: &mut Workspace) {
         workspace.register_action_renderer(|div, _, _, cx| {
-            div.when(cx.has_flag::<TabularDataPreviewFeatureFlag>(), |div| {
-                div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
+            div.on_action(cx.listener(|workspace, _: &OpenPreview, window, cx| {
+                if let Some(editor) =
+                    Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
+                {
+                    let pane = workspace.active_pane().clone();
+                    Self::open_preview_in_pane(editor, pane, window, cx);
+                }
+            }))
+            .on_action(cx.listener(
+                |workspace, _: &OpenPreviewToTheSide, window, cx| {
                     if let Some(editor) =
                         Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
                     {
                         let pane = workspace.active_pane().clone();
-                        Self::open_preview_in_pane(editor, pane, window, cx);
+                        Self::open_preview_to_the_side_of_pane(workspace, editor, pane, window, cx);
                     }
-                }))
-                .on_action(cx.listener(
-                    |workspace, _: &OpenPreviewToTheSide, window, cx| {
-                        if let Some(editor) =
-                            Self::resolve_active_item_as_tabular_data_editor(workspace, cx)
-                        {
-                            let pane = workspace.active_pane().clone();
-                            Self::open_preview_to_the_side_of_pane(
-                                workspace, editor, pane, window, cx,
-                            );
-                        }
-                    },
-                ))
-            })
+                },
+            ))
         });
     }
 

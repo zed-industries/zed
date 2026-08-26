@@ -5,7 +5,7 @@ mod path_range;
 mod selection;
 
 use base64::Engine as _;
-use futures::FutureExt as _;
+
 use gpui::EdgesRefinement;
 use gpui::HitboxBehavior;
 use gpui::UnderlineStyle;
@@ -39,6 +39,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
     TextStyle, TextStyleRefinement, WrappedLineLayout, actions, canvas, img, point, quad, relative,
+    size,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -110,6 +111,7 @@ pub struct MarkdownStyle {
     pub code_block: StyleRefinement,
     pub code_block_overflow_x_scroll: bool,
     pub inline_code: TextStyleRefinement,
+    pub inline_code_corner_radius: Pixels,
     pub block_quote: TextStyleRefinement,
     pub link: TextStyleRefinement,
     pub link_callback: Option<LinkStyleCallback>,
@@ -121,6 +123,12 @@ pub struct MarkdownStyle {
     pub heading: StyleRefinement,
     pub heading_level_styles: Option<HeadingLevelStyles>,
     pub heading_border_color: Option<Hsla>,
+    pub paragraph_spacing: Pixels,
+    pub paragraph_line_height: DefiniteLength,
+    /// Bottom margin of top-level lists only
+    pub list_spacing: Pixels,
+    /// Horizontal (`x`) and vertical (`y`) padding of table cells
+    pub table_cell_padding: Point<Pixels>,
     pub height_is_multiple_of_line_height: bool,
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
@@ -135,6 +143,7 @@ impl Default for MarkdownStyle {
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
+            inline_code_corner_radius: px(0.),
             block_quote: Default::default(),
             link: Default::default(),
             link_callback: None,
@@ -146,6 +155,10 @@ impl Default for MarkdownStyle {
             heading: Default::default(),
             heading_level_styles: None,
             heading_border_color: None,
+            paragraph_spacing: px(8.),
+            paragraph_line_height: rems(1.3).into(),
+            list_spacing: px(0.),
+            table_cell_padding: point(px(4.), px(2.)),
             height_is_multiple_of_line_height: false,
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
@@ -334,38 +347,58 @@ impl MarkdownStyle {
     }
 
     fn with_preview_overrides(mut self, colors: &theme::ThemeColors) -> Self {
-        let body_font_size = rems(0.92);
+        let body_font_size = rems(1.0);
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
 
-        self.base_text_style.color = colors.text_muted.blend(colors.text.opacity(0.25));
-        self.inline_code.color = Some(colors.text);
-        self.heading.text.color = Some(colors.text);
+        self.base_text_style.color = colors.text;
+        self.base_text_style.line_height = relative(1.5);
+        self.paragraph_spacing = px(16.);
+        self.paragraph_line_height = relative(1.5);
+        self.list_spacing = px(12.);
+        self.table_cell_padding = point(px(10.), px(4.));
 
+        self.inline_code.color = Some(colors.text);
+        self.inline_code.font_size = Some(rems(0.875).into());
+        self.inline_code_corner_radius = px(4.);
+
+        self.link.background_color = None;
+
+        self.block_quote.color = Some(colors.text_muted);
+
+        self.code_block.padding = EdgesRefinement {
+            top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+            left: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+            right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+            bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(12.)))),
+        };
+        self.code_block.margin.top = Some(Length::Definite(px(16.).into()));
+        self.code_block.margin.bottom = Some(Length::Definite(px(16.).into()));
+        let code_block_corner_radius = AbsoluteLength::Pixels(px(6.));
+        self.code_block.corner_radii.top_left = Some(code_block_corner_radius);
+        self.code_block.corner_radii.top_right = Some(code_block_corner_radius);
+        self.code_block.corner_radii.bottom_left = Some(code_block_corner_radius);
+        self.code_block.corner_radii.bottom_right = Some(code_block_corner_radius);
+
+        self.heading.text.color = Some(colors.text);
+        self.heading.margin.top = Some(Length::Definite(px(24.).into()));
+        self.heading.margin.bottom = Some(Length::Definite(px(12.).into()));
+
+        let heading_text_style = |font_size: Rems| TextStyleRefinement {
+            font_size: Some(font_size.into()),
+            font_weight: Some(FontWeight::SEMIBOLD),
+            line_height: Some(relative(1.25)),
+            ..Default::default()
+        };
         self.heading_level_styles = Some(HeadingLevelStyles {
-            h1: Some(TextStyleRefinement {
-                font_size: Some(rems(1.45).into()),
-                ..Default::default()
-            }),
-            h2: Some(TextStyleRefinement {
-                font_size: Some(rems(1.3).into()),
-                ..Default::default()
-            }),
-            h3: Some(TextStyleRefinement {
-                font_size: Some(rems(1.1).into()),
-                ..Default::default()
-            }),
-            h4: Some(TextStyleRefinement {
-                font_size: Some(rems(1.01).into()),
-                ..Default::default()
-            }),
-            h5: Some(TextStyleRefinement {
-                font_size: Some(rems(0.95).into()),
-                ..Default::default()
-            }),
+            h1: Some(heading_text_style(rems(1.75))),
+            h2: Some(heading_text_style(rems(1.4))),
+            h3: Some(heading_text_style(rems(1.2))),
+            h4: Some(heading_text_style(rems(1.0))),
+            h5: Some(heading_text_style(rems(0.875))),
             h6: Some(TextStyleRefinement {
-                font_size: Some(rems(0.85).into()),
-                ..Default::default()
+                color: Some(colors.text_muted),
+                ..heading_text_style(rems(0.85))
             }),
         });
 
@@ -933,6 +966,14 @@ impl Markdown {
         &self.source
     }
 
+    pub fn non_rendered_source_ranges(&self) -> Vec<Range<usize>> {
+        if self.source != self.parsed_markdown.source {
+            return Vec::new();
+        }
+
+        self.parsed_markdown.non_rendered_source_ranges()
+    }
+
     pub fn first_code_block_language(&self) -> Option<Arc<Language>> {
         self.parsed_markdown.events.iter().find_map(|(_, event)| {
             let MarkdownEvent::Start(MarkdownTag::CodeBlock { kind, .. }) = event else {
@@ -950,7 +991,8 @@ impl Markdown {
                     .languages_by_path
                     .get(&path_range.path)
                     .cloned(),
-                CodeBlockKind::Fenced | CodeBlockKind::Indented => None,
+                CodeBlockKind::Fenced => self.parsed_markdown.fallback_code_block_language.clone(),
+                CodeBlockKind::Indented => None,
             }
         })
     }
@@ -1217,6 +1259,8 @@ impl Markdown {
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
+                        link_definition_spans: Arc::default(),
+                        fallback_code_block_language: None,
                     },
                     Default::default(),
                 );
@@ -1236,6 +1280,8 @@ impl Markdown {
             let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
+            let link_definition_spans = parsed.link_definition_spans;
+            let has_untagged_code_block = parsed.has_untagged_code_block;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -1244,16 +1290,10 @@ impl Markdown {
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
             let mut languages_by_path = TreeMap::default();
+            let mut fallback_code_block_language = None;
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
-                    let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name).left_future()
-                    } else if let Some(fallback) = &fallback {
-                        registry.language_for_name(fallback.as_ref()).right_future()
-                    } else {
-                        continue;
-                    };
-                    if let Ok(language) = language.await {
+                    if let Ok(language) = registry.language_for_name_or_extension(&name).await {
                         languages_by_name.insert(name, language);
                     }
                 }
@@ -1265,6 +1305,11 @@ impl Markdown {
                     {
                         languages_by_path.insert(path, language);
                     }
+                }
+
+                if has_untagged_code_block && let Some(fallback) = &fallback {
+                    fallback_code_block_language =
+                        registry.language_for_name(fallback.as_ref()).await.ok();
                 }
             }
 
@@ -1305,6 +1350,8 @@ impl Markdown {
                     mermaid_diagrams,
                     heading_slugs,
                     footnote_definitions,
+                    link_definition_spans: Arc::from(link_definition_spans),
+                    fallback_code_block_language,
                 },
                 images_by_source_offset,
             )
@@ -1451,6 +1498,8 @@ pub struct ParsedMarkdown {
     pub(crate) mermaid_diagrams: BTreeMap<usize, ParsedMarkdownMermaidDiagram>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    pub(crate) link_definition_spans: Arc<[Range<usize>]>,
+    pub(crate) fallback_code_block_language: Option<Arc<Language>>,
 }
 
 impl ParsedMarkdown {
@@ -1464,6 +1513,74 @@ impl ParsedMarkdown {
 
     pub fn root_block_starts(&self) -> &Arc<[usize]> {
         &self.root_block_starts
+    }
+
+    fn non_rendered_source_ranges(&self) -> Vec<Range<usize>> {
+        let mut ranges = Vec::new();
+        let mut active_link = None;
+        let mut active_image: Option<Range<usize>> = None;
+
+        for (event_range, event) in self.events.iter() {
+            // An image renders as an image, so nothing between its start and end is text on
+            // screen - not the alt text, and not the destination. Skipping these events also
+            // keeps the alt text from advancing the enclosing link's cursor, which would
+            // otherwise carve it out of the link's non-rendered span.
+            if let Some(image_range) = &active_image {
+                if matches!(event, MarkdownEvent::End(MarkdownTagEnd::Image))
+                    && event_range.end >= image_range.end
+                {
+                    active_image = None;
+                }
+                continue;
+            }
+
+            match event {
+                MarkdownEvent::Start(MarkdownTag::Image { .. }) => {
+                    active_image = Some(event_range.clone());
+                    if active_link.is_none() {
+                        ranges.push(event_range.clone());
+                    }
+                }
+                MarkdownEvent::Start(MarkdownTag::Link { .. }) => {
+                    active_link = Some((event_range.clone(), event_range.start));
+                }
+                MarkdownEvent::Text
+                | MarkdownEvent::SubstitutedText(_)
+                | MarkdownEvent::Code
+                | MarkdownEvent::SubstitutedCode(_) => {
+                    let Some((link_range, cursor)) = active_link.as_mut() else {
+                        continue;
+                    };
+                    let visible_start = event_range.start.max(link_range.start);
+                    let visible_end = event_range.end.min(link_range.end);
+                    if visible_start > *cursor {
+                        ranges.push(*cursor..visible_start);
+                    }
+                    *cursor = (*cursor).max(visible_end);
+                }
+                MarkdownEvent::End(MarkdownTagEnd::Link) => {
+                    if let Some((link_range, cursor)) = active_link.take()
+                        && cursor < link_range.end
+                    {
+                        ranges.push(cursor..link_range.end);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        ranges.extend(self.link_definition_spans.iter().cloned());
+        // Callers binary search these ranges, which requires them to be sorted and disjoint.
+        ranges.sort_by_key(|range| range.start);
+        ranges.dedup_by(|next, previous| {
+            if next.start <= previous.end {
+                previous.end = previous.end.max(next.end);
+                true
+            } else {
+                false
+            }
+        });
+        ranges
     }
 
     pub fn root_block_for_source_index(&self, source_index: usize) -> Option<usize> {
@@ -1664,6 +1781,13 @@ impl MarkdownElement {
             None
         };
 
+        let mut code_style = self.style.inline_code.clone();
+        let chip_background = if self.style.inline_code_corner_radius > px(0.) {
+            code_style.background_color.take()
+        } else {
+            None
+        };
+
         if let Some(url) = link_url {
             builder.push_link(url.clone(), range.clone());
             let link_style = self
@@ -1672,18 +1796,17 @@ impl MarkdownElement {
                 .as_ref()
                 .and_then(|callback| callback(url.as_ref(), cx))
                 .unwrap_or_else(|| self.style.link.clone());
-            builder.push_text_style(self.style.inline_code.clone());
+            builder.push_text_style(code_style);
             builder.push_text_style(link_style);
-            builder.push_text(text, range);
+            builder.push_code_chip_text(text, range, chip_background);
             builder.pop_text_style();
             builder.pop_text_style();
         } else {
-            let mut code_style = self.style.inline_code.clone();
             if builder.link_depth > 0 {
                 code_style.color = self.style.link.color.or(code_style.color);
             }
             builder.push_text_style(code_style);
-            builder.push_text(text, range);
+            builder.push_code_chip_text(text, range, chip_background);
             builder.pop_text_style();
         }
     }
@@ -1776,7 +1899,8 @@ impl MarkdownElement {
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
         let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
-            el.mb_2().line_height(rems(1.3))
+            el.mb(self.style.paragraph_spacing)
+                .line_height(self.style.paragraph_line_height)
         });
 
         paragraph = match align {
@@ -1873,7 +1997,11 @@ impl MarkdownElement {
                 .into_any_element()
         });
 
-        let block_div = div().pl_4().mb_2().border_l_4().border_color(border_color);
+        let block_div = div()
+            .pl_4()
+            .mb(self.style.paragraph_spacing)
+            .border_l_4()
+            .border_color(border_color);
         let block_div = match header {
             Some(header) => block_div.child(header),
             None => block_div,
@@ -2006,7 +2134,9 @@ impl MarkdownElement {
         builder.push_div(
             div()
                 .when(!self.style.height_is_multiple_of_line_height, |el| {
-                    el.mb_1().gap_1().line_height(rems(1.3))
+                    el.mb_1()
+                        .gap_1()
+                        .line_height(self.style.paragraph_line_height)
                 })
                 .h_flex()
                 .items_start()
@@ -2367,6 +2497,7 @@ impl Element for MarkdownElement {
             self.style.base_text_style.clone(),
             self.style.syntax.clone(),
             highlights,
+            self.style.inline_code_corner_radius,
         );
         let (parsed_markdown, images, active_root_block, render_mermaid_diagrams, mermaid_state) = {
             let markdown = self.markdown.read(cx);
@@ -2542,7 +2673,9 @@ impl Element for MarkdownElement {
                             }
 
                             let language = match kind {
-                                CodeBlockKind::Fenced => None,
+                                CodeBlockKind::Fenced => {
+                                    parsed_markdown.fallback_code_block_language.clone()
+                                }
                                 CodeBlockKind::FencedLang(language) => {
                                     parsed_markdown.languages_by_name.get(language).cloned()
                                 }
@@ -2634,7 +2767,14 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_2p5(), range, markdown_end);
+                            let is_top_level = builder.list_stack.len() == 1;
+                            builder.push_div(
+                                div()
+                                    .pl_2p5()
+                                    .when(is_top_level, |this| this.mb(self.style.list_spacing)),
+                                range,
+                                markdown_end,
+                            );
                         }
                         MarkdownTag::Item => {
                             let bullet = if let Some((task_range, checked)) =
@@ -2803,8 +2943,8 @@ impl Element for MarkdownElement {
                                 .when(col_index > 0, |this| this.border_l_1())
                                 .when(row_index > 0, |this| this.border_t_1())
                                 .border_color(cx.theme().colors().border)
-                                .px_1()
-                                .py_0p5()
+                                .px(self.style.table_cell_padding.x)
+                                .py(self.style.table_cell_padding.y)
                                 .when(is_header, |this| {
                                     this.bg(cx.theme().colors().title_bar_background)
                                 })
@@ -3034,7 +3174,7 @@ impl Element for MarkdownElement {
                     builder.push_div(
                         div()
                             .border_b_1()
-                            .my_2()
+                            .my(self.style.paragraph_spacing)
                             .border_color(self.style.rule_color),
                         range,
                         markdown_end,
@@ -3197,15 +3337,16 @@ fn apply_heading_style(
         _ => heading.mt_6(),
     };
 
-    if let Some(border_color) = border_color
-        && matches!(
-            level,
-            pulldown_cmark::HeadingLevel::H1
-                | pulldown_cmark::HeadingLevel::H2
-                | pulldown_cmark::HeadingLevel::H3
-        )
-    {
-        heading = heading.pb_1().border_b_1().border_color(border_color);
+    if let Some(border_color) = border_color {
+        heading = match level {
+            pulldown_cmark::HeadingLevel::H1 => {
+                heading.pb_2().border_b_1().border_color(border_color)
+            }
+            pulldown_cmark::HeadingLevel::H2 => {
+                heading.pb_1().border_b_1().border_color(border_color)
+            }
+            _ => heading,
+        };
     }
 
     if let Some(styles) = custom_styles {
@@ -3449,6 +3590,7 @@ struct MarkdownElementBuilder {
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
     highlights: MarkdownHighlights,
+    code_chip_corner_radius: Pixels,
 }
 
 struct MarkdownHighlights {
@@ -3530,6 +3672,9 @@ struct PendingLine {
     text: String,
     runs: Vec<TextRun>,
     source_mappings: Vec<SourceMapping>,
+    /// Rendered (not source) indices, so chips hug the glyphs and ignore
+    /// unrendered characters like the surrounding backticks
+    code_chips: Vec<(Range<usize>, Hsla)>,
 }
 
 struct ListStackEntry {
@@ -3542,6 +3687,7 @@ impl MarkdownElementBuilder {
         base_text_style: TextStyle,
         syntax_theme: Arc<SyntaxTheme>,
         highlights: MarkdownHighlights,
+        code_chip_corner_radius: Pixels,
     ) -> Self {
         Self {
             div_stack: vec![{
@@ -3565,6 +3711,25 @@ impl MarkdownElementBuilder {
             table: TableState::default(),
             syntax_theme,
             highlights,
+            code_chip_corner_radius,
+        }
+    }
+
+    fn push_code_chip_text(
+        &mut self,
+        text: &str,
+        source_range: Range<usize>,
+        chip_background: Option<Hsla>,
+    ) {
+        let chip_start = self.pending_line.text.len();
+        self.push_text(text, source_range);
+        if let Some(background) = chip_background {
+            let chip_end = self.pending_line.text.len();
+            if chip_start < chip_end {
+                self.pending_line
+                    .code_chips
+                    .push((chip_start..chip_end, background));
+            }
         }
     }
 
@@ -3885,6 +4050,8 @@ impl MarkdownElementBuilder {
             language: None,
             text_align: TextAlign::Left,
             highlights: SmallVec::new(),
+            code_chips: SmallVec::new(),
+            code_chip_corner_radius: px(0.),
         }));
         div()
             .absolute()
@@ -3918,8 +4085,10 @@ impl MarkdownElementBuilder {
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
             highlights,
+            code_chips: line.code_chips.into_iter().collect(),
+            code_chip_corner_radius: self.code_chip_corner_radius,
         });
-        if rendered_line.highlights.is_empty() {
+        if rendered_line.highlights.is_empty() && rendered_line.code_chips.is_empty() {
             self.rendered_lines.push(rendered_line);
             self.append_child(text.into_any());
         } else {
@@ -4001,6 +4170,7 @@ impl Element for HighlightedLine {
         window: &mut Window,
         cx: &mut App,
     ) {
+        self.line.paint_code_chips(window);
         self.text.paint(window, cx);
         self.line.paint_highlights(window);
     }
@@ -4020,11 +4190,58 @@ struct RenderedLine {
     source_end: usize,
     language: Option<Arc<Language>>,
     text_align: TextAlign,
-    /// Highlighted source ranges intersecting this line, in paint order.
+    /// Highlighted source ranges intersecting this line, in paint order
     highlights: SmallVec<[(Range<usize>, Hsla); 1]>,
+    /// Inline code chip ranges intersecting this line, in rendered indices
+    code_chips: SmallVec<[(Range<usize>, Hsla); 1]>,
+    code_chip_corner_radius: Pixels,
 }
 
 impl RenderedLine {
+    /// Painted before the glyphs so the text renders on top of the chips
+    fn paint_code_chips(&self, window: &mut Window) {
+        if self.code_chips.is_empty() {
+            return;
+        }
+        let wrapped_line_segments = self.wrapped_line_segments();
+        if wrapped_line_segments.is_empty() {
+            return;
+        }
+
+        for (rendered_range, color) in &self.code_chips {
+            self.for_each_bounds_in_rendered_range(
+                &wrapped_line_segments,
+                rendered_range.clone(),
+                |bounds| {
+                    // Kept to a hair since the layout reserves no padding and
+                    // anything wider eats the gap to neighboring words
+                    let horizontal_outset = px(1.);
+                    // Inset vertically so the chip hugs the glyphs like a badge
+                    // instead of filling the whole line box
+                    let vertical_inset = bounds.size.height * 0.1;
+                    let chip_bounds = Bounds {
+                        origin: point(
+                            bounds.origin.x - horizontal_outset,
+                            bounds.origin.y + vertical_inset,
+                        ),
+                        size: size(
+                            bounds.size.width + horizontal_outset * 2.,
+                            bounds.size.height - vertical_inset * 2.,
+                        ),
+                    };
+                    window.paint_quad(quad(
+                        chip_bounds,
+                        self.code_chip_corner_radius,
+                        *color,
+                        Edges::default(),
+                        Hsla::transparent_black(),
+                        BorderStyle::default(),
+                    ));
+                },
+            );
+        }
+    }
+
     fn paint_highlights(&self, window: &mut Window) {
         if self.highlights.is_empty() {
             return;
@@ -4080,18 +4297,33 @@ impl RenderedLine {
         &self,
         wrapped_line_segments: &[WrappedLineSegment],
         range: Range<usize>,
-        mut f: impl FnMut(Bounds<Pixels>),
+        f: impl FnMut(Bounds<Pixels>),
     ) {
         if range.start >= range.end {
             return;
         }
 
+        let rendered_start = self.rendered_index_for_source_index(range.start);
+        let rendered_end = self.rendered_index_for_source_index(range.end);
+        self.for_each_bounds_in_rendered_range(
+            wrapped_line_segments,
+            rendered_start..rendered_end,
+            f,
+        );
+    }
+
+    fn for_each_bounds_in_rendered_range(
+        &self,
+        wrapped_line_segments: &[WrappedLineSegment],
+        rendered_range: Range<usize>,
+        mut f: impl FnMut(Bounds<Pixels>),
+    ) {
         let layout = &self.layout;
         let line_bounds = layout.bounds();
         let line_height = layout.line_height();
 
-        let rendered_start = self.rendered_index_for_source_index(range.start);
-        let rendered_end = self.rendered_index_for_source_index(range.end);
+        let rendered_start = rendered_range.start;
+        let rendered_end = rendered_range.end;
 
         for wrapped_line_segment in wrapped_line_segments {
             if wrapped_line_segment.start >= rendered_end {
@@ -4837,6 +5069,88 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_non_rendered_source_ranges(cx: &mut TestAppContext) {
+        let source = "[@octocat](https://github.com/octocat) https://github.com/octocat";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..1, 9..38]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_reference_definitions(cx: &mut TestAppContext) {
+        let source = "[@octocat][octocat]\n\n[octocat]: https://github.com/octocat";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..1, 9..19, 21..58]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_images(cx: &mut TestAppContext) {
+        let source = "![alt](https://example.com/img.png \"title\")";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..source.len()]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_linked_images(cx: &mut TestAppContext) {
+        let source = "[![alt](https://example.com/img.png)](https://example.com/dest)";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges()),
+            vec![0..source.len()]
+        );
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_for_image_between_link_text(cx: &mut TestAppContext) {
+        let source = "[before ![alt](https://example.com/img.png) after](https://example.com/dest)";
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let ranges = markdown.read_with(cx, |markdown, _| markdown.non_rendered_source_ranges());
+        assert_eq!(ranges, vec![0..1, 8..43, 49..source.len()]);
+        assert_eq!(&source[1..8], "before ");
+        assert_eq!(&source[43..49], " after");
+    }
+
+    #[gpui::test]
+    fn test_non_rendered_source_ranges_are_empty_while_parsing(cx: &mut TestAppContext) {
+        let markdown =
+            cx.new(|cx| Markdown::new("[a](https://example.com)".into(), None, None, cx));
+        cx.run_until_parked();
+
+        markdown.update(cx, |markdown, cx| {
+            markdown.reset("[bb](https://example.com)".into(), cx);
+            assert!(markdown.is_parsing());
+            assert_eq!(
+                markdown.non_rendered_source_ranges(),
+                Vec::<Range<usize>>::new()
+            );
+        });
+
+        cx.run_until_parked();
+        markdown.update(cx, |markdown, _| {
+            assert!(!markdown.is_parsing());
+            assert_eq!(markdown.non_rendered_source_ranges(), vec![0..1, 3..25]);
+        });
+    }
+
+    #[gpui::test]
     fn test_wrapped_code_block_has_no_scroll_handle(cx: &mut TestAppContext) {
         let markdown =
             cx.new(|cx| Markdown::new("```rust\nlet value = 1;\n```".into(), None, None, cx));
@@ -4849,6 +5163,78 @@ mod tests {
 
             markdown.toggle_code_block_wrap(0);
             assert!(markdown.code_block_scroll_handle(0).is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn test_fallback_language_highlights_untagged_code_blocks(cx: &mut TestAppContext) {
+        let language = language::rust_lang();
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+
+        let source = indoc::indoc! {"
+            ```
+            fn main() {}
+            ```
+        "};
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                source.into(),
+                Some(language_registry),
+                Some(language.name()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            let fallback = markdown
+                .parsed_markdown()
+                .fallback_code_block_language
+                .as_ref()
+                .expect("the fallback language must be resolved for untagged code blocks");
+            assert_eq!(fallback.name(), language.name());
+            assert_eq!(
+                markdown
+                    .first_code_block_language()
+                    .map(|language| language.name()),
+                Some(language.name()),
+                "untagged code blocks must resolve to the fallback language"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_no_fallback_language_without_untagged_code_blocks(cx: &mut TestAppContext) {
+        let language = language::rust_lang();
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(language.clone());
+
+        let source = indoc::indoc! {"
+            ```rust
+            fn main() {}
+            ```
+        "};
+        let markdown = cx.new(|cx| {
+            Markdown::new(
+                source.into(),
+                Some(language_registry),
+                Some(language.name()),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        markdown.read_with(cx, |markdown, _| {
+            assert_eq!(
+                markdown
+                    .parsed_markdown()
+                    .fallback_code_block_language
+                    .as_ref()
+                    .map(|language| language.name()),
+                None,
+                "The fallback language must not be loaded when no code block needs it"
+            );
         });
     }
 
@@ -4940,6 +5326,59 @@ mod tests {
         });
         cx.run_until_parked();
         render_markdown_entity_in_view(markdown, MarkdownStyle::default(), None, None, cx)
+    }
+
+    fn rendered_code_chips(
+        markdown: &str,
+        style: MarkdownStyle,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, Hsla)> {
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
+        cx.run_until_parked();
+        let rendered = render_markdown_entity_in_view(markdown, style, None, None, cx);
+        rendered
+            .lines
+            .iter()
+            .flat_map(|line| {
+                let text = line.layout.text();
+                line.code_chips
+                    .iter()
+                    .map(|(range, color)| (text[range.clone()].to_string(), *color))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn test_inline_code_chips_cover_exactly_the_code_span_glyphs(cx: &mut TestAppContext) {
+        let chip_background = gpui::red();
+        let style_with_chips = || MarkdownStyle {
+            inline_code: TextStyleRefinement {
+                background_color: Some(chip_background),
+                ..Default::default()
+            },
+            inline_code_corner_radius: px(4.),
+            ..Default::default()
+        };
+
+        // Chip ranges are rendered indices, so each chip must cover the code
+        // span's glyphs exactly, unaffected by the unrendered backticks.
+        assert_eq!(
+            rendered_code_chips("one `two` three `four`", style_with_chips(), cx),
+            vec![
+                ("two".to_string(), chip_background),
+                ("four".to_string(), chip_background)
+            ]
+        );
+
+        // Without a corner radius, backgrounds stay on the text runs and no
+        // chips are recorded.
+        let sharp_style = MarkdownStyle {
+            inline_code_corner_radius: px(0.),
+            ..style_with_chips()
+        };
+        assert_eq!(rendered_code_chips("one `two`", sharp_style, cx), vec![]);
     }
 
     fn render_markdown_with_image_resolver(
