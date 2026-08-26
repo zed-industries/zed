@@ -520,9 +520,10 @@ mod environment_source_tests {
             distro_name: "ubuntu".to_string(),
             user: Some("zed".to_string()),
         };
-        let host = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::with_connection_options(
-            remote::RemoteConnectionOptions::Wsl(distro.clone()),
-        )));
+        let host =
+            DevContainerHost::Remote(Arc::new(FakeRemoteConnection::with_connection_options(
+                remote::RemoteConnectionOptions::Wsl(distro.clone()),
+            )));
         assert_eq!(
             host.docker_host().unwrap(),
             remote::DockerHost::Wsl(distro),
