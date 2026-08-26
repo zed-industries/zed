@@ -2761,7 +2761,8 @@ impl GitRepository for RealGitRepository {
                 git_directory,
                 executor.clone(),
                 is_trusted,
-            );
+            )
+            .interactive(ask_pass.is_interactive());
             let mut command = git.build_command(&["push"]);
             command
                 .envs(env.iter())
@@ -2804,7 +2805,8 @@ impl GitRepository for RealGitRepository {
                 git_directory,
                 executor.clone(),
                 is_trusted,
-            );
+            )
+            .interactive(ask_pass.is_interactive());
             let mut command = git.build_command(&["pull"]);
             command.envs(env.iter());
 
@@ -2846,7 +2848,8 @@ impl GitRepository for RealGitRepository {
                 git_directory,
                 executor.clone(),
                 is_trusted,
-            );
+            )
+            .interactive(ask_pass.is_interactive());
             let mut command = git.build_command(&["fetch", &remote_name]);
             command
                 .envs(env.iter())
@@ -3784,6 +3787,7 @@ pub(crate) struct GitBinary {
     index_file_path: Option<PathBuf>,
     envs: HashMap<String, String>,
     is_trusted: bool,
+    interactive: bool,
 }
 
 impl GitBinary {
@@ -3802,11 +3806,19 @@ impl GitBinary {
             index_file_path: None,
             envs: HashMap::default(),
             is_trusted,
+            interactive: true,
         }
     }
 
     fn envs(mut self, envs: HashMap<String, String>) -> Self {
         self.envs = envs;
+        self
+    }
+
+    /// Mirrors [`AskPassDelegate::is_interactive`]. When false, git is stopped
+    /// from raising prompts of its own, which nothing would be able to answer.
+    fn interactive(mut self, interactive: bool) -> Self {
+        self.interactive = interactive;
         self
     }
 
@@ -3900,6 +3912,16 @@ impl GitBinary {
             command.args(["-c", "protocol.ext.allow=never"]);
             command.args(["-c", "diff.external="]);
         }
+        if !self.interactive {
+            // Narrower than clearing `credential.helper`, which would also disable
+            // helpers that answer from a keychain without prompting — exactly what
+            // makes an unattended fetch useful. Only prompting is forbidden.
+            command.args(["-c", "credential.interactive=false"]);
+            // Auto-maintenance can repack the entire repository, far outweighing
+            // the fetch that triggered it. A background caller should not start
+            // that work on the user's behalf.
+            command.args(["-c", "gc.auto=0"]);
+        }
         command.args(args);
 
         // If the `diff` command is being used, we'll want to add the
@@ -3931,6 +3953,19 @@ async fn run_git_command(
     mut command: util::command::Command,
     executor: BackgroundExecutor,
 ) -> Result<RemoteCommandOutput> {
+    if !ask_pass.is_interactive() {
+        // Set here rather than in `build_command` so it lands after the project
+        // environment has been applied and cannot be overridden by it.
+        command.env("GIT_TERMINAL_PROMPT", "0");
+        // A caller with no user attached can be dropped at any time (a settings
+        // change restarting the auto-fetch timer, repository teardown). Dropping
+        // the task cancels the future, but not the child, so without this the git
+        // process outlives it and keeps holding ref locks untracked. Deliberately
+        // not applied to interactive commands: killing `commit` or `pull` partway
+        // can leave a stale `index.lock` behind, so those are better off finishing.
+        command.kill_on_drop(true);
+    }
+
     if env.contains_key("GIT_ASKPASS") {
         let git_process = command.spawn()?;
         let output = git_process.output().await?;

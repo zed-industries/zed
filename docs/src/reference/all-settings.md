@@ -2678,6 +2678,35 @@ Example:
 }
 ```
 
+### Auto Fetch
+
+- Description: Whether to automatically fetch from all remotes in the background. Auto-fetch never prompts for credentials, so it relies on credentials that can be supplied without interaction, such as an SSH agent or a credential helper answering from a keychain. It is also disabled for repositories in worktrees you have not trusted.
+- Setting: `auto_fetch`
+- Default: `false`
+
+```json [settings]
+{
+  "git": {
+    "auto_fetch": true
+  }
+}
+```
+
+### Auto Fetch Interval Secs
+
+- Description: How often to automatically fetch from all remotes, in seconds. Only applies when `auto_fetch` is enabled. Values below 15 are clamped to 15.
+- Setting: `auto_fetch_interval_secs`
+- Default: `60`
+
+```json [settings]
+{
+  "git": {
+    "auto_fetch": true,
+    "auto_fetch_interval_secs": 300
+  }
+}
+```
+
 ## Go to Definition Fallback
 
 - Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition

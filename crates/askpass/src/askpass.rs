@@ -52,6 +52,7 @@ pub struct AskPassDelegate {
     tx: mpsc::UnboundedSender<PasswordPrompt>,
     executor: BackgroundExecutor,
     _task: Task<()>,
+    interactive: bool,
 }
 
 impl AskPassDelegate {
@@ -88,7 +89,26 @@ impl AskPassDelegate {
             tx,
             _task: task,
             executor: cx.background_executor().clone(),
+            interactive: true,
         }
+    }
+
+    /// A delegate for operations that run without a user attached, such as
+    /// background auto-fetch. Prompts are never answered, and callers use
+    /// [`Self::is_interactive`] to stop git from raising its own prompts.
+    pub fn no_op(cx: &mut AsyncApp) -> Self {
+        let mut this = Self::new(cx, |_prompt, _tx, _cx| {
+            // Drop tx without sending — causes fetch to fail if credentials are needed
+        });
+        this.interactive = false;
+        this
+    }
+
+    /// Whether there is a user who can answer a prompt. When false, git itself
+    /// must also be prevented from prompting, or it will block on a dialog or
+    /// terminal read that nothing will ever respond to.
+    pub fn is_interactive(&self) -> bool {
+        self.interactive
     }
 
     pub fn ask_password(&self, prompt: String) -> Task<Option<EncryptedPassword>> {
