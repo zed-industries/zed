@@ -143,7 +143,7 @@ impl Default for MarkdownStyle {
             code_block: Default::default(),
             code_block_overflow_x_scroll: false,
             inline_code: Default::default(),
-            inline_code_corner_radius: px(0.),
+            inline_code_corner_radius: px(4.),
             block_quote: Default::default(),
             link: Default::default(),
             link_callback: None,
@@ -307,7 +307,6 @@ impl MarkdownStyle {
                 }),
                 ..Default::default()
             },
-            inline_code_corner_radius: px(4.),
             soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
             heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
                 HeadingLevelStyles {
@@ -6617,16 +6616,19 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_themed_inline_code_is_rounded(cx: &mut TestAppContext) {
+    fn test_inline_code_is_rounded_for_every_style(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         cx.update(|window, cx| {
-            for font in [
+            let themed_styles = [
                 MarkdownFont::Agent,
                 MarkdownFont::Preview,
                 MarkdownFont::Editor,
-            ] {
-                let style = MarkdownStyle::themed(font, window, cx);
+            ]
+            .map(|font| MarkdownStyle::themed(font, window, cx));
+            // Surfaces like hover popovers and notifications build their own
+            // style rather than calling `themed`, so the default must round too
+            for style in themed_styles.iter().chain([&MarkdownStyle::default()]) {
                 assert!(
                     style.inline_code_corner_radius > px(0.),
                     "inline code chips must be rounded, got {:?}",
