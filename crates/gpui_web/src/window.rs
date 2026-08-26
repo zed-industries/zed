@@ -1,5 +1,7 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::events::{
+    ClickState, EventListenerHandle, TouchDrag, WebEventListeners, is_mac_platform,
+};
 use crate::ime_mirror::ImeMirror;
 use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
@@ -63,6 +65,11 @@ pub(crate) struct WebWindowInner {
     /// synchronously from inside an input dispatch, and a `RefCell`
     /// double-borrow panic on wasm never unwinds, wedging the app.
     pub(crate) suppress_focus_status_events: Cell<bool>,
+    pub(crate) touch_drag: Cell<TouchDrag>,
+    pub(crate) touch_start: Cell<Point<Pixels>>,
+    pub(crate) touch_last: Cell<Point<Pixels>>,
+    pub(crate) long_press_timer: Cell<Option<i32>>,
+    pub(crate) long_press_callback: RefCell<Option<Closure<dyn FnMut()>>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
@@ -185,6 +192,11 @@ impl WebWindow {
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
             suppress_focus_status_events: Cell::new(false),
+            touch_drag: Cell::new(TouchDrag::None),
+            touch_start: Cell::new(Point::default()),
+            touch_last: Cell::new(Point::default()),
+            long_press_timer: Cell::new(None),
+            long_press_callback: RefCell::new(None),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
@@ -799,7 +811,9 @@ impl PlatformWindow for WebWindow {
         Some(self.inner.state.borrow().renderer.gpu_specs())
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {}
+    fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+        self.inner.ime_mirror.set_caret_bounds(bounds);
+    }
 
     fn request_decorations(&self, _decorations: WindowDecorations) {}
 

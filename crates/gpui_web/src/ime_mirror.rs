@@ -113,7 +113,6 @@ impl ImeMirror {
             ("caret-color", "transparent"),
             ("color", "transparent"),
             ("pointer-events", "none"),
-            ("clip-path", "inset(50%)"),
             // Android Chrome zooms onto a focused field smaller than 16px.
             ("font-size", "16px"),
         ] {
@@ -159,6 +158,26 @@ impl ImeMirror {
 
     pub(crate) fn set_read_only(&self, read_only: bool) {
         self.element.set_read_only(read_only);
+    }
+
+    /// Park the hidden field on the focused caret. iOS dismisses the
+    /// keyboard if the focused control is a clipped 1px box at (0,0).
+    pub(crate) fn set_caret_bounds(&self, bounds: gpui::Bounds<gpui::Pixels>) {
+        let style = self.element.style();
+        let top = f32::from(bounds.origin.y).max(0.0);
+        let left = f32::from(bounds.origin.x).max(0.0);
+        let width = f32::from(bounds.size.width).max(16.0);
+        let height = f32::from(bounds.size.height).max(16.0);
+        for (property, value) in [
+            ("top", format!("{top}px")),
+            ("left", format!("{left}px")),
+            ("width", format!("{width}px")),
+            ("height", format!("{height}px")),
+        ] {
+            style
+                .set_property_with_priority(property, &value, "important")
+                .ok();
+        }
     }
 
     pub(crate) fn remove(&self) {
