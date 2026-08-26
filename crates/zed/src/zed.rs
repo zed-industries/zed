@@ -474,7 +474,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         }
 
         cx.spawn_in(window, async move |_this, cx| {
-            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
             loop {
                 cx.background_executor().timer(TELEMETRY_INTERVAL).await;
                 if cx
@@ -1870,13 +1870,7 @@ fn quit(_: &Quit, cx: &mut App) {
         for window in &workspace_windows {
             window
                 .update(cx, |multi_workspace, window, cx| {
-                    for workspace in multi_workspace.workspaces() {
-                        flush_tasks.push(workspace.update(cx, |workspace, cx| {
-                            workspace.flush_serialization(window, cx)
-                        }));
-                    }
-                    flush_tasks.append(&mut multi_workspace.take_pending_removal_tasks());
-                    flush_tasks.push(multi_workspace.flush_serialization());
+                    flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
                 })
                 .log_err();
         }
