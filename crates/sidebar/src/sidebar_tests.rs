@@ -1849,6 +1849,25 @@ async fn test_reopening_terminal_group_reuses_restored_terminal(cx: &mut TestApp
         "with no restored terminal, the post-open path must create a new one",
     );
 
+    panel.update(cx, |panel, _cx| {
+        panel.set_terminal_restore_pending_for_tests(true);
+    });
+    sidebar.read_with(cx, |sidebar, cx| {
+        assert!(
+            sidebar.should_reuse_restored_entry(&workspace, NewEntryTarget::Terminal, cx),
+            "a pending terminal restoration must be reused, not duplicated",
+        );
+        let should_reuse_last_created_kind =
+            sidebar.should_reuse_restored_entry(&workspace, NewEntryTarget::LastCreatedKind, cx);
+        assert!(
+            should_reuse_last_created_kind,
+            "LastCreatedKind resolving to a pending terminal must reuse it",
+        );
+    });
+    panel.update(cx, |panel, _cx| {
+        panel.set_terminal_restore_pending_for_tests(false);
+    });
+
     // Stand in for the terminal the agent panel restores when the workspace
     // reopens. `insert_test_terminal` also sets the panel's last-created-entry
     // kind to Terminal, so the sidebar's `LastCreatedKind` target resolves to

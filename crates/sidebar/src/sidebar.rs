@@ -534,14 +534,11 @@ fn workspace_path_list(workspace: &Entity<Workspace>, cx: &App) -> PathList {
     PathList::new(&workspace.read(cx).root_paths(cx))
 }
 
-/// Whether the workspace's agent panel currently shows a terminal as its
-/// active surface — true after opening a workspace whose last-active session
-/// was a terminal thread.
-fn workspace_has_active_terminal(workspace: &Entity<Workspace>, cx: &App) -> bool {
+fn workspace_has_active_or_pending_terminal(workspace: &Entity<Workspace>, cx: &App) -> bool {
     workspace
         .read(cx)
         .panel::<AgentPanel>(cx)
-        .is_some_and(|panel| panel.read(cx).active_terminal_id().is_some())
+        .is_some_and(|panel| panel.read(cx).has_active_or_pending_terminal())
 }
 
 fn linked_worktree_path_lists_for_workspaces(
@@ -6896,7 +6893,7 @@ impl Sidebar {
             }
         };
 
-        wants_terminal && workspace_has_active_terminal(workspace, cx)
+        wants_terminal && workspace_has_active_or_pending_terminal(workspace, cx)
     }
 
     /// Activates a freshly-opened workspace whose panel already restored the
