@@ -653,7 +653,7 @@ fn handle_file_permalink(
     cx: &mut App,
 ) {
     let permalink_task = project.update(cx, |project, cx| {
-        project.get_permalink(&project_path, None, cx)
+        project.get_file_permalink(&project_path, cx)
     });
 
     window

@@ -5293,14 +5293,13 @@ impl Project {
         })
     }
 
-    pub fn get_permalink(
+    pub fn get_file_permalink(
         &self,
         project_path: &ProjectPath,
-        selection: Option<Range<u32>>,
         cx: &mut App,
     ) -> Task<Result<url::Url>> {
         self.git_store.update(cx, |git_store, cx| {
-            git_store.get_permalink(project_path, selection, cx)
+            git_store.get_file_permalink(project_path, cx)
         })
     }
 

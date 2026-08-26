@@ -741,6 +741,23 @@ pub enum RepositoryState {
     Remote(RemoteRepositoryState),
 }
 
+enum PermalinkTarget {
+    Buffer {
+        buffer_id: BufferId,
+        selection: Range<u32>,
+    },
+    File(ProjectPath),
+}
+
+impl PermalinkTarget {
+    fn selection(&self) -> Option<Range<u32>> {
+        match self {
+            Self::Buffer { selection, .. } => Some(selection.clone()),
+            Self::File(_) => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GitGraphEvent {
     CountUpdated(usize),
@@ -986,6 +1003,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_open_unstaged_diff);
         client.add_entity_request_handler(Self::handle_open_uncommitted_diff);
         client.add_entity_message_handler(Self::handle_update_diff_bases);
+        client.add_entity_request_handler(Self::handle_get_file_permalink);
         client.add_entity_request_handler(Self::handle_get_permalink_to_line);
         client.add_entity_request_handler(Self::handle_blame_buffer);
         client.add_entity_request_handler(Self::handle_blame_buffer_at_revision);
@@ -2178,7 +2196,15 @@ impl GitStore {
         if let Some((repo, repo_path)) =
             self.repository_and_path_for_project_path(&project_path, cx)
         {
-            return self.build_permalink(repo, repo_path, &project_path, Some(selection), cx);
+            return self.build_permalink(
+                repo,
+                repo_path,
+                PermalinkTarget::Buffer {
+                    buffer_id: buffer.read(cx).remote_id(),
+                    selection,
+                },
+                cx,
+            );
         }
 
         // If we're not in a Git repo, check whether this is a Rust source
@@ -2195,33 +2221,35 @@ impl GitStore {
         let file_path = file.worktree.read(cx).absolutize(&file.path);
         cx.spawn(async move |cx| {
             let provider_registry = cx.update(GitHostingProviderRegistry::default_global);
-            get_permalink_in_rust_registry_src(provider_registry, file_path, Some(selection))
+            get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
                 .context("no permalink available")
         })
     }
 
-    pub fn get_permalink(
+    pub fn get_file_permalink(
         &self,
         project_path: &ProjectPath,
-        selection: Option<Range<u32>>,
         cx: &mut App,
     ) -> Task<Result<url::Url>> {
         let Some((repo, repo_path)) = self.repository_and_path_for_project_path(project_path, cx)
         else {
             return Task::ready(Err(anyhow!("no permalink available")));
         };
-        self.build_permalink(repo, repo_path, project_path, selection, cx)
+        self.build_permalink(
+            repo,
+            repo_path,
+            PermalinkTarget::File(project_path.clone()),
+            cx,
+        )
     }
 
     fn build_permalink(
         &self,
         repo: Entity<Repository>,
         repo_path: RepoPath,
-        project_path: &ProjectPath,
-        selection: Option<Range<u32>>,
+        target: PermalinkTarget,
         cx: &mut App,
     ) -> Task<Result<url::Url>> {
-        let path_proto = project_path.to_proto();
         let branch = repo.read(cx).branch.clone();
         let remote = branch
             .as_ref()
@@ -2250,23 +2278,39 @@ impl GitStore {
 
                         Ok(provider.build_permalink(
                             remote,
-                            BuildPermalinkParams::new(&sha, &repo_path, selection),
+                            BuildPermalinkParams::new(&sha, &repo_path, target.selection()),
                         ))
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
-                        let response = client
-                            .request(proto::GetPermalinkToLine {
-                                project_id: project_id.to_proto(),
-                                buffer_id: None,
-                                selection: selection.map(|selection| proto::Range {
-                                    start: selection.start as u64,
-                                    end: selection.end as u64,
-                                }),
-                                path: Some(path_proto),
-                            })
-                            .await?;
+                        let permalink = match target {
+                            PermalinkTarget::Buffer {
+                                buffer_id,
+                                selection,
+                            } => {
+                                client
+                                    .request(proto::GetPermalinkToLine {
+                                        project_id: project_id.to_proto(),
+                                        buffer_id: buffer_id.into(),
+                                        selection: Some(proto::Range {
+                                            start: selection.start as u64,
+                                            end: selection.end as u64,
+                                        }),
+                                    })
+                                    .await?
+                                    .permalink
+                            }
+                            PermalinkTarget::File(project_path) => {
+                                client
+                                    .request(proto::GetFilePermalink {
+                                        project_id: project_id.to_proto(),
+                                        path: Some(project_path.to_proto()),
+                                    })
+                                    .await?
+                                    .permalink
+                            }
+                        };
 
-                        url::Url::parse(&response.permalink).context("failed to parse permalink")
+                        url::Url::parse(&permalink).context("failed to parse permalink")
                     }
                 }
             })
@@ -4861,33 +4905,43 @@ impl GitStore {
         envelope: TypedEnvelope<proto::GetPermalinkToLine>,
         mut cx: AsyncApp,
     ) -> Result<proto::GetPermalinkToLineResponse> {
-        let selection = envelope
-            .payload
-            .selection
-            .map(|selection| selection.start as u32..selection.end as u32);
-
-        let permalink = if let Some(path) = envelope.payload.path.and_then(ProjectPath::from_proto)
-        {
-            this.update(&mut cx, |this, cx| this.get_permalink(&path, selection, cx))
-                .await?
-        } else {
-            let buffer_id = BufferId::new(
-                envelope
-                    .payload
-                    .buffer_id
-                    .context("GetPermalinkToLine requires buffer_id or path")?,
-            )?;
-            let buffer = this.read_with(&cx, |this, cx| {
-                this.buffer_store.read(cx).get_existing(buffer_id)
-            })?;
-            let selection = selection.context("no selection to get permalink for defined")?;
-            this.update(&mut cx, |this, cx| {
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        let selection = {
+            let selection = envelope
+                .payload
+                .selection
+                .context("no selection to get permalink for defined")?;
+            selection.start as u32..selection.end as u32
+        };
+        let buffer = this.read_with(&cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })?;
+        let permalink = this
+            .update(&mut cx, |this, cx| {
                 this.get_permalink_to_line(&buffer, selection, cx)
             })
-            .await?
-        };
+            .await?;
 
         Ok(proto::GetPermalinkToLineResponse {
+            permalink: permalink.to_string(),
+        })
+    }
+
+    async fn handle_get_file_permalink(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GetFilePermalink>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GetFilePermalinkResponse> {
+        let path = envelope
+            .payload
+            .path
+            .context("GetFilePermalink requires a path")?;
+        let path = ProjectPath::from_proto(path).context("invalid file permalink path")?;
+        let permalink = this
+            .update(&mut cx, |this, cx| this.get_file_permalink(&path, cx))
+            .await?;
+
+        Ok(proto::GetFilePermalinkResponse {
             permalink: permalink.to_string(),
         })
     }
@@ -10747,7 +10801,7 @@ pub fn linked_worktree_short_name(
 fn get_permalink_in_rust_registry_src(
     provider_registry: Arc<GitHostingProviderRegistry>,
     path: PathBuf,
-    selection: Option<Range<u32>>,
+    selection: Range<u32>,
 ) -> Result<url::Url> {
     #[derive(Deserialize)]
     struct CargoVcsGit {
@@ -10789,7 +10843,7 @@ fn get_permalink_in_rust_registry_src(
             &RepoPath::from_rel_path(
                 &RelPath::new(&path, PathStyle::local()).context("invalid path")?,
             ),
-            selection,
+            Some(selection),
         ),
     );
     Ok(permalink)
@@ -11455,7 +11509,7 @@ mod tests {
 
         let permalink = project
             .update(cx, |project, cx| {
-                project.get_permalink(&project_path, None, cx)
+                project.get_file_permalink(&project_path, cx)
             })
             .await
             .unwrap();
@@ -11465,14 +11519,6 @@ mod tests {
             &format!("https://github.com/zed-industries/zed/blob/{sha}/src/main.rs")
         );
         assert!(permalink.fragment().is_none());
-
-        let permalink_with_selection = project
-            .update(cx, |project, cx| {
-                project.get_permalink(&project_path, Some(0..0), cx)
-            })
-            .await
-            .unwrap();
-        assert_eq!(permalink_with_selection.fragment(), Some("L1"));
     }
 
     #[gpui::test]
