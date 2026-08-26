@@ -827,6 +827,10 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
+    /// Records that the current pointer gesture targeted editable text.
+    /// Mobile web platforms use this synchronous signal to open the software
+    /// keyboard while the browser's user gesture is still active.
+    fn request_text_input(&self) {}
     fn prompt(
         &self,
         level: PromptLevel,

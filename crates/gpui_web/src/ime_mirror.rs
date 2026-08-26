@@ -91,8 +91,7 @@ impl ImeMirror {
             .map_err(|e| anyhow::anyhow!("Created element is not a textarea: {e:?}"))?;
         // Host `input`/`textarea` CSS must not unhide this. iOS also pops
         // the software keyboard for a focused 1px field unless it starts
-        // read-only; `sync_virtual_keyboard` clears that when a GPUI text
-        // field actually takes focus.
+        // read-only; a focused GPUI text element explicitly activates it.
         element
             .set_attribute("data-gpui-input", "")
             .map_err(|e| anyhow::anyhow!("Failed to mark the IME element: {e:?}"))?;
@@ -118,7 +117,9 @@ impl ImeMirror {
         ] {
             style
                 .set_property_with_priority(property, value, "important")
-                .map_err(|e| anyhow::anyhow!("Failed to hide the IME element ({property}): {e:?}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to hide the IME element ({property}): {e:?}")
+                })?;
         }
         // The element is an IME conduit, not a form field: browser-side text
         // assistance would mutate it behind the app's back.
@@ -129,7 +130,6 @@ impl ImeMirror {
         element.set_read_only(true);
         body.append_child(&element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        element.focus().ok();
 
         Ok(Self {
             element,

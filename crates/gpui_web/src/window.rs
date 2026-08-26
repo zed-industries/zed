@@ -59,13 +59,11 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
-    /// Set while `sync_virtual_keyboard` blur/focus-cycles the hidden input.
-    /// The cycle is a keyboard-visibility hint, not a real activity change;
-    /// letting the focus/blur listeners report it would re-enter GPUI
-    /// synchronously from inside an input dispatch, and a `RefCell`
-    /// double-borrow panic on wasm never unwinds, wedging the app.
+    /// Set while the hidden input changes focus only to show or hide the IME.
     pub(crate) suppress_focus_status_events: Cell<bool>,
+    pub(crate) text_input_requested: Cell<bool>,
     pub(crate) touch_drag: Cell<TouchDrag>,
+    pub(crate) active_touch_id: Cell<Option<i32>>,
     pub(crate) touch_start: Cell<Point<Pixels>>,
     pub(crate) touch_last: Cell<Point<Pixels>>,
     pub(crate) long_press_timer: Cell<Option<i32>>,
@@ -192,7 +190,9 @@ impl WebWindow {
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
             suppress_focus_status_events: Cell::new(false),
+            text_input_requested: Cell::new(false),
             touch_drag: Cell::new(TouchDrag::None),
+            active_touch_id: Cell::new(None),
             touch_start: Cell::new(Point::default()),
             touch_last: Cell::new(Point::default()),
             long_press_timer: Cell::new(None),
@@ -660,6 +660,10 @@ impl PlatformWindow for WebWindow {
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.inner.state.borrow_mut().input_handler.take()
+    }
+
+    fn request_text_input(&self) {
+        self.inner.text_input_requested.set(true);
     }
 
     fn prompt(

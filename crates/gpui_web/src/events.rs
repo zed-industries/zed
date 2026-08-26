@@ -142,6 +142,8 @@ impl WebWindowInner {
         let mut handles = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
+            self.register_pointer_cancel("pointercancel"),
+            self.register_pointer_cancel("lostpointercapture"),
             self.register_pointer_move(),
             self.register_pointer_leave(),
             self.register_wheel(),
@@ -212,23 +214,29 @@ impl WebWindowInner {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
 
-            // Capture the pointer so drags that leave the canvas keep
-            // delivering pointermove/pointerup here; otherwise a release
-            // outside the canvas is never seen and `pressed_button` stays
-            // stuck. The capture is released implicitly on pointerup.
-            this.canvas.set_pointer_capture(event.pointer_id()).ok();
-
             let button = dom_mouse_button_to_gpui(event.button());
             let position = pointer_position_in_element(&event);
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
 
             if event.pointer_type() == "touch" {
+                if this.active_touch_id.get().is_some() {
+                    return;
+                }
+                this.active_touch_id.set(Some(event.pointer_id()));
+                this.canvas.set_pointer_capture(event.pointer_id()).ok();
                 this.begin_touch(position, button, modifiers);
                 return;
             }
 
+            // Capture the pointer so drags that leave the canvas keep
+            // delivering pointermove/pointerup here. Pointerup releases it.
+            this.canvas.set_pointer_capture(event.pointer_id()).ok();
             this.ime_mirror.focus();
-            this.dispatch_mouse_down(position, button, modifiers);
+            let click_count = this
+                .click_state
+                .borrow_mut()
+                .register_click(position, js_sys::Date::now());
+            this.dispatch_mouse_down(position, button, modifiers, click_count);
         })
     }
 
@@ -243,7 +251,7 @@ impl WebWindowInner {
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
 
             if event.pointer_type() == "touch" {
-                this.end_touch(position, button, modifiers);
+                this.end_touch(event.pointer_id(), position, button, modifiers);
                 return;
             }
 
@@ -271,33 +279,19 @@ impl WebWindowInner {
         ImeMirror::schedule_sync(self);
     }
 
-    /// Aligns the software keyboard with GPUI's focus after a touch tap.
-    ///
-    /// Mobile browsers show the keyboard only when an editable element is
-    /// focused from within a user gesture, so this runs while the tap's
-    /// `pointerup` is still on the stack (by which point GPUI has usually
-    /// painted a frame since the `MouseDown`, so the input handler reflects
-    /// the tap's focus change). `readOnly` suppresses the keyboard while
-    /// keeping hardware key events flowing to the hidden input; the
-    /// blur/focus cycle is what makes the browser re-evaluate keyboard
-    /// visibility, since `focus()` on an already-focused element is a no-op.
-    ///
-    /// We don't use `navigator.virtualKeyboard` here because it's
-    /// Chromium-only.
-    fn sync_virtual_keyboard(&self) {
-        let editable = self.state.borrow().input_handler.is_some();
-        let was_editable = !self.ime_mirror.read_only();
-        self.ime_mirror.set_read_only(!editable);
-        if editable == was_editable {
-            return;
-        }
-        // Do not blur-then-focus: iOS treats that blur as "dismiss the
-        // keyboard" and the following focus often loses the user gesture.
-        // Touch down never focuses the mirror, so this focus() is the
-        // gesture's first real focus and the keyboard stays.
-        if editable {
+    /// Shows the software keyboard only when the tapped element synchronously
+    /// requested text input. Reading `input_handler` here is too late for the
+    /// browser gesture but too early for GPUI's next paint.
+    fn finish_text_input_request(&self) {
+        let active = self.text_input_requested.replace(false);
+        self.ime_mirror.set_read_only(!active);
+        self.suppress_focus_status_events.set(true);
+        if active {
             self.ime_mirror.focus();
+        } else {
+            self.ime_mirror.blur();
         }
+        self.suppress_focus_status_events.set(false);
     }
 
     fn dispatch_mouse_down(
@@ -305,10 +299,9 @@ impl WebWindowInner {
         position: Point<Pixels>,
         button: MouseButton,
         modifiers: Modifiers,
+        click_count: usize,
     ) {
-        let time = js_sys::Date::now();
         self.pressed_button.set(Some(button));
-        let click_count = self.click_state.borrow_mut().register_click(position, time);
         {
             let mut current_state = self.state.borrow_mut();
             current_state.mouse_position = position;
@@ -342,7 +335,10 @@ impl WebWindowInner {
         self.schedule_long_press();
     }
 
-    fn move_touch(&self, position: Point<Pixels>, modifiers: Modifiers) {
+    fn move_touch(&self, pointer_id: i32, position: Point<Pixels>, modifiers: Modifiers) {
+        if self.active_touch_id.get() != Some(pointer_id) {
+            return;
+        }
         {
             let mut current_state = self.state.borrow_mut();
             current_state.mouse_position = position;
@@ -379,10 +375,14 @@ impl WebWindowInner {
 
     fn end_touch(
         self: &Rc<Self>,
+        pointer_id: i32,
         position: Point<Pixels>,
         button: MouseButton,
         modifiers: Modifiers,
     ) {
+        if self.active_touch_id.get() != Some(pointer_id) {
+            return;
+        }
         self.cancel_long_press();
         self.pressed_button.set(None);
         {
@@ -393,37 +393,36 @@ impl WebWindowInner {
         match self.touch_drag.get() {
             TouchDrag::Pending => {
                 let start = self.touch_start.get();
-                self.dispatch_mouse_down(start, button, modifiers);
+                self.text_input_requested.set(false);
+                self.dispatch_mouse_down(start, button, modifiers, 1);
                 self.pressed_button.set(None);
-                let click_count = self.click_state.borrow().current_count;
                 self.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
                     button,
                     position,
                     modifiers,
-                    click_count,
+                    click_count: 1,
                 }));
-                self.sync_virtual_keyboard();
+                self.finish_text_input_request();
             }
             TouchDrag::Pan => {
-                self.emit_touch_scroll(
-                    self.touch_last.get(),
-                    position,
-                    modifiers,
-                    TouchPhase::Ended,
-                );
+                let last = self.touch_last.get();
+                if last != position {
+                    self.emit_touch_scroll(last, position, modifiers, TouchPhase::Moved);
+                }
+                self.emit_touch_scroll(position, position, modifiers, TouchPhase::Ended);
             }
             TouchDrag::Select => {
-                let click_count = self.click_state.borrow().current_count;
                 self.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
                     button,
                     position,
                     modifiers,
-                    click_count,
+                    click_count: 2,
                 }));
             }
             TouchDrag::None => {}
         }
         self.touch_drag.set(TouchDrag::None);
+        self.active_touch_id.set(None);
         self.schedule_ime_mirror_sync();
     }
 
@@ -480,7 +479,44 @@ impl WebWindowInner {
         let position = self.touch_start.get();
         let modifiers = self.state.borrow().modifiers;
         let button = self.pressed_button.get().unwrap_or(MouseButton::Left);
-        self.dispatch_mouse_down(position, button, modifiers);
+        self.dispatch_mouse_down(position, button, modifiers, 2);
+    }
+
+    fn register_pointer_cancel(self: &Rc<Self>, event_name: &'static str) -> EventListenerHandle {
+        let this = Rc::clone(self);
+        self.listen(event_name, move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            if event.pointer_type() != "touch" {
+                return;
+            }
+            let position = pointer_position_in_element(&event);
+            let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
+            this.cancel_touch(event.pointer_id(), position, modifiers);
+        })
+    }
+
+    fn cancel_touch(&self, pointer_id: i32, position: Point<Pixels>, modifiers: Modifiers) {
+        if self.active_touch_id.get() != Some(pointer_id) {
+            return;
+        }
+        self.cancel_long_press();
+        self.pressed_button.set(None);
+        match self.touch_drag.get() {
+            TouchDrag::Pan => {
+                self.emit_touch_scroll(position, position, modifiers, TouchPhase::Cancelled);
+            }
+            TouchDrag::Select => {
+                self.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers,
+                    click_count: 2,
+                }));
+            }
+            TouchDrag::None | TouchDrag::Pending => {}
+        }
+        self.touch_drag.set(TouchDrag::None);
+        self.active_touch_id.set(None);
     }
 
     /// Dispatches a full key press for editing intents that arrive without a
@@ -511,7 +547,7 @@ impl WebWindowInner {
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
 
             if event.pointer_type() == "touch" {
-                this.move_touch(position, modifiers);
+                this.move_touch(event.pointer_id(), position, modifiers);
                 return;
             }
 

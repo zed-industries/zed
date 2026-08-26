@@ -2077,6 +2077,11 @@ impl Window {
         self.refresh();
     }
 
+    /// Requests platform text input for the element handling the current gesture.
+    pub fn request_text_input(&self) {
+        self.platform_window.request_text_input();
+    }
+
     /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self) {
         if !self.focus_enabled {
