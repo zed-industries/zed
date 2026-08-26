@@ -79,6 +79,15 @@ message GetPermalinkToLineResponse {
   string permalink = 1;
 }
 
+message GetFilePermalink {
+  uint64 project_id = 1;
+  ProjectPath path = 2;
+}
+
+message GetFilePermalinkResponse {
+  string permalink = 1;
+}
+
 message Branch {
   bool is_head = 1;
   string ref_name = 2;
