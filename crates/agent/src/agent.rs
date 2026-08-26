@@ -9,6 +9,7 @@ mod templates;
 mod tests;
 mod thread;
 mod thread_store;
+mod tool_guidance;
 mod tool_permissions;
 mod tools;
 

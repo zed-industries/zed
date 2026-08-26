@@ -1,0 +1,22 @@
+{{!-- The full model-facing description for the `create_directory` tool, rendered
+when the completion request is built and used in place of the tool's Rust doc
+comment. Out-of-project creation only exists when terminal commands are
+sandboxed, and only on platforms that can grant a not-yet-existing directory
+(Linux/macOS), so it is gated on both. The matching `reason` input is stripped
+from the schema at request-build time under the same conditions, since schemas
+aren't templates. --}}
+Creates a new directory at the specified path within the project. Returns confirmation that the directory was created.
+
+This tool creates a directory and all necessary parent directories. It should be used whenever you need to create new directories within the project.
+{{#if (and sandboxing (or is_linux is_macos))}}
+This tool can also create a directory **outside** the project. Doing so grants
+sandboxed terminal commands write access to exactly that new directory — so,
+rather than requesting write access to a broad existing parent (e.g. your home
+directory) just to create something inside it, create the specific directory
+here first and then write into it. Justify the creation with the `reason`
+parameter: it is shown to the user, attributed to you, in the approval prompt
+that grants the write access. The only other supported path outside the project
+is `~/.agents/skills` or a descendant, for global agent skills.
+{{else}}
+The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
+{{/if}}
