@@ -42,7 +42,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
         }
     }
 
-    edits.sort_by_key(|(range, _)| (range.start, Reverse(range.end)));
+    edits.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
     edits.dedup_by(|(range_b, _), (range_a, _)| {
         range_a.contains(&range_b.start) || range_a.contains(&range_b.end)
     });
@@ -257,6 +257,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2026_05_04::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2026_05_04,
         ),
+        MigrationType::Json(migrations::m_2026_08_17::make_git_gutter_width_an_enum),
     ];
     run_migrations(text, migrations)
 }
@@ -5421,5 +5422,63 @@ mod tests {
             .unindent(),
             None,
         );
+    }
+
+    #[test]
+    fn test_make_git_gutter_width_an_enum_from_number() {
+        assert_migrate_settings(
+            &r#"
+            {
+                "gutter": {
+                    "git_gutter_width": 4.0
+                }
+            }
+            "#
+            .unindent(),
+            Some(
+                &r#"
+                {
+                    "gutter": {
+                        "git_gutter_width": {
+                            "custom": 4.0
+                        }
+                    }
+                }
+                "#
+                .unindent(),
+            ),
+        );
+    }
+
+    #[test]
+    fn test_make_git_gutter_width_an_enum_no_change_when_already_migrated() {
+        // already "default" string — no change
+        assert_migrate_settings(
+            &r#"
+            {
+                "gutter": {
+                    "git_gutter_width": "default"
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // already custom object — no change
+        assert_migrate_settings(
+            &r#"
+            {
+                "gutter": {
+                    "git_gutter_width": { "custom": 4.0 }
+                }
+            }
+            "#
+            .unindent(),
+            None,
+        );
+
+        // no gutter key — no change
+        assert_migrate_settings(&r#"{ "theme": "One Dark" }"#.unindent(), None);
     }
 }
