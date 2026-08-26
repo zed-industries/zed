@@ -9699,6 +9699,7 @@ dependencies = [
  "ui_input",
  "util",
  "x_ai",
+ "x_ai_subscribed",
 ]
 
 [[package]]
@@ -22406,6 +22407,31 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "strum 0.28.0",
+]
+
+[[package]]
+name = "x_ai_subscribed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "credentials_provider",
+ "futures 0.3.32",
+ "gpui",
+ "http_client",
+ "language_model",
+ "log",
+ "oauth_callback_server",
+ "open_ai",
+ "parking_lot",
+ "rand 0.9.4",
+ "serde",
+ "serde_json",
+ "sha2",
+ "smol",
+ "url",
+ "util",
+ "x_ai",
 ]
 
 [[package]]
