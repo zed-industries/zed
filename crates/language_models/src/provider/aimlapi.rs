@@ -190,7 +190,7 @@ impl AimlapiLanguageModelProvider {
 
     fn default_available_model() -> AvailableModel {
         AvailableModel {
-            name: "openai/gpt-5.6-terra-pro".to_string(),
+            name: "openai/gpt-5.6-terra".to_string(),
             display_name: Some("GPT-5.6 Terra Pro".to_string()),
             max_tokens: 1_050_000,
             max_output_tokens: Some(128_000),
