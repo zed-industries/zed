@@ -100,7 +100,11 @@ fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
     if diagnostic.source.is_none() && diagnostic.code.is_none() {
         return;
     }
-    if diagnostic.message.markdown().is_some() {
+    let is_lsp_markdown = diagnostic
+        .message
+        .lsp_markup()
+        .is_some_and(|(kind, _)| kind == &lsp::MarkupKind::Markdown);
+    if is_lsp_markdown {
         markdown.push_str("\n\n(");
     } else {
         markdown.push_str(" (");
@@ -123,6 +127,34 @@ fn append_source_and_code(markdown: &mut String, diagnostic: &Diagnostic) {
         }
     }
     markdown.push(')');
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language::DiagnosticMessage;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_adapter_markdown_keeps_source_and_code_inline() {
+        let diagnostic = Diagnostic {
+            message: DiagnosticMessage::plain_with_adapter_markdown(
+                "mismatched types\nexpected `usize`, found `char`",
+                Some("mismatched types\n\nexpected `usize`, found `char`".into()),
+            ),
+            source: Some("rust-analyzer".to_string()),
+            code: Some(lsp::NumberOrString::String("E0308".to_string())),
+            ..Diagnostic::default()
+        };
+
+        let mut markdown = DiagnosticRenderer::markdown(&diagnostic);
+        append_source_and_code(&mut markdown, &diagnostic);
+
+        assert_eq!(
+            markdown,
+            "mismatched types\n\nexpected `usize`, found `char` (rust\\-analyzer E0308)"
+        );
+    }
 }
 
 impl editor::DiagnosticRenderer for DiagnosticRenderer {
