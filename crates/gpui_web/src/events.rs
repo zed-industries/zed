@@ -326,6 +326,7 @@ impl WebWindowInner {
         modifiers: Modifiers,
     ) {
         self.cancel_long_press();
+        self.text_input_requested.set(false);
         self.touch_drag.set(TouchDrag::Pending);
         self.touch_start.set(position);
         self.touch_last.set(position);
@@ -421,6 +422,7 @@ impl WebWindowInner {
                     modifiers,
                     click_count: 2,
                 }));
+                self.finish_text_input_request();
             }
             TouchDrag::None => {}
         }
@@ -520,6 +522,7 @@ impl WebWindowInner {
         }
         self.touch_drag.set(TouchDrag::None);
         self.active_touch_id.set(None);
+        self.text_input_requested.set(false);
     }
 
     /// Dispatches a full key press for editing intents that arrive without a

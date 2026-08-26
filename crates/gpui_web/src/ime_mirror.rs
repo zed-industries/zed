@@ -152,10 +152,6 @@ impl ImeMirror {
         self.element.blur().ok();
     }
 
-    pub(crate) fn read_only(&self) -> bool {
-        self.element.read_only()
-    }
-
     pub(crate) fn set_read_only(&self, read_only: bool) {
         self.element.set_read_only(read_only);
     }
