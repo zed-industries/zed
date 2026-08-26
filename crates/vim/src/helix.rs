@@ -888,7 +888,6 @@ impl Vim {
                 // Start always goes to column 0 of the first selected line
                 let buffer_point = movement::line_beginning(&display_map, selection.start, false)
                     .to_point(&display_map);
-                let current_end_row = movement::line_end(&display_map, selection.end, false).row();
 
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(buffer_point);
@@ -903,7 +902,7 @@ impl Vim {
 
                 selection.start = buffer_point.to_display_point(&display_map);
                 selection.end = display_map.start_of_relative_buffer_row(
-                    DisplayPoint::new(current_end_row, 0),
+                    DisplayPoint::new(selection.end.row(), 0),
                     rows_to_select as isize,
                 );
                 selection.reversed = false;
