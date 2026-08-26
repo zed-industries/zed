@@ -988,6 +988,8 @@ mod tests {
         cx.update(|cx| {
             cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
             cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
+            cx.bind_keys([KeyBinding::new("ctrl-d", TestAction, None)]);
+            cx.bind_keys([KeyBinding::new("ctrl-d h", TestAction, None)]);
         });
 
         let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
@@ -1048,6 +1050,15 @@ mod tests {
 
         cx.update(|_, _| {
             assert!(*pending_input_changed_count.borrow() > count_before_blur);
+        });
+
+        cx.update(|window, cx| window.disable_focus(cx));
+        cx.simulate_keystrokes("ctrl-d");
+
+        cx.update(|window, cx| {
+            assert!(window.has_pending_keystrokes());
+            window.blur(cx);
+            assert!(window.pending_input_is_none());
         });
     }
 

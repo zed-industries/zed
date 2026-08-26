@@ -2066,6 +2066,8 @@ impl Window {
 
     /// Remove focus from all elements within this context's window.
     pub fn blur(&mut self, cx: &mut App) {
+        self.clear_pending_keystrokes(cx);
+
         if !self.focus_enabled {
             return;
         }
@@ -2074,7 +2076,6 @@ impl Window {
             self.focus_generation = self.focus_generation.wrapping_add(1);
         }
         self.focus = None;
-        self.clear_pending_keystrokes(cx);
         self.refresh();
     }
 
