@@ -124,6 +124,7 @@ impl DevContainerHost {
         };
         match connection.connection_options() {
             remote::RemoteConnectionOptions::Ssh(options) => Ok(remote::DockerHost::Ssh(options)),
+            remote::RemoteConnectionOptions::Wsl(options) => Ok(remote::DockerHost::Wsl(options)),
             #[cfg(any(test, feature = "test-support"))]
             remote::RemoteConnectionOptions::Mock(options) => Ok(remote::DockerHost::Mock(options)),
             other => Err(DevContainerError::UnsupportedHost(
@@ -230,6 +231,7 @@ pub(crate) struct FakeRemoteConnection {
     /// Every `(source, destination)` pair handed to [`RemoteConnection::upload_directory`].
     pub(crate) uploads: std::sync::Mutex<Vec<(std::path::PathBuf, String)>>,
     path_style: util::paths::PathStyle,
+    connection_options: remote::RemoteConnectionOptions,
 }
 
 #[cfg(test)]
@@ -245,6 +247,14 @@ impl FakeRemoteConnection {
         Self {
             uploads: std::sync::Mutex::new(Vec::new()),
             path_style,
+            connection_options: remote::RemoteConnectionOptions::Ssh(Default::default()),
+        }
+    }
+
+    pub(crate) fn with_connection_options(options: remote::RemoteConnectionOptions) -> Self {
+        Self {
+            connection_options: options,
+            ..Self::default()
         }
     }
 }
@@ -321,7 +331,7 @@ impl RemoteConnection for FakeRemoteConnection {
     }
 
     fn connection_options(&self) -> remote::RemoteConnectionOptions {
-        remote::RemoteConnectionOptions::Ssh(remote::SshConnectionOptions::default())
+        self.connection_options.clone()
     }
 
     fn path_style(&self) -> util::paths::PathStyle {
@@ -505,6 +515,19 @@ mod environment_source_tests {
             host.docker_host().unwrap(),
             remote::DockerHost::Ssh(_)
         ));
+
+        let distro = remote::WslConnectionOptions {
+            distro_name: "ubuntu".to_string(),
+            user: Some("zed".to_string()),
+        };
+        let host = DevContainerHost::Remote(Arc::new(FakeRemoteConnection::with_connection_options(
+            remote::RemoteConnectionOptions::Wsl(distro.clone()),
+        )));
+        assert_eq!(
+            host.docker_host().unwrap(),
+            remote::DockerHost::Wsl(distro),
+            "a project in a WSL distro is built by that distro's engine"
+        );
     }
 
     /// The engine is on whichever machine will build the container, so the
