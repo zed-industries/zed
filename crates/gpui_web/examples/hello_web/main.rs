@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use gpui::prelude::*;
 use gpui::{
     App, Bounds, Context, ElementId, SharedString, Task, Window, WindowBounds, WindowOptions, div,
@@ -426,9 +428,13 @@ fn requested_backend() -> gpui_platform::WebBackendPreference {
     }
 }
 
+thread_local! {
+    static APPLICATION: RefCell<Option<ApplicationHandle>> = RefCell::new(None);
+}
+
 fn main() {
     gpui_platform::web_init();
-    gpui_platform::application_with_web_backend(requested_backend()).run(|cx: &mut App| {
+    let handle = gpui_platform::application_with_web_backend(requested_backend()).run_embedded(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(640.), px(560.)), cx);
         cx.open_window(
             WindowOptions {
@@ -440,4 +446,5 @@ fn main() {
         .expect("failed to open window");
         cx.activate(true);
     });
+    APPLICATION.with(|cell| *cell.borrow_mut() = Some(handle));
 }
