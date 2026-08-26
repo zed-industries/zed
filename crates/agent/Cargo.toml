@@ -86,6 +86,7 @@ zstd.workspace = true
 release_channel.workspace = true
 
 [dev-dependencies]
+acp_thread = { workspace = true, features = ["test-support"] }
 async-io.workspace = true
 agent_servers = { workspace = true, "features" = ["test-support"] }
 client = { workspace = true, "features" = ["test-support"] }
