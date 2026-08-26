@@ -307,10 +307,7 @@ impl MarkdownStyle {
                 }),
                 ..Default::default()
             },
-            inline_code_corner_radius: match font {
-                MarkdownFont::Agent | MarkdownFont::Preview => px(4.),
-                MarkdownFont::Editor => px(0.),
-            },
+            inline_code_corner_radius: px(4.),
             soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
             heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
                 HeadingLevelStyles {
@@ -6620,11 +6617,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_agent_and_preview_inline_code_is_rounded(cx: &mut TestAppContext) {
+    fn test_themed_inline_code_is_rounded(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         cx.update(|window, cx| {
-            for font in [MarkdownFont::Agent, MarkdownFont::Preview] {
+            for font in [
+                MarkdownFont::Agent,
+                MarkdownFont::Preview,
+                MarkdownFont::Editor,
+            ] {
                 let style = MarkdownStyle::themed(font, window, cx);
                 assert!(
                     style.inline_code_corner_radius > px(0.),
@@ -6632,8 +6633,6 @@ mod tests {
                     style.inline_code_corner_radius
                 );
             }
-            let editor_style = MarkdownStyle::themed(MarkdownFont::Editor, window, cx);
-            assert_eq!(editor_style.inline_code_corner_radius, px(0.));
         });
     }
 
