@@ -72,7 +72,6 @@ pub struct OpenCodeSettings {
     pub custom_headers: CustomHeaders,
     pub show_zen_models: bool,
     pub show_go_models: bool,
-    pub show_free_models: bool,
 }
 
 pub struct OpenCodeLanguageModelProvider {
@@ -167,7 +166,6 @@ impl OpenCodeLanguageModelProvider {
         match subscription {
             OpenCodeSubscription::Zen => settings.show_zen_models,
             OpenCodeSubscription::Go => settings.show_go_models,
-            OpenCodeSubscription::Free => settings.show_free_models,
         }
     }
 
@@ -210,13 +208,6 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
             )
         } else if Self::subscription_enabled(OpenCodeSubscription::Zen, cx) {
             Some(self.create_language_model(opencode::Model::default(), OpenCodeSubscription::Zen))
-        } else if Self::subscription_enabled(OpenCodeSubscription::Free, cx) {
-            Some(
-                self.create_language_model(
-                    opencode::Model::default_free(),
-                    OpenCodeSubscription::Free,
-                ),
-            )
         } else {
             None
         }
@@ -236,11 +227,6 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
                     OpenCodeSubscription::Zen,
                 ),
             )
-        } else if Self::subscription_enabled(OpenCodeSubscription::Free, cx) {
-            Some(self.create_language_model(
-                opencode::Model::default_free_fast(),
-                OpenCodeSubscription::Free,
-            ))
         } else {
             None
         }
@@ -273,7 +259,6 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
             };
             let subscription = match model.subscription {
                 Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
-                Some(settings::OpenCodeModelSubscription::Free) => OpenCodeSubscription::Free,
                 Some(settings::OpenCodeModelSubscription::Zen) | None => OpenCodeSubscription::Zen,
             };
             if !Self::subscription_enabled(subscription, cx) {
@@ -858,7 +843,6 @@ impl ConfigurationView {
             match subscription {
                 OpenCodeSubscription::Zen => opencode_settings.show_zen_models = Some(is_enabled),
                 OpenCodeSubscription::Go => opencode_settings.show_go_models = Some(is_enabled),
-                OpenCodeSubscription::Free => opencode_settings.show_free_models = Some(is_enabled),
             }
         });
     }
@@ -935,7 +919,6 @@ impl Render for ConfigurationView {
             let settings = OpenCodeLanguageModelProvider::settings(cx);
             let show_zen = settings.show_zen_models;
             let show_go = settings.show_go_models;
-            let show_free = settings.show_free_models;
 
             let subscription_toggles = v_flex()
                 .gap_2()
@@ -943,7 +926,7 @@ impl Render for ConfigurationView {
                 .child(
                     Switch::new("opencode-show-zen-models", show_zen.into())
                         .full_width(true)
-                        .label("Show Zen Models")
+                        .label("Show Zen models")
                         .label_position(SwitchLabelPosition::Start)
                         .on_click(cx.listener(|this, state, window, cx| {
                             this.set_subscription_enabled(
@@ -968,24 +951,9 @@ impl Render for ConfigurationView {
                                 cx,
                             );
                         })),
-                )
-                .child(Divider::horizontal_dashed())
-                .child(
-                    Switch::new("opencode-show-free-models", show_free.into())
-                        .full_width(true)
-                        .label("Show Free models")
-                        .label_position(SwitchLabelPosition::Start)
-                        .on_click(cx.listener(|this, state, window, cx| {
-                            this.set_subscription_enabled(
-                                OpenCodeSubscription::Free,
-                                matches!(state, ToggleState::Selected),
-                                window,
-                                cx,
-                            );
-                        })),
                 );
 
-            let no_subscriptions_warning = if !show_zen && !show_go && !show_free {
+            let no_subscriptions_warning = if !show_zen && !show_go {
                 Some(Banner::new().severity(Severity::Warning).child(Label::new(
                     "No subscriptions enabled. Enable at least one subscription to use OpenCode.",
                 )))
