@@ -45,8 +45,8 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role,
-    SubPageProviderSettings, TokenUsage, env_var,
+    LanguageModelToolUse, MessageContent, ProviderErrorCategory, ProviderSettingsView, RateLimiter,
+    Role, SubPageProviderSettings, TokenUsage, env_var,
 };
 use open_ai::responses::Request as OpenAiResponseRequest;
 use open_ai::responses::{ResponseOutputItem, StreamEvent as OpenAiResponseStreamEvent};
@@ -981,36 +981,65 @@ impl LanguageModel for BedrockModel {
             let response = request.await.map_err(|err| match err {
                 BedrockError::Validation(ref msg) => {
                     if msg.contains("model identifier is invalid") {
-                        LanguageModelCompletionError::Other(anyhow!(
-                            "{display_name} is not available in {region}. \
+                        LanguageModelCompletionError::from_provider_response(
+                            PROVIDER_NAME,
+                            None,
+                            Some("ValidationException".to_string()),
+                            format!(
+                                "{display_name} is not available in {region}. \
                                  Try switching to a region where this model is supported."
-                        ))
+                            ),
+                            None,
+                            ProviderErrorCategory::InvalidRequest,
+                        )
                     } else {
-                        LanguageModelCompletionError::BadRequestFormat {
-                            provider: PROVIDER_NAME,
-                            message: msg.clone(),
-                        }
+                        LanguageModelCompletionError::from_provider_response(
+                            PROVIDER_NAME,
+                            None,
+                            Some("ValidationException".to_string()),
+                            msg.clone(),
+                            None,
+                            ProviderErrorCategory::InvalidRequest,
+                        )
                     }
                 }
-                BedrockError::RateLimited => LanguageModelCompletionError::RateLimitExceeded {
-                    provider: PROVIDER_NAME,
-                    retry_after: None,
-                },
+                BedrockError::RateLimited => LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    None,
+                    Some("ThrottlingException".to_string()),
+                    "Bedrock request was throttled".to_string(),
+                    None,
+                    ProviderErrorCategory::RateLimit,
+                ),
                 BedrockError::ServiceUnavailable => {
-                    LanguageModelCompletionError::ServerOverloaded {
-                        provider: PROVIDER_NAME,
-                        retry_after: None,
-                    }
+                    LanguageModelCompletionError::from_provider_response(
+                        PROVIDER_NAME,
+                        None,
+                        Some("ServiceUnavailableException".to_string()),
+                        "Bedrock service is temporarily unavailable".to_string(),
+                        None,
+                        ProviderErrorCategory::Overloaded,
+                    )
                 }
-                BedrockError::AccessDenied(msg) => LanguageModelCompletionError::PermissionError {
-                    provider: PROVIDER_NAME,
-                    message: msg,
-                },
+                BedrockError::AccessDenied(msg) => {
+                    LanguageModelCompletionError::from_provider_response(
+                        PROVIDER_NAME,
+                        None,
+                        Some("AccessDeniedException".to_string()),
+                        msg,
+                        None,
+                        ProviderErrorCategory::Permission,
+                    )
+                }
                 BedrockError::InternalServer(msg) => {
-                    LanguageModelCompletionError::ApiInternalServerError {
-                        provider: PROVIDER_NAME,
-                        message: msg,
-                    }
+                    LanguageModelCompletionError::from_provider_response(
+                        PROVIDER_NAME,
+                        None,
+                        Some("InternalServerException".to_string()),
+                        msg,
+                        None,
+                        ProviderErrorCategory::InternalServer,
+                    )
                 }
                 other => LanguageModelCompletionError::Other(anyhow!(other)),
             })?;
@@ -1081,16 +1110,20 @@ fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCo
     if let RequestError::HttpResponseError { status_code, .. } = &error
         && *status_code == http_client::http::StatusCode::FORBIDDEN
     {
-        return LanguageModelCompletionError::PermissionError {
-            provider: PROVIDER_NAME,
-            message: format!(
+        return LanguageModelCompletionError::from_provider_response(
+            PROVIDER_NAME,
+            Some(http_client::http::StatusCode::FORBIDDEN),
+            None,
+            format!(
                 "Bedrock Mantle denied this request for {}. Mantle-only models require IAM \
                  permissions for the `bedrock-mantle` endpoint (for example via the \
                  `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever \
                  permissions your existing Bedrock credentials already have.",
                 model.display_name()
             ),
-        };
+            None,
+            ProviderErrorCategory::Permission,
+        );
     }
     error.into()
 }

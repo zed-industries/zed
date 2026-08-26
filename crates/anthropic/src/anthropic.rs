@@ -452,14 +452,19 @@ async fn handle_error_response(
     mut response: http::Response<AsyncBody>,
     rate_limits: RateLimitInfo,
 ) -> AnthropicError {
-    if response.status().as_u16() == 529 {
+    let status = response.status();
+    if status.as_u16() == 529 {
         return AnthropicError::ServerOverloaded {
+            status,
             retry_after: rate_limits.retry_after,
         };
     }
 
     if let Some(retry_after) = rate_limits.retry_after {
-        return AnthropicError::RateLimit { retry_after };
+        return AnthropicError::RateLimit {
+            status,
+            retry_after,
+        };
     }
 
     let mut body = String::new();
@@ -474,9 +479,12 @@ async fn handle_error_response(
     }
 
     match serde_json::from_str::<Event>(&body) {
-        Ok(Event::Error { error }) => AnthropicError::ApiError(error),
+        Ok(Event::Error { error }) => AnthropicError::ApiError {
+            status: Some(status),
+            error,
+        },
         Ok(_) | Err(_) => AnthropicError::HttpResponseError {
-            status_code: response.status(),
+            status_code: status,
             message: body,
         },
     }
@@ -1096,13 +1104,22 @@ pub enum AnthropicError {
     },
 
     /// Rate limit exceeded
-    RateLimit { retry_after: Duration },
+    RateLimit {
+        status: StatusCode,
+        retry_after: Duration,
+    },
 
     /// Server overloaded
-    ServerOverloaded { retry_after: Option<Duration> },
+    ServerOverloaded {
+        status: StatusCode,
+        retry_after: Option<Duration>,
+    },
 
     /// API returned an error response
-    ApiError(ApiError),
+    ApiError {
+        status: Option<StatusCode>,
+        error: ApiError,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
@@ -1212,21 +1229,37 @@ pub fn completion_error_from_anthropic(
         AnthropicError::HttpResponseError {
             status_code,
             message,
-        } => Error::HttpResponseError {
-            provider,
-            status_code,
-            message,
-        },
-        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
-            provider,
-            retry_after: Some(retry_after),
-        },
-        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
-            provider,
+        } => Error::from_http_status(provider, status_code, message, None),
+        AnthropicError::RateLimit {
+            status,
             retry_after,
-        },
-        AnthropicError::ApiError(api_error) => {
-            completion_error_from_anthropic_api(api_error, provider)
+        } => {
+            let message = format!("{provider}'s API rate limit exceeded");
+            Error::from_provider_response(
+                provider,
+                Some(status),
+                None,
+                message,
+                Some(retry_after),
+                language_model_core::ProviderErrorCategory::RateLimit,
+            )
+        }
+        AnthropicError::ServerOverloaded {
+            status,
+            retry_after,
+        } => {
+            let message = format!("{provider}'s API servers are overloaded right now");
+            Error::from_provider_response(
+                provider,
+                Some(status),
+                None,
+                message,
+                retry_after,
+                language_model_core::ProviderErrorCategory::Overloaded,
+            )
+        }
+        AnthropicError::ApiError { status, error } => {
+            completion_error_from_anthropic_api_with_status(error, provider, status)
         }
     }
 }
@@ -1235,52 +1268,49 @@ pub fn completion_error_from_anthropic_api(
     error: ApiError,
     provider: language_model_core::LanguageModelProviderName,
 ) -> language_model_core::LanguageModelCompletionError {
+    completion_error_from_anthropic_api_with_status(error, provider, None)
+}
+
+fn completion_error_from_anthropic_api_with_status(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+    status: Option<StatusCode>,
+) -> language_model_core::LanguageModelCompletionError {
     use ApiErrorCode::*;
     use language_model_core::LanguageModelCompletionError as Error;
-    match error.code() {
-        Some(code) => match code {
-            InvalidRequestError => Error::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Error::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            BillingError => Error::PaymentRequired,
-            PermissionError => Error::PermissionError {
-                provider,
-                message: error.message,
-            },
-            NotFoundError => Error::ApiEndpointNotFound { provider },
-            ConflictError => Error::HttpResponseError {
-                provider,
-                status_code: StatusCode::CONFLICT,
-                message: error.message,
-            },
-            RequestTooLarge => Error::PromptTooLarge {
-                tokens: language_model_core::parse_prompt_too_long(&error.message),
-            },
-            RateLimitError => Error::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            TimeoutError => Error::UpstreamProviderError {
-                message: error.message,
-                status: StatusCode::GATEWAY_TIMEOUT,
-                retry_after: None,
-            },
-            ApiError => Error::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Error::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
+    use language_model_core::ProviderErrorCategory;
+    let category = match error.code() {
+        Some(InvalidRequestError) => {
+            if let Some(tokens) = parse_prompt_too_long(&error.message) {
+                ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(tokens),
+                }
+            } else {
+                ProviderErrorCategory::InvalidRequest
+            }
+        }
+        Some(AuthenticationError) => ProviderErrorCategory::Authentication,
+        Some(BillingError) => ProviderErrorCategory::PaymentRequired,
+        Some(PermissionError) => ProviderErrorCategory::Permission,
+        Some(NotFoundError) => ProviderErrorCategory::EndpointNotFound,
+        Some(ConflictError) => ProviderErrorCategory::Conflict,
+        Some(RequestTooLarge) => ProviderErrorCategory::PromptTooLarge {
+            tokens: parse_prompt_too_long(&error.message),
         },
-        None => Error::Other(error.into()),
-    }
+        Some(RateLimitError) => ProviderErrorCategory::RateLimit,
+        Some(TimeoutError) => ProviderErrorCategory::Timeout,
+        Some(ApiError) => ProviderErrorCategory::InternalServer,
+        Some(OverloadedError) => ProviderErrorCategory::Overloaded,
+        None => ProviderErrorCategory::Other,
+    };
+    Error::from_provider_response(
+        provider,
+        status,
+        Some(error.error_type),
+        error.message,
+        None,
+        category,
+    )
 }
 
 #[cfg(test)]
@@ -1309,10 +1339,13 @@ mod tests {
 
         assert!(matches!(
             error,
-            AnthropicError::ApiError(ApiError {
-                error_type,
-                message,
-            }) if error_type == "authentication_error" && message == "invalid x-api-key"
+            AnthropicError::ApiError {
+                status: Some(StatusCode::UNAUTHORIZED),
+                error: ApiError {
+                    error_type,
+                    message,
+                },
+            } if error_type == "authentication_error" && message == "invalid x-api-key"
         ));
     }
 
@@ -1362,12 +1395,36 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::PaymentRequired
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            }
         ));
     }
 
     #[test]
-    fn list_models_maps_anthropic_conflict_errors_to_http_conflict() {
+    fn request_too_large_preserves_reported_token_count() {
+        let error = completion_error_from_anthropic_api(
+            ApiError {
+                error_type: "request_too_large".to_string(),
+                message: "prompt is too long: 1500000 tokens".to_string(),
+            },
+            language_model_core::ANTHROPIC_PROVIDER_NAME,
+        );
+
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(1_500_000),
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn list_models_preserves_anthropic_conflict_errors() {
         let client = FakeHttpClient::create(|_| async move {
             Ok(http::Response::builder()
                 .status(StatusCode::CONFLICT)
@@ -1388,11 +1445,15 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::HttpResponseError {
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
                 provider,
-                status_code: StatusCode::CONFLICT,
+                status: Some(StatusCode::CONFLICT),
+                code: Some(code),
                 message,
+                retry_after: None,
+                category: language_model_core::ProviderErrorCategory::Conflict,
             } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "conflict_error"
                 && message == "The resource was modified concurrently."
         ));
     }
@@ -1419,11 +1480,16 @@ mod tests {
 
         assert!(matches!(
             completion_error,
-            language_model_core::LanguageModelCompletionError::UpstreamProviderError {
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                provider,
                 message,
-                status: StatusCode::GATEWAY_TIMEOUT,
+                status: Some(StatusCode::GATEWAY_TIMEOUT),
+                code: Some(code),
                 retry_after: None,
-            } if message == "The request timed out."
+                category: language_model_core::ProviderErrorCategory::Timeout,
+            } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "timeout_error"
+                && message == "The request timed out."
         ));
     }
 
