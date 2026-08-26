@@ -40,8 +40,12 @@ impl LineWrapper {
     pub fn wrap_line<'a>(
         &'a mut self,
         fragments: &'a [LineFragment],
-        wrap_width: Pixels,
+        widths: impl Into<WrapWidths>,
     ) -> impl Iterator<Item = Boundary> + 'a {
+        let WrapWidths {
+            wrap_width,
+            whitespace_wrap_width,
+        } = widths.into();
         let mut width = px(0.);
         let mut first_non_whitespace_ix = None;
         let mut indent = None;
@@ -59,11 +63,14 @@ impl LineWrapper {
                 let ix = index;
                 index += candidate.len_utf8();
                 let mut new_prev_c = prev_c;
+                let mut is_whitespace = false;
                 let item_width = match candidate {
                     WrapBoundaryCandidate::Char { character: c } => {
                         if c == '\n' {
                             continue;
                         }
+
+                        is_whitespace = c.is_whitespace();
 
                         if Self::is_word_char(c) {
                             if prev_c == ' ' && c != ' ' && first_non_whitespace_ix.is_some() {
@@ -104,7 +111,12 @@ impl LineWrapper {
                 };
 
                 width += item_width;
-                if width > wrap_width && ix > last_wrap_ix {
+                let width_limit = if is_whitespace {
+                    whitespace_wrap_width
+                } else {
+                    wrap_width
+                };
+                if width > width_limit && ix > last_wrap_ix {
                     if let (None, Some(first_non_whitespace_ix)) = (indent, first_non_whitespace_ix)
                     {
                         indent = Some(
@@ -669,6 +681,26 @@ impl WrapBoundaryCandidate {
     }
 }
 
+/// The widths a line is wrapped at.
+/// Words are wrapped at `wrap_width`, while whitespace may extend to `whitespace_wrap_width`
+/// before a wrap is forced
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct WrapWidths {
+    /// The width that words are wrapped at.
+    pub wrap_width: Pixels,
+    /// The width that whitespace is wrapped at. Should be at least `wrap_width`.
+    pub whitespace_wrap_width: Pixels,
+}
+
+impl From<Pixels> for WrapWidths {
+    fn from(wrap_width: Pixels) -> Self {
+        Self {
+            wrap_width,
+            whitespace_wrap_width: wrap_width,
+        }
+    }
+}
+
 /// A boundary between two lines of text.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Boundary {
@@ -713,6 +745,37 @@ mod tests {
                 ..Default::default()
             })
             .collect()
+    }
+
+    #[test]
+    fn test_wrap_line_allows_whitespace_to_overflow() {
+        let mut wrapper = build_wrapper();
+        // The test font is 0.6em per character, so 9.6px at a font size of 16px.
+        let wrap_width = px(52.8); // 5.5 characters
+
+        // Wrapping everything at one width breaks before `bb`, because the space that follows it
+        // is what exceeds the width.
+        assert_eq!(
+            wrapper
+                .wrap_line(&[LineFragment::text("aa bb cc")], wrap_width)
+                .collect::<Vec<_>>(),
+            &[Boundary::new(3, 0)],
+        );
+
+        // Letting whitespace overflow keeps `bb` and the space after it on the first line, and
+        // wraps at the start of the next word instead.
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[LineFragment::text("aa bb cc")],
+                    WrapWidths {
+                        wrap_width,
+                        whitespace_wrap_width: px(76.8), // 8 characters
+                    },
+                )
+                .collect::<Vec<_>>(),
+            &[Boundary::new(6, 0)],
+        );
     }
 
     #[test]

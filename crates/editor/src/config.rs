@@ -273,16 +273,16 @@ impl Editor {
 
     // Called by the element. This method is not designed to be called outside of the editor
     // element's layout code because it does not notify when rewrapping is computed synchronously.
-    pub(super) fn set_wrap_width(&self, width: Option<Pixels>, cx: &mut App) -> bool {
+    pub(super) fn set_wrap_width(&self, widths: Option<WrapWidths>, cx: &mut App) -> bool {
         if self.is_empty(cx) {
             self.placeholder_display_map
                 .as_ref()
                 .map_or(false, |display_map| {
-                    display_map.update(cx, |map, cx| map.set_wrap_width(width, cx))
+                    display_map.update(cx, |map, cx| map.set_wrap_widths(widths, cx))
                 })
         } else {
             self.display_map
-                .update(cx, |map, cx| map.set_wrap_width(width, cx))
+                .update(cx, |map, cx| map.set_wrap_widths(widths, cx))
         }
     }
 

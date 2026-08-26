@@ -2764,7 +2764,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.set_wrap_width(Some(140.0.into()), cx);
+        editor.set_wrap_width(Some(px(140.0).into()), cx);
 
         // We expect the following lines after wrapping
         // ```
@@ -3059,7 +3059,7 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
     });
 
     _ = editor.update(cx, |editor, window, cx| {
-        editor.set_wrap_width(Some(140.0.into()), cx);
+        editor.set_wrap_width(Some(px(140.0).into()), cx);
         assert_eq!(
             editor.display_text(cx),
             "use one::{\n    two::three::\n    four::five\n};"
@@ -37137,7 +37137,7 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         // Enable soft wrapping with a narrow width to force soft wrapping and
         // confirm that more than 2 rows are being displayed.
-        editor.set_wrap_width(Some(100.0.into()), cx);
+        editor.set_wrap_width(Some(px(100.0).into()), cx);
         assert!(editor.display_text(cx).lines().count() > 2);
 
         editor.add_selection_below(
@@ -37211,7 +37211,7 @@ async fn test_add_selection_skip_soft_wrap_option(cx: &mut TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         // Enable soft wrapping with a narrow width to force soft wrapping and
         // confirm that more than 2 rows are being displayed.
-        editor.set_wrap_width(Some(100.0.into()), cx);
+        editor.set_wrap_width(Some(px(100.0).into()), cx);
         assert!(editor.display_text(cx).lines().count() > 2);
 
         editor.add_selection_below(
@@ -39317,7 +39317,7 @@ fn test_relative_line_numbers(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| build_editor(multibuffer, window, cx));
     _ = editor.update(cx, |editor, window, cx| {
-        editor.set_wrap_width(Some(30.0.into()), cx); // every 3 characters
+        editor.set_wrap_width(Some(px(30.0).into()), cx); // every 3 characters
 
         // includes trailing newlines.
         let expected_line_numbers = [2, 6, 7, 10, 14, 15, 18, 19, 23];
@@ -43208,7 +43208,7 @@ async fn test_align_selections_with_soft_wrap(cx: &mut TestAppContext) {
     let before = "aaaaaaaaaaaaˇx\nbbbbbˇy";
     let after = "aaaaaaaaaaaaˇx\nbbbbb       ˇy";
     cx.set_state(before);
-    cx.update_editor(|e, _, cx| e.set_wrap_width(Some(100.0.into()), cx));
+    cx.update_editor(|e, _, cx| e.set_wrap_width(Some(px(100.0).into()), cx));
     cx.update_editor(|e, window, cx| {
         assert!(e.display_text(cx).lines().count() > 2);
         e.align_selections(&AlignSelections, window, cx)
@@ -43560,7 +43560,7 @@ async fn test_columnar_selection_with_soft_wrap(cx: &mut TestAppContext) {
     "});
 
     let soft_wrap_second_line_row = |editor: &mut Editor, cx: &mut Context<Editor>| {
-        editor.set_wrap_width(Some(100.0.into()), cx);
+        editor.set_wrap_width(Some(px(100.0).into()), cx);
         let snapshot = editor.display_snapshot(cx);
         let second_line_row = Point::new(1, 0).to_display_point(&snapshot).row();
         assert!(

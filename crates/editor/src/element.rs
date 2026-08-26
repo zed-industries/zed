@@ -48,8 +48,8 @@ use gpui::{
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollHandle, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, StyledText, TaskExt, TextAlign, TextRun,
-    TextStyleRefinement, WeakEntity, Window, div, fill, outline, pattern_slash, point, px, quad,
-    relative, size, solid_background, transparent_black,
+    TextStyleRefinement, WeakEntity, Window, WrapWidths, div, fill, outline, pattern_slash, point,
+    px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::{
@@ -8081,13 +8081,13 @@ impl Element for EditorElement {
                         ) {
                             snapshot
                         } else {
-                            let wrap_width = calculate_wrap_width(
+                            let wrap_widths = calculate_wrap_width(
                                 editor.soft_wrap_mode(cx),
                                 editor_width,
                                 em_layout_width,
                             );
 
-                            if editor.set_wrap_width(wrap_width, cx) {
+                            if editor.set_wrap_width(wrap_widths, cx) {
                                 editor.snapshot(window, cx)
                             } else {
                                 snapshot
@@ -10671,15 +10671,24 @@ fn calculate_wrap_width(
     soft_wrap: SoftWrap,
     editor_width: Pixels,
     em_width: Pixels,
-) -> Option<Pixels> {
+) -> Option<WrapWidths> {
     let wrap_width_for = |column: u32| (column as f32 * em_width).ceil();
 
-    match soft_wrap {
-        SoftWrap::GitDiff => None,
-        SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
-        SoftWrap::EditorWidth => Some(editor_width),
-        SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
-    }
+    let wrap_width = match soft_wrap {
+        SoftWrap::GitDiff => return None,
+        SoftWrap::None => wrap_width_for(MAX_LINE_LEN as u32 / 2),
+        SoftWrap::EditorWidth => editor_width,
+        SoftWrap::Bounded(column) => editor_width.min(wrap_width_for(column)),
+    };
+
+    Some(WrapWidths {
+        wrap_width,
+        // Trailing whitespace may run past the wrap column as long as it stays within the
+        // editor, so that a line whose last word ends exactly at the column is not pushed onto
+        // the next line by the space that follows it. When words already wrap at the editor's
+        // width there is no room to give, and letting whitespace overflow would scroll.
+        whitespace_wrap_width: editor_width.max(wrap_width),
+    })
 }
 
 fn compute_auto_height_layout(
@@ -10716,9 +10725,14 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    let wrap_width = calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width)
-        .map(|width| width.min(editor_width));
-    if wrap_width.is_some() && editor.set_wrap_width(wrap_width, cx) {
+    let wrap_widths =
+        calculate_wrap_width(editor.soft_wrap_mode(cx), editor_width, em_width).map(|widths| {
+            WrapWidths {
+                wrap_width: widths.wrap_width.min(editor_width),
+                whitespace_wrap_width: widths.whitespace_wrap_width.min(editor_width),
+            }
+        });
+    if wrap_widths.is_some() && editor.set_wrap_width(wrap_widths, cx) {
         snapshot = editor.snapshot(window, cx);
     }
 
@@ -12131,7 +12145,7 @@ mod tests {
         window
             .update(cx, |editor, _, cx| {
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
-                editor.set_wrap_width(Some(editor_width), cx);
+                editor.set_wrap_width(Some(editor_width.into()), cx);
                 editor.set_show_line_numbers(show_line_numbers, cx);
             })
             .unwrap();
@@ -12511,21 +12525,24 @@ mod tests {
 
         assert_eq!(
             calculate_wrap_width(SoftWrap::None, editor_width, em_width),
-            Some(px((MAX_LINE_LEN as f32 / 2.0 * 8.0).ceil())),
+            Some(px((MAX_LINE_LEN as f32 / 2.0 * 8.0).ceil()).into()),
         );
 
         assert_eq!(
             calculate_wrap_width(SoftWrap::EditorWidth, editor_width, em_width),
-            Some(px(800.0)),
+            Some(px(800.0).into()),
         );
 
         assert_eq!(
             calculate_wrap_width(SoftWrap::Bounded(72), editor_width, em_width),
-            Some(px((72.0 * 8.0_f32).ceil())),
+            Some(WrapWidths {
+                wrap_width: px((72.0 * 8.0_f32).ceil()),
+                whitespace_wrap_width: editor_width,
+            }),
         );
         assert_eq!(
             calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
-            Some(px(400.0)),
+            Some(px(400.0).into()),
         );
     }
 }
