@@ -527,9 +527,9 @@ impl<'a, 'measurement> BenchAppContext<'a, 'measurement> {
         );
         let foreground_executor = platform.foreground_executor();
         let asset_source = Arc::new(());
-        // `test-support`'s `FakeHttpClient` isn't available to `bench`; benchmarks
-        // shouldn't make real network requests anyway, so the production
-        // `BlockedHttpClient` fails any attempted request the same way.
+        // Benchmark setup must not make accidental network requests. The
+        // production `BlockedHttpClient` reports them without enabling a
+        // configurable test double through `test-support`.
         let http_client: Arc<dyn http_client::HttpClient> =
             Arc::new(http_client::BlockedHttpClient::new());
         let app = App::new_app(platform, asset_source, http_client);
