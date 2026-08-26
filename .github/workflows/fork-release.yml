@@ -1,0 +1,87 @@
+# Fork release CI (Windows only, unsigned)
+#
+# Builds a portable Zed binary for personal testing on a fork. This is
+# intentionally separate from the upstream `release.yml`, which requires code
+# signing secrets and only runs on zed-industries/zed.
+#
+# Triggers:
+#   - Manual dispatch (provide a version, e.g. v0.0.0-fork)
+#   - Pushing a tag matching v*-fork
+#
+# Result: a GitHub pre-release containing a zipped Windows build
+# (zed.exe, cli.exe, remote_server.exe) that you can download and run locally.
+#
+# Note: the produced binary is UNSIGNED. Windows SmartScreen / Defender may warn
+# when you run it; choose "Run anyway" / allow it. It is built from the dev
+# release channel.
+
+name: fork-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag/version, e.g. v0.0.0-fork"
+        required: true
+        default: "v0.0.0-fork"
+  push:
+    tags:
+      - "v*-fork"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC environment
+        # Ensures the MSVC linker (link.exe) and Windows SDK tools are on PATH.
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          # Keep in sync with rust-toolchain.toml
+          toolchain: "1.97.1"
+          components: rustfmt, clippy, rust-src
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Zed (release)
+        shell: pwsh
+        run: cargo build --release --package zed --package cli --package remote_server
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/zed.exe, target/release/cli.exe, target/release/remote_server.exe -DestinationPath zed-windows-x86_64.zip -Force
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-windows-x86_64
+          path: zed-windows-x86_64.zip
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.version || github.ref_name }}
+        run: |
+          gh release create "$env:TAG" `
+            --repo "$env:GITHUB_REPOSITORY" `
+            --prerelease `
+            --title "Zed $env:TAG (fork build)" `
+            --notes "Unsigned portable Windows build for personal testing. Built from $(git rev-parse --short HEAD)." `
+            zed-windows-x86_64.zip
