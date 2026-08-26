@@ -9629,6 +9629,7 @@ dependencies = [
  "schemars 1.0.4",
  "serde",
  "serde_json",
+ "serde_json_lenient",
  "settings",
  "sha2",
  "strum 0.27.2",

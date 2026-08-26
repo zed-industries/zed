@@ -69,6 +69,7 @@ x_ai = { workspace = true, features = ["schemars"] }
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
+serde_json_lenient.workspace = true
 clock = { workspace = true, features = ["test-support"] }
 cloud_llm_client.workspace = true
 db = { workspace = true, features = ["test-support"] }

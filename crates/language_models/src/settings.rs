@@ -275,6 +275,30 @@ mod aimlapi_tests {
         name.to_ascii_lowercase()
     }
 
+    /// `AllLanguageModelSettings::from_settings` unwraps every provider's
+    /// section, so a provider missing from `default.json` is not a missing
+    /// default — it is a panic on startup, before any UI exists to report it.
+    /// Nothing else covers that: the type checks, the unit tests pass, and the
+    /// binary dies at launch. This asserts the entry is there.
+    #[test]
+    fn default_json_declares_the_aimlapi_provider() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value =
+            serde_json_lenient::from_str(default_json).expect("default.json should parse");
+
+        let language_models = value
+            .get("language_models")
+            .expect("default.json should have 'language_models'");
+        let aimlapi = language_models
+            .get("aimlapi")
+            .expect("language_models should declare 'aimlapi' or startup panics on unwrap");
+
+        assert_eq!(
+            aimlapi.get("api_url").and_then(|v| v.as_str()),
+            Some("https://api.aimlapi.com/v1"),
+        );
+    }
+
     /// HEADERS.md requires the attribution pair on EVERY aimlapi.com request.
     /// The provider reads these resolved headers from three separate call
     /// sites, so proving they exist here proves it for all of them.
@@ -322,5 +346,78 @@ mod aimlapi_tests {
             aimlapi::AIMLAPI_PARTNER_ID.to_string()
         )));
         assert!(!pairs.iter().any(|(_, value)| value == "part_somebody_else"));
+    }
+}
+
+#[cfg(test)]
+mod aimlapi_wire_tests {
+    use super::*;
+    use futures::StreamExt as _;
+    use http_client::{AsyncBody, FakeHttpClient, Response, http::HeaderMap};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    /// The header-resolution tests above prove the pair is in the settings the
+    /// provider reads. That is one step short of the claim that matters: that a
+    /// request actually leaves carrying them. This drives the real
+    /// `open_ai::stream_completion` — the function both provider call sites use
+    /// — through a fake transport and inspects the request it built.
+    #[gpui::test]
+    async fn attribution_pair_reaches_the_outgoing_request() {
+        let captured: Arc<Mutex<Option<HeaderMap>>> = Arc::new(Mutex::new(None));
+        let sink = captured.clone();
+
+        let client = FakeHttpClient::create(move |req| {
+            let sink = sink.clone();
+            async move {
+                *sink.lock() = Some(req.headers().clone());
+                Ok(Response::builder()
+                    .status(200)
+                    .body(AsyncBody::from("data: [DONE]\n\n"))
+                    .unwrap())
+            }
+        });
+
+        let request = open_ai::Request {
+            model: "openai/gpt-5.6-terra".into(),
+            messages: Vec::new(),
+            stream: true,
+            stream_options: None,
+            max_completion_tokens: None,
+            max_tokens: None,
+            stop: Vec::new(),
+            temperature: None,
+            tool_choice: None,
+            parallel_tool_calls: None,
+            tools: Vec::new(),
+            prompt_cache_key: None,
+            reasoning_effort: None,
+            service_tier: None,
+        };
+
+        let headers = aimlapi_headers_from(None);
+        if let Ok(stream) = open_ai::stream_completion(
+            client.as_ref(),
+            "aimlapi.com",
+            "https://api.aimlapi.com/v1",
+            "test-key",
+            request,
+            &headers,
+        )
+        .await
+        {
+            // Drain so the request is definitely issued; the body is irrelevant.
+            let _ = stream.collect::<Vec<_>>().await;
+        }
+
+        let sent = captured.lock().take().expect("no request was issued");
+        assert_eq!(
+            sent.get("x-aimlapi-source").map(|v| v.to_str().unwrap()),
+            Some("agent/zed"),
+        );
+        assert_eq!(
+            sent.get("x-aimlapi-partner-id").map(|v| v.to_str().unwrap()),
+            Some(crate::provider::aimlapi::AIMLAPI_PARTNER_ID),
+        );
     }
 }
