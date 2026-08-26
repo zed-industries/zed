@@ -26,6 +26,8 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
+#[cfg(test)]
+mod proto_diagnostics_tests;
 
 pub use crate::language_settings::{
     AutoIndentMode, EditPredictionPromptFormat, EditPredictionsMode, IndentGuideSettings,

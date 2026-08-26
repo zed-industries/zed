@@ -1527,18 +1527,23 @@ mod tests {
         };
         RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
 
-        assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
+        assert_eq!(
+            params.diagnostics[0].message,
+            lsp::DiagnosticMessage::from("use of moved value `a`")
+        );
 
         // remove trailing newline from code span
         assert_eq!(
             params.diagnostics[1].message,
-            "consider importing this struct: `use b::c;`"
+            lsp::DiagnosticMessage::from("consider importing this struct: `use b::c;`")
         );
 
         // do not remove newline before the start of code span
         assert_eq!(
             params.diagnostics[2].message,
-            "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+            lsp::DiagnosticMessage::from(
+                "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+            )
         );
 
         assert_eq!(

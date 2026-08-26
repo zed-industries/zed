@@ -69,7 +69,10 @@ fn test_deserialize_lsp_diagnostic() {
         Some(lsp::NumberOrString::String("ERR".to_string()))
     );
     assert_eq!(lsp_diagnostic.source, Some("Prism".to_string()));
-    assert_eq!(lsp_diagnostic.message, "assigned but unused variable - a");
+    assert_eq!(
+        lsp_diagnostic.message,
+        lsp::DiagnosticMessage::from("assigned but unused variable - a")
+    );
 }
 
 #[test]

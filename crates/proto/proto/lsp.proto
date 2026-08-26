@@ -365,11 +365,6 @@ message Documentation {
   }
 }
 
-enum MarkupKind {
-  PlainText = 0;
-  Markdown = 1;
-}
-
 message ParameterInformation {
   oneof label {
     string simple = 1;

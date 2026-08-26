@@ -2829,7 +2829,7 @@ impl LocalLspStore {
                 .then_with(|| b.is_primary.cmp(&a.is_primary))
                 .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
                 .then_with(|| a.severity.cmp(&b.severity))
-                .then_with(|| a.message.cmp(&b.message))
+                .then_with(|| a.message.as_str().cmp(b.message.as_str()))
         }
 
         let mut diagnostics = Vec::with_capacity(new_diagnostics.len() + reused_diagnostics.len());

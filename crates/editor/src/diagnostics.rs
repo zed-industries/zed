@@ -498,6 +498,7 @@ impl Editor {
                         let message = diagnostic_entry
                             .diagnostic
                             .message
+                            .as_str()
                             .split_once('\n')
                             .map(|(line, _)| line)
                             .map(SharedString::new)

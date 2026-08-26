@@ -128,14 +128,6 @@ impl Default for DiagnosticMessage {
     }
 }
 
-impl std::ops::Deref for DiagnosticMessage {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        self.as_str()
-    }
-}
-
 impl AsRef<str> for DiagnosticMessage {
     fn as_ref(&self) -> &str {
         self.as_str()

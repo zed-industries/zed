@@ -39,7 +39,7 @@ pub fn is_inactive_region(diag: &Diagnostic) -> bool {
 
 pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
     diag.severity == Some(INACTIVE_DIAGNOSTIC_SEVERITY)
-        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag.message.as_str() == INACTIVE_REGION_MESSAGE
         && diag
             .source
             .as_ref()

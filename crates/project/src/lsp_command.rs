@@ -21,8 +21,8 @@ use language::{
     language_settings::{InlayHintKind, LanguageSettings},
     lsp_to_symbol_kind, point_from_lsp, point_to_lsp,
     proto::{
-        deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
-        serialize_anchor_range, serialize_version,
+        deserialize_anchor, deserialize_anchor_range, deserialize_markup_kind, deserialize_version,
+        serialize_anchor, serialize_anchor_range, serialize_markup_kind, serialize_version,
     },
     range_from_lsp, range_to_lsp,
 };
@@ -4506,15 +4506,10 @@ impl GetDocumentDiagnostics {
             })
             .collect::<Vec<_>>();
 
-        let kind = match diagnostic
+        let message = match diagnostic
             .markup_message_kind
-            .and_then(proto::MarkupKind::from_i32)
+            .and_then(deserialize_markup_kind)
         {
-            Some(proto::MarkupKind::PlainText) => Some(lsp::MarkupKind::PlainText),
-            Some(proto::MarkupKind::Markdown) => Some(lsp::MarkupKind::Markdown),
-            None => None,
-        };
-        let message = match kind {
             Some(kind) => lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
                 kind,
                 value: diagnostic.message,
@@ -4555,11 +4550,7 @@ impl GetDocumentDiagnostics {
         let (message, markup_message_kind) = match diagnostic.message {
             lsp::DiagnosticMessage::String(message) => (message, None),
             lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent { kind, value }) => {
-                let markup_message_kind = match kind {
-                    lsp::MarkupKind::PlainText => Some(proto::MarkupKind::PlainText as i32),
-                    lsp::MarkupKind::Markdown => Some(proto::MarkupKind::Markdown as i32),
-                };
-                (value, markup_message_kind)
+                (value, Some(serialize_markup_kind(&kind) as i32))
             }
         };
         let related_information = diagnostic
