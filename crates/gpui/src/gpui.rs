@@ -44,7 +44,7 @@ pub mod profiler;
     target_os = "linux",
     target_family = "wasm",
     feature = "test-support",
-    feature = "bench"
+    feature = "bench-support"
 ))]
 #[expect(missing_docs)]
 pub mod queue;

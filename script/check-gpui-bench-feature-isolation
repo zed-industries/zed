@@ -2,23 +2,23 @@
 
 set -euo pipefail
 
-# `gpui`'s `bench` feature must stay usable without pulling in `test-support`,
-# so that `#[gpui::bench]` consumers only compile production-capable code
-# rather than transitively depending on test-only APIs. This walks the
-# resolved feature graph for `gpui` built with only `bench` enabled and fails
-# if `test-support` shows up anywhere in it.
+# GPUI's canonical benchmark support and its compatibility alias must stay
+# usable without pulling in `test-support`, so `#[gpui::bench]` consumers
+# compile only production-capable code.
 cd "$(dirname "$0")/.."
 
-output=$(cargo tree \
-  --offline \
-  --package gpui \
-  --no-default-features \
-  --features bench \
-  --edges features \
-  --invert gpui)
+for feature in bench-support bench; do
+  output=$(cargo tree \
+    --offline \
+    --package gpui \
+    --no-default-features \
+    --features "${feature}" \
+    --edges features \
+    --invert gpui)
 
-if echo "${output}" | grep --quiet 'gpui feature "test-support"'; then
-  echo "gpui's \"bench\" feature pulls in \"test-support\":"
-  echo "${output}"
-  exit 1
-fi
+  if grep --quiet 'gpui feature "test-support"' <<< "${output}"; then
+    echo "gpui's \"${feature}\" feature pulls in \"test-support\":"
+    echo "${output}"
+    exit 1
+  fi
+done
