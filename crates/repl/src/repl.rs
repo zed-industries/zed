@@ -20,7 +20,7 @@ pub use runtimelib::ExecutionState;
 pub use crate::api::{
     ReplCapabilities, ReplConnectRequest, ReplConnectTask, ReplConnection, ReplEvaluation,
     ReplEvaluationStatus, ReplExecution, ReplOutputEvent, ReplOutputStream, ReplProvider,
-    ReplProviderId, ReplSession, ReplTranscript, ReplTranscriptEntry,
+    ReplProviderId, ReplSession, ReplTranscript, ReplTranscriptEntry, ReplView,
 };
 pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus, PythonEnvKernelSpecification};
