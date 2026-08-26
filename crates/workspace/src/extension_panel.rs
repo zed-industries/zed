@@ -10,7 +10,8 @@ use gpui::{
     InteractiveElement as _, IntoElement, ParentElement, Render, StatefulInteractiveElement as _,
     Styled, Window, actions, div, px,
 };
-use ui::{Button, Clickable, IconName};
+use ui::{Button, Clickable, FluentBuilder as _, IconName};
+use ui_input::InputField;
 
 use crate::{Panel, Workspace, WorkspaceStore, dock::DockPosition, dock::PanelEvent};
 
@@ -32,6 +33,7 @@ pub struct ExtensionPanels {
 struct ExtensionPanelContent {
     title: String,
     actions: Vec<extension::ExtensionPanelActionDescriptor>,
+    input: Option<Entity<InputField>>,
     events: Vec<ExtensionPanelEvent>,
 }
 
@@ -48,12 +50,21 @@ impl ExtensionPanels {
         }
     }
 
-    fn open(&mut self, descriptor: ExtensionPanelDescriptor, cx: &mut Context<Self>) {
+    fn open(
+        &mut self,
+        descriptor: ExtensionPanelDescriptor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let has_input_action = descriptor.actions.iter().any(|action| action.requires_input);
         self.panels
             .entry(descriptor.id)
             .or_insert_with(|| ExtensionPanelContent {
                 title: descriptor.title,
                 actions: descriptor.actions,
+                input: has_input_action.then(|| {
+                    cx.new(|cx| InputField::new(window, cx, "Clojure expression"))
+                }),
                 events: Vec::new(),
             });
         cx.notify();
@@ -165,7 +176,10 @@ impl Render for ExtensionPanels {
                     .flex_col()
                     .gap_1()
                     .child(content.title.clone())
+                    .when_some(content.input.clone(), |this, input| this.child(input))
                     .children(content.actions.iter().map(|descriptor| {
+                        let input = content.input.clone();
+                        let requires_input = descriptor.requires_input;
                         let action = ExtensionPanelAction {
                             panel: id.clone(),
                             action: descriptor.id.clone(),
@@ -176,8 +190,17 @@ impl Render for ExtensionPanels {
                             descriptor.label.clone(),
                         )
                         .on_click(move |_, _, cx| {
+                            let payload = input
+                                .as_ref()
+                                .filter(|_| requires_input)
+                                .map(|input| {
+                                    let text = input.read(cx).text(cx);
+                                    serde_json::json!({ "input": text })
+                                })
+                                .unwrap_or_else(|| serde_json::json!({}));
+                            let action = ExtensionPanelAction { payload, ..action.clone() };
                             let task = ExtensionHostProxy::global(cx)
-                                .dispatch_panel_action(action.clone(), cx);
+                                .dispatch_panel_action(action, cx);
                             cx.spawn(async move |_| {
                                 if let Err(error) = task.await {
                                     log::error!("extension panel action failed: {error:#}");
@@ -220,7 +243,11 @@ impl ExtensionPanelsProxy {
         &self,
         location: ExtensionPanelLocation,
         cx: &mut App,
-        f: impl FnOnce(&Entity<ExtensionPanels>, &mut Context<Workspace>) -> Result<()>,
+        f: impl FnOnce(
+            &Entity<ExtensionPanels>,
+            &mut Window,
+            &mut Context<Workspace>,
+        ) -> Result<()>,
     ) -> Result<()> {
         let (window_handle, workspace_handle) = self.first_workspace(cx)?;
         window_handle.update(cx, |_, window, cx| {
@@ -230,7 +257,7 @@ impl ExtensionPanelsProxy {
                     workspace.add_panel(panel.clone(), window, cx);
                     panel
                 });
-                f(&panel, cx)
+                f(&panel, window, cx)
             })
         })??;
         Ok(())
@@ -239,8 +266,10 @@ impl ExtensionPanelsProxy {
 
 impl ExtensionPanelUiProxy for ExtensionPanelsProxy {
     fn open_panel(&self, descriptor: ExtensionPanelDescriptor, cx: &mut App) -> Result<()> {
-        self.with_panel(descriptor.location, cx, |panel, cx| {
-            panel.update(cx, |panel, cx| panel.open(descriptor, cx));
+        self.with_panel(descriptor.location, cx, |panel, window, cx| {
+            // `with_panel` owns the window while the panel is opened; input
+            // fields are constructed lazily inside the panel update below.
+            panel.update(cx, |panel, cx| panel.open(descriptor, window, cx));
             Ok(())
         })
     }
@@ -251,7 +280,7 @@ impl ExtensionPanelUiProxy for ExtensionPanelsProxy {
         event: ExtensionPanelEvent,
         cx: &mut App,
     ) -> Result<()> {
-        self.with_panel(ExtensionPanelLocation::Right, cx, |extension_panels, cx| {
+        self.with_panel(ExtensionPanelLocation::Right, cx, |extension_panels, _, cx| {
             extension_panels.update(cx, |extension_panels, cx| {
                 extension_panels.send_event(panel, event, cx)
             })

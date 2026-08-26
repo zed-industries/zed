@@ -34,6 +34,9 @@ pub struct ExtensionPanelDescriptor {
 pub struct ExtensionPanelActionDescriptor {
     pub id: Arc<str>,
     pub label: String,
+    /// Whether Zed should collect a single line of text and include it in the
+    /// action's JSON payload as `input`.
+    pub requires_input: bool,
 }
 
 /// A structured event sent by an extension to one of its panels.

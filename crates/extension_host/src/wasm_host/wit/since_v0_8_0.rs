@@ -656,6 +656,7 @@ impl panel::Host for WasmState {
                 .map(|action| ExtensionPanelActionDescriptor {
                     id: action.id.into(),
                     label: action.label,
+                    requires_input: action.requires_input,
                 })
                 .collect(),
         };

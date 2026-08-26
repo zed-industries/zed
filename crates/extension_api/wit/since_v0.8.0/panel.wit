@@ -20,6 +20,8 @@ interface panel {
         id: string,
         /// Human-readable label rendered by Zed.
         label: string,
+        /// Render a text field and pass its contents as `payload.input`.
+        requires-input: bool,
     }
 
     /// Creates the extension's persistent panel, or focuses its existing view.
