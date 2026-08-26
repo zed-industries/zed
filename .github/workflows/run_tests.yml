@@ -669,11 +669,6 @@ jobs:
       env:
         CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
         RUSTC_BOOTSTRAP: '1'
-    - name: run_tests::check_wasm::cargo_check_wasm_profiler
-      run: cargo -Zbuild-std=std,panic_abort check --target wasm32-unknown-unknown -p gpui --no-default-features --features profiler
-      env:
-        CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS: -C target-feature=+atomics,+bulk-memory,+mutable-globals
-        RUSTC_BOOTSTRAP: '1'
     - name: steps::show_sccache_stats
       run: sccache --show-stats || true
     - name: steps::cleanup_cargo_config

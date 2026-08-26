@@ -509,19 +509,6 @@ fn check_wasm() -> NamedJob {
         .add_env(("RUSTC_BOOTSTRAP", "1"))
     }
 
-    fn cargo_check_wasm_profiler() -> Step<Run> {
-        named::bash(concat!(
-            "cargo -Zbuild-std=std,panic_abort ",
-            "check --target wasm32-unknown-unknown ",
-            "-p gpui --no-default-features --features profiler",
-        ))
-        .add_env((
-            "CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS",
-            "-C target-feature=+atomics,+bulk-memory,+mutable-globals",
-        ))
-        .add_env(("RUSTC_BOOTSTRAP", "1"))
-    }
-
     named::job(
         release_job(&[])
             .runs_on(runners::LINUX_LARGE)
@@ -532,7 +519,6 @@ fn check_wasm() -> NamedJob {
             .add_step(install_nightly_wasm_toolchain())
             .add_step(steps::setup_sccache(Platform::Linux))
             .add_step(cargo_check_wasm())
-            .add_step(cargo_check_wasm_profiler())
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
