@@ -60,12 +60,13 @@ use futures::{
     future::{Shared, try_join_all},
 };
 use gpui::{
-    Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Axis, Bounds,
-    Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
-    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription,
-    SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity, WindowBounds, WindowHandle,
-    WindowId, WindowOptions, actions, canvas, point, relative, size, transparent_black,
+    Action, AnyEntity, AnyView, AnyWeakView, App, AppContext, AsyncApp, AsyncWindowContext, Axis,
+    Bounds, ClipboardItem, Context, CursorStyle, Decorations, DragMoveEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke,
+    ManagedView, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size,
+    Stateful, Subscription, SystemWindowTabController, Task, TaskExt, Tiling, WeakEntity,
+    WindowBounds, WindowHandle, WindowId, WindowOptions, actions, canvas, point, relative, size,
+    transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -578,7 +579,7 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CloseIntent {
     /// Quit the program entirely.
     Quit,
@@ -619,6 +620,75 @@ impl Toast {
         self.autohide = true;
         self
     }
+}
+
+/// Opens a permalink for the selected file on its Git hosting provider.
+pub fn open_file_permalink(
+    project: Entity<Project>,
+    project_path: ProjectPath,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    handle_file_permalink(project, project_path, workspace, false, window, cx);
+}
+
+/// Copies a permalink for the selected file on its Git hosting provider.
+pub fn copy_file_permalink(
+    project: Entity<Project>,
+    project_path: ProjectPath,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    handle_file_permalink(project, project_path, workspace, true, window, cx);
+}
+
+fn handle_file_permalink(
+    project: Entity<Project>,
+    project_path: ProjectPath,
+    workspace: WeakEntity<Workspace>,
+    copy: bool,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let permalink_task = project.update(cx, |project, cx| {
+        project.get_file_permalink(&project_path, cx)
+    });
+
+    window
+        .spawn(cx, async move |cx| match permalink_task.await {
+            Ok(permalink) => {
+                cx.update(|_, cx| {
+                    if copy {
+                        cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
+                    } else {
+                        cx.open_url(permalink.as_ref());
+                    }
+                })
+                .ok();
+            }
+            Err(err) => {
+                let action = if copy {
+                    "copy file permalink"
+                } else {
+                    "open file permalink"
+                };
+                let message = format!("Failed to {action}: {err}");
+                anyhow::Result::<()>::Err(err).log_err();
+
+                workspace
+                    .update(cx, |workspace, cx| {
+                        struct FilePermalinkAction;
+                        workspace.show_toast(
+                            Toast::new(NotificationId::unique::<FilePermalinkAction>(), message),
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+        })
+        .detach();
 }
 
 impl PartialEq for Toast {
@@ -787,6 +857,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     theme_preview::init(cx);
     toast_layer::init(cx);
     history_manager::init(app_state.fs.clone(), cx);
+
+    cx.on_app_quit(flush_windows_serialization_on_quit).detach();
 
     cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx))
         .on_action(|_: &Reload, cx| reload(cx))
@@ -3637,11 +3709,11 @@ impl Workspace {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
                 if allow_hot_exit_serialization {
-                    workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
                         for (pane, item) in dirty_items {
                             if let Some(task) = item
                                 .to_serializable_item_handle(cx)
-                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                                .and_then(|handle| handle.serialize(workspace, true, cx))
                             {
                                 serialize_tasks.push((pane, item, task));
                             } else {
@@ -6099,7 +6171,7 @@ impl Workspace {
                         state.active_view_id = response
                             .active_view
                             .as_ref()
-                            .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
+                            .and_then(|view| ViewId::from_proto(view.id?).ok());
                         anyhow::Ok(())
                     })??;
                     if let Some(view) = response.active_view {
@@ -6556,7 +6628,7 @@ impl Workspace {
     ) -> Result<()> {
         match update.variant.context("invalid update")? {
             proto::update_followers::Variant::CreateView(view) => {
-                let view_id = ViewId::from_proto(view.id.clone().context("invalid view id")?)?;
+                let view_id = ViewId::from_proto(view.id.context("invalid view id")?)?;
                 let should_add_view = this.update(cx, |this, _| {
                     if let Some(state) = this.follower_states.get_mut(&leader_id.into()) {
                         anyhow::Ok(!state.items_by_leader_view_id.contains_key(&view_id))
@@ -6575,7 +6647,7 @@ impl Workspace {
                         state.active_view_id = update_active_view
                             .view
                             .as_ref()
-                            .and_then(|view| ViewId::from_proto(view.id.clone()?).ok());
+                            .and_then(|view| ViewId::from_proto(view.id?).ok());
 
                         if state.active_view_id.is_some_and(|view_id| {
                             !state.items_by_leader_view_id.contains_key(&view_id)
@@ -6600,7 +6672,7 @@ impl Workspace {
                 this.update_in(cx, |this, window, cx| {
                     let project = this.project.clone();
                     if let Some(state) = this.follower_states.get(&leader_id.into()) {
-                        let view_id = ViewId::from_proto(id.clone())?;
+                        let view_id = ViewId::from_proto(id)?;
                         if let Some(item) = state.items_by_leader_view_id.get(&view_id) {
                             tasks.push(item.view.apply_update_proto(
                                 &project,
@@ -6629,11 +6701,13 @@ impl Workspace {
     ) -> Result<()> {
         let this = this.upgrade().context("workspace dropped")?;
 
-        let Some(id) = view.id.clone() else {
+        let Some(id) = view.id else {
             anyhow::bail!("no id for view");
         };
         let id = ViewId::from_proto(id)?;
-        let panel_id = view.panel_id.and_then(proto::PanelId::from_i32);
+        let panel_id = view
+            .panel_id
+            .and_then(|value| proto::PanelId::try_from(value).ok());
 
         let pane = this.update(cx, |this, _cx| {
             let state = this
@@ -7114,20 +7188,42 @@ impl Workspace {
         })
     }
 
-    /// Bypass the 200ms serialization throttle and write workspace state to
-    /// the DB immediately. Returns a task the caller can await to ensure the
-    /// write completes. Used by the quit handler so the most recent state
-    /// isn't lost to a pending throttle timer when the process exits.
+    /// Bypass the serialization throttles and write workspace and item state
+    /// to the DB immediately. Returns a task the caller can await to ensure the
+    /// writes complete before the process exits.
     pub fn flush_serialization(&mut self, window: &mut Window, cx: &mut App) -> Task<()> {
         self._schedule_serialize_workspace.take();
         self._serialize_workspace_task.take();
         self.bounds_save_task_queued.take();
 
+        let serializable_items = self
+            .panes
+            .iter()
+            .flat_map(|pane| pane.read(cx).items())
+            .filter_map(|item| item.to_serializable_item_handle(cx))
+            .fold(HashMap::default(), |mut items, item| {
+                items.entry(item.item_id()).or_insert(item);
+                items
+            });
+        let item_tasks = serializable_items
+            .into_values()
+            .filter_map(|item| {
+                let item_id = item.item_id();
+                let task = item.serialize(self, false, cx)?;
+                Some(async move {
+                    task.await
+                        .with_context(|| format!("flushing serialization of item {item_id:?}"))
+                })
+            })
+            .collect::<Vec<_>>();
         let bounds_task = self.save_window_bounds(window, cx);
         let serialize_task = self.serialize_workspace_internal(window, cx);
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             bounds_task.await;
             serialize_task.await;
+            for result in futures::future::join_all(item_tasks).await {
+                result.log_err();
+            }
         })
     }
 
@@ -7285,7 +7381,7 @@ impl Workspace {
                 };
 
                 let db = WorkspaceDb::global(cx);
-                window.spawn(cx, async move |_| {
+                cx.background_spawn(async move {
                     db.save_workspace(serialized_workspace).await;
                 })
             }
@@ -7296,7 +7392,7 @@ impl Workspace {
                 let docks = build_serialized_docks(self, window, cx);
                 let db = WorkspaceDb::global(cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
-                window.spawn(cx, async move |_| {
+                cx.background_spawn(async move {
                     let open_status_write = db.set_window_open_status(
                         database_id,
                         window_bounds,
@@ -7316,7 +7412,7 @@ impl Workspace {
                 // Save dock state for empty non-local workspaces
                 let docks = build_serialized_docks(self, window, cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
-                window.spawn(cx, async move |_| {
+                cx.background_spawn(async move {
                     persistence::write_default_dock_state(&kvp, docks)
                         .await
                         .log_err();
@@ -7380,9 +7476,9 @@ impl Workspace {
             // We use into_iter() here so that the references to the items are moved into
             // the tasks and not kept alive while we're sleeping.
             for (_, item) in unique_items.into_iter() {
-                if let Ok(Some(task)) = this.update_in(cx, |workspace, window, cx| {
-                    item.serialize(workspace, false, window, cx)
-                }) {
+                if let Ok(Some(task)) =
+                    this.update(cx, |workspace, cx| item.serialize(workspace, false, cx))
+                {
                     cx.background_spawn(async move { task.await.log_err() })
                         .detach();
                 }
@@ -11213,22 +11309,154 @@ pub fn reload(cx: &mut App) {
             }
         }
 
-        // If the user cancels any save prompt, then keep the app open.
-        for window in workspace_windows {
-            if let Ok(should_close) = window.update(cx, |multi_workspace, window, cx| {
-                let workspace = multi_workspace.workspace().clone();
-                workspace.update(cx, |workspace, cx| {
-                    workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-                })
-            }) && !should_close.await?
-            {
-                return anyhow::Ok(());
-            }
+        if !prepare_windows_to_quit(&workspace_windows, cx).await {
+            return anyhow::Ok(());
         }
         cx.update(|cx| cx.restart());
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
+}
+
+pub async fn prepare_windows_to_quit(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut AsyncApp,
+) -> bool {
+    // If the user cancels any save prompt, then keep the app open.
+    let mut prepared_windows = Vec::new();
+    let mut cancelled = false;
+    for window in workspace_windows {
+        match prepare_window_to_close(*window, CloseIntent::Quit, cx).await {
+            Ok(true) => prepared_windows.push(*window),
+            Ok(false) => {
+                cancelled = true;
+                break;
+            }
+            Err(error) => {
+                log::error!(
+                    "failed to prepare window {:?} to close before quitting: {error:#}",
+                    window.window_id()
+                );
+                cancelled = true;
+                break;
+            }
+        }
+    }
+
+    if cancelled {
+        flush_windows_serialization(&prepared_windows, cx).await;
+        for window in prepared_windows {
+            window
+                .update(cx, |_, window, _cx| {
+                    window.remove_window();
+                })
+                .log_err();
+        }
+        return false;
+    }
+
+    // Flush all pending workspace serialization before quitting so that
+    // session_id/window_id are up-to-date in the database.
+    flush_windows_serialization(workspace_windows, cx).await;
+
+    true
+}
+
+pub(crate) async fn prepare_window_to_close(
+    window: WindowHandle<MultiWorkspace>,
+    close_intent: CloseIntent,
+    cx: &mut AsyncApp,
+) -> Result<bool> {
+    let active_and_workspaces = window
+        .update(cx, |multi_workspace, window, _cx| {
+            if close_intent == CloseIntent::Quit {
+                window.activate_window();
+            }
+            (
+                multi_workspace.workspace().clone(),
+                multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+            )
+        })
+        .log_err();
+
+    let Some((originally_active, workspaces)) = active_and_workspaces else {
+        return Ok(true);
+    };
+
+    let mut prepared = anyhow::Ok(true);
+    for workspace in workspaces {
+        prepared = match window.update(cx, |_, window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                workspace.prepare_to_close(close_intent, window, cx)
+            })
+        }) {
+            Ok(task) => task.await,
+            Err(error) => Err(error),
+        }
+        .with_context(|| format!("preparing workspace {:?} to close", workspace.entity_id()));
+        if !matches!(prepared, Ok(true)) {
+            break;
+        }
+    }
+
+    // Re-activate the workspace the user actually had focused so it is the
+    // one serialized (and restored on next launch) as active, rather than
+    // whichever happened to be last.
+    window
+        .update(cx, |multi_workspace, window, cx| {
+            if !matches!(prepared, Ok(true)) {
+                for workspace in multi_workspace.workspaces() {
+                    workspace.update(cx, |workspace, _| {
+                        workspace.removing = false;
+                    });
+                }
+            }
+            multi_workspace.activate(originally_active, None, window, cx);
+        })
+        .log_err();
+
+    prepared
+}
+
+pub async fn flush_windows_serialization(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut AsyncApp,
+) {
+    let flush_tasks = collect_flush_tasks(workspace_windows, cx);
+    futures::future::join_all(flush_tasks).await;
+}
+
+fn flush_windows_serialization_on_quit(cx: &mut App) -> impl Future<Output = ()> + use<> {
+    let workspace_windows = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<MultiWorkspace>())
+        .collect::<Vec<_>>();
+    let flush_tasks = collect_flush_tasks(&workspace_windows, cx);
+    async move {
+        futures::future::join_all(flush_tasks).await;
+    }
+}
+
+fn collect_flush_tasks(
+    workspace_windows: &[WindowHandle<MultiWorkspace>],
+    cx: &mut impl AppContext,
+) -> Vec<Task<()>> {
+    let mut flush_tasks = Vec::new();
+    for window in workspace_windows {
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
+            })
+            .with_context(|| {
+                format!(
+                    "flushing pending serialization for window {:?}",
+                    window.window_id()
+                )
+            })
+            .log_err();
+    }
+    flush_tasks
 }
 
 fn parse_pixel_position_env_var(value: &str) -> Option<Point<Pixels>> {
@@ -12962,7 +13190,7 @@ mod tests {
                 item.entry_id = None;
             });
             item.is_dirty = true;
-            window.blur();
+            window.blur(cx);
         });
         cx.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
@@ -15773,7 +16001,7 @@ mod tests {
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
-        cx.update(|window, _| window.blur());
+        cx.update(|window, cx| window.blur(cx));
         cx.executor().run_until_parked();
         workspace.update(cx, |_, cx| cx.notify());
         cx.executor().run_until_parked();

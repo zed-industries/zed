@@ -22,7 +22,7 @@ use postage::oneshot;
 use rpc::{AnyProtoClient, proto};
 
 use language::ByteContent;
-use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
+use util::{ResultExt, maybe, rel_path::RelPath};
 use worktree::{
     Entry, ProjectEntryId, Snapshot, Worktree, WorktreeSettings, decode_byte_header,
     decode_file_text,
@@ -119,7 +119,11 @@ impl Search {
         limit: usize,
         cx: &mut App,
     ) -> Self {
-        let worktrees = worktree_store.read(cx).visible_worktrees(cx).collect();
+        let mut worktrees = worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        worktrees.sort_by_key(|worktree| worktree.read(cx).id());
         Self {
             kind: SearchKind::Local { fs, worktrees },
             buffer_store,
@@ -165,7 +169,9 @@ impl Search {
     pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {
         let mut open_buffers = HashSet::default();
         let mut unnamed_buffers = Vec::new();
+        let mut entryless_file_buffers = Vec::new();
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
+        let searches_all_unnamed_buffers = !matches!(self.kind, SearchKind::OpenBuffersOnly);
         let buffers = self.buffer_store.read(cx);
         for handle in buffers.buffers() {
             let buffer = handle.read(cx);
@@ -178,11 +184,23 @@ impl Search {
                 continue;
             } else if let Some(entry_id) = buffer.entry_id(cx) {
                 open_buffers.insert(entry_id);
-            } else {
-                self.limit = self.limit.saturating_sub(1);
-                unnamed_buffers.push(handle)
+            } else if searches_all_unnamed_buffers {
+                match (&self.kind, buffer.file()) {
+                    (SearchKind::Local { .. }, Some(file)) => {
+                        self.limit = self.limit.saturating_sub(1);
+                        let sort_key = (file.worktree_id(cx).to_proto(), file.path().clone());
+                        entryless_file_buffers.push((sort_key, handle));
+                    }
+                    (SearchKind::Remote { .. }, _) => {}
+                    _ => {
+                        self.limit = self.limit.saturating_sub(1);
+                        unnamed_buffers.push(handle);
+                    }
+                }
             };
         }
+        unnamed_buffers.sort_by_cached_key(|buffer| path_key_sort_key(buffer, cx));
+        entryless_file_buffers.sort_by(|(key_a, _), (key_b, _)| key_a.cmp(key_b));
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
@@ -241,6 +259,7 @@ impl Search {
                                 self.buffer_store,
                                 get_buffer_for_full_scan_rx,
                                 grab_buffer_snapshot_tx,
+                                entryless_file_buffers,
                                 cx.clone(),
                             )
                             .boxed_local(),
@@ -540,13 +559,19 @@ impl Search {
         buffer_store: Entity<BufferStore>,
         rx: Receiver<(ProjectPath, MatchPositionHint)>,
         find_all_matches_tx: Sender<(Entity<Buffer>, MatchPositionHint)>,
+        sorted_entryless_file_buffers: Vec<((u64, Arc<RelPath>), Entity<Buffer>)>,
         mut cx: AsyncApp,
     ) {
+        let mut entryless_file_buffers = sorted_entryless_file_buffers.into_iter().peekable();
         let mut rx = pin!(rx.ready_chunks(64));
         _ = maybe!(async move {
             while let Some(requested_paths) = rx.next().await {
                 let line_hints: Vec<MatchPositionHint> =
                     requested_paths.iter().map(|(_, line)| *line).collect();
+                let sort_keys: Vec<(u64, Arc<RelPath>)> = requested_paths
+                    .iter()
+                    .map(|(path, _)| (path.worktree_id.to_proto(), path.path.clone()))
+                    .collect();
                 let mut buffers = buffer_store.update(&mut cx, |this, cx| {
                     requested_paths
                         .into_iter()
@@ -554,12 +579,27 @@ impl Search {
                         .collect::<FuturesOrdered<_>>()
                 });
                 let mut line_hints = line_hints.into_iter();
+                let mut sort_keys = sort_keys.into_iter();
                 while let Some(buffer) = buffers.next().await {
                     let line_hint = line_hints.next().unwrap_or(MatchPositionHint::default());
+                    if let Some(sort_key) = sort_keys.next() {
+                        while let Some((_, entryless_buffer)) =
+                            entryless_file_buffers.next_if(|(key, _)| *key < sort_key)
+                        {
+                            find_all_matches_tx
+                                .send((entryless_buffer, MatchPositionHint::default()))
+                                .await?;
+                        }
+                    }
                     if let Some(buffer) = buffer.log_err() {
                         find_all_matches_tx.send((buffer, line_hint)).await?;
                     }
                 }
+            }
+            for (_, entryless_buffer) in entryless_file_buffers {
+                find_all_matches_tx
+                    .send((entryless_buffer, MatchPositionHint::default()))
+                    .await?;
             }
             Result::<_, anyhow::Error>::Ok(())
         })
@@ -649,18 +689,25 @@ impl Search {
             })
             .cloned()
             .collect::<Vec<_>>();
-        buffers.sort_by(|a, b| {
-            let a = a.read(cx);
-            let b = b.read(cx);
-            match (a.file(), b.file()) {
-                (None, None) => a.remote_id().cmp(&b.remote_id()),
-                (None, Some(_)) => std::cmp::Ordering::Less,
-                (Some(_), None) => std::cmp::Ordering::Greater,
-                (Some(a), Some(b)) => compare_rel_paths((a.path(), true), (b.path(), true)),
-            }
-        });
+        buffers.sort_by_cached_key(|buffer| path_key_sort_key(buffer, cx));
+        buffers.dedup_by_key(|buffer| buffer.entity_id());
 
         buffers
+    }
+}
+
+fn path_key_sort_key(
+    buffer: &Entity<Buffer>,
+    cx: &App,
+) -> (Option<u64>, Option<Arc<RelPath>>, String) {
+    let buffer = buffer.read(cx);
+    match buffer.file() {
+        Some(file) => (
+            Some(file.worktree_id(cx).to_proto()),
+            Some(file.path().clone()),
+            String::new(),
+        ),
+        None => (None, None, buffer.remote_id().to_string()),
     }
 }
 

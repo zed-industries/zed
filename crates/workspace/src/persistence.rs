@@ -4766,6 +4766,57 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_pending_serialization_flushed_on_shutdown(cx: &mut gpui::TestAppContext) {
+        crate::tests::init_test(cx);
+
+        let app_state = cx.update(crate::AppState::test);
+        cx.update(|cx| crate::init(app_state.clone(), cx));
+
+        let fs = fs::FakeFs::new(cx.executor());
+        let dir = unique_test_dir(&fs, "shutdown-flush").await;
+        let project = Project::test(fs.clone(), [dir.as_path()], cx).await;
+
+        let (multi_workspace, vcx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+        let workspace = multi_workspace.read_with(vcx, |mw, _| mw.workspace().clone());
+
+        let db = vcx.update(|_, cx| WorkspaceDb::global(cx));
+        let workspace_id = db.next_id().await.unwrap();
+        workspace.update(vcx, |ws, _cx| {
+            ws.set_database_id(workspace_id);
+        });
+
+        multi_workspace.update_in(vcx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.serialize_workspace(window, cx)
+            })
+        });
+
+        let serialized_paths = db
+            .workspace_for_id(workspace_id)
+            .expect("next_id should have reserved a row")
+            .paths;
+        assert_eq!(
+            serialized_paths.paths().len(),
+            0,
+            "the debounced serialization must not have fired yet"
+        );
+
+        cx.update(|cx| cx.shutdown());
+
+        let serialized_paths = db
+            .workspace_for_id(workspace_id)
+            .expect("the workspace row should still exist after shutdown")
+            .paths;
+        assert_eq!(
+            serialized_paths.paths(),
+            std::slice::from_ref(&dir),
+            "shutdown should flush the pending workspace serialization"
+        );
+    }
+
+    #[gpui::test]
     async fn test_create_workspace_serialization(cx: &mut gpui::TestAppContext) {
         crate::tests::init_test(cx);
 
@@ -5092,7 +5143,7 @@ mod tests {
             // Note: removal_tasks may be empty if the background task already
             // completed (take_pending_removal_tasks filters out ready tasks).
             tasks.append(&mut removal_tasks);
-            tasks.push(mw.flush_serialization());
+            tasks.push(mw.flush_serialization(cx));
             tasks
         });
         futures::future::join_all(all_tasks).await;

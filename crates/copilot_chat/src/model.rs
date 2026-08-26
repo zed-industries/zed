@@ -241,12 +241,16 @@ impl LanguageModel for CopilotChatLanguageModel {
                     anthropic_beta,
                     cx.clone(),
                 );
+                let executor = cx.background_executor().clone();
 
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
                         let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                        Ok(mapper.map_stream(events).boxed())
+                        Ok(language_model::stream_in_background(
+                            mapper.map_stream(events).boxed(),
+                            executor,
+                        ))
                     })
                     .await
             });
@@ -269,11 +273,15 @@ impl LanguageModel for CopilotChatLanguageModel {
                     is_user_initiated,
                     cx.clone(),
                 );
+                let executor = cx.background_executor().clone();
                 request_limiter
                     .stream(async move {
                         let stream = request.await?;
                         let mapper = CopilotResponsesEventMapper::new();
-                        Ok(mapper.map_stream(stream).boxed())
+                        Ok(language_model::stream_in_background(
+                            mapper.map_stream(stream).boxed(),
+                            executor,
+                        ))
                     })
                     .await
             });
