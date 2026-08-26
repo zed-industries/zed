@@ -511,8 +511,16 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_git_blame_inline);
         if editor.read(cx).blame().is_some() {
             register_action(editor, window, Editor::open_git_blame_commit);
-            register_action(editor, window, Editor::blame_revision);
-            register_action(editor, window, Editor::blame_previous_revision);
+            if editor.update(cx, |editor, cx| {
+                editor.blame_revision_target(window, cx).is_some()
+            }) {
+                register_action(editor, window, Editor::blame_revision);
+            }
+            if editor.update(cx, |editor, cx| {
+                editor.blame_previous_revision_target(window, cx).is_some()
+            }) {
+                register_action(editor, window, Editor::blame_previous_revision);
+            }
         }
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);

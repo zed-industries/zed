@@ -157,7 +157,7 @@ use uuid::Uuid;
 pub use workspace_settings::{
     AccessibleMode, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
     RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
-    observe_accessible_mode,
+    closing_last_window_quits_app, observe_accessible_mode,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -2151,8 +2151,11 @@ impl Workspace {
                                     (&workspace.bottom_dock, &default_docks.bottom),
                                 ] {
                                     dock.update(cx, |dock, cx| {
-                                        dock.serialized_dock = Some(serialized_dock.clone());
-                                        dock.restore_state(window, cx);
+                                        dock.restore_serialized_state(
+                                            serialized_dock.clone(),
+                                            window,
+                                            cx,
+                                        );
                                     });
                                 }
                                 cx.notify();
@@ -2289,8 +2292,15 @@ impl Workspace {
             (&self.right_dock, docks.right),
         ] {
             dock.update(cx, |dock, cx| {
-                dock.serialized_dock = Some(data);
-                dock.restore_state(window, cx);
+                dock.restore_serialized_state(data, window, cx);
+            });
+        }
+    }
+
+    pub fn finish_dock_restoration(&self, cx: &mut App) {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            dock.update(cx, |dock, _| {
+                dock.finish_restoration();
             });
         }
     }
@@ -3381,29 +3391,27 @@ impl Workspace {
                     .count()
             })?;
 
-            #[cfg(target_os = "macos")]
-            let save_last_workspace = false;
-
-            // On Linux and Windows, closing the last window should restore the last workspace.
-            #[cfg(not(target_os = "macos"))]
-            let save_last_workspace = {
-                let remaining_workspaces = cx.update(|_window, cx| {
+            let (remaining_workspaces, closing_last_window_quits) = cx.update(|window, cx| {
+                let current_window = window.window_handle();
+                let remaining_workspaces =
                     cx.windows()
-                        .iter()
+                        .into_iter()
+                        .filter(|window| *window != current_window)
                         .filter_map(|window| window.downcast::<MultiWorkspace>())
                         .filter_map(|multi_workspace| {
-                            multi_workspace
-                                .update(cx, |multi_workspace, _, cx| {
-                                    multi_workspace.workspace().read(cx).removing
-                                })
-                                .ok()
+                            multi_workspace.read(cx).ok().map(|multi_workspace| {
+                                multi_workspace.workspace().read(cx).removing
+                            })
                         })
                         .filter(|removing| !removing)
-                        .count()
-                })?;
+                        .count();
 
-                close_intent != CloseIntent::ReplaceWindow && remaining_workspaces == 0
-            };
+                (remaining_workspaces, closing_last_window_quits_app(cx))
+            })?;
+
+            let save_last_workspace = close_intent != CloseIntent::ReplaceWindow
+                && remaining_workspaces == 0
+                && closing_last_window_quits;
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
@@ -5789,6 +5797,7 @@ impl Workspace {
             pane::Event::ChangeItemTitle => {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(false, window, cx);
+                    cx.notify();
                 }
                 serialize_workspace = false;
             }
@@ -7288,14 +7297,16 @@ impl Workspace {
                 let db = WorkspaceDb::global(cx);
                 let kvp = db::kvp::KeyValueStore::global(cx);
                 window.spawn(cx, async move |_| {
-                    db.set_window_open_status(
+                    let open_status_write = db.set_window_open_status(
                         database_id,
                         window_bounds,
                         display.unwrap_or_default(),
-                    )
-                    .await
-                    .log_err();
-                    db.set_session_id(database_id, None).await.log_err();
+                    );
+                    let session_id_write = db.set_session_id(database_id, None);
+                    let (open_status, session_id) =
+                        futures::join!(open_status_write, session_id_write);
+                    open_status.log_err();
+                    session_id.log_err();
                     persistence::write_default_dock_state(&kvp, docks)
                         .await
                         .log_err();
@@ -7476,8 +7487,7 @@ impl Workspace {
                 .iter_mut()
                 {
                     dock.update(cx, |dock, cx| {
-                        dock.serialized_dock = Some(serialized_dock.clone());
-                        dock.restore_state(window, cx);
+                        dock.restore_serialized_state(serialized_dock.clone(), window, cx);
                     });
                 }
 
@@ -7593,6 +7603,10 @@ impl Workspace {
 
     /// Multiworkspace uses this to add workspace action handling to itself
     pub fn actions(&self, div: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let active_item_is_read_only = self
+            .active_item(cx)
+            .is_some_and(|item| !item.capability(cx).editable());
+
         self.add_workspace_actions_listeners(div, window, cx)
             .on_action(cx.listener(
                 |_workspace, action_sequence: &settings::ActionSequence, window, cx| {
@@ -7618,21 +7632,29 @@ impl Workspace {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
             }))
-            .on_action(cx.listener(|workspace, action: &Save, window, cx| {
-                workspace
-                    .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), window, cx)
-                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
-            }))
-            .on_action(cx.listener(|workspace, _: &FormatAndSave, window, cx| {
-                workspace
-                    .save_active_item(SaveIntent::FormatAndSave, window, cx)
-                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
-            }))
-            .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, window, cx| {
-                workspace
-                    .save_active_item(SaveIntent::SaveWithoutFormat, window, cx)
-                    .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
-            }))
+            .when(!active_item_is_read_only, |this| {
+                this.on_action(cx.listener(|workspace, action: &Save, window, cx| {
+                    workspace
+                        .save_active_item(
+                            action.save_intent.unwrap_or(SaveIntent::Save),
+                            window,
+                            cx,
+                        )
+                        .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                }))
+                .on_action(cx.listener(|workspace, _: &FormatAndSave, window, cx| {
+                    workspace
+                        .save_active_item(SaveIntent::FormatAndSave, window, cx)
+                        .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                }))
+                .on_action(cx.listener(
+                    |workspace, _: &SaveWithoutFormat, window, cx| {
+                        workspace
+                            .save_active_item(SaveIntent::SaveWithoutFormat, window, cx)
+                            .detach_and_prompt_err("Failed to save", window, cx, |_, _, _| None);
+                    },
+                ))
+            })
             .on_action(cx.listener(|workspace, _: &SaveAs, window, cx| {
                 workspace
                     .save_active_item(SaveIntent::SaveAs, window, cx)
@@ -11750,6 +11772,7 @@ mod tests {
             ItemBufferKind, ItemEvent,
             test::{TestItem, TestProjectItem},
         },
+        persistence::model::DockData,
     };
     use fs::FakeFs;
     use gpui::{
@@ -12312,6 +12335,78 @@ mod tests {
         cx.executor().run_until_parked();
 
         assert!(task.await.unwrap());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_cancelled_close_window_resets_removing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.close_window(&CloseWindow, window, cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Cancel");
+        cx.executor().run_until_parked();
+
+        assert!(!workspace.read_with(cx, |workspace, _| workspace.removing));
+        let remaining_windows = cx.update(|_window, cx| cx.windows().len());
+        assert_eq!(remaining_windows, 1);
+    }
+
+    #[gpui::test]
+    async fn test_failed_close_window_resets_removing(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_save_error("simulated save failure")
+                .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.close_window(&CloseWindow, window, cx);
+        });
+        cx.executor().run_until_parked();
+
+        assert!(cx.has_pending_prompt());
+        cx.simulate_prompt_answer("Save");
+        cx.executor().run_until_parked();
+
+        assert!(!workspace.read_with(cx, |workspace, _| workspace.removing));
+        let remaining_windows = cx.update(|_window, cx| cx.windows().len());
+        assert_eq!(remaining_windows, 1);
     }
 
     #[gpui::test]
@@ -18438,5 +18533,347 @@ mod tests {
             workspace.open_url_or_file("nonexistent.txt", None, window, cx);
         });
         assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_serialized_dock_state_not_replayed_over_manual_panel_changes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+
+        let first_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        let second_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(second_panel.entity_id()),
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .bottom_dock()
+                    .read(cx)
+                    .active_panel()
+                    .map(|panel| panel.panel_id()),
+                Some(first_panel.entity_id()),
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 300, cx));
+            workspace.add_panel(panel, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(first_panel.entity_id()),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_closed_dock_not_reopened_by_late_serialized_panel(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(workspace.bottom_dock().read(cx).is_open());
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .bottom_dock()
+                .update(cx, |dock, cx| dock.set_open(false, window, cx));
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel, window, cx);
+        });
+
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(!workspace.bottom_dock().read(cx).is_open());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_stale_serialized_dock_state_discarded_when_panel_loading_finishes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .bottom_dock()
+                    .read(cx)
+                    .active_panel()
+                    .map(|panel| panel.panel_id()),
+                None,
+                "stale dock restoration state should not replay after panel loading finished",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_serialized_state_for_missing_panel_dropped_after_restoration_finishes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        workspace.update(cx, |workspace, cx| {
+            workspace.finish_dock_restoration(cx);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: false,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(
+                !dock.is_open(),
+                "dock must not open for a panel that can no longer register",
+            );
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel, window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert!(
+                !workspace.bottom_dock().read(cx).is_open(),
+                "stale dock state must not replay when the panel registers much later",
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_serialized_zoom_not_applied_while_waiting_for_serialized_panel(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let first_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(DockPosition::Bottom, 100, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
+            panel
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.bottom_dock().update(cx, |dock, cx| {
+                dock.restore_serialized_state(
+                    DockData {
+                        visible: true,
+                        active_panel: Some(SecondTestPanel::persistent_name().to_string()),
+                        zoom: true,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        });
+        workspace.read_with(cx, |_, cx| {
+            assert!(
+                !first_panel.read(cx).zoomed,
+                "serialized zoom should not apply to another panel while the serialized active panel is loading",
+            );
+        });
+
+        let second_panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| SecondTestPanel {
+                focus_handle: cx.focus_handle(),
+                zoomed: false,
+            });
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            let dock = workspace.bottom_dock().read(cx);
+            assert!(dock.is_open());
+            assert_eq!(
+                dock.active_panel().map(|panel| panel.panel_id()),
+                Some(second_panel.entity_id()),
+            );
+            assert!(!first_panel.read(cx).zoomed);
+            assert!(second_panel.read(cx).zoomed);
+        });
+    }
+
+    struct SecondTestPanel {
+        focus_handle: FocusHandle,
+        zoomed: bool,
+    }
+
+    impl EventEmitter<PanelEvent> for SecondTestPanel {}
+
+    impl Focusable for SecondTestPanel {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl Render for SecondTestPanel {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("second-test-panel")
+                .track_focus(&self.focus_handle(cx))
+        }
+    }
+
+    impl Panel for SecondTestPanel {
+        fn persistent_name() -> &'static str {
+            "SecondTestPanel"
+        }
+
+        fn panel_key() -> &'static str {
+            "SecondTestPanel"
+        }
+
+        fn position(&self, _: &Window, _: &App) -> DockPosition {
+            DockPosition::Bottom
+        }
+
+        fn position_is_valid(&self, _: DockPosition) -> bool {
+            true
+        }
+
+        fn set_position(&mut self, _: DockPosition, _: &mut Window, _: &mut Context<Self>) {}
+
+        fn default_size(&self, _: &Window, _: &App) -> Pixels {
+            px(300.)
+        }
+
+        fn icon(&self, _: &Window, _: &App) -> Option<ui::IconName> {
+            None
+        }
+
+        fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
+            None
+        }
+
+        fn toggle_action(&self) -> Box<dyn Action> {
+            crate::dock::test::ToggleTestPanel.boxed_clone()
+        }
+
+        fn activation_priority(&self) -> u32 {
+            200
+        }
+
+        fn is_zoomed(&self, _: &Window, _: &App) -> bool {
+            self.zoomed
+        }
+
+        fn set_zoomed(&mut self, zoomed: bool, _: &mut Window, _: &mut Context<Self>) {
+            self.zoomed = zoomed;
+        }
     }
 }

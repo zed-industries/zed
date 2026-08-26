@@ -26,7 +26,7 @@ use gpui::{
 use indoc::indoc;
 use language::{
     BracketPair, BracketPairConfig,
-    Capability::ReadWrite,
+    Capability::{Read, ReadOnly, ReadWrite},
     ContextLocation, ContextProvider, DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings,
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
     LanguageToolchainStore, Override, PLAIN_TEXT, Point,
@@ -2163,6 +2163,124 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
             .unindent(),
         );
     });
+}
+
+#[gpui::test]
+fn test_fold_at_level_chain_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let text = "
+            fn foo(
+                a: i32,
+            ) {
+                if true {
+                    let b = a;
+                } else {
+                    let b = a;
+                }
+            }
+        "
+        .unindent();
+        let buffer = cx.new(|cx| Buffer::local(&text, cx).with_language(rust_lang(), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(⋯) {⋯}
+            "
+                .unindent(),
+            );
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(
+                    a: i32,
+                ) {
+                    if true {⋯} else {⋯}
+                }
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_single_row_crease(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\n@file.txt and more\ncccccc\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
+
+            editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                aaaaaa
+                ⋯ and more
+                cccccc
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd eee\nfff\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let outer =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 7));
+            let inner =
+                snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 3));
+
+            editor.insert_creases(
+                [
+                    Crease::simple(outer, FoldPlaceholder::test()),
+                    Crease::simple(inner, FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\n⋯\nfff\n");
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\nbbb\nccc\nddd eee\nfff\n");
+        })
+        .unwrap();
 }
 
 #[gpui::test]
@@ -15439,6 +15557,344 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
             assert_eq!(!completions.is_empty(), should_match_snippet);
         });
     }
+}
+
+#[gpui::test]
+async fn test_read_only_buffer_is_not_formatted_or_saved(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), b"one\ntwo\nthree\n".to_vec())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let format_request_count = Arc::new(AtomicUsize::new(0));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let format_request_count = format_request_count.clone();
+                move |fake_server| {
+                    let format_request_count = format_request_count.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |_, _| {
+                            let format_request_count = format_request_count.clone();
+                            async move {
+                                format_request_count.fetch_add(1, atomic::Ordering::Release);
+                                Ok(Some(vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 3),
+                                        lsp::Position::new(1, 0),
+                                    ),
+                                    ", ".to_string(),
+                                )]))
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    fake_servers.next().await.unwrap();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(format_request_count.load(atomic::Ordering::Acquire), 0);
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_read_only_buffer_can_be_saved_as(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let save_as = editor.update_in(cx, |editor, window, cx| {
+        editor.save_as(
+            project.clone(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path("copy.rs").into(),
+            },
+            window,
+            cx,
+        )
+    });
+    save_as.await.unwrap();
+
+    assert_eq!(
+        fs.load(path!("/dir/copy.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/dir/file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_format_and_save_skip_read_only_buffers_in_multi_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "one\ntwo\nthree\n",
+            "other.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let formatted_uris = Arc::new(Mutex::new(Vec::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let formatted_uris = formatted_uris.clone();
+                move |fake_server| {
+                    let formatted_uris = formatted_uris.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |params, _| {
+                            let formatted_uris = formatted_uris.clone();
+                            async move {
+                                formatted_uris.lock().push(params.text_document.uri.clone());
+                                Ok(Some(vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 3),
+                                        lsp::Position::new(1, 0),
+                                    ),
+                                    ", ".to_string(),
+                                )]))
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let writable_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let read_only_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/other.rs"), cx)
+        })
+        .await
+        .unwrap();
+    read_only_buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            writable_buffer.clone(),
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            read_only_buffer.clone(),
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    fake_servers.next().await.unwrap();
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| editor.format(&Format, window, cx))
+        .unwrap();
+    format.await.unwrap();
+
+    assert_eq!(
+        *formatted_uris.lock(),
+        vec![lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()]
+    );
+    writable_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one, two\nthree\n");
+    });
+    read_only_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\ntwo\nthree\n");
+    });
+
+    read_only_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "dirty ")], None, cx);
+    });
+    assert_eq!(
+        read_only_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+        true
+    );
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        fs.load(path!("/a/main.rs").as_ref()).await.unwrap(),
+        "one, two\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/a/other.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_save_actions_are_hidden_for_read_only_files(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), b"one\ntwo\nthree\n".to_vec())
+        .await;
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fn save_actions_visible(cx: &mut VisualTestContext) -> (bool, bool, bool, bool) {
+        let actions = cx.update(|window, cx| window.available_actions(cx));
+        let visible = |name: &str| actions.iter().any(|action| action.name() == name);
+        (
+            visible("workspace::Save"),
+            visible("workspace::FormatAndSave"),
+            visible("workspace::SaveWithoutFormat"),
+            visible("workspace::SaveAs"),
+        )
+    }
+
+    assert_eq!(save_actions_visible(cx), (true, true, true, true));
+
+    buffer.update(cx, |buffer, cx| buffer.set_capability(ReadOnly, cx));
+    cx.run_until_parked();
+    assert_eq!(save_actions_visible(cx), (false, false, false, true));
+
+    buffer.update(cx, |buffer, cx| buffer.set_capability(ReadWrite, cx));
+    cx.run_until_parked();
+    assert_eq!(save_actions_visible(cx), (true, true, true, true));
 }
 
 #[gpui::test]
@@ -33080,6 +33536,120 @@ async fn test_active_bookmarks(cx: &mut TestAppContext) {
     assert!(active.contains(&DisplayRow(5)));
     assert!(!active.contains(&DisplayRow(1)));
     assert!(!active.contains(&DisplayRow(8)));
+}
+
+#[gpui::test]
+async fn test_clearing_bookmark_store_notifies_editor(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new("Line 0\nLine 1\nLine 2\nLine 3", cx).await;
+
+    ctx.toggle_bookmarks_at_rows(&[1, 3]);
+
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.contains(&DisplayRow(1)));
+    assert!(active.contains(&DisplayRow(3)));
+
+    let editor = ctx.editor.clone();
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = ctx.cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    // `workspace::ClearBookmarks` mutates only the store, so the editor's gutter
+    // repaint relies entirely on its observation of the bookmark store.
+    ctx.project.update(&mut ctx.cx, |project, cx| {
+        project.bookmark_store().update(cx, |bookmark_store, cx| {
+            bookmark_store.clear_bookmarks(cx);
+        });
+    });
+    ctx.cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "clearing the bookmark store should notify the editor so its gutter repaints"
+    );
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.is_empty());
+}
+
+#[gpui::test]
+async fn test_clear_bookmarks_action_repaints_workspace_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({ "main.rs": "Line 0\nLine 1\nLine 2\nLine 3" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let workspace = window
+        .read_with(&mut cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let worktree_id = workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(&mut cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx.run_until_parked();
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.contains(&DisplayRow(1)));
+
+    // Drain the effects still pending from the toggle above, so that the only
+    // thing that can notify the editor below is the action dispatch.
+    cx.run_until_parked();
+
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    cx.dispatch_action(workspace::ClearBookmarks);
+    cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "workspace::ClearBookmarks should notify the editor so its gutter repaints"
+    );
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.is_empty());
 }
 
 #[gpui::test]
