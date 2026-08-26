@@ -2,6 +2,7 @@ use collections::HashMap;
 use http_client::CustomHeaders;
 use http_client::http::{HeaderName, HeaderValue};
 
+pub mod aimlapi;
 pub mod anthropic;
 pub mod anthropic_compatible;
 pub mod api_compatible;
