@@ -1,5 +1,6 @@
 use crate::display::WebDisplay;
 use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::ime_mirror::ImeMirror;
 use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
@@ -46,7 +47,7 @@ pub(crate) struct WebWindowMutableState {
 pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
-    pub(crate) input_element: web_sys::HtmlInputElement,
+    pub(crate) ime_mirror: ImeMirror,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
@@ -56,6 +57,12 @@ pub(crate) struct WebWindowInner {
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
+    /// Set while `sync_virtual_keyboard` blur/focus-cycles the hidden input.
+    /// The cycle is a keyboard-visibility hint, not a real activity change;
+    /// letting the focus/blur listeners report it would re-enter GPUI
+    /// synchronously from inside an input dispatch, and a `RefCell`
+    /// double-borrow panic on wasm never unwinds, wedging the app.
+    pub(crate) suppress_focus_status_events: Cell<bool>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
@@ -138,21 +145,7 @@ impl WebWindow {
         };
         let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
-        let input_element: web_sys::HtmlInputElement = document
-            .create_element("input")
-            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
-            .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
-        let input_style = input_element.style();
-        input_style.set_property("position", "fixed").ok();
-        input_style.set_property("top", "0").ok();
-        input_style.set_property("left", "0").ok();
-        input_style.set_property("width", "1px").ok();
-        input_style.set_property("height", "1px").ok();
-        input_style.set_property("opacity", "0").ok();
-        body.append_child(&input_element)
-            .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        input_element.focus().ok();
+        let ime_mirror = ImeMirror::new(&document, &body)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -181,7 +174,7 @@ impl WebWindow {
         let inner = Rc::new(WebWindowInner {
             browser_window,
             canvas,
-            input_element,
+            ime_mirror,
             has_device_pixel_support,
             is_mac,
             state: RefCell::new(mutable_state),
@@ -191,6 +184,7 @@ impl WebWindow {
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
+            suppress_focus_status_events: Cell::new(false),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
@@ -528,8 +522,7 @@ impl Drop for WebWindow {
 
         let canvas: &web_sys::Element = self.inner.canvas.as_ref();
         canvas.remove();
-        let input_element: &web_sys::Element = self.inner.input_element.as_ref();
-        input_element.remove();
+        self.inner.ime_mirror.remove();
         self.active_window.borrow_mut().take();
         self.lifecycle.set(WebWindowLifecycle::Closed);
     }

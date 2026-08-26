@@ -1497,7 +1497,7 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        let mtime = envelope.payload.mtime.map(|time| time.into());
         this.update(&mut cx, move |this, cx| {
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
                 buffer.update(cx, |buffer, cx| {
@@ -1526,9 +1526,10 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        let mtime = envelope.payload.mtime.map(|time| time.into());
         let line_ending = deserialize_line_ending(
-            proto::LineEnding::from_i32(envelope.payload.line_ending)
+            proto::LineEnding::try_from(envelope.payload.line_ending)
+                .ok()
                 .context("missing line ending")?,
         );
         this.update(&mut cx, |this, cx| {
