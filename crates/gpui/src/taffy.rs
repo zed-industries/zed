@@ -90,10 +90,11 @@ impl IsolatedLayout {
 
     /// Drop everything this tree holds, keeping it usable for another frame.
     ///
-    /// Call it when a new layout of the content starts, before the first
-    /// `enter` of that pass. Every layout inside `enter` adds nodes, and
-    /// nothing removes them, so a tree that is never cleared grows with each
-    /// pass for as long as the element lives.
+    /// Call it only between elements: after the old content element drops,
+    /// before the first `enter` with the new one. An element requests its
+    /// nodes once and reuses those ids in every later pass, so a clear while
+    /// the element lives makes its next layout panic on the dead ids. A tree
+    /// that lives exactly as long as one element never needs a clear.
     pub fn clear(&mut self) {
         if let Some(engine) = self.0.as_mut() {
             engine.clear();
