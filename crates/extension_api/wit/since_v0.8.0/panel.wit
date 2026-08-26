@@ -32,4 +32,7 @@ interface panel {
 
     /// Returns the root of the active workspace's first visible worktree.
     active-worktree-root: func() -> result<string, string>;
+
+    /// Reads one relative file from the active workspace's visible worktree.
+    read-active-worktree-file: func(path: string) -> result<string, string>;
 }

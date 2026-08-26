@@ -141,10 +141,21 @@ impl ExtensionPanelUiProxy for ExtensionHostProxy {
         };
         proxy.active_worktree_root(cx)
     }
+
+    fn read_active_worktree_file(&self, path: &str, cx: &mut App) -> Result<String> {
+        let Some(proxy) = self.panel_ui_proxy.read().clone() else {
+            return Err(anyhow!("extension panels are not available"));
+        };
+        proxy.read_active_worktree_file(path, cx)
+    }
 }
 
 impl ExtensionPanelActionProxy for ExtensionHostProxy {
-    fn dispatch_panel_action(&self, action: ExtensionPanelAction, cx: &mut App) -> Task<Result<()>> {
+    fn dispatch_panel_action(
+        &self,
+        action: ExtensionPanelAction,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         let Some(proxy) = self.panel_action_proxy.read().clone() else {
             return Task::ready(Err(anyhow!("extension panel actions are not available")));
         };

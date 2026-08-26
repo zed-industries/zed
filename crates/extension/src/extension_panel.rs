@@ -71,10 +71,15 @@ pub trait ExtensionPanelUiProxy: Send + Sync + 'static {
     /// Returns the root path of the first visible worktree in the active
     /// workspace. This intentionally exposes no arbitrary file access.
     fn active_worktree_root(&self, cx: &mut App) -> Result<String>;
+
+    /// Reads one relative file from the active workspace's first visible
+    /// worktree. Implementations must reject absolute and traversing paths.
+    fn read_active_worktree_file(&self, path: &str, cx: &mut App) -> Result<String>;
 }
 
 /// Implemented by the extension host to deliver user actions to the owning
 /// extension. A UI must not execute extension-provided code directly.
 pub trait ExtensionPanelActionProxy: Send + Sync + 'static {
-    fn dispatch_panel_action(&self, action: ExtensionPanelAction, cx: &mut App) -> Task<Result<()>>;
+    fn dispatch_panel_action(&self, action: ExtensionPanelAction, cx: &mut App)
+    -> Task<Result<()>>;
 }

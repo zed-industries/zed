@@ -16,9 +16,9 @@ pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
     ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy, ExtensionPanelAction,
-    ExtensionPanelActionProxy,
-    ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
+    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionLanguageServerProxy, ExtensionPanelAction, ExtensionPanelActionProxy,
+    ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::future::join_all;
@@ -308,7 +308,11 @@ struct ExtensionPanelActionDispatcher {
 }
 
 impl ExtensionPanelActionProxy for ExtensionPanelActionDispatcher {
-    fn dispatch_panel_action(&self, action: ExtensionPanelAction, cx: &mut App) -> Task<Result<()>> {
+    fn dispatch_panel_action(
+        &self,
+        action: ExtensionPanelAction,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         let Some(store) = self.store.upgrade() else {
             return Task::ready(Err(anyhow!("the extension host is no longer available")));
         };

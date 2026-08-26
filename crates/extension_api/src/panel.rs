@@ -23,3 +23,8 @@ pub fn send_event(panel_id: &str, kind: &str, payload: &Value) -> Result<(), Str
 pub fn active_worktree_root() -> Result<String, String> {
     crate::wit::zed::extension::panel::active_worktree_root()
 }
+
+/// Reads one relative file from the active workspace's visible worktree.
+pub fn read_active_worktree_file(path: &str) -> Result<String, String> {
+    crate::wit::zed::extension::panel::read_active_worktree_file(path)
+}

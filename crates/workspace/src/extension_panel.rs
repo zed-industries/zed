@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::{Component, Path},
+};
 
 use anyhow::{Result, anyhow};
 use extension::{
@@ -56,15 +59,17 @@ impl ExtensionPanels {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let has_input_action = descriptor.actions.iter().any(|action| action.requires_input);
+        let has_input_action = descriptor
+            .actions
+            .iter()
+            .any(|action| action.requires_input);
         self.panels
             .entry(descriptor.id)
             .or_insert_with(|| ExtensionPanelContent {
                 title: descriptor.title,
                 actions: descriptor.actions,
-                input: has_input_action.then(|| {
-                    cx.new(|cx| InputField::new(window, cx, "Clojure expression"))
-                }),
+                input: has_input_action
+                    .then(|| cx.new(|cx| InputField::new(window, cx, "Clojure expression"))),
                 events: Vec::new(),
             });
         cx.notify();
@@ -186,7 +191,10 @@ impl Render for ExtensionPanels {
                             payload: serde_json::json!({}),
                         };
                         Button::new(
-                            format!("extension-panel-action-{}-{}-{}", id.extension_id, id.panel_id, descriptor.id),
+                            format!(
+                                "extension-panel-action-{}-{}-{}",
+                                id.extension_id, id.panel_id, descriptor.id
+                            ),
                             descriptor.label.clone(),
                         )
                         .on_click(move |_, _, cx| {
@@ -198,9 +206,12 @@ impl Render for ExtensionPanels {
                                     serde_json::json!({ "input": text })
                                 })
                                 .unwrap_or_else(|| serde_json::json!({}));
-                            let action = ExtensionPanelAction { payload, ..action.clone() };
-                            let task = ExtensionHostProxy::global(cx)
-                                .dispatch_panel_action(action, cx);
+                            let action = ExtensionPanelAction {
+                                payload,
+                                ..action.clone()
+                            };
+                            let task =
+                                ExtensionHostProxy::global(cx).dispatch_panel_action(action, cx);
                             cx.spawn(async move |_| {
                                 if let Err(error) = task.await {
                                     log::error!("extension panel action failed: {error:#}");
@@ -243,11 +254,7 @@ impl ExtensionPanelsProxy {
         &self,
         location: ExtensionPanelLocation,
         cx: &mut App,
-        f: impl FnOnce(
-            &Entity<ExtensionPanels>,
-            &mut Window,
-            &mut Context<Workspace>,
-        ) -> Result<()>,
+        f: impl FnOnce(&Entity<ExtensionPanels>, &mut Window, &mut Context<Workspace>) -> Result<()>,
     ) -> Result<()> {
         let (window_handle, workspace_handle) = self.first_workspace(cx)?;
         window_handle.update(cx, |_, window, cx| {
@@ -280,11 +287,15 @@ impl ExtensionPanelUiProxy for ExtensionPanelsProxy {
         event: ExtensionPanelEvent,
         cx: &mut App,
     ) -> Result<()> {
-        self.with_panel(ExtensionPanelLocation::Right, cx, |extension_panels, _, cx| {
-            extension_panels.update(cx, |extension_panels, cx| {
-                extension_panels.send_event(panel, event, cx)
-            })
-        })
+        self.with_panel(
+            ExtensionPanelLocation::Right,
+            cx,
+            |extension_panels, _, cx| {
+                extension_panels.update(cx, |extension_panels, cx| {
+                    extension_panels.send_event(panel, event, cx)
+                })
+            },
+        )
     }
 
     fn active_worktree_root(&self, cx: &mut App) -> Result<String> {
@@ -295,5 +306,28 @@ impl ExtensionPanelUiProxy for ExtensionPanelsProxy {
             .next()
             .ok_or_else(|| anyhow!("the active workspace has no visible worktree"))?;
         Ok(worktree.read(cx).abs_path().to_string_lossy().into_owned())
+    }
+
+    fn read_active_worktree_file(&self, path: &str, cx: &mut App) -> Result<String> {
+        let relative_path = Path::new(path);
+        if path.is_empty()
+            || !relative_path
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(anyhow!(
+                "extension panel file path must be a relative path without traversal"
+            ));
+        }
+
+        let (_, workspace) = self.first_workspace(cx)?;
+        let worktree = workspace
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .ok_or_else(|| anyhow!("the active workspace has no visible worktree"))?;
+        let file_path = worktree.read(cx).abs_path().join(relative_path);
+        std::fs::read_to_string(&file_path)
+            .map_err(|error| anyhow!("failed to read {}: {error}", file_path.display()))
     }
 }

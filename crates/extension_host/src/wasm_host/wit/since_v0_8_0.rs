@@ -11,9 +11,9 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use extension::{
-    ExtensionLanguageServerProxy, ExtensionPanelActionDescriptor, ExtensionPanelDescriptor, ExtensionPanelEvent, ExtensionPanelId,
-    ExtensionPanelLocation, ExtensionPanelUiProxy, KeyValueStoreDelegate, ProjectDelegate,
-    WorktreeDelegate,
+    ExtensionLanguageServerProxy, ExtensionPanelActionDescriptor, ExtensionPanelDescriptor,
+    ExtensionPanelEvent, ExtensionPanelId, ExtensionPanelLocation, ExtensionPanelUiProxy,
+    KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate,
 };
 use futures::{AsyncReadExt, AsyncWriteExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
@@ -713,6 +713,20 @@ impl panel::Host for WasmState {
         let result = self
             .on_main_thread(move |cx| {
                 async move { cx.update(|cx| proxy.active_worktree_root(cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
+
+    async fn read_active_worktree_file(
+        &mut self,
+        path: String,
+    ) -> wasmtime::Result<Result<String, String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.read_active_worktree_file(&path, cx)) }
+                    .boxed_local()
             })
             .await;
         Ok(result.map_err(|error| error.to_string()))
