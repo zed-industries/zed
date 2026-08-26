@@ -3877,6 +3877,65 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 }
 
 #[gpui::test]
+async fn test_global_gitignore_without_repository(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let home = paths::home_dir();
+    let project_path = home.join("builds").join("my-project.com");
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        home,
+        json!({
+            ".config": {
+                "git": {
+                    "ignore": "foo\nbuilds\n*.com\n"
+                }
+            },
+            "builds": {
+                "my-project.com": {
+                    "foo": "",
+                    "keep_me": "",
+                }
+            }
+        }),
+    )
+    .await;
+
+    let worktree = Worktree::local(
+        project_path.clone(),
+        true,
+        fs.clone(),
+        Arc::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // Neither `builds` (an outside ancestor) nor `.com` (the root's own name) may ignore everything, but `foo` still should.
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            WorktreeExpectations {
+                ignored_paths: &["foo"],
+                tracked_paths: &["keep_me"],
+                ..Default::default()
+            },
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_repo_exclude_in_worktree(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -5593,7 +5652,8 @@ async fn test_load_file_encoding(cx: &mut TestAppContext) {
         }
         let loaded = loaded.unwrap();
         assert_eq!(
-            loaded.text, case.expected_text,
+            loaded.text.to_string(),
+            case.expected_text,
             "Encoding mismatch for file: {}",
             case.name
         );
