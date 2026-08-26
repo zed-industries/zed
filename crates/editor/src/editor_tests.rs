@@ -45,7 +45,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project, ProjectPath,
-    bookmark_store::SerializedBookmark,
+    bookmark_store::{BookmarkStore, BookmarkStoreEvent, SerializedBookmark},
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -74,7 +74,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ToolbarItemLocation, ViewId,
+    Pane, SplitDirection, ToolbarItemLocation, ViewId, Workspace,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -33793,174 +33793,58 @@ async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_bookmarks_tab_auto_refresh(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
         json!({
             "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
             "other.rs": "other0\nother1\nother2\nother3\n",
         }),
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .expect("window should still be open");
-    let mut cx = VisualTestContext::from_window(*window, cx);
 
-    let worktree_id = workspace.update_in(&mut cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .next()
-                .expect("project should have at least one worktree")
-                .read(cx)
-                .id()
-        })
-    });
-
-    let buffer = project
-        .update(&mut cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .expect("main.rs buffer should open");
-
-    let editor = workspace.update_in(&mut cx, |_workspace, window, cx| {
-        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
-        cx.new(|cx| {
-            Editor::new(
-                EditorMode::full(),
-                multibuffer,
-                Some(project.clone()),
-                window,
-                cx,
-            )
-        })
-    });
-
-    let pane = workspace.update_in(&mut cx, |workspace, _window, _cx| {
-        workspace.active_pane().clone()
-    });
-    pane.update_in(&mut cx, |pane, window, cx| {
-        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
-    });
-
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
     cx.run_until_parked();
 
-    workspace.update_in(&mut cx, |workspace, window, cx| {
-        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
-    });
-    cx.run_until_parked();
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
 
-    let bookmarks_editor = workspace
-        .update_in(&mut cx, |workspace, _window, cx| {
-            workspace.panes().iter().find_map(|pane| {
-                pane.read(cx)
-                    .items()
-                    .filter_map(|item| item.downcast::<Editor>())
-                    .find(|editor| editor.read(cx).bookmark_view.is_some())
-            })
-        })
-        .expect("bookmarks editor should exist after view_bookmarks");
-
-    let excerpt_count = bookmarks_editor.update_in(&mut cx, |editor, _window, cx| {
-        editor.buffer.read(cx).snapshot(cx).excerpts().count()
-    });
     assert_eq!(
-        excerpt_count, 1,
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
         "bookmarks editor should have 1 excerpt after first bookmark"
     );
 
-    // Line 7 is far enough from line 0 to produce a separate excerpt.
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(7, 0)..Point::new(7, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
     cx.run_until_parked();
-
-    let excerpt_count = bookmarks_editor.update_in(&mut cx, |editor, _window, cx| {
-        editor.buffer.read(cx).snapshot(cx).excerpts().count()
-    });
     assert_eq!(
-        excerpt_count, 2,
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
         "bookmarks editor should auto-refresh to 2 excerpts after second bookmark"
     );
 
-    // Removing a bookmark should incrementally drop just that excerpt, not rebuild everything.
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(7, 0)..Point::new(7, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
     cx.run_until_parked();
-
-    let excerpt_count = bookmarks_editor.update_in(&mut cx, |editor, _window, cx| {
-        editor.buffer.read(cx).snapshot(cx).excerpts().count()
-    });
     assert_eq!(
-        excerpt_count, 1,
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
         "bookmarks editor should auto-refresh back to 1 excerpt after removing a bookmark"
     );
+    assert_eq!(
+        cursor_line_text(&bookmarks_editor, &mut cx),
+        "line0",
+        "refreshing must keep the surviving excerpt intact, preserving selections in it"
+    );
 
-    let other_buffer = project
-        .update(&mut cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("other.rs")), cx)
-        })
-        .await
-        .expect("other.rs buffer should open");
-
-    let other_editor = workspace.update_in(&mut cx, |_workspace, window, cx| {
-        let multibuffer = MultiBuffer::build_from_buffer(other_buffer.clone(), cx);
-        cx.new(|cx| {
-            Editor::new(
-                EditorMode::full(),
-                multibuffer,
-                Some(project.clone()),
-                window,
-                cx,
-            )
-        })
-    });
-    pane.update_in(&mut cx, |pane, window, cx| {
-        pane.add_item(Box::new(other_editor.clone()), true, true, None, window, cx);
-    });
-
-    other_editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 1, &mut cx);
     cx.run_until_parked();
-
     assert_eq!(
         bookmarked_paths(&bookmarks_editor, &mut cx),
         vec!["main.rs", "other.rs"],
         "bookmarks editor should hold one path per bookmarked file"
     );
 
-    // Removing the last bookmark of a file is the only thing that drops its path entirely.
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
     cx.run_until_parked();
-
     assert_eq!(
         bookmarked_paths(&bookmarks_editor, &mut cx),
         vec!["other.rs"],
@@ -33968,450 +33852,643 @@ async fn test_bookmarks_tab_auto_refresh(cx: &mut TestAppContext) {
     );
 }
 
-fn bookmarked_paths(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<String> {
-    editor.update_in(cx, |editor, _window, cx| {
-        let mut paths: Vec<String> = editor
-            .buffer
-            .read(cx)
-            .snapshot(cx)
-            .buffers_with_paths()
-            .map(|(_, path_key)| path_key.path.as_unix_str().to_string())
-            .collect();
-        paths.sort();
-        paths
-    })
-}
-
-#[gpui::test]
-async fn test_bookmarks_tab_selects_first_bookmark(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
-        json!({
-            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
-        }),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .expect("window should still be open");
-    let mut cx = VisualTestContext::from_window(*window, cx);
-
-    let worktree_id = workspace.update_in(&mut cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .next()
-                .expect("project should have at least one worktree")
-                .read(cx)
-                .id()
-        })
-    });
-
-    let buffer = project
-        .update(&mut cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .expect("main.rs buffer should open");
-
-    let editor = workspace.update_in(&mut cx, |_workspace, window, cx| {
-        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
-        cx.new(|cx| {
-            Editor::new(
-                EditorMode::full(),
-                multibuffer,
-                Some(project.clone()),
-                window,
-                cx,
-            )
-        })
-    });
-
-    let pane = workspace.update_in(&mut cx, |workspace, _window, _cx| {
-        workspace.active_pane().clone()
-    });
-    pane.update_in(&mut cx, |pane, window, cx| {
-        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
-    });
-
-    // Row 5 has context lines above it, so an excerpt built around it starts at row 3. A tab
-    // that merely populates excerpts would leave the cursor there instead of on the bookmark.
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-    cx.run_until_parked();
-
-    workspace.update_in(&mut cx, |workspace, window, cx| {
-        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
-    });
-    cx.run_until_parked();
-
-    let bookmarks_editor = workspace
-        .update_in(&mut cx, |workspace, _window, cx| {
-            workspace.panes().iter().find_map(|pane| {
-                pane.read(cx)
-                    .items()
-                    .filter_map(|item| item.downcast::<Editor>())
-                    .find(|editor| editor.read(cx).bookmark_view.is_some())
-            })
-        })
-        .expect("bookmarks editor should exist after view_bookmarks");
-
-    let cursor_text = bookmarks_editor.update_in(&mut cx, |editor, _window, cx| {
-        let snapshot = editor.buffer.read(cx).snapshot(cx);
-        let head = editor
-            .selections
-            .newest::<Point>(&editor.display_snapshot(cx))
-            .head();
-        snapshot
-            .text_for_range(Point::new(head.row, 0)..Point::new(head.row + 1, 0))
-            .collect::<String>()
-    });
-    assert_eq!(
-        cursor_text.trim_end(),
-        "line5",
-        "cursor should land on the bookmarked line, not the top of its excerpt context"
-    );
-}
-
 #[gpui::test]
 async fn test_bookmarks_tab_selects_first_bookmark_despite_concurrent_change(
     cx: &mut TestAppContext,
 ) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
         json!({
             "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
         }),
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .expect("window should still be open");
-    let mut cx = VisualTestContext::from_window(*window, cx);
 
-    let worktree_id = workspace.update_in(&mut cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .next()
-                .expect("project should have at least one worktree")
-                .read(cx)
-                .id()
-        })
-    });
-
-    let buffer = project
-        .update(&mut cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .expect("main.rs buffer should open");
-
-    let editor = workspace.update_in(&mut cx, |_workspace, window, cx| {
-        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
-        cx.new(|cx| {
-            Editor::new(
-                EditorMode::full(),
-                multibuffer,
-                Some(project.clone()),
-                window,
-                cx,
-            )
-        })
-    });
-
-    let pane = workspace.update_in(&mut cx, |workspace, _window, _cx| {
-        workspace.active_pane().clone()
-    });
-    pane.update_in(&mut cx, |pane, window, cx| {
-        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
-    });
-
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    toggle_bookmark_on_row(&editor, 5, &mut cx);
     cx.run_until_parked();
 
-    workspace.update_in(&mut cx, |workspace, window, cx| {
-        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
-    });
+    open_bookmarks_tab(&workspace, &mut cx);
 
-    // Deliberately no park here: a bookmark change lands while the tab's initial population
-    // task is still queued, so the refresh it triggers must not swallow the pending selection.
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(9, 0)..Point::new(9, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    toggle_bookmark_on_row(&editor, 9, &mut cx);
     cx.run_until_parked();
 
-    let bookmarks_editor = workspace
-        .update_in(&mut cx, |workspace, _window, cx| {
-            workspace.panes().iter().find_map(|pane| {
-                pane.read(cx)
-                    .items()
-                    .filter_map(|item| item.downcast::<Editor>())
-                    .find(|editor| editor.read(cx).bookmark_view.is_some())
-            })
-        })
+    let bookmarks_editor = find_bookmarks_editor(&workspace, &mut cx)
         .expect("bookmarks editor should exist after view_bookmarks");
-
-    let cursor_text = bookmarks_editor.update_in(&mut cx, |editor, _window, cx| {
-        let snapshot = editor.buffer.read(cx).snapshot(cx);
-        let head = editor
-            .selections
-            .newest::<Point>(&editor.display_snapshot(cx))
-            .head();
-        snapshot
-            .text_for_range(Point::new(head.row, 0)..Point::new(head.row + 1, 0))
-            .collect::<String>()
-    });
     assert_eq!(
-        cursor_text.trim_end(),
+        cursor_line_text(&bookmarks_editor, &mut cx),
         "line5",
-        "a bookmark change racing the initial population must not lose the initial selection"
+        "a bookmark change racing the tab creation must not lose the initial selection"
     );
 }
 
 #[gpui::test]
-async fn test_bookmarks_tab_split_populates_when_original_closes_early(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/a"),
+async fn test_view_bookmarks_without_resolvable_bookmarks_opens_no_tab(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, _editor, mut cx) = init_bookmarks_tab_test(
+        cx,
         json!({
-            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+            "main.rs": "line0\nline1\n",
+            "other.rs": "other0\n",
+            "third.rs": "third0\n",
         }),
     )
     .await;
-    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .expect("window should still be open");
-    let mut cx = VisualTestContext::from_window(*window, cx);
 
-    let worktree_id = workspace.update_in(&mut cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .next()
-                .expect("project should have at least one worktree")
-                .read(cx)
-                .id()
-        })
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![(bookmark_path(path!("/a/third.rs")), vec![99])],
+        &mut cx,
+    )
+    .await;
+
+    let worktree_id = project.update(&mut cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have at least one worktree")
+            .read(cx)
+            .id()
     });
-
-    let buffer = project
+    let other_buffer = project
         .update(&mut cx, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("other.rs")), cx)
         })
         .await
-        .expect("main.rs buffer should open");
-
-    let editor = workspace.update_in(&mut cx, |_workspace, window, cx| {
-        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
-        cx.new(|cx| {
-            Editor::new(
-                EditorMode::full(),
-                multibuffer,
-                Some(project.clone()),
-                window,
-                cx,
-            )
-        })
+        .expect("other.rs buffer should open");
+    let probe_anchor = other_buffer.update(&mut cx, |buffer, _| {
+        buffer.text_snapshot().anchor_before(Point::new(0, 0))
+    });
+    bookmark_store.update(&mut cx, |store, cx| {
+        assert_eq!(
+            store
+                .find_bookmark(&other_buffer, probe_anchor, cx)
+                .map(|bookmark| bookmark.label.clone()),
+            None,
+            "a probe on a bookmark-less file should find nothing"
+        );
     });
 
-    let pane = workspace.update_in(&mut cx, |workspace, _window, _cx| {
-        workspace.active_pane().clone()
-    });
-    pane.update_in(&mut cx, |pane, window, cx| {
-        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
-    });
-
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
+    open_bookmarks_tab(&workspace, &mut cx);
     cx.run_until_parked();
 
-    workspace.update_in(&mut cx, |workspace, window, cx| {
-        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
-    });
-
-    // Deliberately no park: the tab exists (it is created synchronously) but its excerpts
-    // have not been populated yet.
-    let bookmarks_editor = workspace
-        .update_in(&mut cx, |workspace, _window, cx| {
-            workspace.panes().iter().find_map(|pane| {
-                pane.read(cx)
-                    .items()
-                    .filter_map(|item| item.downcast::<Editor>())
-                    .find(|editor| editor.read(cx).bookmark_view.is_some())
-            })
-        })
-        .expect("bookmarks editor should exist synchronously after view_bookmarks");
-
-    let split_editor = bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
-        cx.new(|cx| editor.clone(window, cx))
-    });
-
-    // Closing the original tab drops its handle on the shared bookmarks view; the split's
-    // handle is now the only thing keeping the in-flight population alive.
-    bookmarks_editor.update(&mut cx, |editor, _cx| {
-        editor.bookmark_view = None;
-        editor.bookmark_view_subscription = None;
-    });
-    cx.run_until_parked();
-
-    let excerpt_count = split_editor.update_in(&mut cx, |editor, _window, cx| {
-        editor.buffer.read(cx).snapshot(cx).excerpts().count()
-    });
     assert_eq!(
-        excerpt_count, 1,
-        "split should populate itself when the original tab closes mid-load"
+        find_bookmarks_editor(&workspace, &mut cx),
+        None,
+        "a store whose bookmarks all fail to resolve must not open an empty tab, even after a find_bookmark probe"
     );
 }
 
 #[gpui::test]
 async fn test_bookmarks_tab_survives_split(cx: &mut TestAppContext) {
+    let (workspace, pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    let split_editor = bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
+        cx.new(|cx| editor.clone(window, cx))
+    });
+    assert!(
+        split_editor.read_with(&cx, |editor, _| editor.bookmarks_tab_state.is_some()),
+        "split clone should share the bookmarks tab state"
+    );
+    assert!(
+        split_editor.read_with(&cx, |editor, cx| editor
+            .highlighted_rows::<crate::bookmarks::BookmarkRowHighlights>(cx)
+            .next()
+            .is_some()),
+        "split clone should carry over the bookmark line highlights"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    close_bookmarks_editor(&pane, bookmarks_editor, &mut cx);
+    assert_eq!(
+        excerpt_count(&split_editor, &mut cx),
+        2,
+        "split should refresh itself when the original tab closes with a refresh in flight"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        excerpt_count(&split_editor, &mut cx),
+        1,
+        "split clone's subscription should keep refreshing after the original tab closes"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmark_resolution_drop_emits_store_event(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/a"),
         json!({
-            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+            "main.rs": "line0\nline1\n",
         }),
     )
     .await;
     let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
-    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-    let workspace = window
-        .read_with(cx, |mw, _| mw.workspace().clone())
-        .expect("window should still be open");
-    let mut cx = VisualTestContext::from_window(*window, cx);
-
-    let worktree_id = workspace.update_in(&mut cx, |workspace, _window, cx| {
-        workspace.project().update(cx, |project, cx| {
-            project
-                .worktrees(cx)
-                .next()
-                .expect("project should have at least one worktree")
-                .read(cx)
-                .id()
-        })
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have at least one worktree")
+            .read(cx)
+            .id()
     });
-
     let buffer = project
-        .update(&mut cx, |project, cx| {
+        .update(cx, |project, cx| {
             project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .expect("main.rs buffer should open");
 
-    let editor = workspace.update_in(&mut cx, |_workspace, window, cx| {
-        let multibuffer = MultiBuffer::build_from_buffer(buffer.clone(), cx);
-        cx.new(|cx| {
-            Editor::new(
-                EditorMode::full(),
-                multibuffer,
-                Some(project.clone()),
-                window,
+    let bookmark_store = project.read_with(cx, |project, _| project.bookmark_store());
+    let abs_path = cx
+        .update(|cx| BookmarkStore::abs_path_from_buffer(&buffer, cx))
+        .expect("buffer should have an absolute path");
+
+    bookmark_store
+        .update(cx, |store, cx| {
+            store.load_serialized_bookmarks(
+                BTreeMap::from([(abs_path, serialized_rows(&[0, 99]))]),
                 cx,
             )
         })
-    });
+        .await
+        .expect("loading serialized bookmarks should succeed");
 
-    let pane = workspace.update_in(&mut cx, |workspace, _window, _cx| {
-        workspace.active_pane().clone()
-    });
-    pane.update_in(&mut cx, |pane, window, cx| {
-        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
-    });
-
-    editor.update_in(&mut cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
-        });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-    });
-    cx.run_until_parked();
-
-    workspace.update_in(&mut cx, |workspace, window, cx| {
-        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
-    });
-    cx.run_until_parked();
-
-    let bookmarks_editor = workspace
-        .update_in(&mut cx, |workspace, _window, cx| {
-            workspace.panes().iter().find_map(|pane| {
-                pane.read(cx)
-                    .items()
-                    .filter_map(|item| item.downcast::<Editor>())
-                    .find(|editor| editor.read(cx).bookmark_view.is_some())
+    let events = Rc::new(RefCell::new(Vec::<BookmarkStoreEvent>::new()));
+    let _subscription = cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&bookmark_store, move |_, event: &BookmarkStoreEvent, _| {
+                events.borrow_mut().push(event.clone());
             })
-        })
-        .expect("bookmarks editor should exist after view_bookmarks");
+        }
+    });
 
+    let (buffer_id, snapshot) =
+        buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.text_snapshot()));
+    let resolved_count = bookmark_store.update(cx, |store, cx| {
+        store
+            .bookmarks_for_buffer(
+                buffer.clone(),
+                text::Anchor::min_max_range_for_buffer(buffer_id),
+                &snapshot,
+                cx,
+            )
+            .len()
+    });
+    assert_eq!(
+        resolved_count, 1,
+        "only the in-range bookmark should survive resolution"
+    );
+    assert_eq!(
+        *events.borrow(),
+        vec![BookmarkStoreEvent::BookmarksChanged],
+        "dropping the out-of-range bookmark during resolution should emit BookmarksChanged"
+    );
+
+    let resolved_count = bookmark_store.update(cx, |store, cx| {
+        store
+            .bookmarks_for_buffer(
+                buffer.clone(),
+                text::Anchor::min_max_range_for_buffer(buffer_id),
+                &snapshot,
+                cx,
+            )
+            .len()
+    });
+    assert_eq!(
+        resolved_count, 1,
+        "an already-resolved entry should keep its bookmark"
+    );
+    assert_eq!(
+        *events.borrow(),
+        vec![BookmarkStoreEvent::BookmarksChanged],
+        "resolution of an already-loaded entry should not emit again"
+    );
+
+    bookmark_store.update(cx, |store, cx| {
+        store.edit_bookmark(
+            &buffer,
+            snapshot.anchor_before(Point::new(0, 0)),
+            "renamed".to_string(),
+            cx,
+        )
+    });
+    assert_eq!(
+        *events.borrow(),
+        vec![
+            BookmarkStoreEvent::BookmarksChanged,
+            BookmarkStoreEvent::LabelChanged
+        ],
+        "editing a bookmark's label should emit LabelChanged rather than a set change"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_highlights_bookmark_on_trailing_empty_line(cx: &mut TestAppContext) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![last_display_row(&bookmarks_editor, &mut cx)],
+        "a bookmark on the trailing empty line should still highlight its row"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_keeps_unopenable_paths(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+            "unopenable.rs": {},
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    let unopenable_path = bookmark_path(path!("/a/unopenable.rs"));
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![
+            (bookmark_path(path!("/a/main.rs")), vec![0]),
+            (Arc::clone(&unopenable_path), vec![0]),
+        ],
+        &mut cx,
+    )
+    .await;
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "only the openable file should produce an excerpt"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&unopenable_path)],
+        "the unopenable path should be recorded to avoid retrying it on every refresh"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "refreshes should keep working while an unopenable path is recorded"
+    );
+
+    let serialized = bookmark_store.read_with(&cx, |store, cx| store.all_serialized_bookmarks(cx));
+    assert_eq!(
+        serialized.get(&unopenable_path).map(|rows| rows.len()),
+        Some(1),
+        "an unopenable path must keep its serialized bookmark instead of losing it"
+    );
+}
+
+#[gpui::test]
+async fn test_view_bookmarks_activates_most_recent_tab(cx: &mut TestAppContext) {
+    let (workspace, pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
     let split_editor = bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
         cx.new(|cx| editor.clone(window, cx))
     });
-    assert!(
-        split_editor.read_with(&cx, |editor, _| editor.bookmark_view.is_some()),
-        "split clone should share the bookmarks view"
-    );
-    assert!(
-        split_editor.read_with(&cx, |editor, _| editor
-            .has_background_highlights(HighlightKey::Editor)),
-        "split clone should carry over the bookmark line highlights"
-    );
-    // Drain the initial population, so that the assertion below can only be satisfied by a
-    // refresh that the store event triggered.
+    let second_pane = workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.split_pane(pane.clone(), SplitDirection::Right, window, cx)
+    });
+    second_pane.update_in(&mut cx, |pane, window, cx| {
+        pane.add_item(Box::new(split_editor.clone()), true, true, None, window, cx);
+    });
     cx.run_until_parked();
 
-    // Simulate closing the original Bookmarks tab: it drops its handle on the shared bookmarks
-    // view, leaving the split clone's handle as the only thing keeping it alive.
-    bookmarks_editor.update_in(&mut cx, |editor, _window, _cx| {
-        editor.bookmark_view = None;
-        editor.bookmark_view_subscription = None;
+    open_bookmarks_tab(&workspace, &mut cx);
+    cx.run_until_parked();
+
+    let active_editor = workspace.update(&mut cx, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx)
     });
+    assert_eq!(
+        active_editor,
+        Some(split_editor),
+        "view_bookmarks should activate the most recently used bookmarks tab"
+    );
+    let bookmark_editor_count = workspace.update(&mut cx, |workspace, cx| {
+        workspace
+            .items_of_type::<Editor>(cx)
+            .filter(|editor| editor.read(cx).bookmarks_tab_state.is_some())
+            .count()
+    });
+    assert_eq!(
+        bookmark_editor_count, 2,
+        "activating an existing tab must not create another one"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_highlight_does_not_grow_past_last_row(cx: &mut TestAppContext) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
 
     editor.update_in(&mut cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_ranges([Point::new(7, 0)..Point::new(7, 0)])
+            s.select_ranges([Point::new(2, 5)..Point::new(2, 5)])
         });
-        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+        editor.insert("\nline3", window, cx);
     });
     cx.run_until_parked();
 
-    let excerpt_count = split_editor.update_in(&mut cx, |editor, _window, cx| {
-        editor.buffer.read(cx).snapshot(cx).excerpts().count()
-    });
     assert_eq!(
-        excerpt_count, 2,
-        "split clone's subscription should keep refreshing after the original tab closes"
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![display_row_for(
+            &bookmarks_editor,
+            Point::new(2, 0),
+            &mut cx
+        )],
+        "appending lines after a last-row bookmark must not stretch its highlight over the new rows"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_trailing_line_highlight_does_not_grow_on_edit(cx: &mut TestAppContext) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+
+    bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
+        let max_point = editor.buffer.read(cx).snapshot(cx).max_point();
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([max_point..max_point])
+        });
+        editor.insert("new0\nnew1", window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![last_display_row(&bookmarks_editor, &mut cx)],
+        "typing at a trailing-line bookmark must move its single-row highlight, not stretch it"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_last_line_highlight_does_not_cover_next_file_header(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2",
+            "other.rs": "other0\nother1\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![
+            display_row_for(&bookmarks_editor, Point::new(2, 0), &mut cx),
+            display_row_for(&bookmarks_editor, Point::new(3, 0), &mut cx),
+        ],
+        "a bookmark on a file's last line must not highlight the next file's header rows"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_trailing_line_highlight_does_not_cover_next_file_header(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+            "other.rs": "other0\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![
+            display_row_for(&bookmarks_editor, Point::new(2, 0), &mut cx),
+            display_row_for(&bookmarks_editor, Point::new(3, 0), &mut cx),
+        ],
+        "a bookmark on a trailing empty line must not highlight the next file's header rows"
+    );
+}
+
+#[gpui::test]
+async fn test_worktree_add_retries_only_contained_failed_paths(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, _editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    let elsewhere_path = bookmark_path(path!("/elsewhere/file.rs"));
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![
+            (bookmark_path(path!("/a/main.rs")), vec![0]),
+            (Arc::clone(&elsewhere_path), vec![0]),
+        ],
+        &mut cx,
+    )
+    .await;
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "the path outside all worktrees should not produce an excerpt yet"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&elsewhere_path)],
+        "the path outside all worktrees should be recorded as failed to open"
+    );
+
+    let events = Rc::new(RefCell::new(Vec::<BookmarkStoreEvent>::new()));
+    let _subscription = cx.update({
+        let events = events.clone();
+        |_window, cx| {
+            cx.subscribe(&bookmark_store, move |_, event: &BookmarkStoreEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+        }
+    });
+
+    let fs = project.read_with(&cx, |project, _| project.fs().clone());
+    fs.as_fake()
+        .insert_tree(path!("/unrelated"), json!({ "other.rs": "other0\n" }))
+        .await;
+    project
+        .update(&mut cx, |project, cx| {
+            project.create_worktree(path!("/unrelated"), true, cx)
+        })
+        .await
+        .expect("creating the unrelated worktree should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        *events.borrow(),
+        Vec::<BookmarkStoreEvent>::new(),
+        "a worktree containing no failed paths must not trigger a retry"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&elsewhere_path)],
+        "an unrelated worktree must not clear the failed path cache"
+    );
+
+    fs.as_fake()
+        .insert_tree(path!("/elsewhere"), json!({ "file.rs": "else0\n" }))
+        .await;
+    project
+        .update(&mut cx, |project, cx| {
+            project.create_worktree(path!("/elsewhere"), true, cx)
+        })
+        .await
+        .expect("creating the containing worktree should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        Vec::new(),
+        "adding a worktree containing a failed path must retry it"
+    );
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "the bookmarks tab should refresh and show the failed path's bookmark"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_retries_failed_path_when_file_appears(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, _editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+            "late.rs": {},
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    let late_path = bookmark_path(path!("/a/late.rs"));
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![
+            (bookmark_path(path!("/a/main.rs")), vec![0]),
+            (Arc::clone(&late_path), vec![0]),
+        ],
+        &mut cx,
+    )
+    .await;
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "the missing file should not produce an excerpt yet"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&late_path)],
+        "the missing path should be recorded as failed to open"
+    );
+
+    let fs = project.read_with(&cx, |project, _| project.fs().clone());
+    fs.remove_dir(
+        std::path::Path::new(path!("/a/late.rs")),
+        fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .expect("removing the placeholder directory should succeed");
+    fs.as_fake()
+        .insert_file(path!("/a/late.rs"), "late0\n".as_bytes().to_vec())
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        Vec::new(),
+        "a failed path must be retried once its file appears on disk"
+    );
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "the bookmarks tab should refresh and show the late file's bookmark"
     );
 }
 
@@ -44602,4 +44679,231 @@ async fn assert_range_format_merge(
         "{description}"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+async fn init_bookmarks_tab_test(
+    cx: &mut TestAppContext,
+    files: serde_json::Value,
+) -> (
+    Entity<Workspace>,
+    Entity<Pane>,
+    Entity<Project>,
+    Entity<Editor>,
+    VisualTestContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/a"), files).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("window should still be open");
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let editor = open_bookmarks_test_editor(&workspace, &project, "main.rs", &mut cx).await;
+    let pane = workspace.update(&mut cx, |workspace, _| workspace.active_pane().clone());
+    (workspace, pane, project, editor, cx)
+}
+
+async fn open_bookmarks_test_editor(
+    workspace: &Entity<Workspace>,
+    project: &Entity<Project>,
+    path: &str,
+    cx: &mut VisualTestContext,
+) -> Entity<Editor> {
+    let worktree_id = project.update(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have at least one worktree")
+            .read(cx)
+            .id()
+    });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path(path)), cx)
+        })
+        .await
+        .expect("buffer should open");
+    let editor = workspace.update_in(cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer, cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+    editor
+}
+
+fn open_bookmarks_tab(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+    workspace.update_in(cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+}
+
+fn toggle_bookmark_on_row(editor: &Entity<Editor>, row: u32, cx: &mut VisualTestContext) {
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(row, 0)..Point::new(row, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+}
+
+fn find_bookmarks_editor(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Option<Entity<Editor>> {
+    workspace.update(cx, |workspace, cx| {
+        workspace
+            .items_of_type::<Editor>(cx)
+            .find(|editor| editor.read(cx).bookmarks_tab_state.is_some())
+    })
+}
+
+fn excerpt_count(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> usize {
+    editor.update(cx, |editor, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    })
+}
+
+fn bookmarked_paths(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<String> {
+    editor.update(cx, |editor, cx| {
+        let mut paths = editor
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .buffers_with_paths()
+            .map(|(_, path_key)| path_key.path.as_unix_str().to_string())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    })
+}
+
+fn cursor_line_text(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        let head = editor
+            .selections
+            .newest::<Point>(&editor.display_snapshot(cx))
+            .head();
+        snapshot
+            .text_for_range(Point::new(head.row, 0)..Point::new(head.row + 1, 0))
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    })
+}
+
+fn close_bookmarks_editor(
+    pane: &Entity<Pane>,
+    bookmarks_editor: Entity<Editor>,
+    cx: &mut VisualTestContext,
+) {
+    let weak_bookmarks_editor = bookmarks_editor.downgrade();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.remove_item(weak_bookmarks_editor.entity_id(), false, false, window, cx);
+    });
+    drop(bookmarks_editor);
+    cx.executor()
+        .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+    cx.run_until_parked();
+    cx.update(|_window, _cx| {});
+    weak_bookmarks_editor.assert_released();
+}
+
+fn open_and_find_bookmarks_tab(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Entity<Editor> {
+    open_bookmarks_tab(workspace, cx);
+    cx.run_until_parked();
+    find_bookmarks_editor(workspace, cx)
+        .expect("bookmarks editor should exist after view_bookmarks")
+}
+
+fn bookmark_path(path: &str) -> Arc<std::path::Path> {
+    Arc::from(std::path::Path::new(path))
+}
+
+fn serialized_rows(rows: &[u32]) -> Vec<SerializedBookmark> {
+    rows.iter()
+        .map(|&row| SerializedBookmark {
+            row,
+            label: String::new(),
+        })
+        .collect()
+}
+
+async fn load_test_bookmarks(
+    bookmark_store: &Entity<BookmarkStore>,
+    entries: Vec<(Arc<std::path::Path>, Vec<u32>)>,
+    cx: &mut VisualTestContext,
+) {
+    let entries = entries
+        .into_iter()
+        .map(|(path, rows)| (path, serialized_rows(&rows)))
+        .collect::<BTreeMap<_, _>>();
+    bookmark_store
+        .update(cx, |store, cx| store.load_serialized_bookmarks(entries, cx))
+        .await
+        .expect("loading serialized bookmarks should succeed");
+}
+
+fn failed_paths(
+    bookmark_store: &Entity<BookmarkStore>,
+    cx: &mut VisualTestContext,
+) -> Vec<Arc<std::path::Path>> {
+    bookmark_store.read_with(cx, |store, _| {
+        let mut paths = store
+            .paths_failed_to_open()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    })
+}
+
+fn highlighted_display_rows_of(
+    editor: &Entity<Editor>,
+    cx: &mut VisualTestContext,
+) -> Vec<DisplayRow> {
+    editor.update_in(cx, |editor, window, cx| {
+        editor
+            .highlighted_display_rows(window, cx)
+            .into_keys()
+            .collect()
+    })
+}
+
+fn display_row_for(
+    editor: &Entity<Editor>,
+    point: Point,
+    cx: &mut VisualTestContext,
+) -> DisplayRow {
+    editor.update(cx, |editor, cx| {
+        editor
+            .display_snapshot(cx)
+            .point_to_display_point(point, text::Bias::Left)
+            .row()
+    })
+}
+
+fn last_display_row(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> DisplayRow {
+    let last_point = editor.update(cx, |editor, cx| {
+        editor.buffer.read(cx).snapshot(cx).max_point()
+    });
+    display_row_for(editor, last_point, cx)
 }
