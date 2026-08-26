@@ -1103,7 +1103,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     // Dismiss the rename editor when it loses focus.
-    workspace.update_in(cx, |_, window, _| window.blur());
+    workspace.update_in(cx, |_, window, cx| window.blur(cx));
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -6869,7 +6869,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
             "    > test"
         ]
     );
-    workspace.update_in(cx, |_, window, _| window.blur());
+    workspace.update_in(cx, |_, window, cx| window.blur(cx));
     cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
