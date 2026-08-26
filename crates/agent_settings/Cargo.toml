@@ -18,6 +18,7 @@ convert_case.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+handlebars.workspace = true
 language_model.workspace = true
 log.workspace = true
 paths.workspace = true

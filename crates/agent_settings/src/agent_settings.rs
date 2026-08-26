@@ -1,4 +1,5 @@
 mod agent_profile;
+mod template_engine;
 mod user_agents_md;
 
 use std::cmp::Ordering::{Equal, Greater, Less};
@@ -24,6 +25,7 @@ use settings::{
 use util::ResultExt as _;
 
 pub use crate::agent_profile::*;
+pub use crate::template_engine::{ToolGuidanceContext, render_template, template_engine};
 pub use crate::user_agents_md::{UserAgentsMd, UserAgentsMdState, init as init_user_agents_md};
 
 pub const SUMMARIZE_THREAD_PROMPT: &str = include_str!("prompts/summarize_thread_prompt.txt");
