@@ -14,9 +14,7 @@ pub struct Templates(Handlebars<'static>);
 
 impl Templates {
     pub fn new() -> Arc<Self> {
-        let mut handlebars = Handlebars::new();
-        handlebars.set_strict_mode(true);
-        handlebars.register_helper("contains", Box::new(contains));
+        let mut handlebars = agent_settings::template_engine();
         handlebars.register_embed_templates::<Assets>().unwrap();
         Arc::new(Self(handlebars))
     }
@@ -62,31 +60,6 @@ pub struct SystemPromptTemplate<'a> {
 
 impl Template for SystemPromptTemplate<'_> {
     const TEMPLATE_NAME: &'static str = "system_prompt.hbs";
-}
-
-/// Handlebars helper for checking if an item is in a list
-fn contains(
-    h: &handlebars::Helper,
-    _: &handlebars::Handlebars,
-    _: &handlebars::Context,
-    _: &mut handlebars::RenderContext,
-    out: &mut dyn handlebars::Output,
-) -> handlebars::HelperResult {
-    let list = h
-        .param(0)
-        .and_then(|v| v.value().as_array())
-        .ok_or_else(|| {
-            handlebars::RenderError::new("contains: missing or invalid list parameter")
-        })?;
-    let query = h.param(1).map(|v| v.value()).ok_or_else(|| {
-        handlebars::RenderError::new("contains: missing or invalid query parameter")
-    })?;
-
-    if list.contains(query) {
-        out.write("true")?;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
