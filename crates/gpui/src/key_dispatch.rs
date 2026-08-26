@@ -830,7 +830,7 @@ mod tests {
     }
 
     #[crate::test]
-    fn test_pending_input_observers_notified_on_focus_change(cx: &mut TestAppContext) {
+    fn test_pending_input_observers_notified_on_focus_change_and_blur(cx: &mut TestAppContext) {
         #[derive(Clone)]
         struct CustomElement {
             focus_handle: FocusHandle,
@@ -1034,6 +1034,21 @@ mod tests {
             let count_after_focus_change = *pending_input_changed_count.borrow();
             assert!(count_after_focus_change > *count_after_pending_for_assertion.borrow());
         });
+
+        cx.update(|window, cx| window.focus(&focus_handle, cx));
+        cx.simulate_keystrokes("ctrl-b");
+        let count_before_blur = *pending_input_changed_count.borrow();
+
+        cx.update(|window, cx| {
+            assert!(window.has_pending_keystrokes());
+            window.blur(cx);
+            assert!(!window.has_pending_keystrokes());
+            assert!(window.pending_input_keystrokes().is_none());
+        });
+
+        cx.update(|_, _| {
+            assert!(*pending_input_changed_count.borrow() > count_before_blur);
+        });
     }
 
     #[crate::test]
@@ -1226,8 +1241,8 @@ mod tests {
         let prefers_ime_after_blur = {
             let mut platform_window = cx.test_window(cx.window_handle());
             let mut input_handler = platform_window.take_input_handler();
-            cx.update(|window, _| {
-                window.blur();
+            cx.update(|window, cx| {
+                window.blur(cx);
                 assert!(!window.has_pending_keystrokes());
                 assert!(window.pending_input_keystrokes().is_none());
             });
