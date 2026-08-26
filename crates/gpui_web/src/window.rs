@@ -9,8 +9,8 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
     Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    ResizeEdge, Scene, Size, TextInputConfiguration, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -648,6 +648,10 @@ impl PlatformWindow for WebWindow {
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.inner.state.borrow_mut().input_handler.take()
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.inner.ime_mirror.apply_configuration(&configuration);
     }
 
     fn prompt(
