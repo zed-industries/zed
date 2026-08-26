@@ -71,16 +71,29 @@ impl IsolatedLayout {
 
     /// Run `f` with this tree in front of the window's tree.
     ///
-    /// The window gets its own tree back when `f` returns, so calls that
-    /// straddle the two stay separate.
+    /// The window gets its own tree back when `f` returns, and also when `f`
+    /// panics, so a caught panic cannot leave the window on the wrong tree. A
+    /// reentered `enter` on the same value holds no tree any more and gives
+    /// the window a fresh one, so the window never sees `None`.
     pub fn enter<R>(&mut self, window: &mut Window, f: impl FnOnce(&mut Window) -> R) -> R {
-        let outer = mem::replace(&mut window.layout_engine, self.0.take());
-        let result = f(window);
+        let inner = self.0.take().unwrap_or_else(TaffyLayoutEngine::new);
+        let outer = mem::replace(&mut window.layout_engine, Some(inner));
+        // The engines go back where they came from before the panic resumes,
+        // which is what makes the state safe to observe after a catch.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(window)));
         self.0 = mem::replace(&mut window.layout_engine, outer);
-        result
+        match result {
+            Ok(value) => value,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// Drop everything this tree holds, keeping it usable for another frame.
+    ///
+    /// Call it when a new layout of the content starts, before the first
+    /// `enter` of that pass. Every layout inside `enter` adds nodes, and
+    /// nothing removes them, so a tree that is never cleared grows with each
+    /// pass for as long as the element lives.
     pub fn clear(&mut self) {
         if let Some(engine) = self.0.as_mut() {
             engine.clear();
@@ -959,5 +972,28 @@ mod isolated_layout_tests {
         // will on screen. Without it the content would measure at max content and
         // the element would stop at 30.
         assert_eq!(bounds.get().size.height, px(60.));
+    }
+
+    #[crate::test]
+    fn a_panic_inside_enter_puts_both_trees_back(cx: &mut TestAppContext) {
+        let bounds = Rc::new(Cell::new(Bounds::default()));
+        let window = cx.add_window({
+            let bounds = bounds.clone();
+            move |_, _| MeasureTestView { bounds }
+        });
+
+        cx.update_window(AnyWindowHandle::from(window), |_, window, _cx| {
+            let mut layout = IsolatedLayout::new();
+            let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                layout.enter(window, |_| panic!("a panic during an isolated layout"))
+            }));
+            assert!(caught.is_err());
+            // The window holds its own tree again and this value holds the
+            // isolated one, so the caller that caught the panic can go on.
+            assert!(window.layout_engine.is_some());
+            assert!(layout.0.is_some());
+            assert_eq!(layout.enter(window, |_| 7), 7);
+        })
+        .unwrap();
     }
 }
