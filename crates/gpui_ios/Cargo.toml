@@ -1,0 +1,35 @@
+[package]
+name = "gpui_ios"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_ios.rs"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(target_os = "ios")'.dependencies]
+anyhow.workspace = true
+block2.workspace = true
+core-foundation.workspace = true
+core-foundation-sys.workspace = true
+core-graphics.workspace = true
+core-text.workspace = true
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed" }
+futures.workspace = true
+gpui_apple.workspace = true
+log.workspace = true
+metal.workspace = true
+objc2.workspace = true
+parking_lot.workspace = true
+pathfinder_geometry.workspace = true
+raw-window-handle.workspace = true
+smallvec.workspace = true
+uuid.workspace = true

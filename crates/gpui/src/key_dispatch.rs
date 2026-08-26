@@ -1034,6 +1034,14 @@ mod tests {
             let count_after_focus_change = *pending_input_changed_count.borrow();
             assert!(count_after_focus_change > *count_after_pending_for_assertion.borrow());
         });
+        assert_eq!(
+            cx.test_window(cx.window_handle())
+                .text_input_state_changes(),
+            [
+                crate::TextInputStateChange::FocusGained,
+                crate::TextInputStateChange::FocusLost,
+            ]
+        );
     }
 
     #[crate::test]

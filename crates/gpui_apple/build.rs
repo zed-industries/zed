@@ -1,12 +1,12 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
-    #[cfg(target_os = "macos")]
-    macos_build::run();
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    apple_build::run();
 }
 
-#[cfg(target_os = "macos")]
-mod macos_build {
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple_build {
     use std::{
         env,
         path::{Path, PathBuf},
@@ -123,6 +123,16 @@ mod macos_build {
     #[cfg(not(feature = "runtime_shaders"))]
     fn compile_metal_shaders(header_path: &Path) {
         use std::process::{self, Command};
+        let target = env::var("TARGET").unwrap();
+        let (sdk, minimum_version_argument) = if target.contains("apple-ios") {
+            if target.ends_with("-sim") {
+                ("iphonesimulator", "-mios-simulator-version-min=15.0")
+            } else {
+                ("iphoneos", "-mios-version-min=15.0")
+            }
+        } else {
+            ("macosx", "-mmacosx-version-min=10.15.7")
+        };
         let shader_path = "./src/shaders.metal";
         let air_output_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.air");
         let metallib_output_path =
@@ -132,10 +142,10 @@ mod macos_build {
         let output = Command::new("xcrun")
             .args([
                 "-sdk",
-                "macosx",
+                sdk,
                 "metal",
                 "-gline-tables-only",
-                "-mmacosx-version-min=10.15.7",
+                minimum_version_argument,
                 "-MO",
                 "-c",
                 shader_path,
@@ -156,7 +166,7 @@ mod macos_build {
         }
 
         let output = Command::new("xcrun")
-            .args(["-sdk", "macosx", "metallib"])
+            .args(["-sdk", sdk, "metallib"])
             .arg(air_output_path)
             .arg("-o")
             .arg(metallib_output_path)

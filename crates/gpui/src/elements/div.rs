@@ -23,8 +23,8 @@ use crate::{
     LayoutId, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
     PinchEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    StyleRefinement, Styled, Task, TooltipId, TouchClickEvent, Visibility, Window,
+    WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -2957,6 +2957,25 @@ impl Interactivity {
                         }
                     });
                 }
+
+                window.on_touch_event({
+                    let click_listeners = click_listeners.clone();
+                    let aux_click_listeners = aux_click_listeners.clone();
+                    let hitbox = hitbox.clone();
+                    move |event: &TouchClickEvent, phase, window, cx| {
+                        if phase.bubble() && hitbox.is_hovered(window) {
+                            let click_event = ClickEvent::Touch(event.clone());
+                            let listeners = if event.long_press {
+                                &aux_click_listeners
+                            } else {
+                                &click_listeners
+                            };
+                            for listener in listeners {
+                                listener(&click_event, window, cx);
+                            }
+                        }
+                    }
+                });
 
                 window.on_mouse_event({
                     let mut captured_mouse_down = None;
