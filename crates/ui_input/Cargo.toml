@@ -1,0 +1,20 @@
+[package]
+name = "ui_input"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/ui_input.rs"
+
+[dependencies]
+component.workspace = true
+gpui.workspace = true
+ui.workspace = true
+
+[features]
+default = []

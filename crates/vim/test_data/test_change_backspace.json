@@ -1,0 +1,16 @@
+{"Put":{"state":"Teˇst"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"Tˇst","mode":"Insert"}}
+{"Put":{"state":"Tˇest"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"ˇest","mode":"Insert"}}
+{"Put":{"state":"ˇTest"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"ˇTest","mode":"Insert"}}
+{"Put":{"state":"Test\nˇtest"}}
+{"Key":"c"}
+{"Key":"backspace"}
+{"Get":{"state":"Testˇtest","mode":"Insert"}}

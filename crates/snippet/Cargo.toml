@@ -1,0 +1,17 @@
+[package]
+name = "snippet"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/snippet.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+smallvec.workspace = true

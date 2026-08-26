@@ -1,0 +1,17 @@
+{"Put":{"state":"ˇhello world"}}
+{"Key":"q"}
+{"Key":"a"}
+{"Key":"r"}
+{"Key":"a"}
+{"Key":"l"}
+{"Key":"r"}
+{"Key":"b"}
+{"Key":"l"}
+{"Key":"q"}
+{"Get":{"state":"abˇllo world","mode":"Normal"}}
+{"Key":"."}
+{"Get":{"state":"abˇblo world","mode":"Normal"}}
+{"Key":"shift-q"}
+{"Get":{"state":"ababˇo world","mode":"Normal"}}
+{"Key":"."}
+{"Get":{"state":"ababˇb world","mode":"Normal"}}

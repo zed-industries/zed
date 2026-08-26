@@ -1,0 +1,20 @@
+[package]
+name = "aws_http_client"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/aws_http_client.rs"
+
+[features]
+default = []
+
+[dependencies]
+aws-smithy-runtime-api.workspace = true
+aws-smithy-types.workspace = true
+http_client.workspace = true

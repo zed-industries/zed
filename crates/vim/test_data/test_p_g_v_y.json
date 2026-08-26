@@ -1,0 +1,11 @@
+{"Put":{"state":"The\nquicˇk\nbrown\nfox"}}
+{"Key":"y"}
+{"Key":"y"}
+{"Key":"j"}
+{"Key":"shift-v"}
+{"Key":"p"}
+{"Key":"g"}
+{"Key":"v"}
+{"Key":"y"}
+{"Get":{"state":"The\nquick\nˇquick\nfox","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"quick\n"}}

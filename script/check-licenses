@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+check_manifest_for_agpl () {
+    local cargo_toml="$1"
+
+    if grep -Eiq '(agpl|affero)' "$cargo_toml"; then
+        echo "Error: $cargo_toml references an AGPL license. First-party crates must use LICENSE-GPL or LICENSE-APACHE."
+        exit 1
+    fi
+
+    if grep -Eiq '^[[:space:]]*license-file[[:space:]]*=' "$cargo_toml"; then
+        echo "Error: $cargo_toml uses license-file. First-party crates must declare LICENSE-GPL or LICENSE-APACHE via the license field and symlink."
+        exit 1
+    fi
+}
+
+check_no_agpl_license_file () {
+    if [[ -e "LICENSE-AGPL" || -L "LICENSE-AGPL" ]]; then
+        echo "Error: LICENSE-AGPL exists. First-party code must use LICENSE-GPL or LICENSE-APACHE."
+        exit 1
+    fi
+
+    while IFS= read -r -d '' license_file; do
+        if [[ -e "$license_file" || -L "$license_file" ]]; then
+            echo "Error: $license_file exists. First-party crates must use LICENSE-GPL or LICENSE-APACHE."
+            exit 1
+        fi
+    done < <(git ls-files -z -- "*/LICENSE-AGPL")
+}
+
+check_symlink_target () {
+    local symlink_path="$1"
+    local license_name="$2"
+
+    local target=$(readlink "$symlink_path")
+
+    local dir=$(dirname "$symlink_path")
+    local depth=$(echo "$dir" | tr '/' '\n' | wc -l)
+    local expected_prefix=""
+    for ((i = 0; i < depth; i++)); do
+        expected_prefix="../$expected_prefix"
+    done
+    local expected_target="${expected_prefix}${license_name}"
+
+    if [[ "$target" != "$expected_target" ]]; then
+        echo "Error: $symlink_path points to '$target' but should point to '$expected_target'"
+        exit 1
+    fi
+
+    if [[ ! -e "$symlink_path" ]]; then
+        echo "Error: $symlink_path is a broken symlink (target '$target' does not exist)"
+        exit 1
+    fi
+}
+
+check_license () {
+    local dir="$1"
+    local allowed_licenses=("LICENSE-GPL" "LICENSE-APACHE")
+
+    for license in "${allowed_licenses[@]}"; do
+        if [[ -L "$dir/$license" ]]; then
+            check_symlink_target "$dir/$license" "$license"
+            return 0
+        elif [[ -e "$dir/$license" ]]; then
+            echo "Error: $dir/$license exists but is not a symlink."
+            exit 1
+        fi
+    done
+
+    echo "Error: $dir does not contain a LICENSE-GPL or LICENSE-APACHE symlink"
+    exit 1
+}
+
+check_no_agpl_license_file
+
+git ls-files -z -- "Cargo.toml" "**/Cargo.toml" | while IFS= read -r -d '' cargo_toml; do
+    check_manifest_for_agpl "$cargo_toml"
+
+    if [[ "$cargo_toml" == */Cargo.toml ]]; then
+        check_license "$(dirname "$cargo_toml")"
+    fi
+done
+
+echo "check-licenses succeeded"

@@ -1,0 +1,34 @@
+{"Put":{"state":"ˇthe quick brown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"g"}
+{"Key":"shift-m"}
+{"Get":{"state":"ˇbrown fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"the quick bˇrown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"g"}
+{"Key":"shift-m"}
+{"Get":{"state":"the quickˇown fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"the quick brown foˇx\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"g"}
+{"Key":"shift-m"}
+{"Get":{"state":"the quicˇk\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"ˇthe quick brown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"7"}
+{"Key":"5"}
+{"Key":"g"}
+{"Key":"shift-m"}
+{"Get":{"state":"ˇ fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"ˇthe quick brown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"2"}
+{"Key":"3"}
+{"Key":"g"}
+{"Key":"shift-m"}
+{"Get":{"state":"ˇuick brown fox\njumped over the lazy dog","mode":"Normal"}}

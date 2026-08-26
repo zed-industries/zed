@@ -1,0 +1,53 @@
+---
+title: MCP Server Extensions
+description: "MCP Server Extensions for Zed extensions."
+---
+
+# MCP Server Extensions
+
+> We plan to deprecate MCP server extensions in favor of the [official MCP registry](https://registry.modelcontextprotocol.io/). To keep your MCP server available in Zed, publish it to the official registry as well. Follow our deprecation progress in the [tracking issue](https://github.com/zed-industries/zed/issues/59351).
+
+[Model Context Protocol servers](../ai/mcp.md) can be exposed as extensions for use in the Agent Panel.
+
+## Defining MCP Extensions
+
+A given extension may provide one or more MCP servers.
+Each MCP server must be registered in the `extension.toml`:
+
+```toml
+[context_servers.my-context-server]
+```
+
+Then, in the Rust code for your extension, implement the `context_server_command` method on your extension:
+
+```rust
+impl zed::Extension for MyExtension {
+    fn context_server_command(
+        &mut self,
+        context_server_id: &ContextServerId,
+        project: &zed::Project,
+    ) -> Result<zed::Command> {
+        Ok(zed::Command {
+            command: get_path_to_context_server_executable()?,
+            args: get_args_for_context_server()?,
+            env: get_env_for_context_server()?,
+        })
+    }
+}
+```
+
+This method should return the command to start up an MCP server, along with any arguments or environment variables necessary for it to function.
+
+If you need to download the MCP server from an external source (GitHub Releases, npm, etc.), you can also do that in this function.
+
+> Note that this is only intended currently for servers published either as binaries or via NPM. Remote context servers should be added natively via the UI, see [the relevant section in the MCP documentation](../ai/mcp.md#as-custom-servers).
+
+## Available Extensions
+
+See MCP servers published as extensions [on Zed's site](https://zed.dev/extensions?filter=context-servers).
+
+Review their repositories to see common implementation patterns and structure.
+
+## Testing
+
+To test your new MCP server extension, you can [install it as a dev extension](./developing-extensions.md#developing-an-extension-locally).

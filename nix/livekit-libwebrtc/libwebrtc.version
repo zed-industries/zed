@@ -1,0 +1,22 @@
+/* Linker version script for libwebrtc.so (Linux only).
+ *
+ * When libwebrtc.so is built with rtc_use_pipewire=true and
+ * -fvisibility=default, PipeWire lazy-load trampoline stubs (pw_*, spa_*)
+ * are exported as weak symbols. If the PipeWire ALSA plugin
+ * (libasound_module_pcm_pipewire.so) is later dlopen'd by libasound,
+ * the dynamic linker may resolve the plugin's pw_* references through
+ * libwebrtc.so's broken trampolines instead of the real libpipewire.so,
+ * causing a SIGSEGV (NULL function pointer dereference).
+ *
+ * This script hides only those third-party symbol namespaces while
+ * keeping every WebRTC / BoringSSL / internal symbol exported (which
+ * the Rust webrtc-sys bindings require).
+ */
+{
+  global:
+    *;
+
+  local:
+    pw_*;
+    spa_*;
+};

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+    echo "Usage: $0 [local|all] [--help]"
+    echo "  local  Only check local links (default)"
+    echo "  all    Check all links including remote ones"
+    exit 1
+}
+
+check_mode="local"
+if [ $# -eq 1 ]; then
+    case "$1" in
+    "local") check_mode="local" ;;
+    "all") check_mode="all" ;;
+    "--help") usage ;;
+    *) echo "Invalid argument: $1" && usage ;;
+    esac
+else
+    usage
+fi
+
+cargo install lychee
+cd "$(dirname "$0")/.."
+
+if [ "$check_mode" = "all" ]; then
+    lychee --no-progress './docs/src/**/*'
+else
+    lychee --exclude '^http' './docs/src/**/*'
+fi
+#

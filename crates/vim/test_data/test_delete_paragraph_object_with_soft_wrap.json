@@ -1,0 +1,72 @@
+{"SetOption":{"value":"wrap"}}
+{"SetOption":{"value":"columns=20"}}
+{"Put":{"state":"ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"ˇ\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"ˇ\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nˇ\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nˇ\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nˇ","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nˇ","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.ˇ\n"}}
+{"Key":"d"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nˇ","mode":"Normal"}}
+{"Put":{"state":"ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"Second paragraph that is also quite long and will definitely wrap under soft wrap conditions andˇ should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nThird paragraph with additional long text content that will also wrap when line length is constraˇined by the wrapping settings.\n","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\nˇ","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\nˇ","mode":"Normal"}}
+{"Put":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\n\nThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping settings.ˇ\n"}}
+{"Key":"d"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"First paragraph with very long text that will wrap when soft wrap is enabled and line length is limited making it span multiple display lines.\n\nSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and should be handled correctly.\nˇ","mode":"Normal"}}

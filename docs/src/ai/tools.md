@@ -1,0 +1,112 @@
+---
+title: AI Agent Tools - Zed
+description: Built-in tools for Zed's AI agent including file editing, code search, terminal commands, web search, skills, and diagnostics.
+---
+
+# Tools
+
+Zed's built-in agent has access to these tools for reading, searching, and editing your codebase. These tools are used in the [Agent Panel](./agent-panel.md) during conversations with AI agents.
+
+The exact tool list can vary by [Agent Profile](./agent-profiles.md), selected model provider, and Zed version.
+
+You can configure permissions for tool actions, including situations where they are automatically approved, automatically denied, or require your confirmation on a case-by-case basis. See [Tool Permissions](./tool-permissions.md) for the list of permission-gated tools and details.
+
+To add custom tools beyond these built-in ones, see [MCP servers](./mcp.md).
+
+To choose which built-in tools and MCP tools are available in a Zed Agent thread, use [Agent Profiles](./agent-profiles.md). Profiles control tool availability; tool permissions control allow, deny, and confirm behavior.
+
+The terminal tool can also run with additional OS-level restrictions when [Zed Agent sandboxing](./sandboxing.md) is enabled.
+
+## Read & Search Tools
+
+### `diagnostics`
+
+Gets errors and warnings for either a specific file or the entire project, useful after making edits to determine if further changes are needed.
+When a path is provided, shows all diagnostics for that specific file.
+When no path is provided, shows a summary of error and warning counts for all files in the project.
+
+**Example:** After editing `src/parser.rs`, call `diagnostics` with that path to check for type errors immediately. After a larger refactor touching many files, call it without a path to see a project-wide count of errors before deciding what to fix next.
+
+### `fetch`
+
+Fetches a URL and returns the content as Markdown. Useful for providing docs as context.
+
+`fetch` is governed by tool permissions, agent profiles, and project trust. It is not run inside the terminal OS sandbox, so terminal sandbox network grants such as `allow_hosts` and `allow_all_hosts` do not apply to it.
+
+**Example:** Fetching a library's changelog page to check whether a breaking API change was introduced in a recent version before writing integration code.
+
+### `find_path`
+
+Quickly finds files by matching glob patterns (like "\*_/_.js"), returning matching file paths alphabetically.
+
+### `grep`
+
+Searches file contents across the project using regular expressions, preferred for finding symbols in code without knowing exact file paths.
+
+**Example:** To find every call site of a function before renaming it, search for `parse_config\(` — the regex matches the function name followed by an opening parenthesis, filtering out comments or variable names that happen to contain the string.
+
+### `list_directory`
+
+Lists files and directories in a given path, providing an overview of filesystem contents.
+
+### `read_file`
+
+Reads the content of a specified file in the project, allowing access to file contents.
+
+## Web Tools
+
+### `search_web`
+
+Searches the web for information, providing results with snippets and links from relevant web pages, useful for accessing real-time information.
+
+**Example:** Looking up whether a known bug in a dependency has been patched in a recent release, or finding the current API signature for a third-party library when the local docs are out of date.
+
+> **Note:** The built-in `search_web` tool is only available to [Zed Pro](https://zed.dev/pricing) subscribers using the Zed provider. If you're on a free plan or using a different provider, you can get equivalent functionality by connecting an MCP server that provides web search capabilities. See [MCP servers](./mcp.md) for details.
+
+## Edit Tools
+
+### `copy_path`
+
+Copies a file or directory recursively in the project, more efficient than manually reading and writing files when duplicating content.
+
+### `create_directory`
+
+Creates a new directory at the specified path within the project, creating all necessary parent directories (similar to `mkdir -p`).
+
+### `delete_path`
+
+Deletes a file or directory (including contents recursively) at the specified path and confirms the deletion.
+
+### `edit_file`
+
+Edits files by replacing specific text with new content.
+
+**Example:** Updating a function signature — the agent identifies the exact lines to replace and provides the updated version, leaving the surrounding code untouched. For widespread renames, it pairs this with `grep` to find every occurrence first.
+
+### `move_path`
+
+Moves or renames a file or directory in the project, performing a rename if only the filename differs.
+
+### `write_file`
+
+Creates a new file or overwrites an existing file with completely new contents.
+
+### `terminal`
+
+Executes shell commands and returns the combined output, creating a new shell process for each invocation.
+
+**Example:** After editing a Rust file, run `cargo test --package my_crate 2>&1 | tail -30` to confirm the changes don't break existing tests. Or run `git diff --stat` to review which files have been modified before wrapping up a task.
+
+## Other Tools
+
+### `skill`
+
+Loads instructions from an available [Skill](./skills.md) so the agent can follow project-specific or workflow-specific guidance. Skills can also be invoked by you directly with slash commands.
+
+**Example:** When a repository has a skill for release-note writing, the agent can load that skill before drafting release notes so it follows the local format.
+
+### `spawn_agent`
+
+Spawns a subagent with its own context window to perform a delegated task. Useful for running parallel investigations, completing self-contained tasks, or performing research where only the outcome matters. Each subagent has access to the same tools as the parent agent.
+
+**Example:** While refactoring the authentication module, spawn a subagent to investigate how session tokens are validated elsewhere in the codebase. The parent agent continues its work and reviews the subagent's findings when it completes — keeping both context windows focused on a single task.

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -e
+
+if ! which minio > /dev/null; then
+    echo "minio not found - run script/bootstrap to install it and do other setup"
+    exit 1
+fi
+
+mkdir -p .blob_store/the-extensions-bucket
+mkdir -p .blob_store/zed-crash-reports
+
+export MINIO_ROOT_USER=the-blob-store-access-key
+export MINIO_ROOT_PASSWORD=the-blob-store-secret-key
+exec minio server --quiet .blob_store

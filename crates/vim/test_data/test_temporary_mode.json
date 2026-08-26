@@ -1,0 +1,27 @@
+{"Put":{"state":"lorem ˇipsum"}}
+{"Key":"i"}
+{"Get":{"state":"lorem ˇipsum","mode":"Insert"}}
+{"Key":"ctrl-o"}
+{"Key":"$"}
+{"Get":{"state":"lorem ipsumˇ","mode":"Insert"}}
+{"Put":{"state":"loremˇ ipsum dolor"}}
+{"Key":"a"}
+{"Get":{"state":"lorem ˇipsum dolor","mode":"Insert"}}
+{"Key":"a"}
+{"Key":"n"}
+{"Key":"d"}
+{"Key":"space"}
+{"Key":"ctrl-o"}
+{"Key":"w"}
+{"Get":{"state":"lorem and ipsum ˇdolor","mode":"Insert"}}
+{"Put":{"state":"lorem ˇipsum dolor"}}
+{"Key":"i"}
+{"Get":{"state":"lorem ˇipsum dolor","mode":"Insert"}}
+{"Key":"a"}
+{"Key":"n"}
+{"Key":"d"}
+{"Key":"space"}
+{"Key":"ctrl-o"}
+{"Key":"y"}
+{"Key":"$"}
+{"Get":{"state":"lorem and ˇipsum dolor","mode":"Insert"}}

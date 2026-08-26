@@ -1,0 +1,3 @@
+psql postgres -c "DROP DATABASE zed WITH (FORCE);"
+psql postgres -c "DROP DATABASE zed_llm WITH (FORCE);"
+script/bootstrap

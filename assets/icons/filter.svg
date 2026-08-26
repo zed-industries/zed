@@ -1,0 +1,10 @@
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M2 5H4" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M8 5H14" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M12 11H14" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M2 11H8" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path opacity="0.1" d="M6 7C7.10457 7 8 6.10457 8 5C8 3.89543 7.10457 3 6 3C4.89543 3 4 3.89543 4 5C4 6.10457 4.89543 7 6 7Z" fill="#DCE0E5" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path opacity="0.1" d="M10 13C11.1046 13 12 12.1046 12 11C12 9.89543 11.1046 9 10 9C8.89543 9 8 9.89543 8 11C8 12.1046 8.89543 13 10 13Z" fill="#DCE0E5" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M6 7C7.10457 7 8 6.10457 8 5C8 3.89543 7.10457 3 6 3C4.89543 3 4 3.89543 4 5C4 6.10457 4.89543 7 6 7Z" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+<path d="M10 13C11.1046 13 12 12.1046 12 11C12 9.89543 11.1046 9 10 9C8.89543 9 8 9.89543 8 11C8 12.1046 8.89543 13 10 13Z" stroke="#DCE0E5" stroke-width="1.2" stroke-linecap="round"/>
+</svg>

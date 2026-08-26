@@ -1,0 +1,74 @@
+#!/usr/bin/env python3
+
+# Required dependencies for this script:
+#
+# pandas: For data manipulation and analysis.
+# matplotlib: For creating static, interactive, and animated visualizations in Python.
+# seaborn: For making statistical graphics in Python, based on matplotlib.
+
+# To install these dependencies, use the following pip command:
+# pip install pandas matplotlib seaborn
+
+# This script is designed to parse log files for performance measurements and create histograms of these measurements.
+# It expects log files to contain lines with measurements in the format "measurement: timeunit" where timeunit can be in milliseconds (ms) or microseconds (µs).
+# Lines that do not contain a colon ':' are skipped.
+# The script takes one or more file paths as command-line arguments, parses each log file, and then combines the data into a single DataFrame.
+# It then converts all time measurements into milliseconds, discards the original time and unit columns, and creates histograms for each unique measurement type.
+# The histograms display the distribution of times for each measurement, separated by log file, and normalized to show density rather than count.
+# To use this script, run it from the command line with the log file paths as arguments, like so:
+# python this_script.py log1.txt log2.txt ...
+# The script will then parse the provided log files and display the histograms for each type of measurement found.
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import sys
+
+def parse_log_file(file_path):
+    data = {'measurement': [], 'time': [], 'unit': [], 'log_file': []}
+    with open(file_path, 'r') as file:
+        for line in file:
+            if ':' not in line:
+                continue
+
+            parts = line.strip().split(': ')
+            if len(parts) != 2:
+                continue
+
+            measurement, time_with_unit = parts[0], parts[1]
+            if 'ms' in time_with_unit:
+                time, unit = time_with_unit[:-2], 'ms'
+            elif 'µs' in time_with_unit:
+                time, unit = time_with_unit[:-2], 'µs'
+            else:
+                # Print an error message if we can't parse the line and then continue with rest.
+                print(f'Error: Invalid time unit in line "{line.strip()}". Skipping.', file=sys.stderr)
+                continue
+
+            data['measurement'].append(measurement)
+            data['time'].append(float(time))
+            data['unit'].append(unit)
+            data['log_file'].append(file_path.split('/')[-1])
+    return pd.DataFrame(data)
+
+def create_histograms(df, measurement):
+    filtered_df = df[df['measurement'] == measurement]
+    plt.figure(figsize=(12, 6))
+    sns.histplot(data=filtered_df, x='time_ms', hue='log_file', element='step', stat='density', common_norm=False, palette='bright')
+    plt.title(f'Histogram of {measurement}')
+    plt.xlabel('Time (ms)')
+    plt.ylabel('Density')
+    plt.grid(True)
+    plt.xlim(filtered_df['time_ms'].quantile(0.01), filtered_df['time_ms'].quantile(0.99))
+    plt.show()
+
+
+file_paths = sys.argv[1:]
+dfs = [parse_log_file(path) for path in file_paths]
+combined_df = pd.concat(dfs, ignore_index=True)
+combined_df['time_ms'] = combined_df.apply(lambda row: row['time'] if row['unit'] == 'ms' else row['time'] / 1000, axis=1)
+combined_df.drop(['time', 'unit'], axis=1, inplace=True)
+
+measurement_types = combined_df['measurement'].unique()
+for measurement in measurement_types:
+    create_histograms(combined_df, measurement)

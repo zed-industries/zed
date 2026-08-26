@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -e
+
+gh workflow run release_nightly.yml

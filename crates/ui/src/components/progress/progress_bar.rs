@@ -1,0 +1,142 @@
+use documented::Documented;
+use gpui::Hsla;
+
+use crate::components::Label;
+use crate::prelude::*;
+
+/// A progress bar is a horizontal bar that communicates the status of a process.
+///
+/// A progress bar should not be used to represent indeterminate progress.
+#[derive(IntoElement, RegisterComponent, Documented)]
+pub struct ProgressBar {
+    id: ElementId,
+    value: f32,
+    max_value: f32,
+    bg_color: Hsla,
+    over_color: Hsla,
+    fg_color: Hsla,
+}
+
+impl ProgressBar {
+    pub fn new(id: impl Into<ElementId>, value: f32, max_value: f32, cx: &App) -> Self {
+        Self {
+            id: id.into(),
+            value,
+            max_value,
+            bg_color: cx.theme().colors().background,
+            over_color: cx.theme().status().error,
+            fg_color: cx.theme().status().info,
+        }
+    }
+
+    /// Sets the current value of the progress bar.
+    pub fn value(mut self, value: f32) -> Self {
+        self.value = value;
+        self
+    }
+
+    /// Sets the maximum value of the progress bar.
+    pub fn max_value(mut self, max_value: f32) -> Self {
+        self.max_value = max_value;
+        self
+    }
+
+    /// Sets the background color of the progress bar.
+    pub fn bg_color(mut self, color: Hsla) -> Self {
+        self.bg_color = color;
+        self
+    }
+
+    /// Sets the foreground color of the progress bar.
+    pub fn fg_color(mut self, color: Hsla) -> Self {
+        self.fg_color = color;
+        self
+    }
+
+    /// Sets the over limit color of the progress bar.
+    pub fn over_color(mut self, color: Hsla) -> Self {
+        self.over_color = color;
+        self
+    }
+}
+
+impl RenderOnce for ProgressBar {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let fill_width = (self.value / self.max_value).clamp(0.02, 1.0);
+
+        div()
+            .id(self.id.clone())
+            .w_full()
+            .h_2()
+            .p_0p5()
+            .rounded_full()
+            .bg(self.bg_color)
+            .shadow(vec![gpui::BoxShadow::new(
+                px(0.),
+                px(1.),
+                gpui::black().opacity(0.08),
+            )])
+            .child(
+                div()
+                    .h_full()
+                    .rounded_full()
+                    .when(self.value > self.max_value, |div| div.bg(self.over_color))
+                    .when(self.value <= self.max_value, |div| div.bg(self.fg_color))
+                    .w(relative(fill_width)),
+            )
+    }
+}
+
+impl Component for ProgressBar {
+    fn scope() -> ComponentScope {
+        ComponentScope::Status
+    }
+
+    fn description() -> &'static str {
+        Self::DOCS
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        let max_value = 180.0;
+        let container = || v_flex().w_full().gap_1();
+
+        example_group(vec![single_example(
+            "Examples",
+            v_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    container()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(Label::new("0%"))
+                                .child(Label::new("Empty")),
+                        )
+                        .child(ProgressBar::new("empty", 0.0, max_value, cx)),
+                )
+                .child(
+                    container()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(Label::new("38%"))
+                                .child(Label::new("Partial")),
+                        )
+                        .child(ProgressBar::new("partial", max_value * 0.35, max_value, cx)),
+                )
+                .child(
+                    container()
+                        .child(
+                            h_flex()
+                                .justify_between()
+                                .child(Label::new("100%"))
+                                .child(Label::new("Complete")),
+                        )
+                        .child(ProgressBar::new("filled", max_value, max_value, cx)),
+                )
+                .into_any_element(),
+        )])
+        .into_any_element()
+    }
+}

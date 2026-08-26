@@ -1,0 +1,11 @@
+{"Put":{"state":"1ˇ.2\n"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"1.ˇ3\n","mode":"Normal"}}
+{"Key":"ctrl-x"}
+{"Get":{"state":"1.ˇ2\n","mode":"Normal"}}
+{"Put":{"state":"0.8ˇ1.46"}}
+{"Key":"ctrl-a"}
+{"Get":{"state":"0.8ˇ2.46","mode":"Normal"}}
+{"Put":{"state":"0.8ˇ1.46"}}
+{"Key":"ctrl-x"}
+{"Get":{"state":"0.8ˇ0.46","mode":"Normal"}}

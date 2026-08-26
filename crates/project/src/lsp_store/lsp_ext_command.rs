@@ -1,0 +1,880 @@
+use crate::{
+    LocationLink,
+    lsp_command::{
+        LspCommand, file_path_to_lsp_url, location_link_from_lsp, location_link_from_proto,
+        location_link_to_proto, location_links_from_lsp, location_links_from_proto,
+        location_links_to_proto,
+    },
+    lsp_store::LspStore,
+    make_lsp_text_document_position, make_text_document_identifier,
+};
+use anyhow::{Context as _, Result};
+use async_trait::async_trait;
+use collections::HashMap;
+use gpui::{App, AsyncApp, Entity};
+use language::{
+    Buffer, point_to_lsp,
+    proto::{deserialize_anchor, serialize_anchor},
+};
+use lsp::{AdapterServerCapabilities, LanguageServer, LanguageServerId};
+use rpc::proto::{self, PeerId};
+use serde::{Deserialize, Serialize};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use task::TaskTemplate;
+use text::{BufferId, PointUtf16, ToPointUtf16};
+
+pub enum LspExtExpandMacro {}
+
+impl lsp::request::Request for LspExtExpandMacro {
+    type Params = ExpandMacroParams;
+    type Result = Option<ExpandedMacro>;
+    const METHOD: &'static str = "rust-analyzer/expandMacro";
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandMacroParams {
+    pub text_document: lsp::TextDocumentIdentifier,
+    pub position: lsp::Position,
+}
+
+#[derive(Default, Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpandedMacro {
+    pub name: String,
+    pub expansion: String,
+}
+
+impl ExpandedMacro {
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty() && self.expansion.is_empty()
+    }
+}
+#[derive(Debug)]
+pub struct ExpandMacro {
+    pub position: PointUtf16,
+}
+
+#[async_trait(?Send)]
+impl LspCommand for ExpandMacro {
+    type Response = ExpandedMacro;
+    type LspRequest = LspExtExpandMacro;
+    type ProtoRequest = proto::LspExtExpandMacro;
+
+    fn display_name(&self) -> &str {
+        "Expand macro"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<ExpandMacroParams> {
+        Ok(ExpandMacroParams {
+            text_document: make_text_document_identifier(path)?,
+            position: point_to_lsp(self.position),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<ExpandedMacro>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<ExpandedMacro> {
+        Ok(message
+            .map(|message| ExpandedMacro {
+                name: message.name,
+                expansion: message.expansion,
+            })
+            .unwrap_or_default())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtExpandMacro {
+        proto::LspExtExpandMacro {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+        }
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> anyhow::Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .context("invalid position")?;
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+        })
+    }
+
+    fn response_to_proto(
+        response: ExpandedMacro,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
+    ) -> proto::LspExtExpandMacroResponse {
+        proto::LspExtExpandMacroResponse {
+            name: response.name,
+            expansion: response.expansion,
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtExpandMacroResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<ExpandedMacro> {
+        Ok(ExpandedMacro {
+            name: message.name,
+            expansion: message.expansion,
+        })
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtExpandMacro) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+pub enum LspOpenDocs {}
+
+impl lsp::request::Request for LspOpenDocs {
+    type Params = OpenDocsParams;
+    type Result = Option<DocsUrls>;
+    const METHOD: &'static str = "experimental/externalDocs";
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenDocsParams {
+    pub text_document: lsp::TextDocumentIdentifier,
+    pub position: lsp::Position,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DocsUrls {
+    pub web: Option<String>,
+    pub local: Option<String>,
+}
+
+impl DocsUrls {
+    pub fn is_empty(&self) -> bool {
+        self.web.is_none() && self.local.is_none()
+    }
+}
+
+#[derive(Debug)]
+pub struct OpenDocs {
+    pub position: PointUtf16,
+}
+
+#[async_trait(?Send)]
+impl LspCommand for OpenDocs {
+    type Response = DocsUrls;
+    type LspRequest = LspOpenDocs;
+    type ProtoRequest = proto::LspExtOpenDocs;
+
+    fn display_name(&self) -> &str {
+        "Open docs"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<OpenDocsParams> {
+        let uri = lsp::Uri::from_file_path(path)
+            .map_err(|()| anyhow::anyhow!("{path:?} is not a valid URI"))?;
+        Ok(OpenDocsParams {
+            text_document: lsp::TextDocumentIdentifier { uri },
+            position: point_to_lsp(self.position),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<DocsUrls>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<DocsUrls> {
+        Ok(message
+            .map(|message| DocsUrls {
+                web: message.web,
+                local: message.local,
+            })
+            .unwrap_or_default())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtOpenDocs {
+        proto::LspExtOpenDocs {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+        }
+    }
+
+    async fn from_proto(
+        message: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> anyhow::Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .context("invalid position")?;
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+        })
+    }
+
+    fn response_to_proto(
+        response: DocsUrls,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
+    ) -> proto::LspExtOpenDocsResponse {
+        proto::LspExtOpenDocsResponse {
+            web: response.web,
+            local: response.local,
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtOpenDocsResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<DocsUrls> {
+        Ok(DocsUrls {
+            web: message.web,
+            local: message.local,
+        })
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtOpenDocs) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+pub enum LspSwitchSourceHeader {}
+
+impl lsp::request::Request for LspSwitchSourceHeader {
+    type Params = SwitchSourceHeaderParams;
+    type Result = Option<SwitchSourceHeaderResult>;
+    const METHOD: &'static str = "textDocument/switchSourceHeader";
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSourceHeaderParams(lsp::TextDocumentIdentifier);
+
+#[derive(Serialize, Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSourceHeaderResult(pub String);
+
+#[derive(Default, Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchSourceHeader;
+
+#[derive(Debug)]
+pub struct GoToParentModule {
+    pub position: PointUtf16,
+}
+
+pub struct LspGoToParentModule {}
+
+impl lsp::request::Request for LspGoToParentModule {
+    type Params = lsp::TextDocumentPositionParams;
+    type Result = Option<Vec<lsp::LocationLink>>;
+    const METHOD: &'static str = "experimental/parentModule";
+}
+
+#[async_trait(?Send)]
+impl LspCommand for SwitchSourceHeader {
+    type Response = SwitchSourceHeaderResult;
+    type LspRequest = LspSwitchSourceHeader;
+    type ProtoRequest = proto::LspExtSwitchSourceHeader;
+
+    fn display_name(&self) -> &str {
+        "Switch source header"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<SwitchSourceHeaderParams> {
+        Ok(SwitchSourceHeaderParams(make_text_document_identifier(
+            path,
+        )?))
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: Option<SwitchSourceHeaderResult>,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: LanguageServerId,
+        _: AsyncApp,
+    ) -> anyhow::Result<SwitchSourceHeaderResult> {
+        Ok(message
+            .map(|message| SwitchSourceHeaderResult(message.0))
+            .unwrap_or_default())
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtSwitchSourceHeader {
+        proto::LspExtSwitchSourceHeader {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+        }
+    }
+
+    async fn from_proto(
+        _: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {})
+    }
+
+    fn response_to_proto(
+        response: SwitchSourceHeaderResult,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut App,
+    ) -> proto::LspExtSwitchSourceHeaderResponse {
+        proto::LspExtSwitchSourceHeaderResponse {
+            target_file: response.0,
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtSwitchSourceHeaderResponse,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> anyhow::Result<SwitchSourceHeaderResult> {
+        Ok(SwitchSourceHeaderResult(message.target_file))
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtSwitchSourceHeader) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GoToParentModule {
+    type Response = Vec<LocationLink>;
+    type LspRequest = LspGoToParentModule;
+    type ProtoRequest = proto::LspExtGoToParentModule;
+
+    fn display_name(&self) -> &str {
+        "Go to parent module"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<lsp::TextDocumentPositionParams> {
+        make_lsp_text_document_position(path, self.position)
+    }
+
+    async fn response_from_lsp(
+        self,
+        links: Option<Vec<lsp::LocationLink>>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        cx: AsyncApp,
+    ) -> anyhow::Result<Vec<LocationLink>> {
+        location_links_from_lsp(
+            links.map(lsp::GotoDefinitionResponse::Link),
+            lsp_store,
+            buffer,
+            server_id,
+            cx,
+        )
+        .await
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtGoToParentModule {
+        proto::LspExtGoToParentModule {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+        }
+    }
+
+    async fn from_proto(
+        request: Self::ProtoRequest,
+        _: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> anyhow::Result<Self> {
+        let position = request
+            .position
+            .and_then(deserialize_anchor)
+            .context("bad request with bad position")?;
+        Ok(Self {
+            position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
+        })
+    }
+
+    fn response_to_proto(
+        links: Vec<LocationLink>,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::LspExtGoToParentModuleResponse {
+        proto::LspExtGoToParentModuleResponse {
+            links: location_links_to_proto(links, lsp_store, peer_id, cx),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtGoToParentModuleResponse,
+        lsp_store: Entity<LspStore>,
+        _: Entity<Buffer>,
+        cx: AsyncApp,
+    ) -> anyhow::Result<Vec<LocationLink>> {
+        location_links_from_proto(message.links, lsp_store, cx).await
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtGoToParentModule) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+// https://rust-analyzer.github.io/book/contributing/lsp-extensions.html#runnables
+// Taken from https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/ext.rs#L425-L489
+//
+// Note that in rust-analyzer, `Runnable` is defined as:
+//
+// ```
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// pub struct Runnable {
+//     pub label: String,
+//     #[serde(skip_serializing_if = "Option::is_none")]
+//     pub location: Option<lsp_types::LocationLink>,
+//     pub kind: RunnableKind,
+//     pub args: RunnableArgs,
+// }
+//
+// #[derive(Deserialize, Serialize, Debug, Clone)]
+// #[serde(rename_all = "camelCase")]
+// #[serde(untagged)]
+// pub enum RunnableArgs {
+//     Cargo(CargoRunnableArgs),
+//     Shell(ShellRunnableArgs),
+// }
+// ```
+//
+// i.e., RunnableArgs uses serde(untagged) and is not associated with
+// RunnableKind. But rust-analyzer always syncs RunnableKind with RunnableArgs:
+//
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1608-L1633
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/lsp/to_proto.rs#L1648-L1653
+// * https://github.com/rust-lang/rust-analyzer/blob/3aaa35b49ef27e15144952aa4f7ba3eecd36fbb4/crates/rust-analyzer/src/handlers/request.rs#L1052-L1066
+//
+// And it really doesn't make any sense for it to be any other way. On top of
+// that, the Shell and Cargo variants are similar enough that serde(untagged)
+// deserialization has been observed to confuse one for the other. So we rely on
+// RunnableKind to determine which variant to deserialize.
+pub enum Runnables {}
+
+impl lsp::request::Request for Runnables {
+    type Params = RunnablesParams;
+    type Result = Vec<Runnable>;
+    const METHOD: &'static str = "experimental/runnables";
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RunnablesParams {
+    pub text_document: lsp::TextDocumentIdentifier,
+    #[serde(default)]
+    pub position: Option<lsp::Position>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Runnable {
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<lsp::LocationLink>,
+    #[serde(flatten)]
+    pub args: RunnableArgs,
+}
+
+/// The `kind` field in the JSON determines which variant is deserialized; see
+/// comment on `Runnables` above for more discussion.
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(tag = "kind", content = "args")]
+#[serde(rename_all = "lowercase")]
+pub enum RunnableArgs {
+    Cargo(CargoRunnableArgs),
+    Shell(ShellRunnableArgs),
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CargoRunnableArgs {
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub environment: HashMap<String, String>,
+    pub cwd: PathBuf,
+    /// Command to be executed instead of cargo
+    #[serde(default)]
+    pub override_cargo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_root: Option<PathBuf>,
+    // command, --package and --lib stuff
+    #[serde(default)]
+    pub cargo_args: Vec<String>,
+    // stuff after --
+    #[serde(default)]
+    pub executable_args: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellRunnableArgs {
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub environment: HashMap<String, String>,
+    pub cwd: PathBuf,
+    pub program: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct GetLspRunnables {
+    pub buffer_id: BufferId,
+    pub position: Option<text::Anchor>,
+}
+
+#[derive(Debug, Default)]
+pub struct LspRunnables {
+    pub runnables: Vec<(Option<LocationLink>, TaskTemplate)>,
+}
+
+pub fn runnable_to_task_template(label: String, args: RunnableArgs) -> TaskTemplate {
+    let mut task_template = TaskTemplate::default();
+    task_template.label = label;
+    match args {
+        RunnableArgs::Cargo(cargo) => {
+            match cargo.override_cargo {
+                Some(override_cargo) => {
+                    let mut override_parts = override_cargo.split(" ").map(|s| s.to_string());
+                    task_template.command = override_parts
+                        .next()
+                        .unwrap_or_else(|| override_cargo.clone());
+                    task_template.args.extend(override_parts);
+                }
+                None => task_template.command = "cargo".to_string(),
+            };
+            task_template.env = cargo.environment;
+            task_template.cwd = Some(
+                cargo
+                    .workspace_root
+                    .unwrap_or(cargo.cwd)
+                    .to_string_lossy()
+                    .to_string(),
+            );
+            task_template.args.extend(cargo.cargo_args);
+            if !cargo.executable_args.is_empty() {
+                let shell_kind = task_template.shell.shell_kind(cfg!(windows));
+                task_template.args.push("--".to_string());
+                task_template.args.extend(
+                    cargo
+                        .executable_args
+                        .into_iter()
+                        // rust-analyzer's doctest data may contain things like `X<T>::new`
+                        // which cause shell issues when run as `$SHELL -i -c "cargo test ..."`.
+                        // Escape extra cargo args unconditionally as those are unlikely to contain `~`.
+                        .flat_map(|extra_arg| {
+                            shell_kind.try_quote(&extra_arg).map(|s| s.to_string())
+                        }),
+                );
+            }
+        }
+        RunnableArgs::Shell(shell) => {
+            task_template.command = shell.program;
+            task_template.args = shell.args;
+            task_template.env = shell.environment;
+            task_template.cwd = Some(shell.cwd.to_string_lossy().into_owned());
+        }
+    }
+    task_template
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetLspRunnables {
+    type Response = LspRunnables;
+    type LspRequest = Runnables;
+    type ProtoRequest = proto::LspExtRunnables;
+
+    fn display_name(&self) -> &str {
+        "LSP Runnables"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        _: &Arc<LanguageServer>,
+        _: &App,
+    ) -> Result<RunnablesParams> {
+        let url = file_path_to_lsp_url(path)?;
+        Ok(RunnablesParams {
+            text_document: lsp::TextDocumentIdentifier::new(url),
+            position: self
+                .position
+                .map(|anchor| point_to_lsp(anchor.to_point_utf16(&buffer.snapshot()))),
+        })
+    }
+
+    async fn response_from_lsp(
+        self,
+        lsp_runnables: Vec<Runnable>,
+        lsp_store: Entity<LspStore>,
+        buffer: Entity<Buffer>,
+        server_id: LanguageServerId,
+        mut cx: AsyncApp,
+    ) -> Result<LspRunnables> {
+        let mut runnables = Vec::with_capacity(lsp_runnables.len());
+
+        for runnable in lsp_runnables {
+            let location = match runnable.location {
+                Some(location) => Some(
+                    location_link_from_lsp(location, &lsp_store, &buffer, server_id, &mut cx)
+                        .await?,
+                ),
+                None => None,
+            };
+            let task_template = runnable_to_task_template(runnable.label, runnable.args);
+            runnables.push((location, task_template));
+        }
+
+        Ok(LspRunnables { runnables })
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::LspExtRunnables {
+        proto::LspExtRunnables {
+            project_id,
+            buffer_id: buffer.remote_id().to_proto(),
+            position: self.position.as_ref().map(serialize_anchor),
+        }
+    }
+
+    async fn from_proto(
+        message: proto::LspExtRunnables,
+        _: Entity<LspStore>,
+        _: Entity<Buffer>,
+        _: AsyncApp,
+    ) -> Result<Self> {
+        let buffer_id = Self::buffer_id_from_proto(&message)?;
+        let position = message.position.and_then(deserialize_anchor);
+        Ok(Self {
+            buffer_id,
+            position,
+        })
+    }
+
+    fn response_to_proto(
+        response: LspRunnables,
+        lsp_store: &mut LspStore,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut App,
+    ) -> proto::LspExtRunnablesResponse {
+        proto::LspExtRunnablesResponse {
+            runnables: response
+                .runnables
+                .into_iter()
+                .map(|(location, task_template)| proto::LspRunnable {
+                    location: location
+                        .map(|location| location_link_to_proto(location, lsp_store, peer_id, cx)),
+                    task_template: serde_json::to_vec(&task_template).unwrap(),
+                })
+                .collect(),
+        }
+    }
+
+    async fn response_from_proto(
+        self,
+        message: proto::LspExtRunnablesResponse,
+        lsp_store: Entity<LspStore>,
+        _: Entity<Buffer>,
+        mut cx: AsyncApp,
+    ) -> Result<LspRunnables> {
+        let mut runnables = LspRunnables {
+            runnables: Vec::new(),
+        };
+
+        for lsp_runnable in message.runnables {
+            let location = match lsp_runnable.location {
+                Some(location) => {
+                    Some(location_link_from_proto(location, lsp_store.clone(), &mut cx).await?)
+                }
+                None => None,
+            };
+            let task_template = serde_json::from_slice(&lsp_runnable.task_template)
+                .context("deserializing task template from proto")?;
+            runnables.runnables.push((location, task_template));
+        }
+
+        Ok(runnables)
+    }
+
+    fn buffer_id_from_proto(message: &proto::LspExtRunnables) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[derive(Debug)]
+pub struct LspExtCancelFlycheck {}
+
+#[derive(Debug)]
+pub struct LspExtRunFlycheck {}
+
+#[derive(Debug)]
+pub struct LspExtClearFlycheck {}
+
+impl lsp::notification::Notification for LspExtCancelFlycheck {
+    type Params = ();
+    const METHOD: &'static str = "rust-analyzer/cancelFlycheck";
+}
+
+impl lsp::notification::Notification for LspExtRunFlycheck {
+    type Params = RunFlycheckParams;
+    const METHOD: &'static str = "rust-analyzer/runFlycheck";
+}
+
+#[derive(Deserialize, Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct RunFlycheckParams {
+    pub text_document: Option<lsp::TextDocumentIdentifier>,
+}
+
+impl lsp::notification::Notification for LspExtClearFlycheck {
+    type Params = ();
+    const METHOD: &'static str = "rust-analyzer/clearFlycheck";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_runnable_deserializes_as_shell() {
+        // rust-analyzer sends this when `runnables.test.overrideCommand` is
+        // configured (e.g. for nextest).
+        let json = serde_json::json!({
+            "label": "test my_test",
+            "kind": "shell",
+            "args": {
+                "environment": {"RUSTC_TOOLCHAIN": "/path/to/toolchain"},
+                "cwd": "/project",
+                "program": "cargo",
+                "args": ["nextest", "run", "--package", "my-crate", "--lib", "--", "my_test", "--exact", "--include-ignored"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("shell runnable should deserialize");
+        let RunnableArgs::Shell(shell) = &runnable.args else {
+            panic!("expected Shell variant, got {:?}", runnable.args);
+        };
+        assert_eq!(shell.program, "cargo");
+        assert_eq!(shell.args[0], "nextest");
+        assert_eq!(shell.args[1], "run");
+    }
+
+    #[test]
+    fn cargo_runnable_deserializes_as_cargo() {
+        // Standard cargo runnable from rust-analyzer.
+        let json = serde_json::json!({
+            "label": "cargo test -p my-crate",
+            "kind": "cargo",
+            "args": {
+                "environment": {},
+                "cwd": "/project",
+                "overrideCargo": null,
+                "workspaceRoot": "/project",
+                "cargoArgs": ["test", "--package", "my-crate", "--lib"],
+                "executableArgs": ["my_test", "--exact"]
+            }
+        });
+
+        let runnable: Runnable =
+            serde_json::from_value(json).expect("cargo runnable should deserialize");
+        let RunnableArgs::Cargo(cargo) = &runnable.args else {
+            panic!("expected Cargo variant, got {:?}", runnable.args);
+        };
+        assert_eq!(
+            cargo.cargo_args,
+            vec!["test", "--package", "my-crate", "--lib"]
+        );
+        assert_eq!(cargo.executable_args, vec!["my_test", "--exact"]);
+    }
+}

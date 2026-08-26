@@ -1,0 +1,68 @@
+use std::sync::Arc;
+
+use gpui::Hsla;
+use serde::Deserialize;
+
+use crate::{
+    amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple, tomato,
+};
+
+/// A collection of colors that are used to color indent aware lines in the editor.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct AccentColors(pub Arc<[Hsla]>);
+
+impl Default for AccentColors {
+    /// Don't use this!
+    /// We have to have a default to be `[refineable::Refinable]`.
+    /// TODO "Find a way to not need this for Refinable"
+    fn default() -> Self {
+        Self::dark()
+    }
+}
+
+impl AccentColors {
+    /// Returns the set of dark accent colors.
+    pub fn dark() -> Self {
+        Self(Arc::from(vec![
+            blue().dark().step_9(),
+            orange().dark().step_9(),
+            pink().dark().step_9(),
+            lime().dark().step_9(),
+            purple().dark().step_9(),
+            amber().dark().step_9(),
+            jade().dark().step_9(),
+            tomato().dark().step_9(),
+            cyan().dark().step_9(),
+            gold().dark().step_9(),
+            grass().dark().step_9(),
+            indigo().dark().step_9(),
+            iris().dark().step_9(),
+        ]))
+    }
+
+    /// Returns the set of light accent colors.
+    pub fn light() -> Self {
+        Self(Arc::from(vec![
+            blue().light().step_9(),
+            orange().light().step_9(),
+            pink().light().step_9(),
+            lime().light().step_9(),
+            purple().light().step_9(),
+            amber().light().step_9(),
+            jade().light().step_9(),
+            tomato().light().step_9(),
+            cyan().light().step_9(),
+            gold().light().step_9(),
+            grass().light().step_9(),
+            indigo().light().step_9(),
+            iris().light().step_9(),
+        ]))
+    }
+}
+
+impl AccentColors {
+    /// Returns the color for the given index.
+    pub fn color_for_index(&self, index: u32) -> Hsla {
+        self.0[index as usize % self.0.len()]
+    }
+}

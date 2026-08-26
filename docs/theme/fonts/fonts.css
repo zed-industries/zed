@@ -1,0 +1,39 @@
+/* Open Sans is licensed under the Apache License, Version 2.0. See http://www.apache.org/licenses/LICENSE-2.0 */
+/* Source Code Pro is under the Open Font License. See https://scripts.sil.org/cms/scripts/page.php?site_id=nrsi&id=OFL */
+/* open-sans-300 - latin_vietnamese_latin-ext_greek-ext_greek_cyrillic-ext_cyrillic */
+
+@font-face {
+  font-family: "iA Writer Quattro S";
+  src: url("https://cdn.zed.dev/fonts/iAWriterQuattroV.woff2")
+    format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "iA Writer Quattro S";
+  src: url("https://cdn.zed.dev/fonts/iAWriterQuattroV-Italic.woff2")
+    format("woff2-variations");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "IBM Plex Serif";
+  src: url("https://cdn.zed.dev/fonts/IBMPlexSerif-Var.woff2")
+    format("woff2-variations");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lilex";
+  src: url("https://cdn.zed.dev/fonts/Lilex-Regular.woff2")
+    format("woff2-variations");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.." || exit 1
+cd crates/json_schema_store/src/schemas
+
+if [[ $# -gt 1 ]]; then
+    echo "Usage: script/update-json-schemas [schemastore-commit]" >&2
+    exit 1
+fi
+
+UPSTREAM_REF="${1:-master}"
+
+COMMIT="$(curl -sL "https://api.github.com/repos/SchemaStore/schemastore/commits/$UPSTREAM_REF")"
+HASH="$(jq -r '.sha' <<< "$COMMIT")"
+if [[ -z "$HASH" || "$HASH" == "null" ]]; then
+    echo "Failed to resolve SchemaStore/schemastore commit: $UPSTREAM_REF" >&2
+    exit 1
+fi
+
+files=(
+    "tsconfig.json"
+    "package.json"
+)
+for file in "${files[@]}"; do
+    curl -sL "https://raw.githubusercontent.com/SchemaStore/schemastore/$HASH/src/schemas/json/$file" |
+        sed 's|https://json\.schemastore\.org|https://www.schemastore.org|g' > "$file"
+done
+
+SHORT_HASH="${HASH:0:7}"
+DATE="$(jq -r .commit.author.date <<< "$COMMIT" | cut -c1-10)"
+echo
+echo "Updated JSON schemas to [SchemaStore/schemastore@$SHORT_HASH](https://github.com/SchemaStore/schemastore/tree/$HASH) ($DATE)"
+echo
+for file in "${files[@]}"; do
+    echo "- [$file](https://github.com/SchemaStore/schemastore/commits/master/src/schemas/json/$file)" \
+        "@ [$SHORT_HASH](https://raw.githubusercontent.com/SchemaStore/schemastore/$HASH/src/schemas/json/$file)"
+done
+echo

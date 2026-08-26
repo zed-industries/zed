@@ -1,0 +1,249 @@
+use crate::{
+    BufferId, BufferSnapshot, Point, PointUtf16, TextDimension, ToOffset, ToPoint, ToPointUtf16,
+    locator::Locator,
+};
+use std::{cmp::Ordering, fmt::Debug, ops::Range};
+use sum_tree::{Bias, Dimensions};
+
+/// A timestamped position in a buffer.
+#[doc(alias = "TextAnchor")]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+pub struct Anchor {
+    // /// The timestamp of the operation that inserted the text
+    // /// in which this anchor is located.
+    // pub(crate) timestamp: clock::Lamport,
+    // we store the replica id and sequence number of the timestamp inline
+    // to avoid the alignment of our fields from increasing the size of this struct
+    // This saves 8 bytes, by allowing replica id, value and bias to occupy the padding
+    pub(crate) timestamp_replica_id: clock::ReplicaId,
+    pub(crate) timestamp_value: clock::Seq,
+
+    /// The byte offset into the text inserted in the operation
+    /// at `timestamp`.
+    pub offset: u32,
+    /// Whether this anchor stays attached to the character *before* or *after*
+    /// the offset.
+    pub bias: Bias,
+    pub buffer_id: BufferId,
+}
+
+impl Debug for Anchor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_min() {
+            return write!(f, "Anchor::min({:?})", self.buffer_id);
+        }
+        if self.is_max() {
+            return write!(f, "Anchor::max({:?})", self.buffer_id);
+        }
+
+        f.debug_struct("Anchor")
+            .field("timestamp", &self.timestamp())
+            .field("offset", &self.offset)
+            .field("bias", &self.bias)
+            .field("buffer_id", &self.buffer_id)
+            .finish()
+    }
+}
+
+impl Anchor {
+    pub fn new(timestamp: clock::Lamport, offset: u32, bias: Bias, buffer_id: BufferId) -> Self {
+        Self {
+            timestamp_replica_id: timestamp.replica_id,
+            timestamp_value: timestamp.value,
+            offset,
+            bias,
+            buffer_id,
+        }
+    }
+
+    pub fn min_for_buffer(buffer_id: BufferId) -> Self {
+        Self {
+            timestamp_replica_id: clock::Lamport::MIN.replica_id,
+            timestamp_value: clock::Lamport::MIN.value,
+            offset: u32::MIN,
+            bias: Bias::Left,
+            buffer_id,
+        }
+    }
+
+    pub fn max_for_buffer(buffer_id: BufferId) -> Self {
+        Self {
+            timestamp_replica_id: clock::Lamport::MAX.replica_id,
+            timestamp_value: clock::Lamport::MAX.value,
+            offset: u32::MAX,
+            bias: Bias::Right,
+            buffer_id,
+        }
+    }
+
+    pub fn min_min_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
+        let min = Self::min_for_buffer(buffer_id);
+        min..min
+    }
+    pub fn max_max_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
+        let max = Self::max_for_buffer(buffer_id);
+        max..max
+    }
+    pub fn min_max_range_for_buffer(buffer_id: BufferId) -> std::ops::Range<Self> {
+        Self::min_for_buffer(buffer_id)..Self::max_for_buffer(buffer_id)
+    }
+
+    pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Ordering {
+        let fragment_id_comparison = if self.timestamp() == other.timestamp() {
+            Ordering::Equal
+        } else {
+            buffer
+                .fragment_id_for_anchor(self)
+                .cmp(buffer.fragment_id_for_anchor(other))
+        };
+
+        fragment_id_comparison
+            .then_with(|| self.offset.cmp(&other.offset))
+            .then_with(|| self.bias.cmp(&other.bias))
+    }
+
+    pub fn min<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
+        if self.cmp(other, buffer).is_le() {
+            self
+        } else {
+            other
+        }
+    }
+
+    pub fn max<'a>(&'a self, other: &'a Self, buffer: &BufferSnapshot) -> &'a Self {
+        if self.cmp(other, buffer).is_ge() {
+            self
+        } else {
+            other
+        }
+    }
+
+    pub fn bias(&self, bias: Bias, buffer: &BufferSnapshot) -> Anchor {
+        match bias {
+            Bias::Left => self.bias_left(buffer),
+            Bias::Right => self.bias_right(buffer),
+        }
+    }
+
+    pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
+        match self.bias {
+            Bias::Left => *self,
+            Bias::Right => buffer.anchor_before(self),
+        }
+    }
+
+    pub fn bias_right(&self, buffer: &BufferSnapshot) -> Anchor {
+        match self.bias {
+            Bias::Left => buffer.anchor_after(self),
+            Bias::Right => *self,
+        }
+    }
+
+    pub fn summary<D>(&self, content: &BufferSnapshot) -> D
+    where
+        D: TextDimension,
+    {
+        content.summary_for_anchor(self)
+    }
+
+    /// Returns true when the [`Anchor`] is located inside a visible fragment.
+    pub fn is_valid(&self, buffer: &BufferSnapshot) -> bool {
+        if self.is_min() || self.is_max() {
+            true
+        } else if self.buffer_id != buffer.remote_id {
+            false
+        } else {
+            let Some(fragment_id) = buffer.try_fragment_id_for_anchor(self) else {
+                return false;
+            };
+            let (.., item) = buffer
+                .fragments
+                .find::<Dimensions<Option<&Locator>, usize>, _>(
+                    &None,
+                    &Some(fragment_id),
+                    Bias::Left,
+                );
+            item.is_some_and(|fragment| fragment.visible)
+        }
+    }
+
+    pub fn is_min(&self) -> bool {
+        self.timestamp() == clock::Lamport::MIN
+            && self.offset == u32::MIN
+            && self.bias == Bias::Left
+    }
+
+    pub fn is_max(&self) -> bool {
+        self.timestamp() == clock::Lamport::MAX
+            && self.offset == u32::MAX
+            && self.bias == Bias::Right
+    }
+
+    #[inline]
+    pub fn timestamp(&self) -> clock::Lamport {
+        clock::Lamport {
+            replica_id: self.timestamp_replica_id,
+            value: self.timestamp_value,
+        }
+    }
+
+    pub fn opaque_id(&self) -> [u8; 20] {
+        let mut bytes = [0u8; 20];
+        let buffer_id: u64 = self.buffer_id.into();
+        bytes[0..8].copy_from_slice(&buffer_id.to_le_bytes());
+        bytes[8..12].copy_from_slice(&self.offset.to_le_bytes());
+        bytes[12..16].copy_from_slice(&self.timestamp_value.to_le_bytes());
+        let replica_id = self.timestamp_replica_id.as_u16();
+        bytes[16..18].copy_from_slice(&replica_id.to_le_bytes());
+        bytes[18] = self.bias as u8;
+        bytes
+    }
+}
+
+pub trait OffsetRangeExt {
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> Range<usize>;
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Range<Point>;
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> Range<PointUtf16>;
+}
+
+impl<T> OffsetRangeExt for Range<T>
+where
+    T: ToOffset,
+{
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> Range<usize> {
+        self.start.to_offset(snapshot)..self.end.to_offset(snapshot)
+    }
+
+    fn to_point(&self, snapshot: &BufferSnapshot) -> Range<Point> {
+        self.start.to_offset(snapshot).to_point(snapshot)
+            ..self.end.to_offset(snapshot).to_point(snapshot)
+    }
+
+    fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> Range<PointUtf16> {
+        self.start.to_offset(snapshot).to_point_utf16(snapshot)
+            ..self.end.to_offset(snapshot).to_point_utf16(snapshot)
+    }
+}
+
+pub trait AnchorRangeExt {
+    fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering;
+    fn overlaps(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> bool;
+    fn contains_anchor(&self, b: Anchor, buffer: &BufferSnapshot) -> bool;
+}
+
+impl AnchorRangeExt for Range<Anchor> {
+    fn cmp(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> Ordering {
+        match self.start.cmp(&other.start, buffer) {
+            Ordering::Equal => other.end.cmp(&self.end, buffer),
+            ord => ord,
+        }
+    }
+
+    fn overlaps(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> bool {
+        self.start.cmp(&other.end, buffer).is_lt() && other.start.cmp(&self.end, buffer).is_lt()
+    }
+
+    fn contains_anchor(&self, other: Anchor, buffer: &BufferSnapshot) -> bool {
+        self.start.cmp(&other, buffer).is_le() && self.end.cmp(&other, buffer).is_ge()
+    }
+}

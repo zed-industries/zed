@@ -1,0 +1,174 @@
+use gh_workflow::*;
+
+use crate::tasks::workflows::{
+    runners,
+    steps::{
+        self, CommonPermissionSets, DownloadArtifactStep, FluentBuilder, IfNoFilesFound, NamedJob,
+        RepositoryTarget, TokenPermissions, UploadArtifactStep, ZippyGitIdentity, named, use_clang,
+    },
+    vars::{self, StepOutput, WorkflowInput},
+};
+
+pub fn autofix_pr() -> Workflow {
+    let pr_number = WorkflowInput::string("pr_number", None);
+    let run_clippy = WorkflowInput::bool("run_clippy", Some(false));
+    let run_autofix = run_autofix(&pr_number, &run_clippy);
+    let commit_changes = commit_changes(&pr_number, &run_autofix);
+    named::workflow()
+        .with_minimal_permissions()
+        .run_name(format!("autofix PR #{pr_number}"))
+        .on(Event::default().workflow_dispatch(
+            WorkflowDispatch::default()
+                .add_input(pr_number.name, pr_number.input())
+                .add_input(run_clippy.name, run_clippy.input()),
+        ))
+        .concurrency(
+            Concurrency::new(Expression::new(format!(
+                "${{{{ github.workflow }}}}-{pr_number}"
+            )))
+            .cancel_in_progress(true),
+        )
+        .add_job(run_autofix.name.clone(), run_autofix.job)
+        .add_job(commit_changes.name, commit_changes.job)
+}
+
+const PATCH_ARTIFACT_NAME: &str = "autofix-patch";
+const PATCH_FILE_PATH: &str = "autofix.patch";
+
+fn upload_patch_artifact() -> UploadArtifactStep {
+    steps::upload_artifact(PATCH_ARTIFACT_NAME, PATCH_FILE_PATH)
+        .if_no_files_found(IfNoFilesFound::Ignore)
+        .retention_days(1)
+}
+
+fn download_patch_artifact() -> DownloadArtifactStep {
+    steps::download_artifact().artifact_name(PATCH_ARTIFACT_NAME)
+}
+
+fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
+    // Dispatches via the REST API/CLI can deliver boolean inputs as strings, and the
+    // non-empty string 'false' is truthy in expressions, so compare against both forms.
+    fn clippy_enabled(run_clippy: &WorkflowInput) -> Expression {
+        Expression::new(format!(
+            "{expr} == true || {expr} == 'true'",
+            expr = run_clippy.expr()
+        ))
+    }
+
+    fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
+            .add_env(("PR_NUMBER", pr_number.to_string()))
+            .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
+    }
+
+    fn install_cargo_shear() -> Step<Use> {
+        steps::taiki_install_action("cargo-shear@1.13.4")
+    }
+
+    fn run_cargo_fmt() -> Step<Run> {
+        named::bash("cargo fmt --all")
+    }
+
+    fn run_cargo_fix() -> Step<Run> {
+        named::bash("cargo fix --workspace --allow-dirty --allow-staged")
+    }
+
+    fn run_cargo_shear_fix() -> Step<Run> {
+        named::bash("cargo shear --fix")
+    }
+
+    fn run_clippy_fix() -> Step<Run> {
+        named::bash("cargo clippy --workspace --fix --allow-dirty --allow-staged")
+    }
+
+    fn run_prettier_fix() -> Step<Run> {
+        named::bash("./script/prettier --write")
+    }
+
+    fn create_patch() -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            if git diff --quiet; then
+                echo "No changes to commit"
+                echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            else
+                git diff > autofix.patch
+                echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            fi
+        "#})
+        .id("create-patch")
+    }
+
+    named::job(use_clang(
+        Job::default()
+            .runs_on(runners::LINUX_DEFAULT)
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Read)
+                    .pull_requests(Level::Read),
+            )
+            .outputs([(
+                "has_changes".to_owned(),
+                "${{ steps.create-patch.outputs.has_changes }}".to_owned(),
+            )])
+            .add_step(steps::checkout_repo())
+            .add_step(checkout_pr(pr_number))
+            .add_step(steps::setup_cargo_config(runners::Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .map(steps::install_linux_dependencies)
+            .add_step(steps::setup_pnpm())
+            .add_step(install_cargo_shear().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_cargo_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_cargo_shear_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_clippy_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_prettier_fix())
+            .add_step(run_cargo_fmt())
+            .add_step(create_patch())
+            .add_step(upload_patch_artifact())
+            .add_step(steps::cleanup_cargo_config(runners::Platform::Linux)),
+    ))
+}
+
+fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob {
+    fn checkout_pr(pr_number: &WorkflowInput, token: &StepOutput) -> Step<Run> {
+        named::bash(r#"gh pr checkout "$PR_NUMBER""#)
+            .add_env(("PR_NUMBER", pr_number.to_string()))
+            .add_env(("GITHUB_TOKEN", token))
+    }
+
+    fn apply_patch() -> Step<Run> {
+        named::bash("git apply autofix.patch")
+    }
+
+    fn commit_and_push(token: &StepOutput) -> Step<Run> {
+        named::bash(indoc::indoc! {r#"
+            git commit -am "Autofix"
+            git push
+        "#})
+        .with_zippy_git_identity()
+        .add_env(("GITHUB_TOKEN", token))
+    }
+
+    let (authenticate, token) = steps::authenticate_as_zippy()
+        .for_repository(RepositoryTarget::current())
+        .with_permissions([
+            (TokenPermissions::Contents, Level::Write),
+            (TokenPermissions::Workflows, Level::Write),
+        ])
+        .into();
+
+    named::job(
+        Job::default()
+            .runs_on(runners::LINUX_SMALL)
+            .needs(vec![autofix_job.name.clone()])
+            .cond(Expression::new(format!(
+                "needs.{}.outputs.has_changes == 'true'",
+                autofix_job.name
+            )))
+            .add_step(authenticate)
+            .add_step(steps::checkout_repo().with_token(&token))
+            .add_step(checkout_pr(pr_number, &token))
+            .add_step(download_patch_artifact())
+            .add_step(apply_patch())
+            .add_step(commit_and_push(&token)),
+    )
+}
