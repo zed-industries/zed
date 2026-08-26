@@ -444,7 +444,11 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::{Model, ReasoningEffort};
+    use language_model_core::{
+        LanguageModelCompletionError, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory,
+    };
+
+    use super::{Model, ReasoningEffort, RequestError, StatusCode};
 
     #[test]
     fn gpt_5_1_uses_none_reasoning_by_default() {
@@ -514,6 +518,86 @@ mod tests {
             Model::FivePointThreeCodex.supported_reasoning_efforts(),
             expected_efforts.as_slice()
         );
+    }
+
+    #[test]
+    fn http_credit_balance_exhaustion_is_payment_required() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::TOO_MANY_REQUESTS,
+            body: serde_json::json!({
+                "error": {
+                    "message": "You have no credits remaining.",
+                    "type": "insufficient_quota",
+                    "param": null,
+                    "code": "credit_balance_exhausted"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::TOO_MANY_REQUESTS),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::PaymentRequired,
+                ..
+            } if code == "credit_balance_exhausted"
+                && message == "You have no credits remaining."
+        ));
+    }
+
+    #[test]
+    fn http_invalid_prompt_is_content_policy_rejection() {
+        let error = LanguageModelCompletionError::from(RequestError::HttpResponseError {
+            provider: OPEN_AI_PROVIDER_NAME.to_string(),
+            status_code: StatusCode::BAD_REQUEST,
+            body: serde_json::json!({
+                "error": {
+                    "message": "Invalid prompt: your prompt was flagged as potentially violating our usage policy.",
+                    "type": "invalid_request_error",
+                    "param": null,
+                    "code": "invalid_prompt"
+                }
+            })
+            .to_string(),
+            headers: Box::default(),
+        });
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                status: Some(StatusCode::BAD_REQUEST),
+                code: Some(code),
+                message,
+                category: ProviderErrorCategory::ContentPolicy,
+                ..
+            } if code == "invalid_prompt"
+                && message
+                    == "Invalid prompt: your prompt was flagged as potentially violating our usage policy."
+        ));
+    }
+
+    #[test]
+    fn stream_usage_with_null_prompt_cache_tokens_is_not_an_error() {
+        let chunk = r#"{"choices":[],"usage":{"prompt_tokens":5,"completion_tokens":3,"total_tokens":8,"prompt_tokens_details":{"cached_tokens":0,"cache_write_tokens":null}}}"#;
+
+        let super::ResponseStreamResult::Ok(event) =
+            serde_json::from_str::<super::ResponseStreamResult>(chunk).unwrap()
+        else {
+            panic!("usage-only chunk with null cache token fields must not fail to parse");
+        };
+
+        let details = event
+            .usage
+            .unwrap()
+            .prompt_tokens_details
+            .expect("prompt_tokens_details should be present");
+        assert_eq!(details.cached_tokens, Some(0));
+        assert_eq!(details.cache_write_tokens, None);
     }
 }
 
@@ -754,11 +838,9 @@ pub struct FunctionChunk {
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub struct PromptTokensDetails {
     /// Tokens read from a prompt cache.
-    #[serde(default)]
-    pub cached_tokens: u64,
+    pub cached_tokens: Option<u64>,
     /// Tokens written to a prompt cache.
-    #[serde(default)]
-    pub cache_write_tokens: u64,
+    pub cache_write_tokens: Option<u64>,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -836,6 +918,11 @@ pub struct ResponseStreamError {
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
     Err { error: ResponseStreamError },
+}
+
+#[derive(Deserialize)]
+struct ResponseErrorEnvelope {
+    error: responses::ResponseError,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1180,7 +1267,24 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                     .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
                     .map(std::time::Duration::from_secs);
 
-                Self::from_http_status(provider.into(), status_code, body, retry_after)
+                if let Ok(error_response) = serde_json::from_str::<ResponseErrorEnvelope>(&body) {
+                    let error = error_response.error;
+                    let category = completion::response_error_category(
+                        error.code.as_deref(),
+                        Some(status_code),
+                        &error.message,
+                    );
+                    Self::from_provider_response(
+                        provider.into(),
+                        Some(status_code),
+                        error.code,
+                        error.message,
+                        retry_after,
+                        category,
+                    )
+                } else {
+                    Self::from_http_status(provider.into(), status_code, body, retry_after)
+                }
             }
             RequestError::SerializeRequest { provider, error } => Self::SerializeRequest {
                 provider: provider.into(),

@@ -682,7 +682,6 @@ impl SerializableItem for BranchDiff {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let workspace_id = workspace.database_id()?;

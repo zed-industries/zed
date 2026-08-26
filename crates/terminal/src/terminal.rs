@@ -928,6 +928,46 @@ fn init_command_startup_marker_command(shell_kind: ShellKind, marker_id: u64) ->
     }
 }
 
+/// Configures whether a terminal runs an interactive shell or a tracked task.
+///
+/// Task modes must be created with [`TerminalMode::task`] so their completion
+/// sender and receiver remain paired.
+pub struct TerminalMode(TerminalModeKind);
+
+enum TerminalModeKind {
+    Interactive,
+    InteractiveWithCompletion(Sender<Option<ExitStatus>>),
+    Task {
+        state: TaskState,
+        completion_tx: Sender<Option<ExitStatus>>,
+    },
+}
+
+impl TerminalMode {
+    /// Creates a terminal for an interactive shell.
+    pub fn interactive() -> Self {
+        Self(TerminalModeKind::Interactive)
+    }
+
+    /// Creates an interactive terminal that reports when its shell exits.
+    pub fn interactive_with_completion(completion_tx: Sender<Option<ExitStatus>>) -> Self {
+        Self(TerminalModeKind::InteractiveWithCompletion(completion_tx))
+    }
+
+    /// Creates a running task terminal with an internally paired completion channel.
+    pub fn task(spawned_task: SpawnInTerminal) -> Self {
+        let (completion_tx, completion_rx) = async_channel::bounded(1);
+        Self(TerminalModeKind::Task {
+            state: TaskState {
+                status: TaskStatus::Running,
+                completion_rx,
+                spawned_task,
+            },
+            completion_tx,
+        })
+    }
+}
+
 pub struct TerminalBuilder {
     terminal: Terminal,
     events_rx: UnboundedReceiver<PtyEvent>,
@@ -1039,7 +1079,7 @@ impl TerminalBuilder {
 
     pub fn new(
         working_directory: Option<PathBuf>,
-        task: Option<TaskState>,
+        mode: TerminalMode,
         shell: Shell,
         mut env: HashMap<String, String>,
         cursor_shape: SettingsCursorShape,
@@ -1049,7 +1089,6 @@ impl TerminalBuilder {
         path_hyperlink_timeout: Duration,
         is_remote_terminal: bool,
         window_id: u64,
-        completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
         activation_script: Vec<String>,
         path_style: PathStyle,
@@ -1068,6 +1107,17 @@ impl TerminalBuilder {
             Err(error) => return Task::ready(Err(error)),
         };
         let fut = async move {
+            let (task, completion_tx) = match mode.0 {
+                TerminalModeKind::Interactive => (None, None),
+                TerminalModeKind::InteractiveWithCompletion(completion_tx) => {
+                    (None, Some(completion_tx))
+                }
+                TerminalModeKind::Task {
+                    state,
+                    completion_tx,
+                } => (Some(state), Some(completion_tx)),
+            };
+
             // Remove SHLVL so the spawned shell initializes it to 1, matching
             // the behavior of standalone terminal emulators like iTerm2/Kitty/Alacritty.
             env.remove("SHLVL");
@@ -1241,7 +1291,7 @@ impl TerminalBuilder {
 
                 (
                     TerminalType::Pty {
-                        pty_tx,
+                        resources: PtyResources::Active(pty_tx),
                         info: Arc::new(pty_info),
                     },
                     None,
@@ -1433,9 +1483,16 @@ impl TerminalBuilder {
     }
 }
 
+/// Separates retained PTY process metadata from resources needed only while
+/// the terminal is live.
+enum PtyResources {
+    Active(PtySender),
+    Released,
+}
+
 enum TerminalType {
     Pty {
-        pty_tx: PtySender,
+        resources: PtyResources,
         info: Arc<PtyProcessInfo>,
     },
     DisplayOnly,
@@ -1511,10 +1568,13 @@ struct CopyTemplate {
     window_id: u64,
 }
 
+/// Runtime state for a task-backed terminal.
 #[derive(Debug)]
 pub struct TaskState {
     pub status: TaskStatus,
-    pub completion_rx: Receiver<Option<ExitStatus>>,
+    /// Kept private so it can only be paired by [`TerminalMode::task`] with the
+    /// sender that reports this task's completion.
+    completion_rx: Receiver<Option<ExitStatus>>,
     pub spawned_task: SpawnInTerminal,
 }
 
@@ -1659,7 +1719,11 @@ impl Terminal {
                     self.last_content.terminal_bounds.num_columns() != new_bounds.num_columns();
                 self.last_content.terminal_bounds = new_bounds;
 
-                if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
+                if let TerminalType::Pty {
+                    resources: PtyResources::Active(pty_tx),
+                    ..
+                } = &self.terminal_type
+                {
                     pty_tx.resize(new_bounds);
                 }
 
@@ -2047,7 +2111,11 @@ impl Terminal {
         let input = input.into();
         #[cfg(any(test, feature = "test-support"))]
         self.pty_write_log.borrow_mut().push(input.to_vec());
-        if let TerminalType::Pty { pty_tx, .. } = &self.terminal_type {
+        if let TerminalType::Pty {
+            resources: PtyResources::Active(pty_tx),
+            ..
+        } = &self.terminal_type
+        {
             if log::log_enabled!(log::Level::Debug) {
                 if let Ok(str) = str::from_utf8(&input) {
                     log::debug!("Writing to PTY: {:?}", str);
@@ -2963,6 +3031,42 @@ impl Terminal {
         }
     }
 
+    /// Returns whether this terminal still owns its live PTY sender.
+    pub fn has_active_pty_resources(&self) -> bool {
+        matches!(
+            self.terminal_type,
+            TerminalType::Pty {
+                resources: PtyResources::Active(_),
+                ..
+            }
+        )
+    }
+
+    /// Releases live PTY resources while retaining process metadata and buffered output.
+    ///
+    /// Calling this method after the resources have already been released is a no-op.
+    pub fn release_pty_resources(&mut self) {
+        let TerminalType::Pty { resources, info } = &mut self.terminal_type else {
+            return;
+        };
+        let PtyResources::Active(pty_tx) = std::mem::replace(resources, PtyResources::Released)
+        else {
+            return;
+        };
+        let info = info.clone();
+
+        pty_tx.shutdown();
+        info.terminate_child_process();
+
+        let timer = self.background_executor.timer(Duration::from_millis(100));
+        self.background_executor
+            .spawn(async move {
+                timer.await;
+                info.kill_child_process();
+            })
+            .detach();
+    }
+
     pub fn pid(&self) -> Option<sysinfo::Pid> {
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info.pid(),
@@ -3075,7 +3179,7 @@ impl Terminal {
         let working_directory = self.working_directory().or_else(|| cwd);
         TerminalBuilder::new(
             working_directory,
-            None,
+            TerminalMode::interactive(),
             self.template.shell.clone(),
             self.template.env.clone(),
             self.template.cursor_shape,
@@ -3085,7 +3189,6 @@ impl Terminal {
             self.template.path_hyperlink_timeout,
             self.is_remote_terminal,
             self.template.window_id,
-            None,
             cx,
             self.activation_script.clone(),
             self.path_style,
@@ -3274,20 +3377,7 @@ impl Drop for Terminal {
         if let Some(subprocess) = self.subprocess.take() {
             subprocess.kill();
         }
-        if let TerminalType::Pty { pty_tx, info } =
-            std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
-        {
-            pty_tx.shutdown();
-            info.terminate_child_process();
-
-            let timer = self.background_executor.timer(Duration::from_millis(100));
-            self.background_executor
-                .spawn(async move {
-                    timer.await;
-                    info.kill_child_process();
-                })
-                .detach();
-        }
+        self.release_pty_resources();
     }
 }
 
@@ -3471,7 +3561,6 @@ mod tests {
         Cell, Content, IndexedCell, TerminalBounds, TerminalBuilder, content_index_for_mouse,
         rgb_for_index,
     };
-    use async_channel::Receiver;
     use collections::HashMap;
     use gpui::{
         ClipboardItem, Entity, Pixels, TestAppContext, VisualTestContext, bounds, point, size,
@@ -3598,12 +3687,11 @@ mod tests {
     }
 
     /// Helper to build a test terminal running a shell command.
-    /// Returns the terminal entity and a receiver for the completion signal.
     async fn build_test_terminal(
         cx: &mut TestAppContext,
         command: &str,
         args: &[&str],
-    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
+    ) -> Entity<Terminal> {
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         let (program, args) =
             ShellBuilder::new(&Shell::System, false).build(Some(command.to_owned()), &args);
@@ -3614,13 +3702,17 @@ mod tests {
         cx: &mut TestAppContext,
         program: String,
         args: Vec<String>,
-    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = async_channel::unbounded();
+    ) -> Entity<Terminal> {
+        let mode = TerminalMode::task(SpawnInTerminal {
+            command: Some(program.clone()),
+            args: args.clone(),
+            ..Default::default()
+        });
         let builder = cx
             .update(|cx| {
                 TerminalBuilder::new(
                     None,
-                    None,
+                    mode,
                     task::Shell::WithArguments {
                         program,
                         args,
@@ -3634,7 +3726,6 @@ mod tests {
                     Duration::ZERO,
                     false,
                     0,
-                    Some(completion_tx),
                     cx,
                     vec![],
                     PathStyle::local(),
@@ -3642,8 +3733,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let terminal = cx.new(|cx| builder.subscribe(cx));
-        (terminal, completion_rx)
+        cx.new(|cx| builder.subscribe(cx))
     }
 
     /// Builds a non-PTY (`no_pty`) task terminal, exercising the path used by
@@ -3655,23 +3745,18 @@ mod tests {
         cx: &mut TestAppContext,
         program: String,
         args: Vec<String>,
-    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
-        let (completion_tx, completion_rx) = async_channel::unbounded();
-        let task_state = TaskState {
-            status: TaskStatus::Running,
-            completion_rx: completion_rx.clone(),
-            spawned_task: SpawnInTerminal {
-                command: Some(program.clone()),
-                args: args.clone(),
-                ..Default::default()
-            },
-        };
+    ) -> Entity<Terminal> {
+        let mode = TerminalMode::task(SpawnInTerminal {
+            command: Some(program.clone()),
+            args: args.clone(),
+            ..Default::default()
+        });
         let builder = cx
             .update(|cx| {
                 cx.set_global(HeadlessTerminal(true));
                 TerminalBuilder::new(
                     None,
-                    Some(task_state),
+                    mode,
                     task::Shell::WithArguments {
                         program,
                         args,
@@ -3685,7 +3770,6 @@ mod tests {
                     Duration::ZERO,
                     false,
                     0,
-                    Some(completion_tx),
                     cx,
                     vec![],
                     PathStyle::local(),
@@ -3693,8 +3777,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let terminal = cx.new(|cx| builder.subscribe(cx));
-        (terminal, completion_rx)
+        cx.new(|cx| builder.subscribe(cx))
     }
 
     #[test]
@@ -3730,16 +3813,15 @@ mod tests {
         let (program, args) = ShellBuilder::new(&Shell::System, false)
             .non_interactive()
             .build(Some("echo hello-from-subprocess".to_owned()), &[]);
-        let (terminal, completion_rx) = build_test_subprocess_terminal(cx, program, args).await;
+        let terminal = build_test_subprocess_terminal(cx, program, args).await;
 
         assert!(
             !terminal.update(cx, |term, _| term.is_pty()),
             "no_pty terminal should not be PTY-backed"
         );
-        assert_eq!(
-            completion_rx.recv().await.unwrap(),
-            Some(ExitStatus::default())
-        );
+        let exit_status =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
+        assert_eq!(exit_status.await, Some(ExitStatus::default()));
         assert_content_eventually(&terminal, "hello-from-subprocess", cx).await;
     }
 
@@ -4019,11 +4101,10 @@ mod tests {
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["hello"]).await;
-        assert_eq!(
-            completion_rx.recv().await.unwrap(),
-            Some(ExitStatus::default())
-        );
+        let terminal = build_test_terminal(cx, "echo", &["hello"]).await;
+        let exit_status =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
+        assert_eq!(exit_status.await, Some(ExitStatus::default()));
         assert_content_eventually(&terminal, "hello", cx).await;
 
         // Inject additional output directly into the emulator (display-only path)
@@ -4043,14 +4124,16 @@ mod tests {
     async fn test_foreground_process_command_tracks_path_command(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
-        let (terminal, completion_rx) =
+        let terminal =
             build_test_terminal_with_arguments(cx, "sleep".to_string(), vec!["1".to_string()])
                 .await;
 
         assert_foreground_process_command_eventually(&terminal, "sleep", cx).await;
 
+        let exit_status =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
         assert!(
-            completion_rx.recv().await.is_ok(),
+            exit_status.await.is_some(),
             "expected terminal completion after sleep exits"
         );
     }
@@ -4068,7 +4151,7 @@ mod tests {
             .update(|cx| {
                 TerminalBuilder::new(
                     None,
-                    None,
+                    TerminalMode::interactive_with_completion(completion_tx),
                     task::Shell::System,
                     HashMap::default(),
                     SettingsCursorShape::default(),
@@ -4078,7 +4161,6 @@ mod tests {
                     Duration::ZERO,
                     false,
                     0,
-                    Some(completion_tx),
                     cx,
                     Vec::new(),
                     PathStyle::local(),
@@ -4136,7 +4218,7 @@ mod tests {
             .update(|cx| {
                 TerminalBuilder::new(
                     None,
-                    None,
+                    TerminalMode::interactive(),
                     task::Shell::System,
                     HashMap::default(),
                     SettingsCursorShape::default(),
@@ -4146,7 +4228,6 @@ mod tests {
                     Duration::ZERO,
                     false,
                     0,
-                    None,
                     cx,
                     Vec::new(),
                     PathStyle::local(),
@@ -4198,7 +4279,7 @@ mod tests {
             .update(|cx| {
                 TerminalBuilder::new(
                     None,
-                    None,
+                    TerminalMode::interactive_with_completion(completion_tx),
                     task::Shell::WithArguments {
                         program,
                         args,
@@ -4212,7 +4293,6 @@ mod tests {
                     Duration::ZERO,
                     false,
                     0,
-                    Some(completion_tx),
                     cx,
                     Vec::new(),
                     PathStyle::local(),
@@ -5533,25 +5613,21 @@ mod tests {
 
         // Run a command that prints output then sleeps for a long time
         // The echo ensures we have output to capture before killing
-        let (terminal, completion_rx) =
+        let terminal =
             build_test_terminal(cx, "echo", &["test_output_before_kill; sleep 60"]).await;
 
         assert_content_eventually(&terminal, "test_output_before_kill", cx).await;
+
+        let wait_for_completion =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
 
         // Kill the active task
         terminal.update(cx, |term, _cx| {
             term.kill_active_task();
         });
 
-        // wait_for_completed_task should complete within a reasonable time (not hang)
-        let completion_result = completion_rx.recv().await;
-        assert!(
-            completion_result.is_ok(),
-            "wait_for_completed_task should complete after kill_active_task, but it timed out"
-        );
-
         // The exit status should indicate the process was killed (not a clean exit)
-        let exit_status = completion_result.unwrap();
+        let exit_status = wait_for_completion.await;
         assert!(
             exit_status.is_some(),
             "Should have received an exit status after killing"
@@ -5571,14 +5647,12 @@ mod tests {
         cx.executor().allow_parking();
 
         // Run a command that exits immediately
-        let (terminal, completion_rx) = build_test_terminal(cx, "echo", &["done"]).await;
+        let terminal = build_test_terminal(cx, "echo", &["done"]).await;
 
         // Wait for the command to complete naturally
-        let exit_status = completion_rx
-            .recv()
-            .await
-            .expect("Should receive exit status");
-        assert_eq!(exit_status, Some(ExitStatus::default()));
+        let exit_status =
+            terminal.read_with(cx, |terminal, cx| terminal.wait_for_completed_task(cx));
+        assert_eq!(exit_status.await, Some(ExitStatus::default()));
 
         assert_content_eventually(&terminal, "done", cx).await;
 

@@ -350,7 +350,7 @@ impl Delegate {
             .get(&project.downgrade())
             .cloned();
 
-        let search = cx.new(|cx| ProjectSearch::new(project, cx));
+        let search = cx.new(|cx| ProjectSearch::new(project, weak_workspace.clone(), cx));
         let project_search =
             cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
         cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
