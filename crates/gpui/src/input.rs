@@ -338,7 +338,7 @@ mod tests {
         assert_eq!(test_window.text_input_configurations().len(), 3);
 
         // Losing focus reverts the platform to the default configuration.
-        cx.update_window(window, |_, window, _| window.blur())
+        cx.update_window(window, |_, window, cx| window.blur(cx))
             .unwrap();
         draw(cx);
         assert_eq!(

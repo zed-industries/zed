@@ -13190,7 +13190,7 @@ mod tests {
                 item.entry_id = None;
             });
             item.is_dirty = true;
-            window.blur();
+            window.blur(cx);
         });
         cx.run_until_parked();
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
@@ -16001,7 +16001,7 @@ mod tests {
             assert!(panel.read(cx).focus_handle(cx).contains_focused(window, cx));
         });
 
-        cx.update(|window, _| window.blur());
+        cx.update(|window, cx| window.blur(cx));
         cx.executor().run_until_parked();
         workspace.update(cx, |_, cx| cx.notify());
         cx.executor().run_until_parked();

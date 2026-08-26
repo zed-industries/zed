@@ -7280,7 +7280,7 @@ mod tests {
         user_message_editor.update_in(cx, |_editor, window, cx| {
             window.dispatch_action(Box::new(zed_actions::agent::Chat), cx);
         });
-        cx.update(|window, _cx| window.blur());
+        cx.update(|window, cx| window.blur(cx));
         cx.run_until_parked();
 
         workspace.update_in(cx, |workspace, window, cx| {
