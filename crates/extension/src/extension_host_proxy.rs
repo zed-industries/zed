@@ -235,7 +235,9 @@ pub trait ExtensionLanguageProxy: Send + Sync + 'static {
         matcher: Arc<LanguageMatcher>,
         hidden: bool,
         load: LanguageLoader,
-    );
+    ) -> bool;
+
+    fn is_language_registered(&self, language: &LanguageName) -> bool;
 
     fn remove_languages(
         &self,
@@ -253,12 +255,20 @@ impl ExtensionLanguageProxy for ExtensionHostProxy {
         matcher: Arc<LanguageMatcher>,
         hidden: bool,
         load: LanguageLoader,
-    ) {
+    ) -> bool {
         let Some(proxy) = self.language_proxy.read().clone() else {
-            return;
+            return false;
         };
 
         proxy.register_language(language, grammar, matcher, hidden, load)
+    }
+
+    fn is_language_registered(&self, language: &LanguageName) -> bool {
+        let Some(proxy) = self.language_proxy.read().clone() else {
+            return false;
+        };
+
+        proxy.is_language_registered(language)
     }
 
     fn remove_languages(

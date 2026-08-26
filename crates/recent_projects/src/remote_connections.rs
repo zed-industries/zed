@@ -411,7 +411,7 @@ pub async fn open_remote_project(
                 });
             }
 
-            Ok((_workspace, items)) => {
+            Ok((_, items)) => {
                 navigate_to_positions(&window, items, &paths_with_positions, cx);
             }
         }

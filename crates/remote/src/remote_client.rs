@@ -41,7 +41,6 @@ use std::{
     fmt,
     ops::ControlFlow,
     path::PathBuf,
-    rc::Rc,
     sync::{
         Arc, Weak,
         atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
@@ -344,12 +343,6 @@ pub enum RemoteClientEvent {
 }
 
 impl EventEmitter<RemoteClientEvent> for RemoteClient {}
-
-/// A callback invoked whenever a remote client is created, allowing other
-/// subsystems to react to new remote connections.
-pub struct OnRemoteClientCreated(pub Rc<dyn Fn(Entity<RemoteClient>, &mut App)>);
-
-impl Global for OnRemoteClientCreated {}
 
 /// Identifies the socket on the remote server so that reconnects
 /// can re-join the same project.
@@ -733,10 +726,7 @@ impl RemoteClient {
         cx.spawn(async move |this, cx| {
             let new_state = reconnect_task.await;
             this.update(cx, |this, cx| {
-                let reconnected = this
-                    .state
-                    .as_ref()
-                    .is_some_and(State::is_reconnecting)
+                let reconnected = this.state_is(State::is_reconnecting)
                     && matches!(&new_state, State::Connected { .. });
                 this.try_set_state(cx, |old_state| {
                     if old_state.is_reconnecting() {

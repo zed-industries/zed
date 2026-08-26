@@ -44,7 +44,7 @@ use project::{
     image_store,
     search::{SearchQuery, SearchResult},
 };
-use remote::{ConnectionState, OnRemoteClientCreated, RemoteClient};
+use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use rpc::proto;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
@@ -55,7 +55,7 @@ use std::{
     str::FromStr,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use unindent::Unindent as _;
@@ -2460,6 +2460,15 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
     });
 
     let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
+    let reconnected = Arc::new(AtomicBool::new(false));
+    let _subscription = cx.update(|cx| {
+        let reconnected = reconnected.clone();
+        cx.subscribe(&client, move |_client, event, _cx| {
+            if matches!(event, RemoteClientEvent::Reconnected) {
+                reconnected.store(true, Ordering::SeqCst);
+            }
+        })
+    });
     client
         .update(cx, |client, cx| client.simulate_disconnect(cx))
         .detach();
@@ -2474,6 +2483,12 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
             .await
             .unwrap(),
         "fn one() -> usize { 100 }"
+    );
+
+    cx.run_until_parked();
+    assert!(
+        reconnected.load(Ordering::SeqCst),
+        "a successful reconnect should emit RemoteClientEvent::Reconnected"
     );
 }
 
@@ -4316,7 +4331,7 @@ async fn test_remote_trash_restore(cx: &mut TestAppContext, server_cx: &mut Test
 }
 
 #[gpui::test]
-async fn test_remote_project_creation_triggers_on_remote_client_created_callback(
+async fn test_remote_project_creation_notifies_new_entity_observers(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
@@ -4333,24 +4348,28 @@ async fn test_remote_project_creation_triggers_on_remote_client_created_callback
         )
         .await;
 
-    let callback_invocations = Arc::new(AtomicUsize::new(0));
+    let observer_invocations = Arc::new(AtomicUsize::new(0));
     cx.update(|cx| {
-        let callback_invocations = callback_invocations.clone();
-        cx.set_global(OnRemoteClientCreated(Rc::new(move |client, cx| {
+        let observer_invocations = observer_invocations.clone();
+        cx.observe_new::<Project>(move |project, _window, cx| {
+            let Some(client) = project.remote_client() else {
+                return;
+            };
             assert_eq!(
                 client.read(cx).connection_state(),
                 ConnectionState::Connected
             );
-            callback_invocations.fetch_add(1, Ordering::SeqCst);
-        })));
+            observer_invocations.fetch_add(1, Ordering::SeqCst);
+        })
+        .detach();
     });
 
     let (project, _headless) = init_test(&server_fs, cx, server_cx).await;
 
     assert_eq!(
-        callback_invocations.load(Ordering::SeqCst),
+        observer_invocations.load(Ordering::SeqCst),
         1,
-        "creating a remote project should invoke the OnRemoteClientCreated callback exactly once"
+        "creating a remote project should notify new-entity observers with a connected remote client exactly once"
     );
     assert!(project.read_with(cx, |project, _| project.is_remote()));
 }

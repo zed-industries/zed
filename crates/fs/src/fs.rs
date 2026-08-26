@@ -2527,6 +2527,13 @@ impl FakeFs {
             .insert(Self::remove_dir_error_key(path.as_ref()), message);
     }
 
+    pub fn clear_remove_dir_error(&self, path: impl AsRef<Path>) {
+        self.state
+            .lock()
+            .remove_dir_errors
+            .remove(&Self::remove_dir_error_key(path.as_ref()));
+    }
+
     /// Entry resolution in `try_entry` ignores drive prefixes, so the error
     /// injection map must too.
     /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a

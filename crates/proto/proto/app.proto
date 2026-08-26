@@ -44,6 +44,7 @@ message Extension {
   string id = 1;
   string version = 2;
   bool dev = 3;
+  optional uint64 content_fingerprint = 4;
 }
 
 message SyncExtensions {
