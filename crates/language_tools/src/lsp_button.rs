@@ -1036,7 +1036,7 @@ impl LspButton {
                     };
                 }
                 Some(proto::status_update::Status::Health(health_status)) => {
-                    if let Some(health) = proto::ServerHealth::from_i32(*health_status) {
+                    if let Some(health) = proto::ServerHealth::try_from(*health_status).ok() {
                         let health = match health {
                             proto::ServerHealth::Ok => ServerHealth::Ok,
                             proto::ServerHealth::Warning => ServerHealth::Warning,

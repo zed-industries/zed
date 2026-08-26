@@ -21,6 +21,7 @@ extension.workspace = true
 futures.workspace = true
 fs.workspace = true
 gpui_platform.workspace = true
+http_client.workspace = true
 language.workspace = true
 log.workspace = true
 reqwest_client.workspace = true

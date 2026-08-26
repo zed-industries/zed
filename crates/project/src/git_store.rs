@@ -215,6 +215,7 @@ fn decode_git_text(bytes: Vec<u8>) -> Result<String> {
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
+    pub is_shallow_boundary: bool,
 }
 
 #[derive(Debug)]
@@ -284,7 +285,10 @@ fn decode_commit_diff(diff: git::repository::CommitDiff) -> CommitDiff {
             }
         })
         .collect();
-    CommitDiff { files }
+    CommitDiff {
+        files,
+        is_shallow_boundary: diff.is_shallow_boundary,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -600,9 +604,18 @@ pub struct GraphDataResponse<'a> {
     pub error: Option<SharedString>,
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum UnshallowState {
+    #[default]
+    Idle,
+    InProgress,
+    Unshallowed,
+}
+
 pub struct Repository {
     this: WeakEntity<Self>,
     snapshot: RepositorySnapshot,
+    unshallow_state: UnshallowState,
     commit_message_buffer: Option<Entity<Buffer>>,
     git_store: WeakEntity<GitStore>,
     // For a local repository, holds paths that have had worktree events since the last status scan completed,
@@ -3322,7 +3335,8 @@ impl GitStore {
     ) -> Result<proto::RemoteMessageResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
+        let fetch_options =
+            FetchOptions::from_proto(envelope.payload.remote, envelope.payload.unshallow);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -4371,7 +4385,10 @@ impl GitStore {
 
         let commit_diff = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.load_commit_diff(envelope.payload.commit)
+                repository_handle.load_commit_diff(
+                    envelope.payload.commit,
+                    envelope.payload.ignore_shallow_boundary,
+                )
             })
             .await??;
         Ok(proto::LoadCommitDiffResponse {
@@ -4385,6 +4402,7 @@ impl GitStore {
                     is_binary: file.is_binary,
                 })
                 .collect(),
+            is_shallow_boundary: commit_diff.is_shallow_boundary,
         })
     }
 
@@ -5382,7 +5400,7 @@ impl BufferGitState {
     ) {
         use proto::update_diff_bases::Mode;
 
-        let Some(mode) = Mode::from_i32(message.mode) else {
+        let Some(mode) = Mode::try_from(message.mode).ok() else {
             return;
         };
 
@@ -6350,6 +6368,7 @@ impl Repository {
             this: cx.weak_entity(),
             git_store,
             snapshot,
+            unshallow_state: UnshallowState::default(),
             pending_ops: Default::default(),
             repository_state: Task::ready(Err("not yet initialized".into())).shared(),
             _worker_task: Task::ready(()),
@@ -6398,6 +6417,7 @@ impl Repository {
         Self {
             this: cx.weak_entity(),
             snapshot,
+            unshallow_state: UnshallowState::default(),
             commit_message_buffer: None,
             git_store,
             pending_ops: Default::default(),
@@ -6980,12 +7000,16 @@ impl Repository {
         })
     }
 
-    pub fn load_commit_diff(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
+    pub fn load_commit_diff(
+        &mut self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+    ) -> oneshot::Receiver<Result<CommitDiff>> {
         let id = self.id;
         self.send_job("load_commit_diff", None, move |git_repo, cx| async move {
             match git_repo {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .load_commit(commit, cx)
+                    .load_commit(commit, ignore_shallow_boundary, cx)
                     .await
                     .map(decode_commit_diff),
                 RepositoryState::Remote(RemoteRepositoryState {
@@ -6996,6 +7020,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             commit,
+                            ignore_shallow_boundary,
                         })
                         .await?;
                     Ok(CommitDiff {
@@ -7011,6 +7036,7 @@ impl Repository {
                                 })
                             })
                             .collect::<Result<Vec<_>>>()?,
+                        is_shallow_boundary: response.is_shallow_boundary,
                     })
                 }
             }
@@ -8426,6 +8452,39 @@ impl Repository {
         Ok(())
     }
 
+    pub fn unshallow_state(&self) -> UnshallowState {
+        self.unshallow_state
+    }
+
+    pub fn fetch_unshallow(
+        &mut self,
+        askpass: AskPassDelegate,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<RemoteCommandOutput>> {
+        let receiver = self.fetch(FetchOptions::Unshallow, askpass, cx);
+        self.unshallow_state = UnshallowState::InProgress;
+        cx.notify();
+        let (tx, rx) = oneshot::channel();
+        cx.spawn(async move |this, cx| {
+            let result = receiver.await;
+            let succeeded = matches!(&result, Ok(Ok(_)));
+            this.update(cx, |this, cx| {
+                this.unshallow_state = if succeeded {
+                    UnshallowState::Unshallowed
+                } else {
+                    UnshallowState::Idle
+                };
+                cx.notify();
+            })
+            .ok();
+            if let Ok(result) = result {
+                tx.send(result).ok();
+            }
+        })
+        .detach();
+        rx
+    }
+
     pub fn fetch(
         &mut self,
         fetch_options: FetchOptions,
@@ -8474,6 +8533,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 askpass_id,
                                 remote: fetch_options.to_proto(),
+                                unshallow: fetch_options == FetchOptions::Unshallow,
                             })
                             .await?;
 
@@ -10045,7 +10105,7 @@ impl Repository {
                             buffer_id: buffer_id.to_proto(),
                         })
                         .await?;
-                    let mode = Mode::from_i32(response.mode).context("Invalid mode")?;
+                    let mode = Mode::try_from(response.mode).ok().context("Invalid mode")?;
                     let bases = match mode {
                         Mode::IndexMatchesHead => DiffBasesChange::SetBoth(response.committed_text),
                         Mode::IndexAndHead => DiffBasesChange::SetEach {
@@ -10738,6 +10798,7 @@ fn serialize_blame_entry(entry: git::blame::BlameEntry) -> proto::BlameEntry {
         summary: entry.summary,
         previous: entry.previous,
         filename: entry.filename,
+        boundary: entry.boundary,
     }
 }
 
@@ -10757,6 +10818,7 @@ fn deserialize_blame_entry(entry: proto::BlameEntry) -> Option<git::blame::Blame
         summary: entry.summary,
         previous: entry.previous,
         filename: entry.filename,
+        boundary: entry.boundary,
     })
 }
 
@@ -12185,7 +12247,8 @@ fn status_from_proto(
     use proto::git_file_status::Variant;
 
     let Some(variant) = status.and_then(|status| status.variant) else {
-        let code = proto::GitStatus::from_i32(simple_status)
+        let code = proto::GitStatus::try_from(simple_status)
+            .ok()
             .with_context(|| format!("Invalid git status code: {simple_status}"))?;
         let result = match code {
             proto::GitStatus::Added => TrackedStatus {
@@ -12219,7 +12282,8 @@ fn status_from_proto(
         Variant::Unmerged(unmerged) => {
             let [first_head, second_head] =
                 [unmerged.first_head, unmerged.second_head].map(|head| {
-                    let code = proto::GitStatus::from_i32(head)
+                    let code = proto::GitStatus::try_from(head)
+                        .ok()
                         .with_context(|| format!("Invalid git status code: {head}"))?;
                     let result = match code {
                         proto::GitStatus::Added => UnmergedStatusCode::Added,
@@ -12239,7 +12303,8 @@ fn status_from_proto(
         Variant::Tracked(tracked) => {
             let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
                 .map(|status| {
-                    let code = proto::GitStatus::from_i32(status)
+                    let code = proto::GitStatus::try_from(status)
+                        .ok()
                         .with_context(|| format!("Invalid git status code: {status}"))?;
                     let result = match code {
                         proto::GitStatus::Modified => StatusCode::Modified,
