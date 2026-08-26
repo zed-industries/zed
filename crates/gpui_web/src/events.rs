@@ -410,10 +410,7 @@ impl WebWindowInner {
             }
             TouchDrag::Pan => {
                 let last = self.touch_last.get();
-                if last != position {
-                    self.emit_touch_scroll(last, position, modifiers, TouchPhase::Moved);
-                }
-                self.emit_touch_scroll(position, position, modifiers, TouchPhase::Ended);
+                self.emit_touch_scroll(last, position, modifiers, TouchPhase::Ended);
             }
             TouchDrag::Select => {
                 self.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
@@ -431,6 +428,15 @@ impl WebWindowInner {
         self.schedule_ime_mirror_sync();
     }
 
+    /// Never emit a zero delta, not even to report `Ended` or `Cancelled`.
+    ///
+    /// `list()` derives its new offset from the scroll top captured at the
+    /// last paint plus `ScrollDelta::coalesce` of every delta in the frame.
+    /// `coalesce` keeps the newer delta when the signs differ, and `signum`
+    /// of zero is positive, so a trailing zero replaces the gesture's real
+    /// delta. The list then recomputes the pre-gesture offset and the whole
+    /// pan snaps back. A finger lifting in the same frame as its last move
+    /// is the common case, so the pan looked completely dead.
     fn emit_touch_scroll(
         &self,
         from: Point<Pixels>,
@@ -438,6 +444,9 @@ impl WebWindowInner {
         modifiers: Modifiers,
         phase: TouchPhase,
     ) {
+        if from == to {
+            return;
+        }
         self.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {
             position: to,
             delta: ScrollDelta::Pixels(point(
@@ -508,7 +517,12 @@ impl WebWindowInner {
         self.pressed_button.set(None);
         match self.touch_drag.get() {
             TouchDrag::Pan => {
-                self.emit_touch_scroll(position, position, modifiers, TouchPhase::Cancelled);
+                self.emit_touch_scroll(
+                    self.touch_last.get(),
+                    position,
+                    modifiers,
+                    TouchPhase::Cancelled,
+                );
             }
             TouchDrag::Select => {
                 self.dispatch_input(PlatformInput::MouseUp(MouseUpEvent {
