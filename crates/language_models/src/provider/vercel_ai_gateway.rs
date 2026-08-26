@@ -465,9 +465,13 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let completions = self.stream_open_ai(request, cx);
+        let executor = cx.background_executor().clone();
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
