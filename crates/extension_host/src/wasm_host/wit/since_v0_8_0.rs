@@ -15,7 +15,7 @@ use extension::{
     ExtensionPanelLocation, ExtensionPanelUiProxy, KeyValueStoreDelegate, ProjectDelegate,
     WorktreeDelegate,
 };
-use futures::{AsyncReadExt, lock::Mutex};
+use futures::{AsyncReadExt, AsyncWriteExt, lock::Mutex};
 use futures::{FutureExt as _, io::BufReader};
 use gpui::{BackgroundExecutor, SharedString};
 use language::{BinaryStatus, LanguageName, language_settings::AllLanguageSettings};
@@ -23,7 +23,7 @@ use project::project_settings::ProjectSettings;
 use semver::Version;
 use std::{
     env,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -50,7 +50,8 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client.http-response-stream": ExtensionHttpResponseStream,
+         "zed:extension/tcp.tcp-stream": ExtensionTcpStream
     },
 });
 
@@ -65,6 +66,7 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 pub type ExtensionProject = Arc<dyn ProjectDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn KeyValueStoreDelegate>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
+pub type ExtensionTcpStream = Arc<Mutex<async_net::TcpStream>>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -695,6 +697,67 @@ impl panel::Host for WasmState {
             })
             .await;
         Ok(result.map_err(|error| error.to_string()))
+    }
+}
+
+impl tcp::Host for WasmState {
+    async fn connect(
+        &mut self,
+        host: String,
+        port: u16,
+    ) -> wasmtime::Result<Result<Resource<ExtensionTcpStream>, String>> {
+        maybe!(async {
+            self.capability_granter.grant_tcp_connect(&host, port)?;
+
+            let address = match host.as_str() {
+                "localhost" | "127.0.0.1" => SocketAddr::from(([127, 0, 0, 1], port)),
+                "::1" => SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+                _ => bail!("network:tcp-local only permits loopback hosts"),
+            };
+            let stream = Arc::new(Mutex::new(async_net::TcpStream::connect(address).await?));
+            Ok(self.table.push(stream)?)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+}
+
+impl tcp::HostTcpStream for WasmState {
+    async fn read(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+        max_bytes: u32,
+    ) -> wasmtime::Result<Result<Vec<u8>, String>> {
+        let stream = self.table.get(&stream)?.clone();
+        maybe!(async move {
+            let mut buffer = vec![0; max_bytes.min(1024 * 1024) as usize];
+            let bytes_read = stream.lock().await.read(&mut buffer).await?;
+            buffer.truncate(bytes_read);
+            Ok(buffer)
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn write(
+        &mut self,
+        stream: Resource<ExtensionTcpStream>,
+        data: Vec<u8>,
+    ) -> wasmtime::Result<Result<(), String>> {
+        let stream = self.table.get(&stream)?.clone();
+        maybe!(async move {
+            let mut stream = stream.lock().await;
+            stream.write_all(&data).await?;
+            stream.flush().await?;
+            Ok(())
+        })
+        .await
+        .to_wasmtime_result()
+    }
+
+    async fn drop(&mut self, stream: Resource<ExtensionTcpStream>) -> wasmtime::Result<()> {
+        self.table.delete(stream)?;
+        Ok(())
     }
 }
 

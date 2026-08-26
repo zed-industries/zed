@@ -6178,6 +6178,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-net",
  "async-tar",
  "async-trait",
  "client",
