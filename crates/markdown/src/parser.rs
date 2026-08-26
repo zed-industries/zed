@@ -40,6 +40,10 @@ pub(crate) struct ParsedMarkdownData {
     pub metadata_blocks: BTreeMap<usize, ParsedMetadataBlock>,
     pub heading_slugs: HashMap<SharedString, usize>,
     pub footnote_definitions: HashMap<SharedString, usize>,
+    /// Source spans of link reference definitions (`[id]: https://example.com`), which are
+    /// consumed by the parser and never appear in any event range.
+    pub link_definition_spans: Vec<Range<usize>>,
+    pub has_untagged_code_block: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -237,6 +241,7 @@ pub(crate) fn parse_markdown_with_options(
     let mut state = ParseState::default();
     let mut language_names = HashSet::default();
     let mut language_paths = HashSet::default();
+    let mut has_untagged_code_block = false;
     let mut html_blocks = BTreeMap::default();
     let mut metadata_blocks = BTreeMap::default();
     let mut within_link = false;
@@ -250,9 +255,14 @@ pub(crate) fn parse_markdown_with_options(
     } else {
         PARSE_OPTIONS
     };
-    let mut parser = Parser::new_ext(text, parse_options)
-        .into_offset_iter()
-        .peekable();
+    let parser = Parser::new_ext(text, parse_options);
+    let mut link_definition_spans = parser
+        .reference_definitions()
+        .iter()
+        .map(|(_, definition)| definition.span.clone())
+        .collect::<Vec<_>>();
+    link_definition_spans.sort_by_key(|span| span.start);
+    let mut parser = parser.into_offset_iter().peekable();
     while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata && !parse_metadata_blocks {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock(_)) =
@@ -351,6 +361,7 @@ pub(crate) fn parse_markdown_with_options(
 
                         let info = info.trim();
                         let kind = if info.is_empty() {
+                            has_untagged_code_block = true;
                             CodeBlockKind::Fenced
                             // Languages should never contain a slash, and PathRanges always should.
                             // (Models are told to specify them relative to a workspace root.)
@@ -677,6 +688,8 @@ pub(crate) fn parse_markdown_with_options(
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
+        link_definition_spans,
+        has_untagged_code_block,
     }
 }
 

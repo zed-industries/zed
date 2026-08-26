@@ -38,6 +38,8 @@ pub(crate) struct TestWindowState {
     appearance_change_callback: Option<Box<dyn FnMut()>>,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     frame_wake_count: Rc<Cell<usize>>,
+    frame_scheduled: bool,
+    frame_callback_pending: bool,
     input_handler: Option<PlatformInputHandler>,
     is_fullscreen: bool,
     appearance: WindowAppearance,
@@ -48,11 +50,13 @@ pub(crate) struct TestWindowState {
 #[derive(Clone)]
 pub struct TestWindow(pub(crate) Rc<Mutex<TestWindowState>>);
 
+// Test windows are not backed by a real platform window, so there is no raw
+// handle to report; `NotSupported` is `raw_window_handle`'s variant for exactly this.
 impl HasWindowHandle for TestWindow {
     fn window_handle(
         &self,
     ) -> Result<raw_window_handle::WindowHandle<'_>, raw_window_handle::HandleError> {
-        unimplemented!("Test Windows are not backed by a real platform window")
+        Err(raw_window_handle::HandleError::NotSupported)
     }
 }
 
@@ -60,7 +64,7 @@ impl HasDisplayHandle for TestWindow {
     fn display_handle(
         &self,
     ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
-        unimplemented!("Test Windows are not backed by a real platform window")
+        Err(raw_window_handle::HandleError::NotSupported)
     }
 }
 
@@ -96,12 +100,36 @@ impl TestWindow {
             appearance_change_callback: None,
             request_frame_callback: None,
             frame_wake_count: Rc::new(Cell::new(0)),
+            frame_scheduled: false,
+            frame_callback_pending: false,
             input_handler: None,
             is_fullscreen: false,
             appearance: WindowAppearance::Light,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
         })))
+    }
+    pub fn simulate_scheduled_frame(&self) -> bool {
+        let callback = {
+            let mut state = self.0.lock();
+            if !std::mem::take(&mut state.frame_scheduled) {
+                return false;
+            }
+            state.frame_callback_pending = false;
+            state.request_frame_callback.take()
+        };
+        let Some(mut callback) = callback else {
+            self.0.lock().frame_scheduled = true;
+            return false;
+        };
+
+        callback(RequestFrameOptions::default());
+        self.0.lock().request_frame_callback = Some(callback);
+        true
+    }
+
+    pub fn frame_scheduled(&self) -> bool {
+        self.0.lock().frame_scheduled
     }
 
     pub fn simulate_resize(&mut self, size: Size<Pixels>) {
@@ -322,6 +350,13 @@ impl PlatformWindow for TestWindow {
         self.0.lock().request_frame_callback = Some(callback);
     }
 
+    fn schedule_frame(&self) {
+        let mut state = self.0.lock();
+        if !state.frame_callback_pending {
+            state.frame_scheduled = true;
+        }
+    }
+
     fn on_input(&self, callback: Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>) {
         self.0.lock().input_callback = Some(callback)
     }
@@ -359,6 +394,8 @@ impl PlatformWindow for TestWindow {
     fn draw(&self, scene: &Scene) {
         let scale_factor = self.scale_factor();
         let mut state = self.0.lock();
+        state.frame_callback_pending = true;
+        state.frame_scheduled = true;
         let device_size: Size<DevicePixels> = state.bounds.size.to_device_pixels(scale_factor);
         if let Some(renderer) = &mut state.renderer {
             renderer.render_scene(scene, device_size).warn_on_err();
