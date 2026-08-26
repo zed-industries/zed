@@ -2499,6 +2499,9 @@
   },
   // Different settings for specific language models.
   "language_models": {
+    "aimlapi": {
+      "api_url": "https://api.aimlapi.com/v1",
+    },
     "anthropic": {
       "api_url": "https://api.anthropic.com",
     },

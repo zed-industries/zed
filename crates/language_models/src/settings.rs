@@ -275,6 +275,30 @@ mod aimlapi_tests {
         name.to_ascii_lowercase()
     }
 
+    /// `AllLanguageModelSettings::from_settings` unwraps every provider's
+    /// section, so a provider missing from `default.json` is not a missing
+    /// default — it is a panic on startup, before any UI exists to report it.
+    /// Nothing else covers that: the type checks, the unit tests pass, and the
+    /// binary dies at launch. This asserts the entry is there.
+    #[test]
+    fn default_json_declares_the_aimlapi_provider() {
+        let default_json = include_str!("../../../assets/settings/default.json");
+        let value: serde_json_lenient::Value =
+            serde_json_lenient::from_str(default_json).expect("default.json should parse");
+
+        let language_models = value
+            .get("language_models")
+            .expect("default.json should have 'language_models'");
+        let aimlapi = language_models
+            .get("aimlapi")
+            .expect("language_models should declare 'aimlapi' or startup panics on unwrap");
+
+        assert_eq!(
+            aimlapi.get("api_url").and_then(|v| v.as_str()),
+            Some("https://api.aimlapi.com/v1"),
+        );
+    }
+
     /// HEADERS.md requires the attribution pair on EVERY aimlapi.com request.
     /// The provider reads these resolved headers from three separate call
     /// sites, so proving they exist here proves it for all of them.
