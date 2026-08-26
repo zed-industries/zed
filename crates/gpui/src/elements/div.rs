@@ -750,6 +750,19 @@ pub trait InteractiveElement: Sized {
         Stateful { element: self }
     }
 
+    /// Observe this element's own bounds every time it is prepainted.
+    ///
+    /// Unlike `Div::on_children_prepainted`, this needs no extra wrapper element,
+    /// so it can record the bounds of a leaf such as an image or an SVG without
+    /// changing how that leaf participates in layout.
+    fn on_prepainted(
+        mut self,
+        listener: impl Fn(Bounds<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.interactivity().prepaint_listener = Some(Box::new(listener));
+        self
+    }
+
     /// Track the focus state of the given focus handle on this element.
     /// If the focus handle is focused by the application, this element will
     /// apply its focused styles.
@@ -2093,6 +2106,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) tooltip_show_delay: Option<Duration>,
     pub(crate) window_control: Option<WindowControlArea>,
+    pub(crate) prepaint_listener: Option<Box<dyn Fn(Bounds<Pixels>, &mut Window, &mut App)>>,
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) capture_pointer: bool,
     pub(crate) tab_index: Option<isize>,
@@ -2219,6 +2233,10 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
+
+        if let Some(listener) = self.prepaint_listener.take() {
+            listener(bounds, window, cx);
+        }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         window.with_inspector_state(
@@ -4279,7 +4297,7 @@ mod tests {
     use super::*;
     use crate::{
         AnyWindowHandle, AppContext as _, Context, InputEvent, Keystroke, Modifiers, MouseMoveEvent,
-        TestAppContext, canvas, util::FluentBuilder as _,
+        TestAppContext, canvas, svg, util::FluentBuilder as _,
     };
     use std::{
         cell::{Cell, RefCell},
@@ -4575,6 +4593,45 @@ mod tests {
         })
         .unwrap();
         assert_eq!(painted_width.get(), px(10.));
+    }
+
+    struct PrepaintedBoundsTestView {
+        recorded: Rc<RefCell<Vec<Bounds<Pixels>>>>,
+    }
+
+    impl Render for PrepaintedBoundsTestView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let recorded = self.recorded.clone();
+            div().relative().size_full().child(
+                svg()
+                    .absolute()
+                    .top(px(4.))
+                    .left(px(8.))
+                    .size(px(16.))
+                    .on_prepainted(move |bounds, _, _| recorded.borrow_mut().push(bounds)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn on_prepainted_reports_the_bounds_of_a_leaf_element(cx: &mut TestAppContext) {
+        let recorded = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let recorded = recorded.clone();
+            move |_, _| PrepaintedBoundsTestView { recorded }
+        });
+
+        cx.update_window(AnyWindowHandle::from(window), |_, window, cx| {
+            window.draw(cx).clear(cx)
+        })
+        .unwrap();
+
+        // A draw can prepaint more than once, so only the reported geometry is
+        // asserted here, not the call count.
+        let recorded = recorded.borrow();
+        let last = recorded.last().expect("the listener ran at least once");
+        assert_eq!(last.origin, point(px(8.), px(4.)));
+        assert_eq!(last.size, size(px(16.), px(16.)));
     }
 
     struct TestTooltipView;
