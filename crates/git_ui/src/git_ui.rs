@@ -6,6 +6,7 @@ use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
 pub mod clone;
+mod clone_suggestions;
 
 use git::{
     repository::{Branch, CommitDetails, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -15,16 +16,24 @@ use gpui::{
     App, ClipboardItem, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     SharedString, Subscription, Task, TaskExt, WeakEntity, Window,
 };
+use http_client::HttpClientWithUrl;
 use menu::{Cancel, Confirm};
+use picker::{Picker, PickerDelegate};
 use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use time::OffsetDateTime;
-use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
+use ui::{
+    ButtonLike, ContextMenu, ElevationIndex, ListItem, ListItemSpacing, PopoverMenuHandle,
+    TintColor, prelude::*,
+};
+use util::ResultExt;
 use workspace::{
     ModalView, OpenMode, Workspace,
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use zed_actions;
+
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use crate::{
     commit_view::CommitView,
@@ -323,9 +332,10 @@ pub fn init(cx: &mut App) {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
             };
+            let http_client = workspace.client().http_client();
 
             workspace.toggle_modal(window, cx, |window, cx| {
-                GitCloneModal::show(panel, window, cx)
+                GitCloneModal::show(panel, http_client, window, cx)
             });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
@@ -1267,61 +1277,65 @@ impl Component for GitStatusIcon {
     }
 }
 
+const GITHUB_SEARCH_DEBOUNCE: Duration = Duration::from_millis(500);
+
 struct GitCloneModal {
-    panel: Entity<GitPanel>,
-    repo_input: Entity<Editor>,
-    focus_handle: FocusHandle,
+    picker: Entity<Picker<GitCloneDelegate>>,
 }
 
 impl GitCloneModal {
-    pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let repo_input = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter repository URL…", window, cx);
-            editor
-        });
-        let focus_handle = repo_input.focus_handle(cx);
-
-        window.focus(&focus_handle, cx);
-
-        Self {
+    fn show(
+        panel: Entity<GitPanel>,
+        http_client: Arc<HttpClientWithUrl>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let delegate = GitCloneDelegate {
+            modal: cx.entity().downgrade(),
             panel,
-            repo_input,
-            focus_handle,
-        }
+            http_client,
+            suggestions: Vec::new(),
+            cached_searches: HashMap::default(),
+            selected_index: 0,
+        };
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(delegate, window, cx)
+                .max_height(rems(18.))
+                .show_scrollbar(true)
+        });
+        window.focus(&picker.focus_handle(cx), cx);
+        Self { picker }
     }
 }
 
 impl Focusable for GitCloneModal {
-    fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.picker.focus_handle(cx)
     }
 }
 
 impl Render for GitCloneModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        v_flex()
             .elevation_3(cx)
             .w(rems(34.))
-            .flex_1()
             .overflow_hidden()
-            .child(
-                div()
-                    .w_full()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(self.repo_input.clone()),
-            )
+            .rounded_sm()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(self.picker.clone())
             .child(
                 h_flex()
                     .w_full()
-                    .p_2()
-                    .gap_0p5()
-                    .rounded_b_sm()
+                    .px_2()
+                    .py_1p5()
+                    .gap_2()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
                     .child(
-                        Label::new("Clone a repository from GitHub or other sources.")
+                        Label::new("Clone a repository from GitHub or another source.")
                             .color(Color::Muted)
                             .size(LabelSize::Small),
                     )
@@ -1334,22 +1348,160 @@ impl Render for GitCloneModal {
                             }),
                     ),
             )
-            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
-                cx.emit(DismissEvent);
-            }))
-            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                let repo = this.repo_input.read(cx).text(cx);
-                this.panel.update(cx, |panel, cx| {
-                    panel.git_clone(repo, window, cx);
-                });
-                cx.emit(DismissEvent);
-            }))
     }
 }
 
 impl EventEmitter<DismissEvent> for GitCloneModal {}
-
 impl ModalView for GitCloneModal {}
+
+struct GitCloneDelegate {
+    modal: WeakEntity<GitCloneModal>,
+    panel: Entity<GitPanel>,
+    http_client: Arc<HttpClientWithUrl>,
+    suggestions: Vec<clone_suggestions::CloneSuggestion>,
+    cached_searches: HashMap<String, Vec<clone_suggestions::CloneSuggestion>>,
+    selected_index: usize,
+}
+
+impl PickerDelegate for GitCloneDelegate {
+    type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "git clone"
+    }
+
+    fn match_count(&self) -> usize {
+        self.suggestions.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = index.min(self.suggestions.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Enter a repository URL or owner/repo...".into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        let query = query.trim().to_owned();
+        self.suggestions = clone_suggestions::for_input(&query);
+        self.selected_index = 0;
+
+        if !clone_suggestions::should_search_github(&query) {
+            return Task::ready(());
+        }
+        if let Some(cached_suggestions) = self.cached_searches.get(&query) {
+            clone_suggestions::append_unique(
+                &mut self.suggestions,
+                cached_suggestions.iter().cloned(),
+            );
+            return Task::ready(());
+        }
+
+        let http_client = self.http_client.clone();
+        cx.spawn_in(window, async move |picker, cx| {
+            cx.background_executor().timer(GITHUB_SEARCH_DEBOUNCE).await;
+            let search_query = query.clone();
+            let search_result = cx
+                .background_spawn(async move {
+                    clone_suggestions::search_github(http_client, &search_query).await
+                })
+                .await;
+
+            picker
+                .update(cx, |picker, cx| {
+                    match search_result {
+                        Ok(search_suggestions) => {
+                            picker
+                                .delegate
+                                .cached_searches
+                                .insert(query, search_suggestions.clone());
+                            clone_suggestions::append_unique(
+                                &mut picker.delegate.suggestions,
+                                search_suggestions,
+                            );
+                        }
+                        Err(error) => {
+                            log::debug!("failed to fetch GitHub clone suggestions: {error:#}");
+                        }
+                    }
+                    cx.notify();
+                })
+                .log_err();
+        })
+    }
+
+    fn finalize_update_matches(
+        &mut self,
+        _query: String,
+        _duration: Duration,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> bool {
+        true
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(suggestion) = self.suggestions.get(self.selected_index) else {
+            return;
+        };
+        self.panel.update(cx, |panel, cx| {
+            panel.git_clone(suggestion.repo_url.to_string(), window, cx);
+        });
+        self.dismissed(window, cx);
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.modal
+            .update(cx, |_, cx| cx.emit(DismissEvent))
+            .log_err();
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        None
+    }
+
+    fn render_match(
+        &self,
+        index: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let suggestion = self.suggestions.get(index)?;
+        Some(
+            ListItem::new(("clone-suggestion", index))
+                .inset(true)
+                .spacing(ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .child(
+                    v_flex()
+                        .gap_0p5()
+                        .child(Label::new(suggestion.title.clone()))
+                        .child(
+                            Label::new(suggestion.detail.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                ),
+        )
+    }
+}
 
 #[cfg(test)]
 mod view_commit_tests {
