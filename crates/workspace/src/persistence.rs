@@ -1090,6 +1090,7 @@ fn serialize_docker_host(host: &DockerHost) -> Option<String> {
             port: options.port,
             ..Default::default()
         }),
+        DockerHost::Wsl(options) => DockerHost::Wsl(options.clone()),
         #[cfg(any(test, feature = "test-support"))]
         DockerHost::Mock(options) => DockerHost::Mock(options.clone()),
     };
@@ -4461,6 +4462,20 @@ mod tests {
                 ..Default::default()
             })),
             "only the identifying host fields are persisted; the password must not be stored"
+        );
+
+        let wsl_host = DockerHost::Wsl(remote::WslConnectionOptions {
+            distro_name: "ubuntu".into(),
+            user: Some("zed".into()),
+        });
+        let wsl_id = db
+            .get_or_create_remote_connection(container(wsl_host.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            db.remote_connection(wsl_id).unwrap(),
+            container(wsl_host),
+            "a WSL host has no runtime-only fields, so it round trips whole"
         );
     }
 
