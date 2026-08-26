@@ -5462,7 +5462,7 @@ impl LspStore {
         self.check_if_any_relevant_text_document_server_matches(
             buffer,
             <R::LspRequest as lsp::request::Request>::METHOD,
-            |_, capabilities| request.check_capabilities(capabilities),
+            |_, capabilities| request.check_capabilities(&capabilities),
             cx,
         )
     }
@@ -6366,7 +6366,7 @@ impl LspStore {
                     local
                         .language_servers_for_buffer(buffer, cx)
                         .filter(|(_, server)| {
-                            LinkedEditingRange::check_server_capabilities(server.capabilities())
+                            LinkedEditingRange::check_server_capabilities(&server.capabilities())
                         })
                         .filter(|(adapter, _)| {
                             scope
@@ -14195,7 +14195,7 @@ where
             server_capabilities: server_capabilities.clone(),
             code_action_kinds: code_action_kinds.clone(),
         };
-        if request.check_capabilities(capabilities.clone()) {
+        if request.check_capabilities(&capabilities) {
             applicable_capabilities.push(capabilities);
         }
     }
@@ -14215,7 +14215,7 @@ where
                 server_capabilities: registration.server_capabilities.clone(),
                 code_action_kinds: code_action_kinds.clone(),
             };
-            if request.check_capabilities(capabilities.clone()) {
+            if request.check_capabilities(&capabilities) {
                 applicable_capabilities.push(capabilities);
             }
         }
