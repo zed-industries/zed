@@ -469,7 +469,7 @@ impl WindowsWindow {
         );
 
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
+            (WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WINDOW_STYLE(0x0))
         } else {
             let mut dwstyle = WS_SYSMENU;
 
@@ -552,14 +552,13 @@ impl WindowsWindow {
         set_non_rude_hwnd(hwnd, true);
         configure_dwm_dark_mode(hwnd, appearance);
         this.state.border_offset.update(hwnd)?;
-        let placement = retrieve_window_placement(
-            hwnd,
-            display,
-            params.bounds,
-            this.state.scale_factor.get(),
-            &this.state.border_offset,
-        )?;
+        let placement =
+            retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
         if params.show {
+            let mut placement = placement;
+            if !params.focus {
+                placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
+            }
             unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
             this.state.initial_placement.set(Some(WindowOpenStatus {
@@ -990,6 +989,14 @@ impl PlatformWindow for WindowsWindow {
             .borrow_mut()
             .draw(scene, self.state.background_appearance.get())
             .log_err();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
+        self.state
+            .renderer
+            .borrow_mut()
+            .render_to_image(scene, self.state.background_appearance.get())
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
@@ -1516,7 +1523,6 @@ fn retrieve_window_placement(
     hwnd: HWND,
     display: WindowsDisplay,
     initial_bounds: Bounds<Pixels>,
-    scale_factor: f32,
     border_offset: &WindowBorderOffset,
 ) -> Result<WINDOWPLACEMENT> {
     let mut placement = WINDOWPLACEMENT {
@@ -1530,7 +1536,14 @@ fn retrieve_window_placement(
     } else {
         display.default_bounds()
     };
-    let bounds = bounds.to_device_pixels(scale_factor);
+    // `bounds` is expressed in logical pixels for `display`, so it must be converted
+    // to device pixels using that display's own scale factor. The window's current
+    // scale factor can't be used here: `CreateWindowExW` was called with
+    // `CW_USEDEFAULT`, so at this point the window may still be sitting on whichever
+    // monitor Windows picked by default, which can have a different DPI than `display`
+    // and would otherwise throw off the physical position (e.g. leaving the window
+    // partially off-screen when moved to a monitor with a different scale factor).
+    let bounds = bounds.to_device_pixels(display.scale_factor());
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
 }
