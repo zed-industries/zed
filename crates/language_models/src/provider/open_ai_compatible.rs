@@ -19,6 +19,7 @@ use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 
+use crate::provider::CustomHeaderDefinitions;
 use crate::provider::api_compatible::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,
     ApiCompatibleProviderState,
@@ -35,7 +36,7 @@ const API_KEY_PLACEHOLDER: &str = "000000000000000000000000000000000000000000000
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 impl ApiCompatibleProviderSettings for OpenAiCompatibleSettings {
@@ -182,6 +183,7 @@ impl OpenAiCompatibleLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -192,13 +194,9 @@ impl OpenAiCompatibleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
-            (
-                state.api_key_state.key(api_url),
-                state.settings.api_url.clone(),
-                state.settings.custom_headers.clone(),
-            )
+            (state.api_key_state.key(api_url), state.settings.api_url.clone())
         });
 
         let provider = self.provider_name.clone();
@@ -224,18 +222,15 @@ impl OpenAiCompatibleLanguageModel {
     fn stream_response(
         &self,
         request: ResponseRequest,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
-            (
-                state.api_key_state.key(api_url),
-                state.settings.api_url.clone(),
-                state.settings.custom_headers.clone(),
-            )
+            (state.api_key_state.key(api_url), state.settings.api_url.clone())
         });
 
         let provider = self.provider_name.clone();
@@ -422,6 +417,9 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             request.speed = None;
         }
 
+        let extra_headers = self
+            .state
+            .read_with(cx, |state, _cx| state.settings.custom_headers.resolve(&request));
         if self.model.capabilities.chat_completions {
             let reasoning_effort = chat_completion_reasoning_effort(&request, &self.model);
             let request = match into_open_ai(
@@ -437,7 +435,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-            let completions = self.stream_completion(request, cx);
+            let completions = self.stream_completion(request, extra_headers, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())
@@ -458,7 +456,7 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-            let completions = self.stream_response(request, cx);
+            let completions = self.stream_response(request, extra_headers, cx);
             let compaction_state_owner = self.provider_id.clone();
             async move {
                 let mapper = OpenAiResponseEventMapper::new(compaction_state_owner);

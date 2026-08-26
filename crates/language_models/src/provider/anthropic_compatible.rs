@@ -16,6 +16,7 @@ use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 
+use crate::provider::CustomHeaderDefinitions;
 use crate::provider::api_compatible::{
     ApiCompatibleProviderConfigurationView, ApiCompatibleProviderSettings,
     ApiCompatibleProviderState,
@@ -30,7 +31,7 @@ const API_KEY_PLACEHOLDER: &str = "sk-ant-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 pub struct AnthropicCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct AnthropicCompatibleLanguageModelProvider {
@@ -306,6 +307,7 @@ impl AnthropicCompatibleLanguageModel {
     fn stream_completion(
         &self,
         request: anthropic::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -317,13 +319,9 @@ impl AnthropicCompatibleLanguageModel {
         let http_client = self.http_client.clone();
         let provider_name = self.provider_name.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, _cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, _cx| {
             let api_url = state.settings.api_url.clone();
-            (
-                state.api_key_state.key(&api_url),
-                api_url,
-                state.settings.custom_headers.clone(),
-            )
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let beta_headers = self.model.beta_headers();
@@ -437,6 +435,9 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self
+            .state
+            .read_with(cx, |state, _cx| state.settings.custom_headers.resolve(&request));
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
         let mut request = match into_anthropic(
@@ -454,7 +455,7 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
         if !self.model.supports_speed {
             request.speed = None;
         }
-        let completion_request = self.stream_completion(request, cx);
+        let completion_request = self.stream_completion(request, extra_headers, cx);
         let provider_name = self.provider_name.clone();
         let provider_id = self.provider_id.clone();
         let future = self.request_limiter.stream(async move {

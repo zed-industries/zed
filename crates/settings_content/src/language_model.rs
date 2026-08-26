@@ -7,6 +7,22 @@ use settings_macros::{MergeFrom, with_fallible_options};
 
 use std::sync::Arc;
 
+/// A custom language model header value from settings.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum CustomHeaderValueContent {
+    Static(String),
+    Dynamic { source: CustomHeaderSourceContent },
+}
+
+/// A dynamic value source for a custom language model header.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomHeaderSourceContent {
+    /// The current Agent Thread's stable identifier.
+    AgentThreadId,
+}
+
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
@@ -35,7 +51,7 @@ pub struct AllLanguageModelSettingsContent {
 pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<AnthropicAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -43,7 +59,7 @@ pub struct AnthropicSettingsContent {
 pub struct AnthropicCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<AnthropicCompatibleAvailableModel>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -120,7 +136,7 @@ pub struct AmazonBedrockSettingsContent {
     /// OpenAI-compatible APIs, in addition to the built-in Mantle models
     /// (GPT-5.6 Sol, GPT-5.6 Terra, GPT-5.6 Luna, GPT-5.5, GPT-5.4, Grok 4.3).
     pub mantle_available_models: Option<Vec<BedrockMantleAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
     pub endpoint_url: Option<String>,
     pub region: Option<String>,
     pub profile: Option<String>,
@@ -191,7 +207,7 @@ pub struct OllamaSettingsContent {
     pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
     pub context_window: Option<u64>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -240,7 +256,7 @@ impl Default for KeepAlive {
 pub struct OpenCodeSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenCodeAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
     /// Whether to show OpenCode Zen models. Defaults to true.
     pub show_zen_models: Option<bool>,
     /// Whether to show OpenCode Go models. Defaults to true.
@@ -292,7 +308,7 @@ pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
     pub available_models: Option<Vec<LmStudioAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -315,7 +331,7 @@ pub struct LlamaCppSettingsContent {
     pub available_models: Option<Vec<LlamaCppAvailableModel>>,
     /// Overrides the context length reported for every llama.cpp model.
     pub context_window: Option<u64>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -340,7 +356,7 @@ pub struct LlamaCppAvailableModel {
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<DeepseekAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -357,7 +373,7 @@ pub struct DeepseekAvailableModel {
 pub struct MistralSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<MistralAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -378,7 +394,7 @@ pub struct MistralAvailableModel {
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenAiAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -407,7 +423,7 @@ impl MergeFrom for OpenAiReasoningEffort {
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -475,7 +491,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
 pub struct VercelAiGatewaySettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<VercelAiGatewayAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -495,7 +511,7 @@ pub struct VercelAiGatewayAvailableModel {
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<GoogleAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -512,7 +528,7 @@ pub struct GoogleAvailableModel {
 pub struct XAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<XaiAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -576,7 +592,7 @@ pub enum ZedDotDevAvailableProvider {
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenRouterAvailableModel>>,
-    pub custom_headers: Option<HashMap<String, String>>,
+    pub custom_headers: Option<HashMap<String, CustomHeaderValueContent>>,
 }
 
 #[with_fallible_options]
@@ -635,5 +651,30 @@ pub use language_model_core::ModelMode;
 impl MergeFrom for ModelMode {
     fn merge_from(&mut self, other: &Self) {
         *self = *other;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_static_custom_header_value() {
+        let value = serde_json::from_str::<CustomHeaderValueContent>(r#""static""#).unwrap();
+        assert_eq!(value, CustomHeaderValueContent::Static("static".into()));
+    }
+
+    #[test]
+    fn parses_agent_thread_id_custom_header_source() {
+        let value = serde_json::from_str::<CustomHeaderValueContent>(
+            r#"{"source":"agent_thread_id"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            value,
+            CustomHeaderValueContent::Dynamic {
+                source: CustomHeaderSourceContent::AgentThreadId,
+            }
+        );
     }
 }

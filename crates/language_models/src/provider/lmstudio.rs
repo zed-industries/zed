@@ -29,6 +29,7 @@ use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, 
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::CustomHeaderDefinitions;
 use language_model::util::parse_tool_arguments;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
@@ -45,7 +46,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct LmStudioSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct LmStudioLanguageModelProvider {
@@ -86,7 +87,7 @@ impl State {
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
         let api_key = self.api_key_state.key(&api_url);
-        let extra_headers = settings.custom_headers.clone();
+        let extra_headers = settings.custom_headers.resolve_static();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
@@ -469,19 +470,16 @@ impl LmStudioLanguageModel {
     fn stream_completion(
         &self,
         request: lmstudio::ChatCompletionRequest,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<futures::stream::BoxStream<'static, Result<lmstudio::ResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = LmStudioLanguageModelProvider::api_url(cx);
-            let extra_headers = AllLanguageModelSettings::get_global(cx)
-                .lmstudio
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -553,11 +551,17 @@ impl LanguageModel for LmStudioLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .lmstudio
+                .custom_headers
+                .resolve(&request)
+        });
         let request = match self.to_lmstudio_request(request) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        let completions = self.stream_completion(request, cx);
+        let completions = self.stream_completion(request, extra_headers, cx);
         async move {
             let mapper = LmStudioEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())

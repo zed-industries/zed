@@ -22,6 +22,8 @@ pub use settings::GoogleAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
+
+use crate::provider::CustomHeaderDefinitions;
 use ui::IconName;
 
 use language_model::ApiKeyState;
@@ -33,7 +35,7 @@ const PROVIDER_NAME: LanguageModelProviderName = GOOGLE_PROVIDER_NAME;
 pub struct GoogleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -248,6 +250,7 @@ impl GoogleLanguageModel {
     fn stream_completion(
         &self,
         request: google_ai::GenerateContentRequest,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -255,12 +258,9 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = GoogleLanguageModelProvider::api_url(cx);
-            let extra_headers = GoogleLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         async move {
@@ -358,6 +358,11 @@ impl LanguageModel for GoogleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            GoogleLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let request = match into_google(
             request,
             self.model.request_id().to_string(),
@@ -366,7 +371,7 @@ impl LanguageModel for GoogleLanguageModel {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        let request = self.stream_completion(request, cx);
+        let request = self.stream_completion(request, extra_headers, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(LanguageModelCompletionError::from)?;
             Ok(GoogleEventMapper::new().map_stream(response))

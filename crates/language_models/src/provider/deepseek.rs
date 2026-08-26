@@ -20,6 +20,7 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 
+use crate::provider::CustomHeaderDefinitions;
 use ui::IconName;
 
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
@@ -41,7 +42,7 @@ struct RawToolCall {
 pub struct DeepSeekSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 pub struct DeepSeekLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
@@ -223,16 +224,14 @@ impl DeepSeekLanguageModel {
     fn stream_completion(
         &self,
         request: deepseek::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<deepseek::StreamResponse>>>> {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-            let extra_headers = DeepSeekLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -343,11 +342,16 @@ impl LanguageModel for DeepSeekLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            DeepSeekLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let request = match into_deepseek(request, &self.model, self.max_output_tokens()) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        let stream = self.stream_completion(request, cx);
+        let stream = self.stream_completion(request, extra_headers, cx);
 
         async move {
             let mapper = DeepSeekEventMapper::new();

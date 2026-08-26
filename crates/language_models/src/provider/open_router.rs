@@ -22,6 +22,7 @@ use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
 
+use crate::provider::CustomHeaderDefinitions;
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
@@ -35,7 +36,7 @@ pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["HTTP-Referer", "X-Title"];
 pub struct OpenRouterSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -101,7 +102,7 @@ impl State {
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
         let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
             .custom_headers
-            .clone();
+            .resolve_static();
         let Some(api_key) = self.api_key_state.key(&api_url) else {
             return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
                 provider: PROVIDER_NAME,
@@ -286,6 +287,7 @@ impl OpenRouterLanguageModel {
     fn stream_completion(
         &self,
         request: open_router::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -298,12 +300,9 @@ impl OpenRouterLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenRouterLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         async move {
@@ -401,12 +400,17 @@ impl LanguageModel for OpenRouterLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            OpenRouterLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let openrouter_request =
             match into_open_router(request, &self.model, self.max_output_tokens()) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-        let request = self.stream_completion(openrouter_request, cx);
+        let request = self.stream_completion(openrouter_request, extra_headers, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
             Ok(OpenRouterEventMapper::new().map_stream(response))

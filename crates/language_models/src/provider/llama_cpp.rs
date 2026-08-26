@@ -32,6 +32,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::CustomHeaderDefinitions;
 
 const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
 const LLAMA_CPP_MODELS_URL: &str = "https://huggingface.co/models?library=gguf&sort=trending";
@@ -56,7 +57,7 @@ pub struct LlamaCppSettings {
     pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
     pub context_window: Option<u64>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct LlamaCppLanguageModelProvider {
@@ -159,7 +160,7 @@ impl State {
         let settings = LlamaCppLanguageModelProvider::settings(cx);
         let api_url = LlamaCppLanguageModelProvider::api_url(cx);
         let api_key = self.api_key_state.key(&api_url);
-        let extra_headers = settings.custom_headers.clone();
+        let extra_headers = settings.custom_headers.resolve_static();
 
         cx.spawn(async move |this, cx| {
             let entries = get_models(
@@ -262,7 +263,7 @@ impl State {
         let api_key = self.api_key_state.key(&api_url);
         let extra_headers = LlamaCppLanguageModelProvider::settings(cx)
             .custom_headers
-            .clone();
+            .resolve_static();
 
         self.model_event_task = Some(cx.spawn(async move |this, cx| {
             loop {
@@ -662,18 +663,16 @@ impl LlamaCppLanguageModel {
     fn stream_completion(
         &self,
         request: llama_cpp::ChatCompletionRequest,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
         Result<futures::stream::BoxStream<'static, Result<llama_cpp::ResponseStreamEvent>>>,
     > {
         let http_client = self.http_client.clone();
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = LlamaCppLanguageModelProvider::api_url(cx);
-            let extra_headers = LlamaCppLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -936,11 +935,16 @@ impl LanguageModel for LlamaCppLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            LlamaCppLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let request = match self.to_llama_cpp_request(request) {
             Ok(request) => request,
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
-        let completions = self.stream_completion(request, cx);
+        let completions = self.stream_completion(request, extra_headers, cx);
         async move {
             let mapper = LlamaCppEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())

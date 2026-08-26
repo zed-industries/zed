@@ -25,6 +25,7 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::IconName;
 
+use crate::provider::CustomHeaderDefinitions;
 use open_ai::completion::token_usage_from_response_usage;
 pub use open_ai::completion::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
@@ -41,7 +42,7 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct OpenAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -365,17 +366,15 @@ impl OpenAiLanguageModel {
     fn stream_completion(
         &self,
         request: open_ai::Request,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -401,17 +400,15 @@ impl OpenAiLanguageModel {
     fn stream_response(
         &self,
         request: ResponseRequest,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponsesStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let provider = PROVIDER_NAME;
@@ -437,16 +434,14 @@ impl OpenAiLanguageModel {
     fn compact_response(
         &self,
         request: CompactRequest,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<CompactedResponse, LanguageModelCompletionError>> {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenAiLanguageModelProvider::api_url(cx);
-            let extra_headers = OpenAiLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let provider = PROVIDER_NAME;
@@ -559,6 +554,11 @@ impl LanguageModel for OpenAiLanguageModel {
             .boxed();
         }
 
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         normalize_open_ai_response_thinking_effort(&mut request, &self.model);
         let request = match into_open_ai_response(
             request,
@@ -576,7 +576,7 @@ impl LanguageModel for OpenAiLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let request = request.into_compact_request();
-        let response = self.compact_response(request, cx);
+        let response = self.compact_response(request, extra_headers, cx);
         async move {
             let response = response.await?;
             let usage = token_usage_from_response_usage(&response.usage);
@@ -625,6 +625,11 @@ impl LanguageModel for OpenAiLanguageModel {
         if !self.model.supports_priority() {
             request.speed = None;
         }
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            OpenAiLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         if self.model.uses_responses_api() {
             normalize_open_ai_response_thinking_effort(&mut request, &self.model);
             let request = match into_open_ai_response(
@@ -642,7 +647,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-            let completions = self.stream_response(request, cx);
+            let completions = self.stream_response(request, extra_headers, cx);
             async move {
                 let mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
                 Ok(mapper.map_stream(completions.await?).boxed())
@@ -662,7 +667,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-            let completions = self.stream_completion(request, cx);
+            let completions = self.stream_completion(request, extra_headers, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
                 Ok(mapper.map_stream(completions.await?).boxed())

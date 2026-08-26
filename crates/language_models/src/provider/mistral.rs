@@ -19,6 +19,8 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
+
+use crate::provider::CustomHeaderDefinitions;
 use ui::IconName;
 
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
@@ -34,7 +36,7 @@ pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["x-affinity"];
 pub struct MistralSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub custom_headers: CustomHeaders,
+    pub custom_headers: CustomHeaderDefinitions,
 }
 
 pub struct MistralLanguageModelProvider {
@@ -249,6 +251,7 @@ impl MistralLanguageModel {
         &self,
         request: mistral::Request,
         affinity: Option<String>,
+        extra_headers: CustomHeaders,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -256,12 +259,9 @@ impl MistralLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
-            let extra_headers = MistralLanguageModelProvider::settings(cx)
-                .custom_headers
-                .clone();
-            (state.api_key_state.key(&api_url), api_url, extra_headers)
+            (state.api_key_state.key(&api_url), api_url)
         });
 
         let future = self.request_limiter.stream(async move {
@@ -342,12 +342,17 @@ impl LanguageModel for MistralLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            MistralLanguageModelProvider::settings(cx)
+                .custom_headers
+                .resolve(&request)
+        });
         let (request, affinity) =
             match into_mistral(request, self.model.clone(), self.max_output_tokens()) {
                 Ok(request) => request,
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
-        let stream = self.stream_completion(request, affinity, cx);
+        let stream = self.stream_completion(request, affinity, extra_headers, cx);
 
         async move {
             let stream = stream.await?;
