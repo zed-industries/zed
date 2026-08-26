@@ -1059,6 +1059,9 @@ pub struct GitPanel {
     commit_editor_expanded: bool,
     /// Whether the commit editor is hidden, leaving only the commit button row.
     commit_editor_collapsed: bool,
+    /// Set once the user toggles the editor here, so an untouched workspace keeps
+    /// following `git_panel.commit_editor` instead of pinning its first value.
+    commit_editor_toggled: bool,
     conflicted_count: usize,
     conflicted_staged_count: usize,
     add_coauthors: bool,
@@ -1204,6 +1207,9 @@ impl GitPanel {
         let signoff_enabled = serialized_panel
             .as_ref()
             .is_some_and(|panel| panel.signoff_enabled);
+        let commit_editor_was_serialized = serialized_panel
+            .as_ref()
+            .is_some_and(|panel| panel.commit_editor_collapsed.is_some());
         let commit_editor_collapsed = serialized_panel
             .as_ref()
             .and_then(|panel| panel.commit_editor_collapsed)
@@ -1249,6 +1255,7 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+            let mut was_commit_editor = GitPanelSettings::get_global(cx).commit_editor;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
@@ -1257,6 +1264,15 @@ impl GitPanel {
                 let file_icons = settings.file_icons;
                 let folder_icons = settings.folder_icons;
                 let diff_stats = settings.diff_stats;
+                let commit_editor = settings.commit_editor;
+                // Changing the setting is an explicit request, so it wins over
+                // whatever this workspace last persisted.
+                if commit_editor != was_commit_editor {
+                    let collapsed = commit_editor == GitPanelCommitEditor::Collapsed;
+                    if collapsed != this.commit_editor_collapsed {
+                        this.toggle_commit_editor(&Default::default(), window, cx);
+                    }
+                }
                 if tree_view != was_tree_view {
                     match (&mut this.view_mode, tree_view) {
                         (GitPanelViewMode::Tree(state), false) => {
@@ -1291,6 +1307,7 @@ impl GitPanel {
                 was_file_icons = file_icons;
                 was_folder_icons = folder_icons;
                 was_diff_stats = diff_stats;
+                was_commit_editor = commit_editor;
             })
             .detach();
 
@@ -1369,6 +1386,7 @@ impl GitPanel {
                 commit_editor,
                 commit_editor_expanded: false,
                 commit_editor_collapsed,
+                commit_editor_toggled: commit_editor_was_serialized,
                 conflicted_count: 0,
                 conflicted_staged_count: 0,
                 add_coauthors: true,
@@ -1539,7 +1557,7 @@ impl GitPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let signoff_enabled = self.signoff_enabled;
-        let commit_editor_collapsed = Some(self.commit_editor_collapsed);
+        let commit_editor_collapsed = self.commit_editor_toggled.then_some(self.commit_editor_collapsed);
         let commit_messages = self.serialized_commit_messages(cx);
         let kvp = KeyValueStore::global(cx);
 
@@ -5930,6 +5948,7 @@ impl GitPanel {
         cx: &mut Context<Self>,
     ) {
         self.commit_editor_collapsed = !self.commit_editor_collapsed;
+        self.commit_editor_toggled = true;
         // Filling the panel and being hidden are mutually exclusive states, so
         // collapsing has to undo the fill rather than leave it dangling.
         if self.commit_editor_collapsed && self.commit_editor_expanded {
