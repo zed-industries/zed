@@ -326,7 +326,10 @@ impl LspAdapter for RustLspAdapter {
                 .iter_mut()
                 .flatten()
                 .map(|info| &mut info.message)
-                .chain([diagnostic.message.as_mut_string()])
+                .chain(match &mut diagnostic.message {
+                    lsp::DiagnosticMessage::String(message) => Some(message),
+                    lsp::DiagnosticMessage::MarkupContent(_) => None,
+                })
             {
                 if let Cow::Owned(sanitized) = REGEX.replace_all(message, "`$1`") {
                     *message = sanitized;
@@ -1481,6 +1484,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
+        let markdown_message = lsp::MarkupContent {
+            kind: lsp::MarkupKind::Markdown,
+            value: "consider importing this struct: `use b::c;\n`".to_string(),
+        };
+        let plain_text_message = lsp::MarkupContent {
+            kind: lsp::MarkupKind::PlainText,
+            value: "consider importing this struct: `use b::c;\n`".to_string(),
+        };
         let mut params = lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a")).unwrap(),
             version: None,
@@ -1504,6 +1515,14 @@ mod tests {
                     ),
                     ..Default::default()
                 },
+                lsp::Diagnostic {
+                    message: lsp::DiagnosticMessage::from(markdown_message.clone()),
+                    ..Default::default()
+                },
+                lsp::Diagnostic {
+                    message: lsp::DiagnosticMessage::from(plain_text_message.clone()),
+                    ..Default::default()
+                },
             ],
         };
         RustLspAdapter.process_diagnostics(&mut params, LanguageServerId(0));
@@ -1520,6 +1539,15 @@ mod tests {
         assert_eq!(
             params.diagnostics[2].message,
             "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+        );
+
+        assert_eq!(
+            params.diagnostics[3].message,
+            lsp::DiagnosticMessage::from(markdown_message)
+        );
+        assert_eq!(
+            params.diagnostics[4].message,
+            lsp::DiagnosticMessage::from(plain_text_message)
         );
     }
 
