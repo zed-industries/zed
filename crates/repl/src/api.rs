@@ -160,49 +160,6 @@ pub struct ReplTranscriptEntry {
     pub status: ReplEvaluationStatus,
 }
 
-/// State shared by a REPL transcript renderer and its editable input.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ReplView {
-    transcript: ReplTranscript,
-    input: String,
-    namespace: Option<String>,
-}
-
-impl ReplView {
-    pub fn transcript(&self) -> &ReplTranscript {
-        &self.transcript
-    }
-
-    pub fn input(&self) -> &str {
-        &self.input
-    }
-
-    pub fn set_input(&mut self, input: impl Into<String>) {
-        self.input = input.into();
-    }
-
-    pub fn set_namespace(&mut self, namespace: Option<String>) {
-        self.namespace = namespace;
-    }
-
-    pub fn take_evaluation(&mut self) -> Option<ReplEvaluation> {
-        let code = std::mem::take(&mut self.input);
-        (!code.trim().is_empty()).then(|| ReplEvaluation {
-            code,
-            namespace: self.namespace.clone(),
-            file_path: None,
-        })
-    }
-
-    pub fn begin_evaluation(&mut self, evaluation: ReplEvaluation) -> usize {
-        self.transcript.begin_evaluation(evaluation)
-    }
-
-    pub fn push_event(&mut self, entry_index: usize, event: ReplOutputEvent) -> bool {
-        self.transcript.push_event(entry_index, event)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,18 +190,5 @@ mod tests {
     fn transcript_rejects_events_for_missing_entries() {
         let mut transcript = ReplTranscript::default();
         assert!(!transcript.push_event(0, ReplOutputEvent::Value("3".into())));
-    }
-
-    #[test]
-    fn view_turns_editable_input_into_an_evaluation() {
-        let mut view = ReplView::default();
-        view.set_namespace(Some("my.app".into()));
-        view.set_input("(inc 2)");
-
-        let evaluation = view.take_evaluation().expect("input should evaluate");
-        assert_eq!(evaluation.code, "(inc 2)");
-        assert_eq!(evaluation.namespace.as_deref(), Some("my.app"));
-        assert!(view.input().is_empty());
-        assert!(view.take_evaluation().is_none());
     }
 }
