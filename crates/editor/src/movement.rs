@@ -198,13 +198,12 @@ pub fn line_beginning(
     display_point: DisplayPoint,
     stop_at_soft_boundaries: bool,
 ) -> DisplayPoint {
-    let point = display_point.to_point(map);
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
 
     if stop_at_soft_boundaries && display_point != soft_line_start {
         soft_line_start
     } else {
-        map.prev_line_boundary(point).1
+        map.prev_line_boundary(display_point.to_point(map)).1
     }
 }
 
