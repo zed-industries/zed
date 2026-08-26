@@ -888,7 +888,15 @@ impl ToolCall {
         cx: &mut App,
     ) -> Result<Self> {
         let title = if tool_call.kind == acp::ToolKind::Execute {
-            tool_call.title
+            // For Execute tool calls, prefer the actual command from raw_input
+            // over the human-readable title/description.
+            tool_call
+                .raw_input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(|cmd| cmd.as_str())
+                .unwrap_or(&tool_call.title)
+                .to_string()
         } else if tool_call.kind == acp::ToolKind::Edit {
             MarkdownEscaped(tool_call.title.as_str()).to_string()
         } else if let Some((first_line, _)) = tool_call.title.split_once("\n") {
@@ -949,6 +957,35 @@ impl ToolCall {
         Ok(result)
     }
 
+    /// Update the label for Execute tool calls from `raw_input.command`,
+    /// falling back to `fallback_title` if command is not yet available.
+    fn update_execute_label(&mut self, fallback_title: Option<&str>, cx: &mut App) {
+        if self.kind != acp::ToolKind::Execute {
+            return;
+        }
+
+        let title = self
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.get("command"))
+            .and_then(|command| command.as_str())
+            .or(fallback_title);
+
+        let Some(title) = title else {
+            return;
+        };
+
+        for terminal in self.terminals() {
+            terminal.update(cx, |terminal, cx| {
+                terminal.update_command_label(title, cx);
+            });
+        }
+
+        self.label.update(cx, |label, cx| {
+            label.replace(title.to_owned(), cx);
+        });
+    }
+
     fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
@@ -994,27 +1031,6 @@ impl ToolCall {
             self.sandbox_not_applied = Some(sandbox_not_applied);
         }
 
-        if let Some(title) = title {
-            if self.kind == acp::ToolKind::Execute {
-                for terminal in self.terminals() {
-                    terminal.update(cx, |terminal, cx| {
-                        terminal.update_command_label(&title, cx);
-                    });
-                }
-            }
-            self.label.update(cx, |label, cx| {
-                if self.kind == acp::ToolKind::Execute {
-                    label.replace(title, cx);
-                } else if self.kind == acp::ToolKind::Edit {
-                    label.replace(MarkdownEscaped(&title).to_string(), cx)
-                } else if let Some((first_line, _)) = title.split_once("\n") {
-                    label.replace(first_line.to_owned() + "…", cx);
-                } else {
-                    label.replace(title, cx);
-                }
-            });
-        }
-
         if let Some(content) = content {
             let mut new_content_len = content.len();
             let mut content = content.into_iter();
@@ -1050,6 +1066,23 @@ impl ToolCall {
         if let Some(raw_input) = raw_input {
             self.raw_input_markdown = markdown_for_raw_output(&raw_input, &language_registry, cx);
             self.raw_input = Some(raw_input);
+            self.update_execute_label(None, cx);
+        }
+
+        if let Some(title) = title {
+            if self.kind == acp::ToolKind::Execute {
+                self.update_execute_label(Some(&title), cx);
+            } else {
+                self.label.update(cx, |label, cx| {
+                    if self.kind == acp::ToolKind::Edit {
+                        label.replace(MarkdownEscaped(&title).to_string(), cx)
+                    } else if let Some((first_line, _)) = title.split_once("\n") {
+                        label.replace(first_line.to_owned() + "…", cx);
+                    } else {
+                        label.replace(title, cx);
+                    }
+                });
+            }
         }
 
         if let Some(raw_output) = raw_output {
