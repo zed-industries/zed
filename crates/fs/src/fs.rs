@@ -1,4 +1,5 @@
 pub mod fs_watcher;
+mod git_clone_progress;
 
 pub use fs_watcher::requires_poll_watcher;
 
@@ -18,7 +19,7 @@ use gpui::ReadGlobal as _;
 use gpui::SharedString;
 #[cfg(unix)]
 use std::ffi::CString;
-use util::command::new_command;
+use util::command::{Stdio, new_command};
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -326,6 +327,7 @@ pub struct JobInfo {
 #[derive(Debug, Clone)]
 pub enum JobEvent {
     Started { info: JobInfo },
+    Updated { id: JobId, message: SharedString },
     Completed { id: JobId },
 }
 
@@ -349,6 +351,18 @@ impl JobTracker {
             });
         }
         Self { id, subscribers }
+    }
+
+    fn update(&self, message: SharedString) {
+        let mut subscribers = self.subscribers.lock();
+        subscribers.retain(|sender| {
+            sender
+                .unbounded_send(JobEvent::Updated {
+                    id: self.id,
+                    message: message.clone(),
+                })
+                .is_ok()
+        });
     }
 }
 
@@ -1242,18 +1256,28 @@ impl Fs for RealFs {
             message: SharedString::from(format!("Cloning {}", repo_url)),
         };
 
-        let _job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
-
-        let output = new_command("git")
+        let job_tracker = JobTracker::new(job_info, self.job_event_subscribers.clone());
+        let mut child = new_command("git")
             .current_dir(abs_work_directory)
-            .args(&["clone", repo_url])
-            .output()
-            .await?;
+            .args(["clone", "--progress", repo_url])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()?;
+        let stderr = child
+            .stderr
+            .take()
+            .context("failed to read git clone progress")?;
+        let stderr_output = git_clone_progress::read(stderr, |message| {
+            job_tracker.update(message.into());
+        })
+        .await?;
+        let status = child.status().await?;
 
-        if !output.status.success() {
+        if !status.success() {
             anyhow::bail!(
                 "git clone failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim_end()
+                git_clone_progress::failure_message(&stderr_output)
             );
         }
 
