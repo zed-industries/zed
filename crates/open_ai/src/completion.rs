@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
+use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
@@ -820,11 +821,13 @@ impl OpenAiEventMapper {
             let cache_creation_input_tokens = usage
                 .prompt_tokens_details
                 .as_ref()
-                .map_or(0, |details| details.cache_write_tokens);
+                .and_then(|details| details.cache_write_tokens)
+                .unwrap_or(0);
             let cache_read_input_tokens = usage
                 .prompt_tokens_details
                 .as_ref()
-                .map_or(0, |details| details.cached_tokens);
+                .and_then(|details| details.cached_tokens)
+                .unwrap_or(0);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
                 input_tokens: prompt_tokens
                     .saturating_sub(cache_creation_input_tokens)
@@ -1628,25 +1631,7 @@ fn completion_error_from_response_error(
     error: &ResponseError,
     provider: language_model_core::LanguageModelProviderName,
 ) -> LanguageModelCompletionError {
-    let category = match error.code.as_deref() {
-        Some("context_length_exceeded" | "request_too_large") => {
-            ProviderErrorCategory::PromptTooLarge { tokens: None }
-        }
-        Some("invalid_encrypted_content") => ProviderErrorCategory::InvalidEncryptedContent,
-        Some("invalid_request_error") => ProviderErrorCategory::InvalidRequest,
-        Some("authentication_error") => ProviderErrorCategory::Authentication,
-        Some("billing_error" | "payment_required_error") => ProviderErrorCategory::PaymentRequired,
-        Some("permission_error") => ProviderErrorCategory::Permission,
-        Some("not_found_error") => ProviderErrorCategory::EndpointNotFound,
-        Some("conflict_error") => ProviderErrorCategory::Conflict,
-        Some("rate_limit_error" | "rate_limit_exceeded") => ProviderErrorCategory::RateLimit,
-        Some("timeout_error" | "request_timed_out") => ProviderErrorCategory::Timeout,
-        Some("api_error" | "internal_server_error" | "server_error") => {
-            ProviderErrorCategory::InternalServer
-        }
-        Some("overloaded_error") => ProviderErrorCategory::Overloaded,
-        Some(_) | None => ProviderErrorCategory::Other,
-    };
+    let category = response_error_category(error.code.as_deref(), None, &error.message);
     LanguageModelCompletionError::from_provider_response(
         provider,
         None,
@@ -1655,6 +1640,43 @@ fn completion_error_from_response_error(
         None,
         category,
     )
+}
+
+pub(crate) fn response_error_category(
+    code: Option<&str>,
+    status: Option<StatusCode>,
+    message: &str,
+) -> ProviderErrorCategory {
+    match code {
+        Some("context_length_exceeded" | "request_too_large") => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        Some("invalid_encrypted_content") => ProviderErrorCategory::InvalidEncryptedContent,
+        Some("invalid_request_error") => ProviderErrorCategory::InvalidRequest,
+        Some("authentication_error") => ProviderErrorCategory::Authentication,
+        Some(
+            "billing_error"
+            | "payment_required_error"
+            | "credit_balance_exhausted"
+            | "insufficient_quota"
+            | "organization_spend_limit_exceeded"
+            | "project_spend_limit_exceeded"
+            | "organization_usage_limit_exceeded",
+        ) => ProviderErrorCategory::PaymentRequired,
+        Some("permission_error") => ProviderErrorCategory::Permission,
+        Some("cyber_policy" | "invalid_prompt") => ProviderErrorCategory::ContentPolicy,
+        Some("not_found_error") => ProviderErrorCategory::EndpointNotFound,
+        Some("conflict_error") => ProviderErrorCategory::Conflict,
+        Some("rate_limit_error" | "rate_limit_exceeded") => ProviderErrorCategory::RateLimit,
+        Some("timeout_error" | "request_timed_out") => ProviderErrorCategory::Timeout,
+        Some("api_error" | "internal_server_error" | "server_error") => {
+            ProviderErrorCategory::InternalServer
+        }
+        Some("overloaded_error") => ProviderErrorCategory::Overloaded,
+        Some(_) | None => status
+            .map(|status| ProviderErrorCategory::from_http_status(status, message))
+            .unwrap_or(ProviderErrorCategory::Other),
+    }
 }
 
 fn response_error_message(error: &ResponseError) -> String {
@@ -3205,11 +3227,38 @@ mod tests {
                 code: Some(code),
                 message,
                 retry_after: None,
-                category: ProviderErrorCategory::Other,
+                category: ProviderErrorCategory::ContentPolicy,
             } if provider == OPEN_AI_PROVIDER_NAME
                 && code == "cyber_policy"
                 && message == "This content was flagged as potentially violating our terms of use."
         ));
+    }
+
+    #[test]
+    fn responses_stream_maps_billing_codes_to_payment_required() {
+        for code in [
+            "billing_error",
+            "payment_required_error",
+            "credit_balance_exhausted",
+            "insufficient_quota",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+        ] {
+            assert_eq!(
+                response_error_category(Some(code), None, ""),
+                ProviderErrorCategory::PaymentRequired,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_stream_maps_invalid_prompt_to_content_policy() {
+        assert_eq!(
+            response_error_category(Some("invalid_prompt"), None, ""),
+            ProviderErrorCategory::ContentPolicy
+        );
     }
 
     #[test]

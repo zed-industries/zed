@@ -817,7 +817,7 @@ impl<'a> ChunkBrackets<'a> {
             })
             .collect::<Vec<_>>();
 
-        opens.sort_by_key(|r| (r.start, r.end));
+        opens.sort_unstable_by_key(|r| (r.start, r.end));
         opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);
         color_pairs.sort_by_key(|(_, close, _)| close.end);
 
