@@ -64,6 +64,10 @@ pub trait ExtensionPanelUiProxy: Send + Sync + 'static {
         event: ExtensionPanelEvent,
         cx: &mut App,
     ) -> Result<()>;
+
+    /// Returns the root path of the first visible worktree in the active
+    /// workspace. This intentionally exposes no arbitrary file access.
+    fn active_worktree_root(&self, cx: &mut App) -> Result<String>;
 }
 
 /// Implemented by the extension host to deliver user actions to the owning

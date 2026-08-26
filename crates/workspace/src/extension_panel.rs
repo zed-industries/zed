@@ -257,4 +257,14 @@ impl ExtensionPanelUiProxy for ExtensionPanelsProxy {
             })
         })
     }
+
+    fn active_worktree_root(&self, cx: &mut App) -> Result<String> {
+        let (_, workspace) = self.first_workspace(cx)?;
+        let worktree = workspace
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .ok_or_else(|| anyhow!("the active workspace has no visible worktree"))?;
+        Ok(worktree.read(cx).abs_path().to_string_lossy().into_owned())
+    }
 }

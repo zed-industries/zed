@@ -706,6 +706,16 @@ impl panel::Host for WasmState {
             .await;
         Ok(result.map_err(|error| error.to_string()))
     }
+
+    async fn active_worktree_root(&mut self) -> wasmtime::Result<Result<String, String>> {
+        let proxy = self.host.proxy.clone();
+        let result = self
+            .on_main_thread(move |cx| {
+                async move { cx.update(|cx| proxy.active_worktree_root(cx)) }.boxed_local()
+            })
+            .await;
+        Ok(result.map_err(|error| error.to_string()))
+    }
 }
 
 impl tcp::Host for WasmState {

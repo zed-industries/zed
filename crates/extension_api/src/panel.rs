@@ -18,3 +18,8 @@ pub fn send_event(panel_id: &str, kind: &str, payload: &Value) -> Result<(), Str
     let payload = crate::serde_json::to_string(payload).map_err(|error| error.to_string())?;
     crate::wit::zed::extension::panel::send_event(panel_id, kind, &payload)
 }
+
+/// Returns the root path of the active workspace's first visible worktree.
+pub fn active_worktree_root() -> Result<String, String> {
+    crate::wit::zed::extension::panel::active_worktree_root()
+}

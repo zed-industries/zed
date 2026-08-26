@@ -134,6 +134,13 @@ impl ExtensionPanelUiProxy for ExtensionHostProxy {
         };
         proxy.send_panel_event(panel, event, cx)
     }
+
+    fn active_worktree_root(&self, cx: &mut App) -> Result<String> {
+        let Some(proxy) = self.panel_ui_proxy.read().clone() else {
+            return Err(anyhow!("extension panels are not available"));
+        };
+        proxy.active_worktree_root(cx)
+    }
 }
 
 impl ExtensionPanelActionProxy for ExtensionHostProxy {
