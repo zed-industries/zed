@@ -1666,6 +1666,18 @@ impl BufferStore {
         self.shared_buffers.remove(peer_id);
     }
 
+    pub fn is_shared(&self, buffer_id: BufferId, cx: &App) -> bool {
+        self.shared_buffers
+            .values()
+            .any(|buffers| buffers.contains_key(&buffer_id))
+            || self.as_remote().is_some_and(|remote| {
+                remote
+                    .shared_with_me
+                    .iter()
+                    .any(|buffer| buffer.read(cx).remote_id() == buffer_id)
+            })
+    }
+
     pub fn update_peer_id(&mut self, old_peer_id: &proto::PeerId, new_peer_id: proto::PeerId) {
         if let Some(buffers) = self.shared_buffers.remove(old_peer_id) {
             self.shared_buffers.insert(new_peer_id, buffers);
