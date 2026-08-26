@@ -5,6 +5,7 @@ use crate::Inspector;
 #[cfg(feature = "profiler")]
 use crate::profiler;
 use crate::{
+    CornerShape,
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AtlasTile, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
@@ -4297,6 +4298,7 @@ impl Window {
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
+            corner_shapes: quad.corner_shapes.map(|shape| shape.0),
         };
 
         if !quad.background.is_transparent() {
@@ -7293,9 +7295,19 @@ pub struct PaintQuad {
     pub border_color: Hsla,
     /// The style of the quad's borders.
     pub border_style: BorderStyle,
+    /// The shape of the quad's corners.
+    pub corner_shapes: Corners<CornerShape>,
 }
 
 impl PaintQuad {
+    /// Sets the shape of the quad's corners.
+    pub fn corner_shapes(self, corner_shapes: impl Into<Corners<CornerShape>>) -> Self {
+        PaintQuad {
+            corner_shapes: corner_shapes.into(),
+            ..self
+        }
+    }
+
     /// Sets the corner radii of the quad.
     pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
         PaintQuad {
@@ -7345,6 +7357,7 @@ pub fn quad(
         border_widths: border_widths.into(),
         border_color: border_color.into(),
         border_style,
+        corner_shapes: Corners::default(),
     }
 }
 
@@ -7357,6 +7370,7 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>
         border_widths: (0.).into(),
         border_color: transparent_black(),
         border_style: BorderStyle::default(),
+        corner_shapes: Corners::default(),
     }
 }
 
@@ -7373,6 +7387,7 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+        corner_shapes: Corners::default(),
     }
 }
 

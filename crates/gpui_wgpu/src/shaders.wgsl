@@ -128,6 +128,8 @@ struct Hsla {
 struct LinearColorStop {
     color: Hsla,
     percentage: f32,
+    // Where between this stop and the next the mix is half way. 0 = none.
+    hint: f32,
 }
 
 struct Background {
@@ -141,8 +143,11 @@ struct Background {
     color_space: u32,
     solid: Hsla,
     gradient_angle_or_pattern_height: f32,
-    colors: array<LinearColorStop, 2>,
-    pad: u32,
+    colors: array<LinearColorStop, 8>,
+    // How many of `colors` are live.
+    stop_count: u32,
+    // 0 = angle, 1 top left, 2 top right, 3 bottom right, 4 bottom left.
+    corner: u32,
 }
 
 struct AtlasTextureId {
@@ -354,6 +359,67 @@ fn pick_corner_radius(center_to_point: vec2<f32>, radii: Corners) -> f32 {
     }
 }
 
+// Signed distance from a point in the positive quadrant to the superellipse
+// (x/a)^n + (y/b)^n = 1. Negative inside. n is 1 for a straight line between
+// the axes, 2 for an ellipse, and infinity for the a by b box.
+//
+// The distance is the value of the implicit function over the length of its
+// gradient, which is exact for a line and a circle and close elsewhere. The
+// terms are scaled by the largest coordinate first so a big n never
+// underflows the whole sum to zero.
+fn superellipse_sdf(point: vec2<f32>, radii: vec2<f32>, n: f32) -> f32 {
+    // WGSL has no infinity literal or isinf, so a huge exponent stands in.
+    if (n > 1.0e30) {
+        let to_edge = point - radii;
+        return max(to_edge.x, to_edge.y);
+    }
+    let unit = point / radii;
+    let largest = max(max(unit.x, unit.y), 1e-6);
+    let scaled = unit / largest;
+    let rho = largest * pow(pow(scaled.x, n) + pow(scaled.y, n), 1.0 / n);
+    let gradient = pow(scaled * (largest / rho), vec2<f32>(n - 1.0)) / radii;
+    return (rho - 1.0) / max(length(gradient), 1e-6);
+}
+
+// The outer and inner signed distances for one corner whose shape is not a
+// plain quarter circle. `shape` is the CSS superellipse curvature: the curve
+// is a superellipse with exponent 2^|shape|, centered on the corner circle's
+// center when the shape is convex and on the outer corner when it is
+// concave. The inner edge keeps the same shape at the border's distance.
+fn shaped_corner_sdf(corner_to_point: vec2<f32>, corner_center_to_point: vec2<f32>,
+    corner_radius: f32, shape: f32, reduced_border: vec2<f32>,
+    straight_border_inner_corner_to_point: vec2<f32>) -> vec2<f32> {
+    // Past 2^64 every superellipse is a box to the pixel, so cap the
+    // exponent there and let the box path take it.
+    var n = 1.0e31;
+    if (abs(shape) < 64.0) {
+        n = exp2(abs(shape));
+    }
+    let straight_outer = max(corner_to_point.x, corner_to_point.y);
+    let straight_inner = -max(straight_border_inner_corner_to_point.x,
+                              straight_border_inner_corner_to_point.y);
+    if (shape < 0.0) {
+        // The bite sits at the outer corner and reaches the whole corner box,
+        // and its inner edge reaches further, so measure everywhere.
+        let from_corner = max(-corner_to_point, vec2<f32>(0.0));
+        let bite = superellipse_sdf(from_corner, vec2<f32>(corner_radius), n);
+        let inner_bite = superellipse_sdf(
+            from_corner, vec2<f32>(corner_radius) + reduced_border, n);
+        return vec2<f32>(max(straight_outer, -bite), min(straight_inner, inner_bite));
+    }
+    let near_corner = corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0;
+    if (!near_corner) {
+        return vec2<f32>(straight_outer, straight_inner);
+    }
+    let outer = superellipse_sdf(corner_center_to_point, vec2<f32>(corner_radius), n);
+    let inner_radii = vec2<f32>(corner_radius) - reduced_border;
+    var inner = straight_inner;
+    if (inner_radii.x > 0.0 && inner_radii.y > 0.0) {
+        inner = -superellipse_sdf(corner_center_to_point, inner_radii, n);
+    }
+    return vec2<f32>(outer, inner);
+}
+
 // Signed distance of the point to the quad's border - positive outside the
 // border, and negative inside.
 //
@@ -395,41 +461,84 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
 }
 
 
-struct GradientColor {
-    solid: vec4<f32>,
-    color0: vec4<f32>,
-    color1: vec4<f32>,
+// The solid color of a fill, converted once per vertex. Gradients convert
+// their stops per fragment instead, since only two of them matter there.
+fn prepare_fill_color(background: Background) -> vec4<f32> {
+    if (background.tag == 1u) {
+        return vec4<f32>(0.0);
+    }
+    return hsla_to_rgba(background.solid);
 }
 
-fn prepare_gradient_color(tag: u32, color_space: u32,
-    solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
-    var result = GradientColor();
+// One gradient stop in the space the gradient mixes in.
+fn gradient_stop_color(background: Background, index: u32) -> vec4<f32> {
+    // hsla_to_rgba returns linear sRGB.
+    let color = hsla_to_rgba(background.colors[index].color);
+    if (background.color_space == 1u) {
+        return linear_srgb_to_oklab(color);
+    }
+    return linear_to_srgba(color);
+}
 
-    if (tag == 0u || tag == 2u || tag == 3u) {
-        result.solid = hsla_to_rgba(solid);
-    } else if (tag == 1u) {
-        // The hsla_to_rgba is returns a linear sRGB color
-        result.color0 = hsla_to_rgba(colors[0].color);
-        result.color1 = hsla_to_rgba(colors[1].color);
-
-        // Prepare color space in vertex for avoid conversion
-        // in fragment shader for performance reasons
-        if (color_space == 0u) {
-            // sRGB
-            result.color0 = linear_to_srgba(result.color0);
-            result.color1 = linear_to_srgba(result.color1);
-        } else if (color_space == 1u) {
-            // Oklab
-            result.color0 = linear_srgb_to_oklab(result.color0);
-            result.color1 = linear_srgb_to_oklab(result.color1);
+// The color of a CSS linear gradient at `position`.
+//
+// The gradient line goes through the center of the box. Its length is the
+// one CSS Images 3 defines, so 0% and 100% sit exactly on the corners the
+// line points away from and toward. A corner keyword makes the line
+// perpendicular to the diagonal between the two other corners.
+fn linear_gradient_color(background: Background, position: vec2<f32>, bounds: Bounds) -> vec4<f32> {
+    let size = bounds.size;
+    var angle: f32;
+    if (background.corner == 0u) {
+        angle = background.gradient_angle_or_pattern_height * (M_PI_F / 180.0);
+    } else {
+        let toward_top_right = atan2(size.y, size.x);
+        switch (background.corner) {
+            case 1u: { angle = 2.0 * M_PI_F - toward_top_right; }
+            case 2u: { angle = toward_top_right; }
+            case 3u: { angle = M_PI_F - toward_top_right; }
+            default: { angle = M_PI_F + toward_top_right; }
         }
     }
+    let direction = vec2<f32>(sin(angle), -cos(angle));
+    let line_length = abs(size.x * sin(angle)) + abs(size.y * cos(angle));
+    let center = bounds.origin + size / 2.0;
+    let t = (dot(position - center, direction) + line_length / 2.0)
+        / max(line_length, 1e-6);
 
-    return result;
+    let last = background.stop_count - 1u;
+    var color: vec4<f32>;
+    if (t <= background.colors[0].percentage) {
+        color = gradient_stop_color(background, 0u);
+    } else if (t >= background.colors[last].percentage) {
+        color = gradient_stop_color(background, last);
+    } else {
+        var i = 0u;
+        while (i + 1u < last && t > background.colors[i + 1u].percentage) {
+            i = i + 1u;
+        }
+        let start = background.colors[i].percentage;
+        let end = background.colors[i + 1u].percentage;
+        var p = 1.0;
+        if (end > start) {
+            p = (t - start) / (end - start);
+        }
+        // A color hint moves the half-way point of the mix between two stops.
+        let hint = background.colors[i].hint;
+        if (hint > 0.0 && hint < 1.0) {
+            p = pow(p, log(0.5) / log(hint));
+        }
+        color = mix(gradient_stop_color(background, i),
+                    gradient_stop_color(background, i + 1u), p);
+    }
+    if (background.color_space == 1u) {
+        return oklab_to_linear_srgb(color);
+    }
+    return srgba_to_linear(color);
 }
 
 fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
-    solid_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
+    solid_color: vec4<f32>) -> vec4<f32> {
     var background_color = vec4<f32>(0.0);
 
     switch (background.tag) {
@@ -437,46 +546,7 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
             return solid_color;
         }
         case 1u: {
-            // Linear gradient background.
-            // -90 degrees to match the CSS gradient angle.
-            let angle = background.gradient_angle_or_pattern_height;
-            let radians = (angle % 360.0 - 90.0) * M_PI_F / 180.0;
-            var direction = vec2<f32>(cos(radians), sin(radians));
-            let stop0_percentage = background.colors[0].percentage;
-            let stop1_percentage = background.colors[1].percentage;
-
-            // Expand the short side to be the same as the long side
-            if (bounds.size.x > bounds.size.y) {
-                direction.y *= bounds.size.y / bounds.size.x;
-            } else {
-                direction.x *= bounds.size.x / bounds.size.y;
-            }
-
-            // Get the t value for the linear gradient with the color stop percentages.
-            let half_size = bounds.size / 2.0;
-            let center = bounds.origin + half_size;
-            let center_to_point = position - center;
-            var t = dot(center_to_point, direction) / length(direction);
-            // Check the direct to determine the use x or y
-            if (abs(direction.x) > abs(direction.y)) {
-                t = (t + half_size.x) / bounds.size.x;
-            } else {
-                t = (t + half_size.y) / bounds.size.y;
-            }
-
-            // Adjust t based on the stop percentages
-            t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
-            t = clamp(t, 0.0, 1.0);
-
-            switch (background.color_space) {
-                default: {
-                    background_color = srgba_to_linear(mix(color0, color1, t));
-                }
-                case 1u: {
-                    let oklab_color = mix(color0, color1, t);
-                    background_color = oklab_to_linear_srgb(oklab_color);
-                }
-            }
+            background_color = linear_gradient_color(background, position, bounds);
         }
         case 2u: {
             // pattern slash
@@ -525,6 +595,7 @@ struct Quad {
     border_color: Hsla,
     corner_radii: Corners,
     border_widths: Edges,
+    corner_shapes: Corners,
 }
 
 struct QuadVarying {
@@ -534,8 +605,6 @@ struct QuadVarying {
     // TODO: use `clip_distance` once Naga supports it
     @location(2) clip_distances: vec4<f32>,
     @location(3) @interpolate(flat) background_solid: vec4<f32>,
-    @location(4) @interpolate(flat) background_color0: vec4<f32>,
-    @location(5) @interpolate(flat) background_color1: vec4<f32>,
 }
 
 @vertex
@@ -546,15 +615,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
 
-    let gradient = prepare_gradient_color(
-        quad.background.tag,
-        quad.background.color_space,
-        quad.background.solid,
-        quad.background.colors
-    );
-    out.background_solid = gradient.solid;
-    out.background_color0 = gradient.color0;
-    out.background_color1 = gradient.color1;
+    out.background_solid = prepare_fill_color(quad.background);
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
@@ -571,7 +632,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let quad = load_quad(input.quad_id);
 
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
-        input.background_solid, input.background_color0, input.background_color1);
+        input.background_solid);
 
     let unrounded = quad.corner_radii.top_left == 0.0 &&
         quad.corner_radii.bottom_left == 0.0 &&
@@ -598,6 +659,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     // Radius of the nearest corner
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+    let corner_shape = pick_corner_radius(center_to_point, quad.corner_shapes);
 
     // Width of the nearest borders
     let border = vec2<f32>(
@@ -655,7 +717,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     // Signed distance of the point to the outside edge of the quad's border. It
     // is positive outside this edge, and negative inside.
-    let outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+    var outer_sdf = 0.0;
 
     // Approximate signed distance of the point to the inside edge of the quad's
     // border. It is negative outside this edge (within the border), and
@@ -666,19 +728,29 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     //   nearest-point-on-ellipse.
     // * When it is quickly known to be outside the edge, -1.0 is used.
     var inner_sdf = 0.0;
-    if (corner_center_to_point.x <= 0 || corner_center_to_point.y <= 0) {
-        // Fast paths for straight borders.
-        inner_sdf = -max(straight_border_inner_corner_to_point.x,
-                         straight_border_inner_corner_to_point.y);
-    } else if (is_beyond_inner_straight_border) {
-        // Fast path for points that must be outside the inner edge.
-        inner_sdf = -1.0;
-    } else if (reduced_border.x == reduced_border.y) {
-        // Fast path for circular inner edge.
-        inner_sdf = -(outer_sdf + reduced_border.x);
+    if (corner_shape == 1.0 || corner_radius == 0.0) {
+        outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+            if (corner_center_to_point.x <= 0 || corner_center_to_point.y <= 0) {
+            // Fast paths for straight borders.
+            inner_sdf = -max(straight_border_inner_corner_to_point.x,
+                             straight_border_inner_corner_to_point.y);
+        } else if (is_beyond_inner_straight_border) {
+            // Fast path for points that must be outside the inner edge.
+            inner_sdf = -1.0;
+        } else if (reduced_border.x == reduced_border.y) {
+            // Fast path for circular inner edge.
+            inner_sdf = -(outer_sdf + reduced_border.x);
+        } else {
+            let ellipse_radii = max(vec2<f32>(0.0), corner_radius - reduced_border);
+            inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
+        }
     } else {
-        let ellipse_radii = max(vec2<f32>(0.0), corner_radius - reduced_border);
-        inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
+        // Any other corner shape: a superellipse, or a bite out of the corner.
+        let sdfs = shaped_corner_sdf(corner_to_point, corner_center_to_point,
+            corner_radius, corner_shape, reduced_border,
+            straight_border_inner_corner_to_point);
+        outer_sdf = sdfs.x;
+        inner_sdf = sdfs.y;
     }
 
     // Negative when inside the border
@@ -1098,14 +1170,8 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
         let distance = f / length(gradient);
         alpha = saturate(0.5 - distance);
     }
-    let prepared_gradient = prepare_gradient_color(
-        background.tag,
-        background.color_space,
-        background.solid,
-        background.colors,
-    );
     let color = gradient_color(background, input.position.xy, bounds,
-        prepared_gradient.solid, prepared_gradient.color0, prepared_gradient.color1);
+        prepare_fill_color(background));
     return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 

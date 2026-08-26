@@ -2249,6 +2249,37 @@ impl Anchor {
     }
 }
 
+/// The shape of one corner, as the curvature of a superellipse.
+///
+/// This is the number CSS `corner-shape: superellipse()` takes. 1 is a
+/// circle, 2 a squircle, 0 a straight bevel and infinity a square corner.
+/// Negative values curve inward: -1 is a scoop and negative infinity a notch.
+/// The corner radius still sets the size; the shape only bends the curve.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[repr(transparent)]
+pub struct CornerShape(pub f32);
+
+impl CornerShape {
+    /// A quarter circle. The default.
+    pub const ROUND: Self = Self(1.0);
+    /// Between round and square.
+    pub const SQUIRCLE: Self = Self(2.0);
+    /// A plain square corner, whatever the radius.
+    pub const SQUARE: Self = Self(f32::INFINITY);
+    /// A straight cut across the corner.
+    pub const BEVEL: Self = Self(0.0);
+    /// A quarter circle bitten out of the corner.
+    pub const SCOOP: Self = Self(-1.0);
+    /// A square bitten out of the corner.
+    pub const NOTCH: Self = Self(f32::NEG_INFINITY);
+}
+
+impl Default for CornerShape {
+    fn default() -> Self {
+        Self::ROUND
+    }
+}
+
 /// Represents the corners of a box in a 2D space, such as border radius.
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.

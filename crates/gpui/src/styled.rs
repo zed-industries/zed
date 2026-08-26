@@ -1,5 +1,6 @@
 use crate::{
-    self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CursorStyle,
+    self as gpui, AbsoluteLength, AlignContent, AlignItems, AlignSelf, BorderStyle, CornerShape,
+    CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontFeatures, FontStyle,
     FontWeight, GridPlacement, GridTemplate, GridTemplateMinSize, Hsla, JustifyContent, Length,
     SharedString, StrikethroughStyle, StyleRefinement, TextAlign, TextOverflow,
@@ -493,6 +494,40 @@ pub trait Styled: Sized {
         Self: Sized,
     {
         self.style().background = Some(fill.into());
+        self
+    }
+
+    /// Sets the shape of every corner. See [`CornerShape`].
+    fn corner_shape(mut self, shape: CornerShape) -> Self {
+        let corners = &mut self.style().corner_shapes;
+        corners.top_left = Some(shape);
+        corners.top_right = Some(shape);
+        corners.bottom_right = Some(shape);
+        corners.bottom_left = Some(shape);
+        self
+    }
+
+    /// Sets the shape of the top left corner.
+    fn corner_shape_tl(mut self, shape: CornerShape) -> Self {
+        self.style().corner_shapes.top_left = Some(shape);
+        self
+    }
+
+    /// Sets the shape of the top right corner.
+    fn corner_shape_tr(mut self, shape: CornerShape) -> Self {
+        self.style().corner_shapes.top_right = Some(shape);
+        self
+    }
+
+    /// Sets the shape of the bottom right corner.
+    fn corner_shape_br(mut self, shape: CornerShape) -> Self {
+        self.style().corner_shapes.bottom_right = Some(shape);
+        self
+    }
+
+    /// Sets the shape of the bottom left corner.
+    fn corner_shape_bl(mut self, shape: CornerShape) -> Self {
+        self.style().corner_shapes.bottom_left = Some(shape);
         self
     }
 

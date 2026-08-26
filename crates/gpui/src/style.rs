@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::{
-    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
-    CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
+    AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, CornerShape,
+    Corners, CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
     FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
     point, px, quad, rems, size,
@@ -287,6 +287,10 @@ pub struct Style {
     /// The radius of the corners of this element
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
+
+    /// The shape of each corner. Round unless set.
+    #[refineable]
+    pub corner_shapes: Corners<CornerShape>,
 
     /// Box shadow of the element
     pub box_shadow: Vec<BoxShadow>,
@@ -727,14 +731,17 @@ impl Style {
                 None => Hsla::default(),
             };
             border_color.a = 0.;
-            window.paint_quad(quad(
-                bounds,
-                corner_radii,
-                background_color.unwrap_or_default(),
-                Edges::default(),
-                border_color,
-                self.border_style,
-            ));
+            window.paint_quad(
+                quad(
+                    bounds,
+                    corner_radii,
+                    background_color.unwrap_or_default(),
+                    Edges::default(),
+                    border_color,
+                    self.border_style,
+                )
+                .corner_shapes(self.corner_shapes.clone()),
+            );
         }
 
         window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
@@ -745,14 +752,17 @@ impl Style {
             let border_widths = self.border_widths.to_pixels(rem_size);
             let mut background = self.border_color.unwrap_or_default();
             background.a = 0.;
-            window.paint_quad(quad(
-                bounds,
-                corner_radii,
-                background,
-                border_widths,
-                self.border_color.unwrap_or_default(),
-                self.border_style,
-            ));
+            window.paint_quad(
+                quad(
+                    bounds,
+                    corner_radii,
+                    background,
+                    border_widths,
+                    self.border_color.unwrap_or_default(),
+                    self.border_style,
+                )
+                .corner_shapes(self.corner_shapes.clone()),
+            );
         }
 
         #[cfg(debug_assertions)]
@@ -805,6 +815,7 @@ impl Default for Style {
             border_color: None,
             border_style: BorderStyle::default(),
             corner_radii: Corners::default(),
+            corner_shapes: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
             mouse_cursor: None,

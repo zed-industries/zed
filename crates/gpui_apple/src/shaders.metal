@@ -25,6 +25,11 @@ float dash_alpha(float t, float period, float length, float dash_velocity,
                  float antialias_threshold);
 float quarter_ellipse_sdf(float2 point, float2 radii);
 float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_radii);
+float pick_corner_shape(float2 center_to_point, Corners_f32 corner_shapes);
+float superellipse_sdf(float2 point, float2 radii, float n);
+float2 shaped_corner_sdf(float2 corner_to_point, float2 corner_center_to_point,
+                         float corner_radius, float shape, float2 reduced_border,
+                         float2 straight_border_inner_corner_to_point);
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
                Corners_ScaledPixels corner_radii);
 float quad_sdf_impl(float2 center_to_point, float corner_radius);
@@ -35,22 +40,14 @@ float blur_along_x(float x, float y, float sigma, float corner,
 float4 over(float4 below, float4 above);
 float radians(float degrees);
 float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
-  float4 solid_color, float4 color0, float4 color1);
-
-struct GradientColor {
-  float4 solid;
-  float4 color0;
-  float4 color1;
-};
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid, Hsla color0, Hsla color1);
+  float4 solid_color);
+float4 prepare_fill_color(Background background);
 
 struct QuadVertexOutput {
   uint quad_id [[flat]];
   float4 position [[position]];
   float4 border_color [[flat]];
   float4 background_solid [[flat]];
-  float4 background_color0 [[flat]];
-  float4 background_color1 [[flat]];
   float clip_distance [[clip_distance]][4];
 };
 
@@ -59,8 +56,6 @@ struct QuadFragmentInput {
   float4 position [[position]];
   float4 border_color [[flat]];
   float4 background_solid [[flat]];
-  float4 background_color0 [[flat]];
-  float4 background_color1 [[flat]];
 };
 
 vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
@@ -79,21 +74,11 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
                                                  quad.content_mask.bounds);
   float4 border_color = hsla_to_rgba(quad.border_color);
 
-  GradientColor gradient = prepare_fill_color(
-    quad.background.tag,
-    quad.background.color_space,
-    quad.background.solid,
-    quad.background.colors[0].color,
-    quad.background.colors[1].color
-  );
-
   return QuadVertexOutput{
       quad_id,
       device_position,
       border_color,
-      gradient.solid,
-      gradient.color0,
-      gradient.color1,
+      prepare_fill_color(quad.background),
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
@@ -102,7 +87,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
+    input.background_solid);
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
@@ -127,8 +112,9 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   // minimum distance between the center of the pixel and the edge.
   const float antialias_threshold = 0.5;
 
-  // Radius of the nearest corner
+  // Radius and shape of the nearest corner
   float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+  float corner_shape = pick_corner_shape(center_to_point, quad.corner_shapes);
 
   // Width of the nearest borders
   float2 border = float2(
@@ -179,7 +165,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   }
 
   // Signed distance of the point to the outside edge of the quad's border
-  float outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+  float outer_sdf;
 
   // Approximate signed distance of the point to the inside edge of the quad's
   // border. It is negative outside this edge (within the border), and
@@ -190,19 +176,29 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   //   nearest-point-on-ellipse.
   // * When it is quickly known to be outside the edge, -1.0 is used.
   float inner_sdf = 0.0;
-  if (corner_center_to_point.x <= 0.0 || corner_center_to_point.y <= 0.0) {
-    // Fast paths for straight borders
-    inner_sdf = -max(straight_border_inner_corner_to_point.x,
-                     straight_border_inner_corner_to_point.y);
-  } else if (is_beyond_inner_straight_border) {
-    // Fast path for points that must be outside the inner edge
-    inner_sdf = -1.0;
-  } else if (reduced_border.x == reduced_border.y) {
-    // Fast path for circular inner edge.
-    inner_sdf = -(outer_sdf + reduced_border.x);
+  if (corner_shape == 1.0 || corner_radius == 0.0) {
+    outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+      if (corner_center_to_point.x <= 0.0 || corner_center_to_point.y <= 0.0) {
+      // Fast paths for straight borders
+      inner_sdf = -max(straight_border_inner_corner_to_point.x,
+                       straight_border_inner_corner_to_point.y);
+    } else if (is_beyond_inner_straight_border) {
+      // Fast path for points that must be outside the inner edge
+      inner_sdf = -1.0;
+    } else if (reduced_border.x == reduced_border.y) {
+      // Fast path for circular inner edge.
+      inner_sdf = -(outer_sdf + reduced_border.x);
+    } else {
+      float2 ellipse_radii = max(float2(0.0), float2(corner_radius) - reduced_border);
+      inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
+    }
   } else {
-    float2 ellipse_radii = max(float2(0.0), float2(corner_radius) - reduced_border);
-    inner_sdf = quarter_ellipse_sdf(corner_center_to_point, ellipse_radii);
+    // Any other corner shape: a superellipse, or a bite out of the corner.
+    float2 sdfs = shaped_corner_sdf(corner_to_point, corner_center_to_point,
+                                    corner_radius, corner_shape, reduced_border,
+                                    straight_border_inner_corner_to_point);
+    outer_sdf = sdfs.x;
+    inner_sdf = sdfs.y;
   }
 
   // Negative when inside the border
@@ -792,21 +788,11 @@ fragment float4 path_rasterization_fragment(
     alpha = saturate(0.5 - distance);
   }
 
-  GradientColor gradient_color = prepare_fill_color(
-    background.tag,
-    background.color_space,
-    background.solid,
-    background.colors[0].color,
-    background.colors[1].color
-  );
-
   float4 color = fill_color(
     background,
     input.position.xy,
     path_bounds,
-    gradient_color.solid,
-    gradient_color.color0,
-    gradient_color.color1
+    prepare_fill_color(background)
   );
   return float4(color.rgb * color.a * alpha, alpha * color.a);
 }
@@ -1058,6 +1044,77 @@ float pick_corner_radius(float2 center_to_point, Corners_ScaledPixels corner_rad
   }
 }
 
+float pick_corner_shape(float2 center_to_point, Corners_f32 corner_shapes) {
+  if (center_to_point.x < 0.) {
+    if (center_to_point.y < 0.) {
+      return corner_shapes.top_left;
+    } else {
+      return corner_shapes.bottom_left;
+    }
+  } else {
+    if (center_to_point.y < 0.) {
+      return corner_shapes.top_right;
+    } else {
+      return corner_shapes.bottom_right;
+    }
+  }
+}
+
+// Signed distance from a point in the positive quadrant to the superellipse
+// (x/a)^n + (y/b)^n = 1. Negative inside. n is 1 for a straight line between
+// the axes, 2 for an ellipse, and infinity for the a by b box.
+//
+// The distance is the value of the implicit function over the length of its
+// gradient, which is exact for a line and a circle and close elsewhere. The
+// terms are scaled by the largest coordinate first so a big n never
+// underflows the whole sum to zero.
+float superellipse_sdf(float2 point, float2 radii, float n) {
+  if (isinf(n)) {
+    float2 to_edge = point - radii;
+    return max(to_edge.x, to_edge.y);
+  }
+  float2 unit = point / radii;
+  float largest = max(max(unit.x, unit.y), 1e-6);
+  float2 scaled = unit / largest;
+  float rho = largest * pow(pow(scaled.x, n) + pow(scaled.y, n), 1.0 / n);
+  float2 gradient = pow(scaled * (largest / rho), n - 1.0) / radii;
+  return (rho - 1.0) / max(length(gradient), 1e-6);
+}
+
+// The outer and inner signed distances for one corner whose shape is not a
+// plain quarter circle. `shape` is the CSS superellipse curvature: the curve
+// is a superellipse with exponent 2^|shape|, centered on the corner circle's
+// center when the shape is convex and on the outer corner when it is
+// concave. The inner edge keeps the same shape at the border's distance.
+float2 shaped_corner_sdf(float2 corner_to_point, float2 corner_center_to_point,
+                         float corner_radius, float shape, float2 reduced_border,
+                         float2 straight_border_inner_corner_to_point) {
+  float n = exp2(fabs(shape));
+  float straight_outer = max(corner_to_point.x, corner_to_point.y);
+  float straight_inner = -max(straight_border_inner_corner_to_point.x,
+                              straight_border_inner_corner_to_point.y);
+  if (shape < 0.0) {
+    // The bite sits at the outer corner and reaches the whole corner box,
+    // and its inner edge reaches further, so measure everywhere.
+    float2 from_corner = max(-corner_to_point, 0.0);
+    float bite = superellipse_sdf(from_corner, float2(corner_radius), n);
+    float inner_bite = superellipse_sdf(
+      from_corner, float2(corner_radius) + reduced_border, n);
+    return float2(max(straight_outer, -bite), min(straight_inner, inner_bite));
+  }
+  bool near_corner = corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0;
+  if (!near_corner) {
+    return float2(straight_outer, straight_inner);
+  }
+  float outer = superellipse_sdf(corner_center_to_point, float2(corner_radius), n);
+  float2 inner_radii = float2(corner_radius) - reduced_border;
+  float inner = straight_inner;
+  if (inner_radii.x > 0.0 && inner_radii.y > 0.0) {
+    inner = -superellipse_sdf(corner_center_to_point, inner_radii, n);
+  }
+  return float2(outer, inner);
+}
+
 // Signed distance of the point to the quad's border - positive outside the
 // border, and negative inside.
 float quad_sdf(float2 point, Bounds_ScaledPixels bounds,
@@ -1150,25 +1207,88 @@ float4 over(float4 below, float4 above) {
   return result;
 }
 
-GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
-                                     Hsla color0, Hsla color1) {
-  GradientColor out;
-  if (tag == 0 || tag == 2 || tag == 3) {
-    out.solid = hsla_to_rgba(solid);
-  } else if (tag == 1) {
-    out.color0 = hsla_to_rgba(color0);
-    out.color1 = hsla_to_rgba(color1);
+// The solid color of a fill, converted once per vertex. Gradients convert
+// their stops per fragment instead, since only two of them matter there.
+float4 prepare_fill_color(Background background) {
+  if (background.tag == 1) {
+    return float4(0.0);
+  }
+  return hsla_to_rgba(background.solid);
+}
 
-    // Prepare color space in vertex for avoid conversion
-    // in fragment shader for performance reasons
-    if (color_space == 1) {
-      // Oklab
-      out.color0 = srgb_to_oklab(out.color0);
-      out.color1 = srgb_to_oklab(out.color1);
+// One gradient stop in the space the gradient mixes in.
+float4 gradient_stop_color(Background background, uint index) {
+  float4 color = hsla_to_rgba(background.colors[index].color);
+  if (background.color_space == 1) {
+    color = srgb_to_oklab(color);
+  }
+  return color;
+}
+
+// The color of a CSS linear gradient at `position`.
+//
+// The gradient line goes through the center of the box. Its length is the
+// one CSS Images 3 defines, so 0% and 100% sit exactly on the corners the
+// line points away from and toward. A corner keyword makes the line
+// perpendicular to the diagonal between the two other corners.
+float4 linear_gradient_color(Background background, float2 position,
+                             Bounds_ScaledPixels bounds) {
+  float2 size = float2(bounds.size.width, bounds.size.height);
+  float angle;
+  if (background.corner == 0) {
+    angle = background.gradient_angle_or_pattern_height * (M_PI_F / 180.0);
+  } else {
+    float toward_top_right = atan2(size.y, size.x);
+    switch (background.corner) {
+      case 1: angle = 2.0 * M_PI_F - toward_top_right; break;
+      case 2: angle = toward_top_right; break;
+      case 3: angle = M_PI_F - toward_top_right; break;
+      default: angle = M_PI_F + toward_top_right; break;
     }
   }
+  float2 direction = float2(sin(angle), -cos(angle));
+  float line_length = abs(size.x * sin(angle)) + abs(size.y * cos(angle));
+  float2 center = float2(bounds.origin.x, bounds.origin.y) + size / 2.0;
+  float t = (dot(position - center, direction) + line_length / 2.0)
+    / max(line_length, 1e-6);
 
-  return out;
+  uint last = background.stop_count - 1;
+  float4 color;
+  if (t <= background.colors[0].percentage) {
+    color = gradient_stop_color(background, 0);
+  } else if (t >= background.colors[last].percentage) {
+    color = gradient_stop_color(background, last);
+  } else {
+    uint i = 0;
+    while (i + 1 < last && t > background.colors[i + 1].percentage) {
+      i++;
+    }
+    float start = background.colors[i].percentage;
+    float end = background.colors[i + 1].percentage;
+    float p = end > start ? (t - start) / (end - start) : 1.0;
+    // A color hint moves the half-way point of the mix between two stops.
+    float hint = background.colors[i].hint;
+    if (hint > 0.0 && hint < 1.0) {
+      p = pow(p, log(0.5) / log(hint));
+    }
+    color = mix(gradient_stop_color(background, i),
+                gradient_stop_color(background, i + 1), p);
+  }
+  if (background.color_space == 1) {
+    color = oklab_to_srgb(color);
+  }
+
+  // Dither to reduce banding in gradients (especially dark/alpha).
+  // Triangular-distributed noise breaks up 8-bit quantization steps.
+  // ±2/255 for RGB (enough for dark-on-dark compositing),
+  // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
+  float2 seed = position * 0.6180339887; // golden ratio spread
+  float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
+  float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
+  float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
+  color.rgb += tri * 2.0 / 255.0;
+  color.a   += tri * 3.0 / 255.0;
+  return color;
 }
 
 float2x2 rotate2d(float angle) {
@@ -1180,70 +1300,16 @@ float2x2 rotate2d(float angle) {
 float4 fill_color(Background background,
                       float2 position,
                       Bounds_ScaledPixels bounds,
-                      float4 solid_color, float4 color0, float4 color1) {
+                      float4 solid_color) {
   float4 color;
 
   switch (background.tag) {
     case 0:
       color = solid_color;
       break;
-    case 1: {
-      // -90 degrees to match the CSS gradient angle.
-      float gradient_angle = background.gradient_angle_or_pattern_height;
-      float radians = (fmod(gradient_angle, 360.0) - 90.0) * (M_PI_F / 180.0);
-      float2 direction = float2(cos(radians), sin(radians));
-
-      // Expand the short side to be the same as the long side
-      if (bounds.size.width > bounds.size.height) {
-          direction.y *= bounds.size.height / bounds.size.width;
-      } else {
-          direction.x *=  bounds.size.width / bounds.size.height;
-      }
-
-      // Get the t value for the linear gradient with the color stop percentages.
-      float2 half_size = float2(bounds.size.width, bounds.size.height) / 2.;
-      float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
-      float2 center_to_point = position - center;
-      float t = dot(center_to_point, direction) / length(direction);
-      // Check the direction to determine whether to use x or y
-      if (abs(direction.x) > abs(direction.y)) {
-          t = (t + half_size.x) / bounds.size.width;
-      } else {
-          t = (t + half_size.y) / bounds.size.height;
-      }
-
-      // Adjust t based on the stop percentages
-      t = (t - background.colors[0].percentage)
-        / (background.colors[1].percentage
-        - background.colors[0].percentage);
-      t = clamp(t, 0.0, 1.0);
-
-      switch (background.color_space) {
-        case 0:
-          color = mix(color0, color1, t);
-          break;
-        case 1: {
-          float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
-          break;
-        }
-      }
-
-      // Dither to reduce banding in gradients (especially dark/alpha).
-      // Triangular-distributed noise breaks up 8-bit quantization steps.
-      // ±2/255 for RGB (enough for dark-on-dark compositing),
-      // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
-      {
-        float2 seed = position * 0.6180339887; // golden ratio spread
-        float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
-        float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
-        float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
-        color.rgb += tri * 2.0 / 255.0;
-        color.a   += tri * 3.0 / 255.0;
-      }
-
+    case 1:
+      color = linear_gradient_color(background, position, bounds);
       break;
-    }
     case 2: {
         float gradient_angle_or_pattern_height = background.gradient_angle_or_pattern_height;
         float pattern_width = (gradient_angle_or_pattern_height / 65535.0f) / 255.0f;

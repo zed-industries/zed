@@ -541,6 +541,8 @@ pub struct Quad {
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
+    /// The curvature of each corner. See [`crate::CornerShape`].
+    pub corner_shapes: Corners<f32>,
 }
 
 impl From<Quad> for Primitive {
