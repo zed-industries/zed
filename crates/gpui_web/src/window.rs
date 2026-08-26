@@ -343,8 +343,17 @@ impl WebWindowInner {
         let Some(layout_height) = layout_height.as_f64() else {
             return WindowInsets::default();
         };
-        let visible_bottom = viewport.offset_top() + viewport.height();
-        let keyboard_height = (layout_height - visible_bottom).max(0.0) as f32;
+        // `height` counts layout pixels currently visible, so pinch zoom shrinks
+        // it exactly like a keyboard does. Scaling back to layout space keeps
+        // zoom out of the inset: only real occlusion survives. `offset_top` is
+        // pan, not occlusion, so it must not enter this.
+        let scale = viewport.scale();
+        let visible_height = if scale > 0.0 {
+            viewport.height() * scale
+        } else {
+            viewport.height()
+        };
+        let keyboard_height = (layout_height - visible_height).max(0.0) as f32;
         WindowInsets {
             safe_area: Edges::default(),
             ime: Edges {
