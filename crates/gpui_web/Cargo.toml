@@ -56,9 +56,10 @@ web-sys = { version = "0.3", features = [
     "File",
     "HtmlCanvasElement",
     "HtmlElement",
-    "HtmlInputElement",
+    "HtmlTextAreaElement",
     "IdleDeadline",
     "IdleRequestOptions",
+    "InputEvent",
     "KeyboardEvent",
     "Location",
     "MediaQueryList",
@@ -86,3 +87,6 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
     "Window",
 ] }
+
+[package.metadata.cargo-shear]
+ignored = ["scheduler"]

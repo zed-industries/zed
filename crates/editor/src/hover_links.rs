@@ -321,7 +321,9 @@ impl Editor {
                 (true, true) => {
                     self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
                 }
-                (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
+                (true, false) => {
+                    self.go_to_type_definition(&GoToTypeDefinition::default(), window, cx)
+                }
                 (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
                 (false, false) => {
                     self.go_to_definition_of_kind(GotoDefinitionKind::Symbol, false, window, cx)

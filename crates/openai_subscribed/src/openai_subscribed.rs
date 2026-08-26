@@ -37,7 +37,7 @@ const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
-const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const TOKEN_REFRESH_BUFFER_MS: u64 = Duration::from_mins(5).as_millis() as u64;
 /// Requests the complete account catalog without Codex CLI version filtering.
 ///
 /// The backend treats this exact version as an ungated sentinel. Other versions
