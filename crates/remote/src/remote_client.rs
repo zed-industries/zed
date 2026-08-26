@@ -1414,6 +1414,8 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Docker(opts) => match (opts.use_podman, &opts.host) {
                 (false, DockerHost::Ssh(_)) => "docker-ssh",
                 (true, DockerHost::Ssh(_)) => "podman-ssh",
+                (false, DockerHost::Wsl(_)) => "docker-wsl",
+                (true, DockerHost::Wsl(_)) => "podman-wsl",
                 (false, _) => "docker",
                 (true, _) => "podman",
             },

@@ -29,16 +29,21 @@ use crate::{
     remote_client::{CommandTemplate, Interactive},
     transport::parse_platform,
     transport::ssh::SshConnectionOptions,
+    transport::wsl::WslConnectionOptions,
 };
 
 /// Where the docker daemon that owns the container lives. `Local` is the
-/// client machine; `Ssh` is a host Zed already knows how to connect to, so the
-/// docker invocations can be routed through that connection.
+/// client machine; `Ssh` and `Wsl` are hosts Zed already knows how to connect
+/// to, so the docker invocations can be routed through that connection.
+///
+/// This is deliberately flat: a host is always one hop from the client, which
+/// is what lets the connection pool rebuild it without recursing.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum DockerHost {
     #[default]
     Local,
     Ssh(SshConnectionOptions),
+    Wsl(WslConnectionOptions),
     #[cfg(any(test, feature = "test-support"))]
     Mock(crate::transport::mock::MockConnectionOptions),
 }
@@ -50,6 +55,7 @@ impl DockerHost {
         match self {
             DockerHost::Local => None,
             DockerHost::Ssh(options) => Some(RemoteConnectionOptions::Ssh(options.clone())),
+            DockerHost::Wsl(options) => Some(RemoteConnectionOptions::Wsl(options.clone())),
             #[cfg(any(test, feature = "test-support"))]
             DockerHost::Mock(options) => Some(RemoteConnectionOptions::Mock(options.clone())),
         }
