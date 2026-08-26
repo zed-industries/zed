@@ -179,55 +179,82 @@ impl Render for ExtensionPanels {
                     ))
                     .flex()
                     .flex_col()
-                    .gap_1()
+                    .gap_2()
                     .child(content.title.clone())
                     .when_some(content.input.clone(), |this, input| this.child(input))
-                    .children(content.actions.iter().map(|descriptor| {
-                        let input = content.input.clone();
-                        let requires_input = descriptor.requires_input;
-                        let action = ExtensionPanelAction {
-                            panel: id.clone(),
-                            action: descriptor.id.clone(),
-                            payload: serde_json::json!({}),
-                        };
-                        Button::new(
-                            format!(
-                                "extension-panel-action-{}-{}-{}",
-                                id.extension_id, id.panel_id, descriptor.id
-                            ),
-                            descriptor.label.clone(),
-                        )
-                        .on_click(move |_, _, cx| {
-                            let payload = input
-                                .as_ref()
-                                .filter(|_| requires_input)
-                                .map(|input| {
-                                    let text = input.read(cx).text(cx);
-                                    serde_json::json!({ "input": text })
-                                })
-                                .unwrap_or_else(|| serde_json::json!({}));
+                    .child(div().flex().gap_1().children(content.actions.iter().map(
+                        |descriptor| {
+                            let input = content.input.clone();
+                            let requires_input = descriptor.requires_input;
                             let action = ExtensionPanelAction {
-                                payload,
-                                ..action.clone()
+                                panel: id.clone(),
+                                action: descriptor.id.clone(),
+                                payload: serde_json::json!({}),
                             };
-                            let task =
-                                ExtensionHostProxy::global(cx).dispatch_panel_action(action, cx);
-                            cx.spawn(async move |_| {
-                                if let Err(error) = task.await {
-                                    log::error!("extension panel action failed: {error:#}");
-                                }
+                            Button::new(
+                                format!(
+                                    "extension-panel-action-{}-{}-{}",
+                                    id.extension_id, id.panel_id, descriptor.id
+                                ),
+                                descriptor.label.clone(),
+                            )
+                            .on_click(move |_, _, cx| {
+                                let payload = input
+                                    .as_ref()
+                                    .filter(|_| requires_input)
+                                    .map(|input| {
+                                        let text = input.read(cx).text(cx);
+                                        serde_json::json!({ "input": text })
+                                    })
+                                    .unwrap_or_else(|| serde_json::json!({}));
+                                let action = ExtensionPanelAction {
+                                    payload,
+                                    ..action.clone()
+                                };
+                                let task = ExtensionHostProxy::global(cx)
+                                    .dispatch_panel_action(action, cx);
+                                cx.spawn(async move |_| {
+                                    if let Err(error) = task.await {
+                                        log::error!("extension panel action failed: {error:#}");
+                                    }
+                                })
+                                .detach();
                             })
-                            .detach();
-                        })
-                    }))
-                    .children(
-                        content
-                            .events
-                            .iter()
-                            .map(|event| div().child(format!("{} {}", event.kind, event.payload))),
+                        },
+                    )))
+                    .child(
+                        div()
+                            .border_t_1()
+                            .pt_2()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(content.events.iter().map(render_panel_event)),
                     )
             }))
     }
+}
+
+fn render_panel_event(event: &ExtensionPanelEvent) -> impl IntoElement {
+    let payload = event
+        .payload
+        .get("message")
+        .or_else(|| event.payload.get("code"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| event.payload.to_string());
+    let (prefix, text) = match event.kind.as_ref() {
+        "input" => ("> ", payload),
+        "value" => ("=> ", payload),
+        "stdout" => ("out  ", payload),
+        "stderr" => ("err  ", payload),
+        "exception" => ("ex   ", payload),
+        "status" => ("· ", payload),
+        _ => ("· ", payload),
+    };
+    div()
+        .font_family(".ZedMono")
+        .child(format!("{prefix}{text}"))
 }
 
 /// Connects extension-host panel calls to the first active workspace window.
