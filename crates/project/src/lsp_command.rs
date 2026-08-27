@@ -531,7 +531,7 @@ impl LspCommand for PrepareCallHierarchy {
     ) -> Result<lsp::CallHierarchyPrepareParams> {
         Ok(lsp::CallHierarchyPrepareParams {
             text_document_position_params: make_lsp_text_document_position(path, self.position)?,
-            work_done_progress_params: Default::default(),
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
         })
     }
 
@@ -707,8 +707,8 @@ impl LspCommand for GetIncomingCalls {
     ) -> Result<lsp::CallHierarchyIncomingCallsParams> {
         Ok(lsp::CallHierarchyIncomingCallsParams {
             item: call_hierarchy_item_to_lsp(&self.item, path, buffer)?,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
         })
     }
 
@@ -854,8 +854,8 @@ impl LspCommand for GetOutgoingCalls {
     ) -> Result<lsp::CallHierarchyOutgoingCallsParams> {
         Ok(lsp::CallHierarchyOutgoingCallsParams {
             item: call_hierarchy_item_to_lsp(&self.item, path, buffer)?,
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
         })
     }
 

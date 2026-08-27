@@ -2697,7 +2697,6 @@ dependencies = [
 name = "call_hierarchy"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "futures 0.3.32",
  "fuzzy",
@@ -2705,15 +2704,19 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "menu",
  "picker",
  "project",
+ "proto",
  "serde_json",
  "settings",
+ "theme",
  "theme_settings",
  "tree-sitter-rust",
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]

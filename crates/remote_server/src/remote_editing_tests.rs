@@ -1021,9 +1021,9 @@ async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut Tes
             name: "Rust".into(),
             matcher: Arc::new(LanguageMatcher {
                 path_suffixes: vec!["rs".into()],
-                ..Default::default()
+                ..LanguageMatcher::default()
             }),
-            ..Default::default()
+            ..LanguageConfig::default()
         });
         project.languages().register_fake_lsp_adapter(
             "Rust",
@@ -1031,7 +1031,7 @@ async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut Tes
                 name: "rust-analyzer",
                 capabilities: lsp::ServerCapabilities {
                     call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
-                    ..Default::default()
+                    ..lsp::ServerCapabilities::default()
                 },
                 ..FakeLspAdapter::default()
             },
@@ -1043,7 +1043,7 @@ async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut Tes
             LanguageServerName("rust-analyzer".into()),
             lsp::ServerCapabilities {
                 call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
             None,
         )
@@ -1115,7 +1115,7 @@ async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut Tes
                         ),
                         data: None,
                     },
-                    from_ranges: vec![],
+                    from_ranges: Vec::new(),
                 }]))
             }
         }
@@ -1155,6 +1155,7 @@ async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut Tes
         );
     });
 }
+
 #[gpui::test]
 async fn test_remote_code_action_resolve(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -2072,6 +2073,7 @@ async fn test_remote_code_lens_resolve(cx: &mut TestAppContext, server_cx: &mut 
         assert_eq!(item.label(), "1 reference");
     });
 }
+
 #[gpui::test]
 async fn test_remote_cancel_language_server_work(
     cx: &mut TestAppContext,

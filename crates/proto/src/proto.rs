@@ -671,8 +671,8 @@ lsp_messages!(
     (InlayHints, InlayHintsResponse, false),
     (SemanticTokens, SemanticTokensResponse, true),
     (PrepareCallHierarchy, PrepareCallHierarchyResponse, true),
-    (GetIncomingCalls, GetIncomingCallsResponse, false),
-    (GetOutgoingCalls, GetOutgoingCallsResponse, false),
+    (GetIncomingCalls, GetIncomingCallsResponse, true),
+    (GetOutgoingCalls, GetOutgoingCallsResponse, true),
 );
 
 entity_messages!(

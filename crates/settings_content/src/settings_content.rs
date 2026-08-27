@@ -193,6 +193,8 @@ pub struct SettingsContent {
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
 
+    pub call_hierarchy: Option<CallHierarchySettingsContent>,
+
     pub git_panel: Option<GitPanelSettingsContent>,
 
     pub tabs: Option<ItemSettingsContent>,
@@ -911,7 +913,7 @@ pub struct FileFinderSettingsContent {
     /// Determines how much space the file finder can take up in relation to the available window width.
     ///
     /// Default: small
-    pub modal_max_width: Option<FileFinderWidthContent>,
+    pub modal_max_width: Option<ModalWidthContent>,
     /// Determines whether the file finder should skip focus for the active file in search results.
     ///
     /// Default: true
@@ -967,13 +969,34 @@ pub enum IncludeIgnoredContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
-pub enum FileFinderWidthContent {
+pub enum ModalWidthContent {
     #[default]
     Small,
     Medium,
     Large,
     XLarge,
     Full,
+}
+
+impl ModalWidthContent {
+    pub fn to_pixels(self, base_width: gpui::Pixels, window_width: gpui::Pixels) -> gpui::Pixels {
+        match self {
+            ModalWidthContent::Small => base_width,
+            ModalWidthContent::Full => window_width,
+            ModalWidthContent::XLarge => (window_width - gpui::px(512.)).max(base_width),
+            ModalWidthContent::Large => (window_width - gpui::px(768.)).max(base_width),
+            ModalWidthContent::Medium => (window_width - gpui::px(1024.)).max(base_width),
+        }
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct CallHierarchySettingsContent {
+    /// Determines how much space the call hierarchy picker can take up in relation to the available window width.
+    ///
+    /// Default: medium
+    pub modal_max_width: Option<ModalWidthContent>,
 }
 
 #[with_fallible_options]
