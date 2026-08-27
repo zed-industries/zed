@@ -3862,6 +3862,7 @@ impl Project {
                 });
                 cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
+            &remote::RemoteClientEvent::Reconnected => {}
         }
     }
 
