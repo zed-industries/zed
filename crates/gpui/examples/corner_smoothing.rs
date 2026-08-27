@@ -3,8 +3,8 @@
 //! This example demonstrates corner smoothing capabilities in GPUI.
 
 use gpui::{
-    App, Bounds, Context, Window, WindowBounds, WindowOptions, actions, div, percentage,
-    prelude::*, px, rgb, rgba, size,
+    App, Bounds, Context, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb,
+    rgba, size,
 };
 use slider::Slider;
 
@@ -48,7 +48,7 @@ impl Render for CornerSmoothingExample {
                             .w(px(self.width))
                             .h(px(self.height))
                             .rounded(px(self.corner_radius))
-                            .rounded_smoothing(percentage(self.corner_smoothing))
+                            .rounded_smoothing(self.corner_smoothing)
                             .bg(rgba(0x663399b8).alpha(0.5)),
                     ),
             )
