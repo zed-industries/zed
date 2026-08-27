@@ -11,7 +11,7 @@ use db::{
     sqlez_macros::sql,
 };
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext as _, Entity, Global, Task};
+use gpui::{AppContext as _, Entity, EventEmitter, Global, Task};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
@@ -70,6 +70,18 @@ impl TerminalThreadMetadata {
             self.custom_title.as_ref().map(|title| title.as_ref()),
         )
     }
+
+    pub fn editable_title(&self) -> SharedString {
+        self.custom_title.clone().unwrap_or_else(|| {
+            SharedString::from(terminal_title_without_prefix(self.title.as_ref()).to_string())
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TerminalThreadCustomTitleChanged {
+    pub terminal_id: TerminalId,
+    pub custom_title: Option<SharedString>,
 }
 
 pub(crate) fn compose_terminal_thread_title(
@@ -264,6 +276,35 @@ impl TerminalThreadMetadataStore {
         cx.notify();
     }
 
+    pub fn rename_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(mut metadata) = self.entry(terminal_id).cloned() else {
+            return;
+        };
+        let custom_title = if title.trim().is_empty()
+            || title == terminal_title_without_prefix(metadata.title.as_ref())
+        {
+            None
+        } else {
+            Some(title)
+        };
+        if metadata.custom_title == custom_title {
+            return;
+        }
+
+        metadata.custom_title = custom_title.clone();
+        self.save_internal(metadata);
+        cx.emit(TerminalThreadCustomTitleChanged {
+            terminal_id,
+            custom_title,
+        });
+        cx.notify();
+    }
+
     pub fn change_worktree_paths(
         &mut self,
         current_folder_paths: &PathList,
@@ -439,6 +480,8 @@ impl TerminalThreadMetadataStore {
         );
     }
 }
+
+impl EventEmitter<TerminalThreadCustomTitleChanged> for TerminalThreadMetadataStore {}
 
 struct TerminalThreadMetadataDb(ThreadSafeConnection);
 
@@ -657,6 +700,47 @@ mod tests {
 
         metadata.title = "Thinking".into();
         assert_eq!(metadata.display_title().as_ref(), "Fix bug");
+    }
+
+    #[gpui::test]
+    async fn test_rename_terminal_updates_stored_custom_title(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let metadata = metadata(
+            "⠋ Dev Server",
+            WorktreePaths::from_folder_paths(&PathList::default()),
+        );
+        let terminal_id = metadata.terminal_id;
+
+        cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.save(metadata, cx);
+                store.rename_terminal(terminal_id, "Renamed Terminal".into(), cx);
+            });
+        });
+
+        cx.update(|cx| {
+            let store = TerminalThreadMetadataStore::global(cx);
+            let metadata = store
+                .read(cx)
+                .entry(terminal_id)
+                .expect("renamed terminal metadata should exist");
+            assert_eq!(metadata.custom_title.as_deref(), Some("Renamed Terminal"));
+            assert_eq!(metadata.display_title().as_ref(), "⠋ Renamed Terminal");
+        });
+
+        cx.update(|cx| {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.rename_terminal(terminal_id, "Dev Server".into(), cx);
+            });
+            let store = TerminalThreadMetadataStore::global(cx);
+            let metadata = store
+                .read(cx)
+                .entry(terminal_id)
+                .expect("renamed terminal metadata should exist");
+            assert_eq!(metadata.custom_title, None);
+            assert_eq!(metadata.display_title().as_ref(), "⠋ Dev Server");
+        });
     }
 
     #[gpui::test]

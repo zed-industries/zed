@@ -40,8 +40,8 @@ use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
 use crate::completion_provider::{AgentContextSelection, AgentContextSource};
 use crate::terminal_thread_metadata_store::{
-    TerminalThreadMetadata, TerminalThreadMetadataStore, compose_terminal_thread_title,
-    terminal_title_without_prefix,
+    TerminalThreadCustomTitleChanged, TerminalThreadMetadata, TerminalThreadMetadataStore,
+    compose_terminal_thread_title, terminal_title_without_prefix,
 };
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
@@ -1185,6 +1185,7 @@ pub struct AgentPanel {
     _draft_editor_observation: Option<Subscription>,
     _active_draft_reclaim_observation: Option<Subscription>,
     _thread_metadata_store_subscription: Subscription,
+    _terminal_thread_metadata_store_subscription: Option<Subscription>,
     last_context_source: Option<AgentContextSource>,
 
     is_active: bool,
@@ -1560,6 +1561,27 @@ impl AgentPanel {
             },
         );
 
+        let _terminal_thread_metadata_store_subscription =
+            TerminalThreadMetadataStore::try_global(cx).map(|store| {
+                cx.subscribe(&store, |this, _store, event, cx| {
+                    let TerminalThreadCustomTitleChanged {
+                        terminal_id,
+                        custom_title,
+                    } = event;
+                    let Some(terminal) = this.terminals.get(terminal_id) else {
+                        return;
+                    };
+                    let terminal_view = terminal.view.clone();
+                    let custom_title = custom_title.clone();
+                    cx.defer(move |cx| {
+                        terminal_view.update(cx, |terminal_view, cx| {
+                            terminal_view
+                                .set_custom_title(custom_title.map(|title| title.to_string()), cx);
+                        });
+                    });
+                })
+            });
+
         cx.on_release(|this, cx| {
             this.dismiss_all_terminal_notifications(cx);
         })
@@ -1599,6 +1621,7 @@ impl AgentPanel {
             _draft_editor_observation: None,
             _active_draft_reclaim_observation: None,
             _thread_metadata_store_subscription,
+            _terminal_thread_metadata_store_subscription,
             last_context_source: None,
             is_active: false,
         };
