@@ -167,6 +167,10 @@ impl LanguageModelProvider for DeepSeekLanguageModelProvider {
         let mut models = IndexMap::default();
 
         models.insert("deepseek-v4-flash", deepseek::Model::V4Flash);
+        models.insert(
+            "deepseek-v4-flash-vision-exp",
+            deepseek::Model::V4FlashVision,
+        );
         models.insert("deepseek-v4-pro", deepseek::Model::V4Pro);
 
         for available_model in &Self::settings(cx).available_models {
@@ -284,7 +288,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     fn supports_thinking(&self) -> bool {
         matches!(
             self.model,
-            deepseek::Model::V4Flash | deepseek::Model::V4Pro
+            deepseek::Model::V4Flash | deepseek::Model::V4FlashVision | deepseek::Model::V4Pro
         )
     }
 
@@ -317,7 +321,7 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_images()
     }
 
     fn telemetry_id(&self) -> String {
@@ -361,6 +365,18 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 }
 
+fn push_user_message(
+    parts: &mut Vec<deepseek::MessagePart>,
+    messages: &mut Vec<deepseek::RequestMessage>,
+) {
+    if parts.is_empty() {
+        return;
+    }
+    messages.push(deepseek::RequestMessage::User {
+        content: deepseek::MessageContent::from(std::mem::take(parts)),
+    });
+}
+
 pub fn into_deepseek(
     request: LanguageModelRequest,
     model: &deepseek::Model,
@@ -377,6 +393,7 @@ pub fn into_deepseek(
 
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
+    let mut user_parts: Vec<deepseek::MessagePart> = Vec::new();
 
     for message in request.messages {
         for content in message.content {
@@ -389,15 +406,17 @@ pub fn into_deepseek(
                     };
 
                     if should_add {
-                        messages.push(match message.role {
-                            Role::User => deepseek::RequestMessage::User { content: text },
-                            Role::Assistant => deepseek::RequestMessage::Assistant {
+                        match message.role {
+                            Role::User => user_parts.push(deepseek::MessagePart::Text { text }),
+                            Role::Assistant => messages.push(deepseek::RequestMessage::Assistant {
                                 content: Some(text),
                                 tool_calls: Vec::new(),
                                 reasoning_content: current_reasoning.take(),
-                            },
-                            Role::System => deepseek::RequestMessage::System { content: text },
-                        });
+                            }),
+                            Role::System => {
+                                messages.push(deepseek::RequestMessage::System { content: text })
+                            }
+                        }
                     }
                 }
                 MessageContent::Thinking { text, .. } => {
@@ -405,9 +424,19 @@ pub fn into_deepseek(
                     current_reasoning.get_or_insert_default().push_str(&text);
                 }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image(image) => {
+                    if message.role == Role::User && model.supports_images() {
+                        user_parts.push(deepseek::MessagePart::Image {
+                            image_url: deepseek::ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        });
+                    }
+                }
                 MessageContent::Compaction(_) => {}
                 MessageContent::ToolUse(tool_use) => {
+                    push_user_message(&mut user_parts, &mut messages);
                     let input = tool_use
                         .input
                         .as_json()
@@ -435,6 +464,7 @@ pub fn into_deepseek(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
+                    push_user_message(&mut user_parts, &mut messages);
                     let mut text_parts: Vec<String> = Vec::new();
                     for part in &tool_result.content {
                         match part {
@@ -458,6 +488,7 @@ pub fn into_deepseek(
                 }
             }
         }
+        push_user_message(&mut user_parts, &mut messages);
     }
 
     Ok(deepseek::Request {
@@ -512,7 +543,7 @@ fn deepseek_thinking(
     thinking_allowed: bool,
 ) -> Option<deepseek::Thinking> {
     let kind = match model {
-        deepseek::Model::V4Flash | deepseek::Model::V4Pro => {
+        deepseek::Model::V4Flash | deepseek::Model::V4FlashVision | deepseek::Model::V4Pro => {
             if thinking_allowed {
                 deepseek::ThinkingType::Enabled
             } else {
@@ -664,5 +695,70 @@ impl DeepSeekEventMapper {
         }
 
         events
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::{LanguageModelImage, LanguageModelRequestMessage};
+
+    fn image_request() -> LanguageModelRequest {
+        LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![
+                    MessageContent::Text("What's in this image?".into()),
+                    MessageContent::Image(LanguageModelImage {
+                        source: "base64data".into(),
+                    }),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_into_deepseek_with_image() {
+        let deepseek_request =
+            into_deepseek(image_request(), &deepseek::Model::V4FlashVision, None).unwrap();
+
+        assert_eq!(deepseek_request.messages.len(), 1);
+        let deepseek::RequestMessage::User { content } = &deepseek_request.messages[0] else {
+            panic!("expected a user message");
+        };
+        let deepseek::MessageContent::Multipart(parts) = content else {
+            panic!("expected multipart content");
+        };
+
+        assert_eq!(parts.len(), 2);
+        assert!(matches!(
+            &parts[0],
+            deepseek::MessagePart::Text { text } if text == "What's in this image?"
+        ));
+        assert!(matches!(
+            &parts[1],
+            deepseek::MessagePart::Image { image_url }
+                if image_url.url.starts_with("data:image/png;base64,")
+        ));
+
+        assert!(
+            serde_json::to_value(&deepseek_request).unwrap()["messages"][0]["content"].is_array()
+        );
+    }
+
+    #[test]
+    fn test_into_deepseek_drops_images_for_non_vision_models() {
+        let deepseek_request =
+            into_deepseek(image_request(), &deepseek::Model::V4Flash, None).unwrap();
+
+        assert!(matches!(
+            &deepseek_request.messages[0],
+            deepseek::RequestMessage::User {
+                content: deepseek::MessageContent::Plain(text)
+            } if text == "What's in this image?"
+        ));
     }
 }
