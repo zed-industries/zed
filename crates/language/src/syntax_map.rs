@@ -1752,34 +1752,27 @@ pub(crate) fn splice_included_ranges(
             ),
         };
 
-        let mut start_ix = ranges_ix
-            + match ranges[ranges_ix..].binary_search_by_key(&remove.start, |r| r.end_byte) {
-                Ok(ix) => ix,
-                Err(ix) => ix,
-            };
-        let mut end_ix = ranges_ix
-            + match ranges[ranges_ix..].binary_search_by_key(&remove.end, |r| r.start_byte) {
-                Ok(ix) => ix + 1,
-                Err(ix) => ix,
-            };
+        // Splice out the ranges that the change actually overlaps. A non-empty range
+        // that merely *touches* the change - it ends where the change begins, or
+        // begins where the change ends - is unaffected by it and must be preserved:
+        // the injection query is only re-run over the changed ranges, so a range that
+        // is removed here but not re-reported by the query is lost for good. Combined
+        // injections routinely produce such touching ranges; the Go template lexer,
+        // for example, splits `podSelector: {}` into three adjacent `(text)` nodes.
+        //
+        // Empty ranges are the exception: several of them can share a start or end
+        // byte, so touching empty ranges are included in the splice.
+        let start_ix = ranges_ix
+            + ranges[ranges_ix..].partition_point(|range| {
+                range.end_byte < remove.start
+                    || (range.end_byte == remove.start && range.start_byte < range.end_byte)
+            });
+        let end_ix = ranges_ix
+            + ranges[ranges_ix..].partition_point(|range| {
+                range.start_byte < remove.end
+                    || (range.start_byte == remove.end && range.start_byte == range.end_byte)
+            });
 
-        // If there are empty ranges, then there may be multiple ranges with the same
-        // start or end. Expand the splice to include any adjacent ranges that touch
-        // the changed range.
-        while start_ix > 0 {
-            if ranges[start_ix - 1].end_byte == remove.start {
-                start_ix -= 1;
-            } else {
-                break;
-            }
-        }
-        while let Some(range) = ranges.get(end_ix) {
-            if range.start_byte == remove.end {
-                end_ix += 1;
-            } else {
-                break;
-            }
-        }
         let changed_start = changed_portion
             .as_ref()
             .map_or(usize::MAX, |range| range.start)
