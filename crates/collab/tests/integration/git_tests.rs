@@ -86,6 +86,67 @@ async fn test_root_repo_common_dir_sync(
     );
 }
 
+#[gpui::test]
+async fn test_remote_file_permalink(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let fs = client_a.fs();
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "tracked.txt": "tracked",
+        }),
+    )
+    .await;
+
+    let dot_git = Path::new(path!("/project/.git"));
+    let sha = "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7";
+    fs.set_head_for_repo(dot_git, &[("tracked.txt", "tracked".into())], sha);
+    fs.set_remote_for_repo(
+        dot_git,
+        "origin",
+        "https://github.com/zed-industries/zed.git",
+    );
+
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/project"), cx_a).await;
+    project_a
+        .update(cx_a, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let tracked_path = ProjectPath {
+        worktree_id,
+        path: rel_path("tracked.txt").into(),
+    };
+    let permalink = project_b
+        .update(cx_b, |project, cx| {
+            project.get_file_permalink(&tracked_path, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        permalink.as_str(),
+        format!("https://github.com/zed-industries/zed/blob/{sha}/tracked.txt")
+    );
+}
+
 fn collect_diff_stats<C: gpui::AppContext>(
     panel: &gpui::Entity<GitPanel>,
     cx: &C,

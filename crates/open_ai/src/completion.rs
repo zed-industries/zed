@@ -1,14 +1,15 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
+use http_client::StatusCode;
 use language_model_core::{
     CompactedContext, CompactionUpdate, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
     LanguageModelProviderId, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestToolInput, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent, Role,
-    StopReason, TokenUsage,
-    util::{fix_streamed_json, is_context_window_exceeded_message, parse_tool_arguments},
+    LanguageModelToolUse, LanguageModelToolUseId, LanguageModelToolUseInput, MessageContent,
+    ProviderErrorCategory, Role, StopReason, TokenUsage, provider_name_for_id,
+    util::{fix_streamed_json, parse_tool_arguments},
 };
 use std::pin::Pin;
 use std::sync::Arc;
@@ -73,6 +74,9 @@ pub fn into_open_ai(
     let mut messages = Vec::new();
     let mut current_reasoning: Option<String> = None;
     for message in request.messages {
+        let reasoning_details = interleaved_reasoning
+            .then(|| message.reasoning_details.clone())
+            .flatten();
         for content in message.content {
             match content {
                 MessageContent::Thinking { text, .. } if interleaved_reasoning => {
@@ -91,6 +95,7 @@ pub fn into_open_ai(
                             MessagePart::Text { text },
                             message.role,
                             &mut messages,
+                            reasoning_details.clone(),
                         );
                         if let Some(reasoning) = current_reasoning.take() {
                             if let Some(crate::RequestMessage::Assistant {
@@ -114,6 +119,7 @@ pub fn into_open_ai(
                         },
                         message.role,
                         &mut messages,
+                        reasoning_details.clone(),
                     );
                 }
                 MessageContent::ToolUse(tool_use) => {
@@ -129,12 +135,19 @@ pub fn into_open_ai(
                             function: FunctionContent {
                                 name: tool_use.name.to_string(),
                                 arguments: serde_json::to_string(input).unwrap_or_default(),
+                                thought_signature: interleaved_reasoning
+                                    .then(|| tool_use.thought_signature.clone())
+                                    .flatten(),
                             },
                         },
                     };
 
-                    if let Some(crate::RequestMessage::Assistant { tool_calls, .. }) =
-                        messages.last_mut()
+                    if let Some(crate::RequestMessage::Assistant {
+                        tool_calls,
+                        reasoning_details: existing_reasoning_details,
+                        ..
+                    }) = messages.last_mut()
+                        && existing_reasoning_details == &reasoning_details
                     {
                         tool_calls.push(tool_call);
                     } else {
@@ -142,6 +155,7 @@ pub fn into_open_ai(
                             content: None,
                             tool_calls: vec![tool_call],
                             reasoning_content: current_reasoning.take(),
+                            reasoning_details: reasoning_details.clone(),
                         });
                     }
                 }
@@ -679,17 +693,21 @@ fn add_message_content_part(
     new_part: MessagePart,
     role: Role,
     messages: &mut Vec<crate::RequestMessage>,
+    reasoning_details: Option<Arc<serde_json::Value>>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(crate::RequestMessage::User { content }))
-        | (
+        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        (
             Role::Assistant,
             Some(crate::RequestMessage::Assistant {
                 content: Some(content),
+                reasoning_details: existing_reasoning_details,
                 ..
             }),
-        )
-        | (Role::System, Some(crate::RequestMessage::System { content, .. })) => {
+        ) if existing_reasoning_details == &reasoning_details => {
             content.push_part(new_part);
         }
         _ => {
@@ -701,6 +719,7 @@ fn add_message_content_part(
                     content: Some(crate::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                     reasoning_content: None,
+                    reasoning_details,
                 },
                 Role::System => crate::RequestMessage::System {
                     content: crate::MessageContent::from(vec![new_part]),
@@ -710,14 +729,70 @@ fn add_message_content_part(
     }
 }
 
+/// Accumulates structured reasoning metadata from compatible providers.
+///
+/// Array entries are matched by `index` and then `id`. Fragmented `text`,
+/// `summary`, and `data` fields are concatenated while other non-null fields
+/// replace their previous values.
+///
+/// # Examples
+///
+/// ```
+/// use open_ai::completion::ReasoningDetailsAccumulator;
+/// use serde_json::json;
+///
+/// let mut accumulator = ReasoningDetailsAccumulator::default();
+/// accumulator.push(json!([{"index": 0, "text": "first "}]));
+/// let details = accumulator
+///     .push(json!([{"index": 0, "text": "second"}]))
+///     .expect("non-empty reasoning details");
+///
+/// assert_eq!(details[0]["text"], "first second");
+/// ```
+#[derive(Debug, Default)]
+pub struct ReasoningDetailsAccumulator {
+    accumulated: Option<serde_json::Value>,
+}
+
+impl ReasoningDetailsAccumulator {
+    /// Merges `chunk` and returns the updated metadata snapshot.
+    ///
+    /// `null` and empty arrays do not replace previously accumulated metadata
+    /// and return `None`.
+    pub fn push(&mut self, chunk: serde_json::Value) -> Option<serde_json::Value> {
+        match chunk {
+            serde_json::Value::Null => None,
+            serde_json::Value::Array(chunks) if chunks.is_empty() => None,
+            serde_json::Value::Array(chunks) => {
+                let mut details = match self.accumulated.take() {
+                    Some(serde_json::Value::Array(details)) => details,
+                    _ => Vec::new(),
+                };
+                for chunk in chunks {
+                    merge_reasoning_detail(&mut details, chunk);
+                }
+                let accumulated = serde_json::Value::Array(details);
+                self.accumulated = Some(accumulated.clone());
+                Some(accumulated)
+            }
+            chunk => {
+                self.accumulated = Some(chunk.clone());
+                Some(chunk)
+            }
+        }
+    }
+}
+
 pub struct OpenAiEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
+    reasoning_details: ReasoningDetailsAccumulator,
 }
 
 impl OpenAiEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
+            reasoning_details: ReasoningDetailsAccumulator::default(),
         }
     }
 
@@ -743,11 +818,23 @@ impl OpenAiEventMapper {
             && let Some(prompt_tokens) = usage.prompt_tokens
             && let Some(completion_tokens) = usage.completion_tokens
         {
+            let cache_creation_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|details| details.cache_write_tokens)
+                .unwrap_or(0);
+            let cache_read_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|details| details.cached_tokens)
+                .unwrap_or(0);
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens,
+                input_tokens: prompt_tokens
+                    .saturating_sub(cache_creation_input_tokens)
+                    .saturating_sub(cache_read_input_tokens),
                 output_tokens: completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
             })));
         }
 
@@ -756,6 +843,13 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning_details) = delta.reasoning_details.clone()
+                && let Some(reasoning_details) = self.reasoning_details.push(reasoning_details)
+            {
+                events.push(Ok(LanguageModelCompletionEvent::ReasoningDetails(
+                    reasoning_details,
+                )));
+            }
             if let Some(reasoning) = delta.reasoning.clone() {
                 push_thinking_event(reasoning, &mut events);
             }
@@ -788,6 +882,10 @@ impl OpenAiEventMapper {
                         if let Some(arguments) = function.arguments.clone() {
                             entry.arguments.push_str(&arguments);
                         }
+
+                        if let Some(thought_signature) = function.thought_signature.clone() {
+                            entry.thought_signature = Some(thought_signature);
+                        }
                     }
 
                     if !entry.id.is_empty() && !entry.name.is_empty() {
@@ -801,7 +899,7 @@ impl OpenAiEventMapper {
                                     is_input_complete: false,
                                     input: LanguageModelToolUseInput::Json(input),
                                     raw_input: entry.arguments.clone(),
-                                    thought_signature: None,
+                                    thought_signature: entry.thought_signature.clone(),
                                 },
                             )));
                         }
@@ -824,7 +922,7 @@ impl OpenAiEventMapper {
                                 is_input_complete: true,
                                 input: LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
-                                thought_signature: None,
+                                thought_signature: tool_call.thought_signature.clone(),
                             },
                         )),
                         Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
@@ -861,11 +959,49 @@ fn push_thinking_event(
     }
 }
 
+fn merge_reasoning_detail(details: &mut Vec<serde_json::Value>, chunk: serde_json::Value) {
+    let index = chunk.get("index").and_then(serde_json::Value::as_u64);
+    let target_index = index
+        .and_then(|index| {
+            details.iter().position(|detail| {
+                detail.get("index").and_then(serde_json::Value::as_u64) == Some(index)
+            })
+        })
+        .or_else(|| {
+            let id = chunk.get("id").and_then(serde_json::Value::as_str)?;
+            details
+                .iter()
+                .position(|detail| detail.get("id").and_then(serde_json::Value::as_str) == Some(id))
+        });
+    let Some(target_index) = target_index else {
+        details.push(chunk);
+        return;
+    };
+    let (Some(target), Some(chunk)) = (details[target_index].as_object_mut(), chunk.as_object())
+    else {
+        return;
+    };
+    for (key, value) in chunk {
+        if matches!(key.as_str(), "text" | "summary" | "data")
+            && let Some(fragment) = value.as_str()
+            && let Some(existing) = target.get(key).and_then(serde_json::Value::as_str)
+        {
+            target.insert(
+                key.clone(),
+                serde_json::Value::String(format!("{existing}{fragment}")),
+            );
+        } else if !value.is_null() {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 #[derive(Default)]
 struct RawToolCall {
     id: String,
     name: String,
     arguments: String,
+    thought_signature: Option<String>,
 }
 
 pub struct OpenAiResponseEventMapper {
@@ -875,6 +1011,7 @@ pub struct OpenAiResponseEventMapper {
     function_calls_by_item: HashMap<String, PendingResponseFunctionCall>,
     custom_tool_calls_by_item: HashMap<String, PendingResponseCustomToolCall>,
     reasoning_items: Vec<ResponseReasoningInputItem>,
+    current_reasoning_summary_part: Option<(String, usize)>,
     current_message_phase: Option<String>,
     pending_stop_reason: Option<StopReason>,
     pending_compaction_items: usize,
@@ -900,6 +1037,7 @@ impl OpenAiResponseEventMapper {
             function_calls_by_item: HashMap::default(),
             custom_tool_calls_by_item: HashMap::default(),
             reasoning_items: Vec::new(),
+            current_reasoning_summary_part: None,
             current_message_phase: None,
             pending_stop_reason: None,
             pending_compaction_items: 0,
@@ -980,8 +1118,24 @@ impl OpenAiResponseEventMapper {
                 }
                 events
             }
-            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. }
-            | ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id,
+                summary_index,
+                delta,
+                ..
+            } => {
+                if delta.is_empty() {
+                    Vec::new()
+                } else {
+                    let mut events = self.begin_reasoning_summary_part(&item_id, summary_index);
+                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                        text: delta,
+                        signature: None,
+                    }));
+                    events
+                }
+            }
+            ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -1122,28 +1276,37 @@ impl OpenAiResponseEventMapper {
                 events
             }
             ResponsesStreamEvent::Failed { response } => match response.error.as_ref() {
-                Some(error) => vec![Err(completion_error_from_response_error(error))],
-                None => vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    response_failure_message(&response)
-                )))],
+                Some(error) => vec![Err(completion_error_from_response_error(
+                    error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))],
+                None => vec![Err(LanguageModelCompletionError::from_provider_response(
+                    provider_name_for_id(&self.compaction_state_owner),
+                    None,
+                    Some("response.failed".to_string()),
+                    response_failure_message(&response),
+                    None,
+                    ProviderErrorCategory::Other,
+                ))],
             },
             ResponsesStreamEvent::Error { error } => {
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
             ResponsesStreamEvent::GenericError { error } => {
                 let error = error.into_response_error();
-                vec![Err(completion_error_from_response_error(&error))]
+                vec![Err(completion_error_from_response_error(
+                    &error,
+                    provider_name_for_id(&self.compaction_state_owner),
+                ))]
             }
-            ResponsesStreamEvent::ReasoningSummaryPartAdded { summary_index, .. } => {
-                if summary_index > 0 {
-                    vec![Ok(LanguageModelCompletionEvent::Thinking {
-                        text: "\n\n".to_string(),
-                        signature: None,
-                    })]
-                } else {
-                    Vec::new()
-                }
-            }
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id,
+                summary_index,
+                ..
+            } => self.begin_reasoning_summary_part(&item_id, summary_index),
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
@@ -1181,6 +1344,27 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::Created { .. }
             | ResponsesStreamEvent::InProgress { .. }
             | ResponsesStreamEvent::Unknown => Vec::new(),
+        }
+    }
+
+    fn begin_reasoning_summary_part(
+        &mut self,
+        item_id: &str,
+        summary_index: usize,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let part = (item_id.to_string(), summary_index);
+        if self.current_reasoning_summary_part.as_ref() == Some(&part) {
+            return Vec::new();
+        }
+
+        let separator = self.current_reasoning_summary_part.replace(part).is_some();
+        if separator {
+            vec![Ok(LanguageModelCompletionEvent::Thinking {
+                text: "\n\n".to_string(),
+                signature: None,
+            })]
+        } else {
+            Vec::new()
         }
     }
 
@@ -1443,12 +1627,57 @@ fn response_failure_message(response: &ResponsesSummary) -> String {
         .unwrap_or_else(|| "response.failed".to_string())
 }
 
-fn completion_error_from_response_error(error: &ResponseError) -> LanguageModelCompletionError {
-    let message = response_error_message(error);
-    if is_context_window_exceeded_message(&message) {
-        LanguageModelCompletionError::PromptTooLarge { tokens: None }
-    } else {
-        LanguageModelCompletionError::Other(anyhow!(message))
+fn completion_error_from_response_error(
+    error: &ResponseError,
+    provider: language_model_core::LanguageModelProviderName,
+) -> LanguageModelCompletionError {
+    let category = response_error_category(error.code.as_deref(), None, &error.message);
+    LanguageModelCompletionError::from_provider_response(
+        provider,
+        None,
+        error.code.clone(),
+        error.message.clone(),
+        None,
+        category,
+    )
+}
+
+pub(crate) fn response_error_category(
+    code: Option<&str>,
+    status: Option<StatusCode>,
+    message: &str,
+) -> ProviderErrorCategory {
+    match code {
+        Some("context_length_exceeded" | "request_too_large") => {
+            ProviderErrorCategory::PromptTooLarge { tokens: None }
+        }
+        Some("invalid_encrypted_content") => ProviderErrorCategory::InvalidEncryptedContent,
+        Some("invalid_request_error") => ProviderErrorCategory::InvalidRequest,
+        Some("authentication_error") => ProviderErrorCategory::Authentication,
+        Some(
+            "billing_error"
+            | "payment_required_error"
+            | "credit_balance_exhausted"
+            | "insufficient_quota"
+            | "organization_spend_limit_exceeded"
+            | "project_spend_limit_exceeded"
+            | "organization_usage_limit_exceeded",
+        ) => ProviderErrorCategory::PaymentRequired,
+        Some("permission_error") => ProviderErrorCategory::Permission,
+        Some("cyber_policy" | "invalid_prompt") => ProviderErrorCategory::ContentPolicy,
+        Some("not_found_error") => ProviderErrorCategory::EndpointNotFound,
+        Some("conflict_error") => ProviderErrorCategory::Conflict,
+        Some("rate_limit_error" | "rate_limit_exceeded") => ProviderErrorCategory::RateLimit,
+        Some("timeout_error" | "request_timed_out") => ProviderErrorCategory::Timeout,
+        Some("api_error" | "internal_server_error" | "server_error") => {
+            ProviderErrorCategory::InternalServer
+        }
+        Some("overloaded_error" | "server_is_overloaded" | "slow_down") => {
+            ProviderErrorCategory::Overloaded
+        }
+        Some(_) | None => status
+            .map(|status| ProviderErrorCategory::from_http_status(status, message))
+            .unwrap_or(ProviderErrorCategory::Other),
     }
 }
 
@@ -1538,8 +1767,8 @@ mod tests {
         LanguageModelCustomToolFormat, LanguageModelCustomToolGrammarSyntax, LanguageModelImage,
         LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelRequestToolInput,
         LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
-        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID, SharedString,
-        Speed,
+        LanguageModelToolUseId, LanguageModelToolUseInput, OPEN_AI_PROVIDER_ID,
+        OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, SharedString, Speed,
     };
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -2908,7 +3137,7 @@ mod tests {
     }
 
     #[test]
-    fn responses_stream_failed_uses_response_error_message() {
+    fn responses_stream_failed_preserves_provider_rejection() {
         let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
         let mapped = mapper.map_event(ResponsesStreamEvent::Failed {
             response: ResponseSummary {
@@ -2924,10 +3153,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "server_error: The model failed to generate a response."
-        );
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "server_error"
+                && message == "The model failed to generate a response."
+        ));
     }
 
     #[test]
@@ -2946,11 +3184,23 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "ERR_SOMETHING: Something went wrong");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "ERR_SOMETHING"
+                && message == "Something went wrong"
+        ));
     }
 
     #[test]
-    fn responses_stream_deserializes_nested_error_event() {
+    fn responses_stream_preserves_nested_cyber_policy_rejection() {
         // In practice the Responses API often nests error fields under an
         // `error` object even though the public spec documents them at the top
         // level. Make sure we don't lose the message and code in that case.
@@ -2958,8 +3208,8 @@ mod tests {
             "type": "error",
             "error": {
                 "type": "invalid_request_error",
-                "code": "invalid_prompt",
-                "message": "Your prompt was flagged.",
+                "code": "cyber_policy",
+                "message": "This content was flagged as potentially violating our terms of use.",
                 "param": "input"
             },
             "sequence_number": 2
@@ -2971,10 +3221,57 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: ProviderErrorCategory::ContentPolicy,
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "cyber_policy"
+                && message == "This content was flagged as potentially violating our terms of use."
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_billing_codes_to_payment_required() {
+        for code in [
+            "billing_error",
+            "payment_required_error",
+            "credit_balance_exhausted",
+            "insufficient_quota",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+        ] {
+            assert_eq!(
+                response_error_category(Some(code), None, ""),
+                ProviderErrorCategory::PaymentRequired,
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn responses_stream_maps_invalid_prompt_to_content_policy() {
         assert_eq!(
-            error.to_string(),
-            "invalid_prompt: Your prompt was flagged."
+            response_error_category(Some("invalid_prompt"), None, ""),
+            ProviderErrorCategory::ContentPolicy
         );
+    }
+
+    #[test]
+    fn responses_stream_maps_overload_codes_to_overloaded() {
+        for code in ["overloaded_error", "server_is_overloaded", "slow_down"] {
+            assert_eq!(
+                response_error_category(Some(code), None, ""),
+                ProviderErrorCategory::Overloaded,
+                "{code}"
+            );
+        }
     }
 
     #[test]
@@ -2998,7 +3295,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3021,7 +3321,10 @@ mod tests {
         let error = mapped.into_iter().next().unwrap().unwrap_err();
         assert!(matches!(
             error,
-            LanguageModelCompletionError::PromptTooLarge { tokens: None }
+            LanguageModelCompletionError::ProviderRejection {
+                category: ProviderErrorCategory::PromptTooLarge { tokens: None },
+                ..
+            }
         ));
     }
 
@@ -3041,7 +3344,19 @@ mod tests {
 
         assert_eq!(mapped.len(), 1);
         let error = mapped.into_iter().next().unwrap().unwrap_err();
-        assert_eq!(error.to_string(), "invalid_request_error: Invalid request.");
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: None,
+                code: Some(code),
+                message,
+                retry_after: None,
+                ..
+            } if provider == OPEN_AI_PROVIDER_NAME
+                && code == "invalid_request_error"
+                && message == "Invalid request."
+        ));
     }
 
     #[test]
@@ -3442,11 +3757,13 @@ mod tests {
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: "Thinking about".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 0,
                 delta: " the answer".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3459,14 +3776,10 @@ mod tests {
                 output_index: 0,
                 summary_index: 0,
             },
-            ResponsesStreamEvent::ReasoningSummaryPartAdded {
-                item_id: "rs_123".into(),
-                output_index: 0,
-                summary_index: 1,
-            },
             ResponsesStreamEvent::ReasoningSummaryTextDelta {
                 item_id: "rs_123".into(),
                 output_index: 0,
+                summary_index: 1,
                 delta: "Second part".into(),
             },
             ResponsesStreamEvent::ReasoningSummaryTextDone {
@@ -3541,6 +3854,65 @@ mod tests {
         assert!(mapped.iter().any(
             |e| matches!(e, LanguageModelCompletionEvent::Text(t) if t == "The answer is 42")
         ));
+    }
+
+    #[test]
+    fn responses_stream_separates_reasoning_summary_items() {
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_1",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_1".into(),
+                output_index: 0,
+                summary_index: 0,
+                delta: "**First item**".into(),
+            },
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 1,
+                sequence_number: None,
+                item: ResponseOutputItem::Reasoning(response_reasoning_item(
+                    "rs_2",
+                    vec![],
+                    None,
+                    None,
+                )),
+            },
+            ResponsesStreamEvent::ReasoningSummaryPartAdded {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+            },
+            ResponsesStreamEvent::ReasoningSummaryTextDelta {
+                item_id: "rs_2".into(),
+                output_index: 1,
+                summary_index: 0,
+                delta: "**Second item**".into(),
+            },
+        ];
+
+        let mapped = map_response_events(events);
+        let thinking = mapped
+            .into_iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::Thinking { text, signature: _ } => Some(text),
+                _ => None,
+            })
+            .collect::<String>();
+
+        assert_eq!(thinking, "**First item**\n\n**Second item**");
     }
 
     #[test]
@@ -3839,7 +4211,7 @@ mod tests {
             raw_input: tool_arguments.clone(),
             input: LanguageModelToolUseInput::Json(tool_input),
             is_input_complete: true,
-            thought_signature: None,
+            thought_signature: Some("thought-signature".into()),
         };
         let tool_result = LanguageModelToolResult {
             tool_use_id: tool_use_id,
@@ -3870,7 +4242,11 @@ mod tests {
                         MessageContent::ToolUse(tool_use),
                     ],
                     cache: false,
-                    reasoning_details: None,
+                    reasoning_details: Some(Arc::new(json!([{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]))),
                 },
                 LanguageModelRequestMessage {
                     role: Role::Assistant,
@@ -3907,8 +4283,13 @@ mod tests {
                 {
                     "role": "assistant",
                     "content": "Searching now.",
-                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments}}],
-                    "reasoning_content": "I should search"
+                    "tool_calls": [{"id": "call-1", "type": "function", "function": {"name": "search", "arguments": tool_arguments, "thought_signature": "thought-signature"}}],
+                    "reasoning_content": "I should search",
+                    "reasoning_details": [{
+                        "id": "reasoning-1",
+                        "type": "reasoning.encrypted",
+                        "data": "encrypted"
+                    }]
                 },
                 {"role": "tool", "content": "result", "tool_call_id": "call-1"}
             ])
@@ -3953,6 +4334,7 @@ mod tests {
                     reasoning: Some("thinking".into()),
                     tool_calls: None,
                     reasoning_content: None,
+                    reasoning_details: None,
                 }),
                 finish_reason: None,
             }],
@@ -3965,6 +4347,110 @@ mod tests {
                 text: "thinking".into(),
                 signature: None,
             }]
+        );
+    }
+
+    #[test]
+    fn stream_merges_reasoning_details_and_maps_compatible_usage_and_signatures() {
+        let response_events = serde_json::from_value(json!([
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "reasoning_details": [{
+                            "id": "reasoning-1",
+                            "index": 0,
+                            "type": "reasoning.text",
+                            "text": "first "
+                        }],
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": "call-1",
+                            "function": {
+                                "name": "search",
+                                "arguments": "{",
+                                "thought_signature": "signature"
+                            }
+                        }]
+                    },
+                    "finish_reason": null
+                }],
+                "usage": null
+            },
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "reasoning_details": [{
+                            "id": "reasoning-1",
+                            "index": 0,
+                            "text": "second"
+                        }],
+                        "tool_calls": [{
+                            "index": 0,
+                            "function": {
+                                "arguments": "}"
+                            }
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": null
+            },
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 10000,
+                    "completion_tokens": 500,
+                    "total_tokens": 10500,
+                    "prompt_tokens_details": {
+                        "cached_tokens": 6000,
+                        "cache_write_tokens": 1000
+                    }
+                }
+            }
+        ]))
+        .expect("valid compatible Chat Completions events");
+        let events = map_completion_events(response_events);
+
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ReasoningDetails(details)
+                    if details[0]["text"] == "first second"
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::ToolUse(tool_use)
+                    if tool_use.is_input_complete
+                        && tool_use.thought_signature.as_deref() == Some("signature")
+            )
+        }));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 3_000,
+                    output_tokens: 500,
+                    cache_creation_input_tokens: 1_000,
+                    cache_read_input_tokens: 6_000,
+                })
+            )
+        }));
+    }
+
+    #[test]
+    fn reasoning_details_accumulator_replaces_an_incompatible_previous_shape() {
+        let mut accumulator = ReasoningDetailsAccumulator::default();
+        assert_eq!(
+            accumulator.push(json!({"summary": "provider-defined"})),
+            Some(json!({"summary": "provider-defined"}))
+        );
+        assert_eq!(
+            accumulator.push(json!([{"index": 0, "text": "reasoning"}])),
+            Some(json!([{"index": 0, "text": "reasoning"}]))
         );
     }
 
@@ -3989,9 +4475,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("list_directory".into()),
                                 arguments: Some("".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -4011,9 +4499,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("{\"path\": \"".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],
@@ -4032,9 +4522,11 @@ mod tests {
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
                                 arguments: Some("blog-scraper\"}".into()),
+                                thought_signature: None,
                             }),
                         }]),
                         reasoning_content: None,
+                        reasoning_details: None,
                     }),
                     finish_reason: None,
                 }],

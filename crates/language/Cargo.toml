@@ -32,6 +32,7 @@ test-support = [
 anyhow.workspace = true
 async-trait.workspace = true
 clock.workspace = true
+chardetng.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
 encoding_rs.workspace = true
@@ -114,5 +115,5 @@ theme_settings.workspace = true
 name = "highlight_map"
 harness = false
 
-[package.metadata.cargo-machete]
+[package.metadata.cargo-shear]
 ignored = ["tracing"]

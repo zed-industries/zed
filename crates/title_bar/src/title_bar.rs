@@ -259,15 +259,15 @@ impl Render for TitleBar {
                             .flatten()
                     });
 
-                let identity = repo_identity_path(&repo.common_dir_abs_path);
+                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
 
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
-                    identity.file_stem()
+                    identity.file_stem().and_then(|n| n.to_str())
                 } else {
-                    identity.file_name()
+                    repo.path_style.file_name(identity)
                 };
 
-                if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
+                if let Some(repo_name) = display_name {
                     let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
                     let name = if visible_worktrees_in_repo == 1 {
                         if let Ok(relative) =

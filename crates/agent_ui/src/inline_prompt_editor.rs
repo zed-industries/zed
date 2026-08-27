@@ -1160,7 +1160,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn render_markdown(&self, markdown: Entity<Markdown>, style: MarkdownStyle) -> MarkdownElement {
         MarkdownElement::new(markdown, style)
-            .image_resolver(|dest_url| crate::resolve_agent_image(dest_url, &[]))
+            .image_resolver(|dest_url, _cx| crate::resolve_agent_image(dest_url, &[]))
     }
 }
 

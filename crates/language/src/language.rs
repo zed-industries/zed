@@ -58,7 +58,7 @@ pub use language_core::{
     serialize_regex,
 };
 pub use language_registry::{
-    LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
+    LanguageLoader, LanguageName, LanguageServerStatusUpdate, LoadedLanguage, ServerHealth,
 };
 use lsp::{
     CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions, Uri,
@@ -100,11 +100,14 @@ use util::rel_path::RelPath;
 pub use available_languages::AvailableLanguage;
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
+pub use diagnostic::{Diagnostic, DiagnosticSourceKind, RelatedInformation, RelatedLocation};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
-pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
+pub use file_content::{
+    ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
+};
 pub use language_registry::{
-    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QUERY_FILENAME_PREFIXES,
+    BinaryStatus, LanguageNotFound, LanguageQueries, LanguageRegistry, QueryFile,
+    QueryFileContents, QueryFiles,
 };
 pub use lsp::{LanguageServerId, LanguageServerName};
 pub use outline::*;
@@ -911,6 +914,8 @@ pub struct LanguageScope {
 pub struct FakeLspAdapter {
     pub name: &'static str,
     pub initialization_options: Option<Value>,
+    pub additional_initialization_options: HashMap<LanguageServerName, Value>,
+    pub additional_workspace_configuration: HashMap<LanguageServerName, Value>,
     pub prettier_plugins: Vec<&'static str>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     pub disk_based_diagnostics_sources: Vec<String>,
@@ -1468,6 +1473,8 @@ impl Default for FakeLspAdapter {
             initializer: None,
             disk_based_diagnostics_progress_token: None,
             initialization_options: None,
+            additional_initialization_options: HashMap::default(),
+            additional_workspace_configuration: HashMap::default(),
             disk_based_diagnostics_sources: Vec::new(),
             prettier_plugins: Vec::new(),
             language_server_binary: LanguageServerBinary {
@@ -1543,6 +1550,29 @@ impl LspAdapter for FakeLspAdapter {
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
+    }
+
+    async fn additional_initialization_options(
+        self: Arc<Self>,
+        target_language_server_id: LanguageServerName,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        Ok(self
+            .additional_initialization_options
+            .get(&target_language_server_id)
+            .cloned())
+    }
+
+    async fn additional_workspace_configuration(
+        self: Arc<Self>,
+        target_language_server_id: LanguageServerName,
+        _: &Arc<dyn LspAdapterDelegate>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Option<Value>> {
+        Ok(self
+            .additional_workspace_configuration
+            .get(&target_language_server_id)
+            .cloned())
     }
 
     async fn label_for_completion(

@@ -38,14 +38,8 @@ wgpu.workspace = true
 # WARNING: If you change this, you must also publish a new version of zed-font-kit to crates.io
 font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", optional = true }
 
-[target.'cfg(not(target_family = "wasm"))'.dependencies]
-pollster.workspace = true
-
 [target.'cfg(target_family = "wasm")'.dependencies]
-wasm-bindgen.workspace = true
-wasm-bindgen-futures.workspace = true
 web-sys = { version = "0.3", features = ["HtmlCanvasElement"] }
-js-sys.workspace = true
 wgpu = { workspace = true, features = ["webgl"] }
 
 [dev-dependencies]

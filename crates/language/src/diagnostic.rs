@@ -2,6 +2,7 @@ use gpui::SharedString;
 use lsp::{DiagnosticSeverity, NumberOrString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::ops::Range;
 
 /// A diagnostic associated with a certain range of a buffer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +46,47 @@ pub struct Diagnostic {
     pub data: Option<Value>,
     /// Whether to underline the corresponding text range in the editor.
     pub underline: bool,
+}
+
+/// A location and message the language server attached to a diagnostic.
+///
+/// Kept as the server sent it, since flattening it into non-primary entries is lossy,
+/// and passed back to the LS when we request code actions for the diagnostic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RelatedInformation<T> {
+    /// The location the diagnostic points at.
+    pub location: RelatedLocation<T>,
+    /// The message as the language server sent it.
+    pub message: String,
+}
+
+/// Where a [`RelatedInformation`] points.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub enum RelatedLocation<T> {
+    /// A range of the buffer the diagnostic belongs to, in the same coordinates as the
+    /// diagnostic's own range, so that it follows edits the same way.
+    InBuffer(Range<T>),
+    /// A location in another file, as the language server published it. There is
+    /// nothing in this buffer to anchor it to.
+    InAnotherFile(lsp::Location),
+}
+
+impl<T: Clone> RelatedInformation<T> {
+    /// Converts the coordinates of this related information to a different type.
+    pub(crate) fn map_location<O>(
+        &self,
+        map: impl FnOnce(&Range<T>) -> Range<O>,
+    ) -> RelatedInformation<O> {
+        RelatedInformation {
+            location: match &self.location {
+                RelatedLocation::InBuffer(range) => RelatedLocation::InBuffer(map(range)),
+                RelatedLocation::InAnotherFile(location) => {
+                    RelatedLocation::InAnotherFile(location.clone())
+                }
+            },
+            message: self.message.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

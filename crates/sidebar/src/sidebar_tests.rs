@@ -561,12 +561,7 @@ fn visible_entries_as_strings(
                     ""
                 };
                 match entry {
-                    ListEntry::ProjectHeader {
-                        label,
-                        key,
-                        highlight_positions: _,
-                        ..
-                    } => {
+                    ListEntry::ProjectHeader { label, key, .. } => {
                         let icon = if sidebar.is_group_collapsed(key, cx) {
                             ">"
                         } else {
@@ -1460,8 +1455,8 @@ async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) 
         sidebar.selection = Some(0);
     });
 
-    cx.update(|window, _cx| {
-        window.blur();
+    cx.update(|window, cx| {
+        window.blur(cx);
     });
     cx.run_until_parked();
 

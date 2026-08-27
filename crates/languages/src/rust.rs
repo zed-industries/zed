@@ -269,7 +269,7 @@ impl RustLspAdapter {
             "{}-{}-{}.{}",
             SERVER_NAME,
             std::env::consts::ARCH,
-            &arch_server_name,
+            arch_server_name,
             extension
         )
     }
