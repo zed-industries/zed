@@ -1264,6 +1264,55 @@ mod git_worktrees {
     }
 
     #[gpui::test]
+    async fn test_new_worktree_paths_use_bare_repository_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let default_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "../worktrees")
+                .unwrap()
+        });
+        let repository_relative_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "worktrees")
+                .unwrap()
+        });
+
+        assert_eq!(
+            default_path,
+            PathBuf::from("/worktrees/zed/plum-warbler/zed")
+        );
+        assert_eq!(
+            repository_relative_path,
+            PathBuf::from("/zed/worktrees/plum-warbler/zed")
+        );
+    }
+
+    #[gpui::test]
     async fn test_git_worktrees_list_and_create(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());

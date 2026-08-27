@@ -12,7 +12,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::Project;
-use project::git_store::RepositoryEvent;
+use project::git_store::{RepositoryEvent, repo_identity_path};
 use ui::{
     Button, CommonAnimationExt as _, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem,
     ListItemSpacing, ListSubHeader, Tooltip, prelude::*,
@@ -89,6 +89,10 @@ impl WorktreePicker {
 
         let has_multiple_repositories = project_ref.repositories(cx).len() > 1;
         let repository = project_ref.active_repository(cx);
+        let repository_identity_path = repository.as_ref().map(|repository| {
+            let repository = repository.read(cx);
+            repo_identity_path(&repository.common_dir_abs_path, repository.path_style).to_path_buf()
+        });
 
         let current_branch_name = repository.as_ref().and_then(|repo| {
             repo.read(cx)
@@ -110,6 +114,7 @@ impl WorktreePicker {
         let delegate = WorktreePickerDelegate {
             matches: initial_matches,
             all_worktrees: Vec::new(),
+            repository_identity_path,
             project_worktree_paths,
             selected_index: 0,
             project,
@@ -289,6 +294,7 @@ enum WorktreeEntry {
 struct WorktreePickerDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Vec<GitWorktree>,
+    repository_identity_path: Option<PathBuf>,
     project_worktree_paths: HashSet<PathBuf>,
     active_worktree_paths: HashSet<PathBuf>,
     selected_index: usize,
@@ -303,6 +309,17 @@ struct WorktreePickerDelegate {
     modifiers: Modifiers,
     hovered_delete_index: Option<usize>,
     deleting_worktree_paths: HashSet<PathBuf>,
+}
+
+fn worktree_name_anchor<'a>(
+    worktrees: &'a [GitWorktree],
+    repository_identity_path: Option<&'a Path>,
+) -> Option<&'a Path> {
+    worktrees
+        .iter()
+        .find(|worktree| worktree.is_main)
+        .map(|worktree| worktree.path.as_path())
+        .or(repository_identity_path)
 }
 
 fn remove_worktree_command(path: &Path, force: bool) -> String {
@@ -407,6 +424,13 @@ impl Render for DeleteWorktreeTooltip {
 }
 
 impl WorktreePickerDelegate {
+    fn worktree_name_anchor(&self) -> Option<&Path> {
+        worktree_name_anchor(
+            &self.all_worktrees,
+            self.repository_identity_path.as_deref(),
+        )
+    }
+
     fn build_fixed_entries(&self) -> Vec<WorktreeEntry> {
         worktree_create_targets(
             self.has_multiple_repositories,
@@ -495,12 +519,7 @@ impl WorktreePickerDelegate {
             return;
         };
         let path = worktree.path.clone();
-        let display_name = worktree.directory_name(
-            self.all_worktrees
-                .iter()
-                .find(|worktree| worktree.is_main)
-                .map(|worktree| worktree.path.as_path()),
-        );
+        let display_name = worktree.directory_name(self.worktree_name_anchor());
         let workspace = self.workspace.clone();
 
         self.deleting_worktree_paths.insert(path.clone());
@@ -784,13 +803,9 @@ impl PickerDelegate for WorktreePickerDelegate {
         let repo_worktrees = self.all_repo_worktrees().to_vec();
 
         let normalized_query = query.replace(' ', "-");
-        let main_worktree_path = self
-            .all_worktrees
-            .iter()
-            .find(|wt| wt.is_main)
-            .map(|wt| wt.path.clone());
+        let worktree_name_anchor = self.worktree_name_anchor().map(Path::to_path_buf);
         let has_named_worktree = self.all_worktrees.iter().any(|worktree| {
-            worktree.directory_name(main_worktree_path.as_deref()) == normalized_query
+            worktree.directory_name(worktree_name_anchor.as_deref()) == normalized_query
         });
         let create_named_disabled_reason: Option<String> = if self.has_multiple_repositories {
             Some("Cannot create a named worktree in a project with multiple repositories".into())
@@ -808,16 +823,11 @@ impl PickerDelegate for WorktreePickerDelegate {
             let mut matches = self.build_fixed_entries();
 
             if !repo_worktrees.is_empty() {
-                let main_worktree_path = repo_worktrees
-                    .iter()
-                    .find(|wt| wt.is_main)
-                    .map(|wt| wt.path.clone());
-
                 let project_paths = &self.project_worktree_paths;
 
                 let sort_by_name = |a: &GitWorktree, b: &GitWorktree| {
-                    a.directory_name(main_worktree_path.as_deref())
-                        .cmp(&b.directory_name(main_worktree_path.as_deref()))
+                    a.directory_name(worktree_name_anchor.as_deref())
+                        .cmp(&b.directory_name(worktree_name_anchor.as_deref()))
                 };
 
                 let (mut open_here, mut others): (Vec<_>, Vec<_>) = repo_worktrees
@@ -862,17 +872,13 @@ impl PickerDelegate for WorktreePickerDelegate {
             return Task::ready(());
         }
 
-        let main_worktree_path = repo_worktrees
-            .iter()
-            .find(|wt| wt.is_main)
-            .map(|wt| wt.path.clone());
         let candidates: Vec<_> = repo_worktrees
             .iter()
             .enumerate()
             .map(|(ix, worktree)| {
                 StringMatchCandidate::new(
                     ix,
-                    &worktree.directory_name(main_worktree_path.as_deref()),
+                    &worktree.directory_name(worktree_name_anchor.as_deref()),
                 )
             })
             .collect();
@@ -999,18 +1005,14 @@ impl PickerDelegate for WorktreePickerDelegate {
                             cx,
                         );
                     } else {
-                        let main_worktree_path = self
-                            .all_worktrees
-                            .iter()
-                            .find(|wt| wt.is_main)
-                            .map(|wt| wt.path.as_path());
                         if let Some(workspace) = self.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
                                 crate::worktree_service::handle_switch_worktree(
                                     workspace,
                                     &SwitchWorktree {
                                         path: worktree.path.clone(),
-                                        display_name: worktree.directory_name(main_worktree_path),
+                                        display_name: worktree
+                                            .directory_name(self.worktree_name_anchor()),
                                     },
                                     window,
                                     self.focused_dock,
@@ -1120,12 +1122,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 worktree,
                 positions,
             } => {
-                let main_worktree_path = self
-                    .all_worktrees
-                    .iter()
-                    .find(|wt| wt.is_main)
-                    .map(|wt| wt.path.as_path());
-                let display_name = worktree.directory_name(main_worktree_path);
+                let display_name = worktree.directory_name(self.worktree_name_anchor());
                 let first_line = display_name.lines().next().unwrap_or(&display_name);
                 let positions: Vec<_> = positions
                     .iter()
@@ -1682,6 +1679,21 @@ mod tests {
             ProjectSettings::register(cx);
             WorktreeSettings::register(cx);
         });
+    }
+
+    #[test]
+    fn test_bare_repository_worktree_uses_generated_name() {
+        let worktree = GitWorktree {
+            path: PathBuf::from("/worktrees/zed/plum-warbler/zed"),
+            ref_name: None,
+            sha: "8166e3d".into(),
+            is_main: false,
+            is_bare: false,
+        };
+        let worktrees = [worktree.clone()];
+        let name_anchor = worktree_name_anchor(&worktrees, Some(Path::new("/repos/zed")));
+
+        assert_eq!(worktree.directory_name(name_anchor), "plum-warbler");
     }
 
     async fn init_worktree_picker_test(

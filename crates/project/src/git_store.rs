@@ -9057,10 +9057,10 @@ impl Repository {
         let repository_anchor = self
             .snapshot
             .main_worktree_abs_path()
-            .unwrap_or(self.common_dir_abs_path.as_ref());
-        let project_name = repository_anchor
-            .file_name()
-            .and_then(|name| name.to_str())
+            .unwrap_or_else(|| repo_identity_path(&self.common_dir_abs_path, self.path_style));
+        let project_name = self
+            .path_style
+            .file_name(repository_anchor)
             .ok_or_else(|| anyhow!("git repo must have a directory name"))?;
         let directory = worktrees_directory_for_repo(
             repository_anchor,

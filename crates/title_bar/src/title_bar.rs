@@ -245,11 +245,13 @@ impl Render for TitleBar {
                 .map(|name| SharedString::from(name.to_string()));
             if let Some(repo) = &repository {
                 let repo = repo.read(cx);
+                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
                 linked_worktree_name = repo
                     .main_worktree_abs_path()
-                    .and_then(|main_worktree_path| {
+                    .or_else(|| repo.is_linked_worktree().then_some(identity))
+                    .and_then(|name_anchor_path| {
                         linked_worktree_short_name(
-                            main_worktree_path,
+                            name_anchor_path,
                             repo.work_directory_abs_path.as_ref(),
                         )
                     })
@@ -258,8 +260,6 @@ impl Render for TitleBar {
                             .then_some(project_name.clone())
                             .flatten()
                     });
-
-                let identity = repo_identity_path(&repo.common_dir_abs_path, repo.path_style);
 
                 let display_name = if identity.extension() == Some(std::ffi::OsStr::new("git")) {
                     identity.file_stem().and_then(|n| n.to_str())
