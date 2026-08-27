@@ -449,7 +449,13 @@ impl LspStore {
         };
 
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_server_capable_for_proto_request(server_id, can_resolve_link) {
+            if !self.check_server_capable_for_proto_request(
+                buffer,
+                server_id,
+                "textDocument/documentLink",
+                can_resolve_link,
+                cx,
+            ) {
                 return Task::ready(None);
             }
             let request = proto::ResolveDocumentLink {

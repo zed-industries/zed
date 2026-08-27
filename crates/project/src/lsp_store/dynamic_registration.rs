@@ -7,7 +7,7 @@
 //! the active registration is unregistered.
 
 use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexMap};
 use gpui::{Context, SharedString};
 use lsp::{
     DiagnosticServerCapabilities, LanguageServer, LanguageServerId, OneOf,
@@ -61,7 +61,7 @@ pub(super) struct DynamicTextDocumentRegistration {
 }
 
 pub(super) type TextDocumentRegistrations =
-    HashMap<String, HashMap<String, DynamicTextDocumentRegistration>>;
+    HashMap<String, IndexMap<String, DynamicTextDocumentRegistration>>;
 
 #[derive(Default, Debug)]
 pub(super) struct DynamicRegistrations {
@@ -208,7 +208,9 @@ impl LspStore {
             && dynamic_registrations
                 .text_documents
                 .get_mut(&unregistration.method)
-                .is_some_and(|registrations| registrations.remove(&unregistration.id).is_some());
+                .is_some_and(|registrations| {
+                    registrations.shift_remove(&unregistration.id).is_some()
+                });
         if !removed_active || restored.as_ref() == Some(&removed_options) {
             if registration_removed {
                 self.notify_server_capabilities_updated(server, cx);

@@ -397,9 +397,13 @@ impl LspStore {
         let action = cached.clone();
 
         if self.upstream_client().is_some() {
-            if !self
-                .check_server_capable_for_proto_request(server_id, GetCodeLens::can_resolve_lens)
-            {
+            if !self.check_server_capable_for_proto_request(
+                buffer,
+                server_id,
+                "textDocument/codeLens",
+                GetCodeLens::can_resolve_lens,
+                cx,
+            ) {
                 return Task::ready(None).shared();
             }
             let resolve = self.resolve_code_action(buffer, action, cx);

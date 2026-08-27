@@ -529,6 +529,32 @@ impl LspStore {
             }
         }
 
+        if let Some(initial_capabilities) = self.lsp_server_initial_capabilities.get(&server_id) {
+            let context = self.remote_document_selector_context(server_id, language);
+            if let Some(registrations) = self
+                .lsp_server_text_document_registrations
+                .get(&server_id)
+                .and_then(|registrations| registrations.get("textDocument/semanticTokens"))
+            {
+                for registration in registrations.values().rev() {
+                    let matches = context.as_ref().is_none_or(|context| {
+                        document_selector_matches(registration.document_selector.as_ref(), context)
+                    });
+                    if matches
+                        && let Some(provider) = registration
+                            .server_capabilities
+                            .semantic_tokens_provider
+                            .as_ref()
+                    {
+                        return Some(semantic_tokens_provider_legend(provider));
+                    }
+                }
+            }
+
+            let provider = initial_capabilities.semantic_tokens_provider.as_ref()?;
+            return Some(semantic_tokens_provider_legend(provider));
+        }
+
         let tokens_provider = self
             .lsp_server_capabilities
             .get(&server_id)?

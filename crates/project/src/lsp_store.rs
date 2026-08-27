@@ -4310,6 +4310,12 @@ struct SyncedServerCapabilities {
     #[serde(flatten)]
     server_capabilities: lsp::ServerCapabilities,
     #[serde(
+        rename = "zedInitialServerCapabilities",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    initial_server_capabilities: Option<lsp::ServerCapabilities>,
+    #[serde(
         rename = "zedTextDocumentRegistrations",
         default,
         skip_serializing_if = "Option::is_none"
@@ -4356,6 +4362,7 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
+    lsp_server_initial_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_server_text_document_registrations:
         HashMap<LanguageServerId, dynamic_registration::TextDocumentRegistrations>,
     semantic_token_config: SemanticTokenConfig,
@@ -4729,6 +4736,7 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
+            lsp_server_initial_capabilities: HashMap::default(),
             lsp_server_text_document_registrations: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             lsp_data: HashMap::default(),
@@ -4792,6 +4800,7 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
+            lsp_server_initial_capabilities: HashMap::default(),
             lsp_server_text_document_registrations: HashMap::default(),
             semantic_token_config: SemanticTokenConfig::new(cx),
             next_hint_id: Arc::default(),
@@ -5515,23 +5524,45 @@ impl LspStore {
             .collect()
     }
 
-    fn notify_server_capabilities_updated(&self, server: &LanguageServer, cx: &mut Context<Self>) {
-        let text_document_registrations = self.as_local().and_then(|local| {
-            let registrations = local
-                .language_server_dynamic_registrations
-                .get(&server.server_id())?
-                .text_documents
-                .iter()
-                .filter(|(_, registrations)| !registrations.is_empty())
-                .map(|(method, registrations)| (method.clone(), registrations.clone()))
-                .collect::<HashMap<_, _>>();
-            (!registrations.is_empty()).then_some(registrations)
-        });
-        let synced_capabilities = SyncedServerCapabilities {
+    fn synced_server_capabilities(&self, server: &LanguageServer) -> SyncedServerCapabilities {
+        let (initial_server_capabilities, text_document_registrations) = self
+            .as_local()
+            .map(|local| {
+                let initial_server_capabilities = local
+                    .initial_server_capabilities
+                    .get(&server.server_id())
+                    .cloned();
+                let text_document_registrations = local
+                    .language_server_dynamic_registrations
+                    .get(&server.server_id())
+                    .map(|registrations| {
+                        registrations
+                            .text_documents
+                            .iter()
+                            .filter(|(_, registrations)| !registrations.is_empty())
+                            .map(|(method, registrations)| (method.clone(), registrations.clone()))
+                            .collect::<dynamic_registration::TextDocumentRegistrations>()
+                    })
+                    .filter(|registrations| !registrations.is_empty());
+                (initial_server_capabilities, text_document_registrations)
+            })
+            .unwrap_or_default();
+        SyncedServerCapabilities {
             server_capabilities: server.capabilities(),
+            initial_server_capabilities,
             text_document_registrations,
-        };
-        if let Some(capabilities) = serde_json::to_string(&synced_capabilities).ok() {
+        }
+    }
+
+    fn serialize_synced_server_capabilities(
+        &self,
+        server: &LanguageServer,
+    ) -> serde_json::Result<String> {
+        serde_json::to_string(&self.synced_server_capabilities(server))
+    }
+
+    fn notify_server_capabilities_updated(&self, server: &LanguageServer, cx: &mut Context<Self>) {
+        if let Some(capabilities) = self.serialize_synced_server_capabilities(server).log_err() {
             cx.emit(LspStoreEvent::LanguageServerUpdate {
                 language_server_id: server.server_id(),
                 name: Some(server.name()),
@@ -5569,6 +5600,15 @@ impl LspStore {
         {
             self.lsp_server_capabilities
                 .insert(server_id, capabilities.server_capabilities);
+            match capabilities.initial_server_capabilities {
+                Some(capabilities) => {
+                    self.lsp_server_initial_capabilities
+                        .insert(server_id, capabilities);
+                }
+                None => {
+                    self.lsp_server_initial_capabilities.remove(&server_id);
+                }
+            }
             match capabilities.text_document_registrations {
                 Some(registrations) => {
                     self.lsp_server_text_document_registrations
@@ -5582,14 +5622,89 @@ impl LspStore {
         }
     }
 
-    fn check_server_capable_for_proto_request(
+    fn remote_document_selector_context(
         &self,
         server_id: LanguageServerId,
-        check: impl FnOnce(&lsp::ServerCapabilities) -> bool,
+        language: Option<&LanguageName>,
+    ) -> Option<DocumentSelectorContext> {
+        let language = language?;
+        let server_name = &self.language_server_statuses.get(&server_id)?.name;
+        let language_id = self
+            .languages
+            .lsp_adapters(language)
+            .iter()
+            .find(|adapter| &adapter.name() == server_name)
+            .map(|adapter| adapter.language_id(language))
+            .unwrap_or_else(|| language.lsp_id());
+        Some(DocumentSelectorContext {
+            language_id,
+            scheme: "file",
+        })
+    }
+
+    fn remote_text_document_capability_matches(
+        &self,
+        server_id: LanguageServerId,
+        buffer: &Entity<Buffer>,
+        method: &str,
+        mut check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
+        cx: &App,
     ) -> bool {
-        self.lsp_server_capabilities
+        let Some(initial_capabilities) = self.lsp_server_initial_capabilities.get(&server_id)
+        else {
+            return self.lsp_server_capabilities.get(&server_id).is_some_and(
+                |server_capabilities| {
+                    check(AdapterServerCapabilities {
+                        server_capabilities,
+                        code_action_kinds: None,
+                    })
+                },
+            );
+        };
+
+        if check(AdapterServerCapabilities {
+            server_capabilities: initial_capabilities,
+            code_action_kinds: None,
+        }) {
+            return true;
+        }
+
+        let registration_method = text_document_registration_method(method);
+        let Some(registrations) = self
+            .lsp_server_text_document_registrations
             .get(&server_id)
-            .is_some_and(check)
+            .and_then(|registrations| registrations.get(registration_method))
+        else {
+            return false;
+        };
+        let language = buffer.read(cx).language().map(|language| language.name());
+        let context = self.remote_document_selector_context(server_id, language.as_ref());
+        registrations.values().any(|registration| {
+            context.as_ref().is_none_or(|context| {
+                document_selector_matches(registration.document_selector.as_ref(), context)
+            }) && check(AdapterServerCapabilities {
+                server_capabilities: &registration.server_capabilities,
+                code_action_kinds: None,
+            })
+        })
+    }
+
+    fn check_server_capable_for_proto_request(
+        &self,
+        buffer: &Entity<Buffer>,
+        server_id: LanguageServerId,
+        method: &str,
+        check: impl FnMut(&lsp::ServerCapabilities) -> bool,
+        cx: &App,
+    ) -> bool {
+        let mut check = check;
+        self.remote_text_document_capability_matches(
+            server_id,
+            buffer,
+            method,
+            |capabilities| check(capabilities.server_capabilities),
+            cx,
+        )
     }
 
     fn check_if_any_relevant_text_document_server_matches<F>(
@@ -5622,8 +5737,6 @@ impl LspStore {
                 });
         }
 
-        let language_name = buffer.read(cx).language().map(|language| language.name());
-        let registration_method = text_document_registration_method(method);
         self.relevant_server_ids_for_capability_check(buffer, cx)
             .into_iter()
             .filter_map(|server_id| {
@@ -5633,52 +5746,13 @@ impl LspStore {
                 ))
             })
             .any(|(server_id, server_name)| {
-                let aggregate_matches =
-                    self.lsp_server_capabilities
-                        .get(&server_id)
-                        .is_some_and(|capabilities| {
-                            check(
-                                server_name,
-                                AdapterServerCapabilities {
-                                    server_capabilities: capabilities,
-                                    code_action_kinds: None,
-                                },
-                            )
-                        });
-                if aggregate_matches {
-                    return true;
-                }
-                let Some(registrations) = self
-                    .lsp_server_text_document_registrations
-                    .get(&server_id)
-                    .and_then(|registrations| registrations.get(registration_method))
-                else {
-                    return false;
-                };
-                let context = language_name.as_ref().map(|language| {
-                    let language_id = self
-                        .languages
-                        .lsp_adapters(language)
-                        .iter()
-                        .find(|adapter| &adapter.name() == server_name)
-                        .map(|adapter| adapter.language_id(language))
-                        .unwrap_or_else(|| language.lsp_id());
-                    DocumentSelectorContext {
-                        language_id,
-                        scheme: "file",
-                    }
-                });
-                registrations.values().any(|registration| {
-                    context.as_ref().is_none_or(|context| {
-                        document_selector_matches(registration.document_selector.as_ref(), context)
-                    }) && check(
-                        server_name,
-                        AdapterServerCapabilities {
-                            server_capabilities: &registration.server_capabilities,
-                            code_action_kinds: None,
-                        },
-                    )
-                })
+                self.remote_text_document_capability_matches(
+                    server_id,
+                    buffer,
+                    method,
+                    |capabilities| check(server_name, capabilities),
+                    cx,
+                )
             })
     }
 
@@ -5738,11 +5812,12 @@ impl LspStore {
     fn all_capable_for_proto_request<F>(
         &self,
         buffer: &Entity<Buffer>,
+        method: &str,
         mut check: F,
         cx: &App,
     ) -> Vec<(lsp::LanguageServerId, lsp::LanguageServerName)>
     where
-        F: FnMut(&lsp::LanguageServerName, &lsp::ServerCapabilities) -> bool,
+        F: FnMut(&lsp::LanguageServerName, AdapterServerCapabilities<'_>) -> bool,
     {
         self.relevant_server_ids_for_capability_check(buffer, cx)
             .into_iter()
@@ -5750,11 +5825,18 @@ impl LspStore {
                 Some((
                     server_id,
                     &self.language_server_statuses.get(&server_id)?.name,
-                    self.lsp_server_capabilities.get(&server_id)?,
                 ))
             })
-            .filter(|(_, server_name, capabilities)| check(server_name, capabilities))
-            .map(|(server_id, server_name, _)| (server_id, server_name.clone()))
+            .filter(|(server_id, server_name)| {
+                self.remote_text_document_capability_matches(
+                    *server_id,
+                    buffer,
+                    method,
+                    |capabilities| check(server_name, capabilities),
+                    cx,
+                )
+            })
+            .map(|(server_id, server_name)| (server_id, server_name.clone()))
             .collect()
     }
 
@@ -7345,8 +7427,12 @@ impl LspStore {
             let scope = snapshot.language_scope_at(offset);
             let capable_lsps = self.all_capable_for_proto_request(
                 buffer,
+                "textDocument/completion",
                 |server_name, capabilities| {
-                    capabilities.completion_provider.is_some()
+                    capabilities
+                        .server_capabilities
+                        .completion_provider
+                        .is_some()
                         && scope
                             .as_ref()
                             .map(|scope| scope.language_allowed(server_name))
@@ -7540,8 +7626,11 @@ impl LspStore {
             })
             .filter(|&server_id| {
                 self.check_server_capable_for_proto_request(
+                    &buffer,
                     server_id,
+                    "textDocument/completion",
                     GetCompletions::can_resolve_completions,
+                    cx,
                 )
             })
             .collect::<HashSet<_>>();
@@ -9420,7 +9509,10 @@ impl LspStore {
         self.downstream_client = Some((downstream_client.clone(), project_id));
 
         for (server_id, status) in &self.language_server_statuses {
-            if let Some(server) = self.language_server_for_id(*server_id) {
+            if let Some(server) = self.language_server_for_id(*server_id)
+                && let Some(capabilities) =
+                    self.serialize_synced_server_capabilities(&server).log_err()
+            {
                 downstream_client
                     .send(proto::StartLanguageServer {
                         project_id,
@@ -9433,8 +9525,7 @@ impl LspStore {
                                 .as_ref()
                                 .map(|name| name.to_proto()),
                         }),
-                        capabilities: serde_json::to_string(&server.capabilities())
-                            .expect("serializing server LSP capabilities"),
+                        capabilities,
                     })
                     .log_err();
             }
@@ -9968,7 +10059,19 @@ impl LspStore {
         R: LspCommand,
     {
         let Some(local) = self.as_local() else {
-            return self.relevant_server_ids_for_capability_check(buffer, cx);
+            return self
+                .relevant_server_ids_for_capability_check(buffer, cx)
+                .into_iter()
+                .filter(|server_id| {
+                    self.remote_text_document_capability_matches(
+                        *server_id,
+                        buffer,
+                        <R::LspRequest as lsp::request::Request>::METHOD,
+                        |capabilities| request.check_capabilities(capabilities),
+                        cx,
+                    )
+                })
+                .collect();
         };
         let buffer_id = buffer.read(cx).remote_id();
         buffer.update(cx, |buffer, cx| {
@@ -12882,7 +12985,11 @@ impl LspStore {
             Some(key.worktree_id),
         ));
 
-        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref()
+            && let Some(capabilities) = self
+                .serialize_synced_server_capabilities(&language_server)
+                .log_err()
+        {
             downstream_client
                 .send(proto::StartLanguageServer {
                     project_id: *project_id,
@@ -12892,8 +12999,7 @@ impl LspStore {
                         worktree_id: Some(key.worktree_id.to_proto()),
                         language_name: Some(language_name.to_proto()),
                     }),
-                    capabilities: serde_json::to_string(&server_capabilities)
-                        .expect("serializing server LSP capabilities"),
+                    capabilities,
                 })
                 .log_err();
         }
@@ -13519,6 +13625,7 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
+        self.lsp_server_initial_capabilities.remove(&for_server);
         self.lsp_server_text_document_registrations
             .remove(&for_server);
         self.semantic_token_config.remove_server_data(for_server);
@@ -15927,7 +16034,7 @@ mod tests {
         let registrations: dynamic_registration::TextDocumentRegistrations =
             HashMap::from_iter([(
                 "textDocument/completion".to_string(),
-                HashMap::from_iter([(
+                collections::IndexMap::from_iter([(
                     "file-completion".to_string(),
                     dynamic_registration::DynamicTextDocumentRegistration {
                         document_selector: Some(vec![lsp::DocumentFilter {
@@ -15949,9 +16056,14 @@ mod tests {
             hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
             ..lsp::ServerCapabilities::default()
         };
+        let initial_server_capabilities = lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        };
 
         let envelope = serde_json::to_string(&SyncedServerCapabilities {
             server_capabilities: server_capabilities.clone(),
+            initial_server_capabilities: Some(initial_server_capabilities.clone()),
             text_document_registrations: Some(registrations.clone()),
         })
         .unwrap();
@@ -15963,6 +16075,10 @@ mod tests {
         );
         let parsed = serde_json::from_str::<SyncedServerCapabilities>(&envelope).unwrap();
         assert_eq!(parsed.server_capabilities, server_capabilities);
+        assert_eq!(
+            parsed.initial_server_capabilities,
+            Some(initial_server_capabilities)
+        );
         assert_eq!(parsed.text_document_registrations, Some(registrations));
 
         let plain_capabilities = serde_json::to_string(&server_capabilities).unwrap();
@@ -15972,6 +16088,7 @@ mod tests {
             parsed_plain.server_capabilities, server_capabilities,
             "payloads from peers without the extra field should parse as an envelope",
         );
+        assert_eq!(parsed_plain.initial_server_capabilities, None);
         assert_eq!(parsed_plain.text_document_registrations, None);
     }
 }
