@@ -1669,7 +1669,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to copy permalink: {err}");
+                let message = format!("Failed to copy permalink to line: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -1710,7 +1710,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to open permalink: {err}");
+                let message = format!("Failed to open permalink to line: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
