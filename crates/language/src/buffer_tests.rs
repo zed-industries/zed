@@ -1666,7 +1666,7 @@ fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &m
 }
 
 #[gpui::test]
-fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut App) {
+async fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut TestAppContext) {
     let text = indoc! {r#"
         CLAY(CLAY_ID("MenuContainer"),
              CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
@@ -1693,7 +1693,10 @@ fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut App) {
         .unwrap(),
     );
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
-    let snapshot = buffer.read(cx).snapshot();
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     assert_has_syntax_errors(&snapshot);
 
     let mut matches = snapshot
