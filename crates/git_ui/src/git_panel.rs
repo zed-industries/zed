@@ -712,6 +712,7 @@ enum GitListEntry {
 
 /// Stable key used to re-resolve a marked entry's index across list rebuilds,
 /// since raw indices only stay valid for the render pass that produced them.
+#[derive(Clone)]
 enum MarkedEntryKey {
     File(RepoPath, Option<Section>),
     Directory(TreeKey),
@@ -2463,7 +2464,10 @@ impl GitPanel {
         };
         let workspace = self.workspace.clone();
 
-        let created_count = entries.iter().filter(|entry| entry.status.is_created()).count();
+        let created_count = entries
+            .iter()
+            .filter(|entry| entry.status.is_created())
+            .count();
         let mut details = entries
             .iter()
             .filter_map(|entry| entry.repo_path.as_ref().file_name())
@@ -2507,39 +2511,7 @@ impl GitPanel {
                 })?;
             }
 
-            if !created_entries.is_empty() {
-                let tasks = workspace.update(cx, |workspace, cx| {
-                    created_entries
-                        .iter()
-                        .filter_map(|entry| {
-                            workspace.project().update(cx, |project, cx| {
-                                let project_path = active_repo
-                                    .read(cx)
-                                    .repo_path_to_project_path(&entry.repo_path, cx)?;
-                                project.trash_file(project_path, cx)
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })?;
-                let total_count = tasks.len();
-                let to_unstage = created_entries
-                    .into_iter()
-                    .filter(|entry| !entry.status.staging().is_fully_unstaged())
-                    .collect();
-                this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
-
-                let results = futures::future::join_all(tasks).await;
-                let errors: Vec<anyhow::Error> =
-                    results.into_iter().filter_map(|r| r.err()).collect();
-                let failed_count = errors.len();
-                if let Some(first_error) = errors.into_iter().next() {
-                    return Err(anyhow::anyhow!(
-                        "Failed to trash {failed_count} of {total_count} files: {first_error:#}"
-                    ));
-                }
-            }
-
-            Ok(())
+            GitPanel::trash_created_entries(this, workspace, active_repo, created_entries, cx).await
         })
         .detach_and_prompt_err("Failed to discard changes", window, cx, |e, _, _| {
             Some(format!("{e}"))
@@ -2667,6 +2639,51 @@ impl GitPanel {
             }
             Some(())
         });
+    }
+
+    /// Trashes each of `created_entries` (unstaging any that are staged first)
+    /// and reports how many, if any, failed. Shared by `revert_selected` and
+    /// `clean_all`, which both need to trash a batch of untracked files.
+    async fn trash_created_entries(
+        this: WeakEntity<Self>,
+        workspace: WeakEntity<Workspace>,
+        active_repo: Entity<Repository>,
+        created_entries: Vec<GitStatusEntry>,
+        cx: &mut AsyncWindowContext,
+    ) -> anyhow::Result<()> {
+        if created_entries.is_empty() {
+            return Ok(());
+        }
+
+        let tasks = workspace.update(cx, |workspace, cx| {
+            created_entries
+                .iter()
+                .filter_map(|entry| {
+                    workspace.project().update(cx, |project, cx| {
+                        let project_path = active_repo
+                            .read(cx)
+                            .repo_path_to_project_path(&entry.repo_path, cx)?;
+                        project.trash_file(project_path, cx)
+                    })
+                })
+                .collect::<Vec<_>>()
+        })?;
+        let total_count = tasks.len();
+        let to_unstage = created_entries
+            .into_iter()
+            .filter(|entry| !entry.status.staging().is_fully_unstaged())
+            .collect();
+        this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
+
+        let results = futures::future::join_all(tasks).await;
+        let errors: Vec<anyhow::Error> = results.into_iter().filter_map(|r| r.err()).collect();
+        let failed_count = errors.len();
+        if let Some(first_error) = errors.into_iter().next() {
+            return Err(anyhow::anyhow!(
+                "Failed to trash {failed_count} of {total_count} files: {first_error:#}"
+            ));
+        }
+        Ok(())
     }
 
     fn perform_checkout(
@@ -2833,35 +2850,7 @@ impl GitPanel {
                 TrashCancel::Trash => {}
                 TrashCancel::Cancel => return Ok(()),
             }
-            let tasks = workspace.update(cx, |workspace, cx| {
-                to_delete
-                    .iter()
-                    .filter_map(|entry| {
-                        workspace.project().update(cx, |project, cx| {
-                            let project_path = active_repo
-                                .read(cx)
-                                .repo_path_to_project_path(&entry.repo_path, cx)?;
-                            project.trash_file(project_path, cx)
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })?;
-            let total_count = tasks.len();
-            let to_unstage = to_delete
-                .into_iter()
-                .filter(|entry| !entry.status.staging().is_fully_unstaged())
-                .collect();
-            this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
-
-            let results = futures::future::join_all(tasks).await;
-            let errors: Vec<anyhow::Error> = results.into_iter().filter_map(|r| r.err()).collect();
-            let failed_count = errors.len();
-            if let Some(first_error) = errors.into_iter().next() {
-                return Err(anyhow::anyhow!(
-                    "Failed to trash {failed_count} of {total_count} files: {first_error:#}"
-                ));
-            }
-            Ok(())
+            GitPanel::trash_created_entries(this, workspace, active_repo, to_delete, cx).await
         })
         .detach_and_prompt_err("Failed to trash files", window, cx, |e, _, _| {
             Some(format!("{e}"))
@@ -3092,12 +3081,26 @@ impl GitPanel {
             self.toggle_staged_for_entry(entry, intent, window, cx);
             return;
         }
+        let entries = self.effective_status_entries();
+        self.stage_batch(entries, intent, cx);
+    }
+
+    /// Excludes already-staged conflicted entries (staging those needs an explicit,
+    /// single-entry action since it can't be undone by toggling), resolves whether
+    /// the batch should stage or unstage from `intent`, and applies it. Shared by
+    /// the checkbox (`toggle_staged_for_entry_or_marked`) and keyboard/menu
+    /// (`toggle_staged_for_selected`) bulk-staging paths so they can't diverge.
+    fn stage_batch(
+        &mut self,
+        entries: Vec<GitStatusEntry>,
+        intent: StageIntent,
+        cx: &mut Context<Self>,
+    ) {
         let Some(active_repository) = self.active_repository.clone() else {
             return;
         };
         let repo = active_repository.read(cx);
-        let entries = self
-            .effective_status_entries()
+        let entries = entries
             .into_iter()
             .filter(|entry| {
                 !(entry.status.is_conflicted()
@@ -3297,22 +3300,8 @@ impl GitPanel {
             return;
         }
 
-        let Some(active_repository) = self.active_repository.clone() else {
-            return;
-        };
         let intent = self.stage_intent_for_entry_index(selected_index);
-        let repo = active_repository.read(cx);
-        let entries = entries
-            .into_iter()
-            .filter(|entry| {
-                !(entry.status.is_conflicted()
-                    && GitPanel::stage_status_for_entry(entry, repo) == StageStatus::Staged)
-            })
-            .collect::<Vec<_>>();
-        let stage = entries
-            .iter()
-            .any(|entry| intent.resolve_with(|| GitPanel::stage_status_for_entry(entry, repo)));
-        self.change_file_stage(stage, entries, cx);
+        self.stage_batch(entries, intent, cx);
     }
 
     fn stage_range(&mut self, _: &git::StageRange, _window: &mut Window, cx: &mut Context<Self>) {
@@ -5130,31 +5119,46 @@ impl GitPanel {
         });
     }
 
+    /// Stable key for the entry at `index`, used to re-resolve a selected or
+    /// marked row's position after a rebuild reorders raw indices.
+    fn marked_entry_key(&self, index: usize) -> Option<MarkedEntryKey> {
+        let entry = self.entries.get(index)?;
+        if let Some(status_entry) = entry.status_entry() {
+            Some(MarkedEntryKey::File(
+                status_entry.repo_path.clone(),
+                self.section_for_entry_index(index),
+            ))
+        } else {
+            entry
+                .directory_entry()
+                .map(|directory| MarkedEntryKey::Directory(directory.key.clone()))
+        }
+    }
+
+    /// Resolves a `MarkedEntryKey` captured before a rebuild back to its new index.
+    fn resolve_marked_entry_key(&self, key: &MarkedEntryKey) -> Option<usize> {
+        match key.clone() {
+            MarkedEntryKey::File(path, section) => section
+                .and_then(|section| self.entry_by_path_in_section(&path, section))
+                .or_else(|| self.entry_by_path(&path)),
+            MarkedEntryKey::Directory(key) => self.directory_entry_index(&key),
+        }
+    }
+
     fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path_style = self.project.read(cx).path_style(cx);
-        let selected_change = self.selected_entry.and_then(|index| {
-            let entry = self.entries.get(index)?.status_entry()?;
-            Some((entry.repo_path.clone(), self.section_for_entry_index(index)))
-        });
         // Raw indices only stay valid for the render pass that produced them, so
-        // marks are captured by the same stable key used to re-resolve `selected_entry`
-        // (path+section for files, `TreeKey` for directories) and remapped after rebuild.
+        // both `selected_entry` and `marked_entries` are captured by the same stable
+        // key (path+section for files, `TreeKey` for directories) and remapped after
+        // rebuild. A selected directory must be captured the same way as a marked one,
+        // otherwise it keeps a stale index across a rebuild that reorders rows.
+        let selected_change = self
+            .selected_entry
+            .and_then(|index| self.marked_entry_key(index));
         let marked_change = self
             .marked_entries
             .iter()
-            .filter_map(|&index| {
-                let entry = self.entries.get(index)?;
-                if let Some(status_entry) = entry.status_entry() {
-                    Some(MarkedEntryKey::File(
-                        status_entry.repo_path.clone(),
-                        self.section_for_entry_index(index),
-                    ))
-                } else {
-                    entry
-                        .directory_entry()
-                        .map(|directory| MarkedEntryKey::Directory(directory.key.clone()))
-                }
-            })
+            .filter_map(|&index| self.marked_entry_key(index))
             .collect::<Vec<_>>();
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
@@ -5502,19 +5506,12 @@ impl GitPanel {
             self.bulk_staging = bulk_staging;
         }
 
-        if let Some((path, section)) = selected_change {
-            self.selected_entry = section
-                .and_then(|section| self.entry_by_path_in_section(&path, section))
-                .or_else(|| self.entry_by_path(&path));
+        if let Some(key) = selected_change {
+            self.selected_entry = self.resolve_marked_entry_key(&key);
         }
         self.marked_entries = marked_change
-            .into_iter()
-            .filter_map(|key| match key {
-                MarkedEntryKey::File(path, section) => section
-                    .and_then(|section| self.entry_by_path_in_section(&path, section))
-                    .or_else(|| self.entry_by_path(&path)),
-                MarkedEntryKey::Directory(key) => self.directory_entry_index(&key),
-            })
+            .iter()
+            .filter_map(|key| self.resolve_marked_entry_key(key))
             .collect();
         self.select_first_entry_if_none(window, cx);
         self.select_last_entry_if_out_of_bounds(window, cx);
@@ -10480,6 +10477,87 @@ mod tests {
                 marked_paths,
                 std::collections::HashSet::from([repo_path("a.rs"), repo_path("c.rs")])
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_selected_directory_remaps_across_rebuild(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.tree_view = Some(true);
+                    // Group by staging state so that fully staging "aaa/a.rs" moves
+                    // its whole directory into a separate Staged section, actually
+                    // reordering `self.entries` rather than just relabeling rows.
+                    git_panel.group_by = Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "aaa": {
+                    "a.rs": "a",
+                },
+                "zzz": {
+                    "b.rs": "b",
+                },
+            }),
+            &[
+                ("aaa/a.rs", StatusCode::Modified),
+                ("zzz/b.rs", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        let dir_ix = panel
+            .read_with(&cx, |panel, _| {
+                panel.entries.iter().position(|entry| {
+                    matches!(entry, GitListEntry::Directory(dir) if dir.key.path == repo_path("zzz"))
+                })
+            })
+            .unwrap();
+
+        // Select the "zzz" directory without marking it, matching the
+        // checkbox/keyboard selection path (marks are a separate, opt-in set).
+        panel.update(&mut cx, |panel, _| {
+            panel.selected_entry = Some(dir_ix);
+            panel.marked_entries.clear();
+        });
+
+        // Fully staging "aaa/a.rs" moves the whole "aaa" directory into the Staged
+        // section, ahead of "zzz", shifting every index after it — the selected
+        // directory must follow by its stable key, not its old raw index.
+        let status_entry_a = panel
+            .read_with(&cx, |panel, _| {
+                let ix = entry_index_for_repo_path(panel, &repo_path("aaa/a.rs")).unwrap();
+                panel.entries[ix].status_entry().cloned()
+            })
+            .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_staged_for_entry(
+                &GitListEntry::Status(status_entry_a),
+                StageIntent::Stage,
+                window,
+                cx,
+            );
+        });
+        cx.executor().run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.read_with(&cx, |panel, _| {
+            let selected_ix = panel
+                .selected_entry
+                .expect("selection should remain set across the rebuild");
+            let directory = panel.entries[selected_ix]
+                .directory_entry()
+                .expect("selection should still point at the \"zzz\" directory");
+            assert_eq!(directory.key.path, repo_path("zzz"));
         });
     }
 
