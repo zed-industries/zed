@@ -20,4 +20,6 @@ The zero-width `space` mask is the degenerate case. A 1-bit strike is decoded as
 
 The outlines are plain rectangles authored here rather than derived from any
 existing typeface, so the file carries no third-party licence. Regenerate with
-`python3 generate_zero_width_strike.py`.
+`python3 generate_zero_width_strike.py`. The generator pins `head.created` and
+`head.modified`, so the output is byte-reproducible and can be diffed against
+the committed file.

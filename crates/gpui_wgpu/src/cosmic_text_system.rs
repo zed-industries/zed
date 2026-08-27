@@ -456,10 +456,10 @@ impl CosmicTextSystemState {
             .build();
 
         let glyph_id: u16 = params.glyph_id.0.try_into()?;
-        let sources = glyph_render_sources(
-            params.is_emoji,
-            alpha_bitmap_is_renderable(font_ref, glyph_id, pixel_size * params.scale_factor),
-        );
+        // Only the alpha path consults the guard, so don't walk EBLC for emoji.
+        let sources = glyph_render_sources(params.is_emoji, || {
+            alpha_bitmap_is_renderable(font_ref, glyph_id, pixel_size * params.scale_factor)
+        });
 
         let mut renderer = Render::new(sources);
         if params.subpixel_rendering {
@@ -753,7 +753,10 @@ impl CosmicTextSystemState {
     }
 }
 
-fn glyph_render_sources(is_emoji: bool, use_alpha_bitmap: bool) -> &'static [Source] {
+fn glyph_render_sources(
+    is_emoji: bool,
+    use_alpha_bitmap: impl FnOnce() -> bool,
+) -> &'static [Source] {
     if is_emoji {
         // The color path is left unguarded on purpose. swash only reaches the
         // alpha decoder that panics when a strike is neither packed, PNG, nor
@@ -766,7 +769,7 @@ fn glyph_render_sources(is_emoji: bool, use_alpha_bitmap: bool) -> &'static [Sou
             Source::ColorBitmap(StrikeWith::BestFit),
             Source::Outline,
         ]
-    } else if use_alpha_bitmap {
+    } else if use_alpha_bitmap() {
         &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline]
     } else {
         &[Source::Outline]
@@ -790,29 +793,38 @@ fn alpha_bitmap_is_renderable(font: FontRef<'_>, glyph_id: u16, size: f32) -> bo
 }
 
 fn be_u16(data: &[u8], offset: usize) -> Option<u16> {
-    data.get(offset..offset + 2)?
+    data.get(offset..offset.checked_add(2)?)?
         .try_into()
         .ok()
         .map(u16::from_be_bytes)
 }
 
 fn be_u32(data: &[u8], offset: usize) -> Option<u32> {
-    data.get(offset..offset + 4)?
+    data.get(offset..offset.checked_add(4)?)?
         .try_into()
         .ok()
         .map(u32::from_be_bytes)
 }
 
-// Image formats 1/2/6/7/17/18 store smallGlyphMetrics at the EBDT offset (height, width).
+/// Reads the mask size swash will decode from, for the two image formats that
+/// can reach the alpha decoder.
+///
+/// Only formats 1 and 6 produce `BitmapFormat::Alpha`. Formats 2 and 7 are
+/// packed and 17/18/19 are PNG, and those decoders never divide by the mask
+/// width. PNG sizes also come from the IHDR rather than these bytes, so reading
+/// them here would compare the wrong numbers.
+///
+/// smallGlyphMetrics and bigGlyphMetrics both begin with `height: u8, width: u8`,
+/// so the same two bytes serve format 1 and format 6 alike.
 fn ebdt_mask_px(ebdt: &[u8], offset: u32, image_format: u16) -> Option<(u8, u8)> {
     if offset == 0 {
         return None;
     }
     let offset = offset as usize;
     match image_format {
-        1 | 2 | 6 | 7 | 17 | 18 => {
+        1 | 6 => {
             let height = *ebdt.get(offset)?;
-            let width = *ebdt.get(offset + 1)?;
+            let width = *ebdt.get(offset.checked_add(1)?)?;
             Some((width, height))
         }
         _ => None,
@@ -860,9 +872,21 @@ fn exact_alpha_bitmap_px_size(
                     ebdt_mask_px(ebdt, offset, image_format)
                 }
                 2 => {
-                    let height = *eblc.get(base.checked_add(4)?)?;
-                    let width = *eblc.get(base.checked_add(5)?)?;
-                    Some((width, height))
+                    // The metrics stored here are only what swash uses for
+                    // format 5, where the image carries none of its own. For
+                    // formats 1 and 6 it re-reads them from the EBDT record and
+                    // those win, so trusting EBLC would approve a strike swash
+                    // then decodes at a different size.
+                    let image_size = be_u32(eblc, base)?;
+                    if image_format == 5 {
+                        let height = *eblc.get(base.checked_add(4)?)?;
+                        let width = *eblc.get(base.checked_add(5)?)?;
+                        Some((width, height))
+                    } else {
+                        let offset = image_offset
+                            .checked_add(image_size.checked_mul(u32::try_from(delta).ok()?)?)?;
+                        ebdt_mask_px(ebdt, offset, image_format)
+                    }
                 }
                 3 => {
                     let offset = image_offset
@@ -1599,6 +1623,47 @@ mod tests {
         assert!(!alpha_bitmap_is_renderable(font, space, 14.0));
     }
 
+    /// indexFormat 2 stores metrics in EBLC, but for image formats 1 and 6 swash
+    /// re-reads them from the EBDT record and those win. Reading the EBLC copy
+    /// would approve a strike swash then decodes as zero-width, panicking anyway.
+    #[test]
+    fn index_format_2_reads_mask_size_from_ebdt_not_eblc() {
+        // One strike at ppem 12, one indexSubTable covering glyph 0 only,
+        // indexFormat 2 / imageFormat 1. EBLC claims 5x7; EBDT says 0x0.
+        let mut eblc = vec![0u8; 8 + 48];
+        eblc[4..8].copy_from_slice(&1u32.to_be_bytes()); // numSizes
+        let strike = 8;
+        eblc[strike..strike + 4].copy_from_slice(&56u32.to_be_bytes()); // indexSubTableArrayOffset
+        eblc[strike + 8..strike + 12].copy_from_slice(&1u32.to_be_bytes()); // numberOfIndexSubTables
+        eblc[strike + 40..strike + 42].copy_from_slice(&0u16.to_be_bytes()); // startGlyphIndex
+        eblc[strike + 42..strike + 44].copy_from_slice(&0u16.to_be_bytes()); // endGlyphIndex
+        eblc[strike + 45] = 12; // ppemY
+
+        // indexSubTableArray entry, then the subtable it points at.
+        let mut array = vec![0u8; 8];
+        array[0..2].copy_from_slice(&0u16.to_be_bytes()); // firstGlyphIndex
+        array[2..4].copy_from_slice(&0u16.to_be_bytes()); // lastGlyphIndex
+        array[4..8].copy_from_slice(&8u32.to_be_bytes()); // offset to subtable
+        let mut sub = vec![0u8; 8 + 8];
+        sub[0..2].copy_from_slice(&2u16.to_be_bytes()); // indexFormat 2
+        sub[2..4].copy_from_slice(&1u16.to_be_bytes()); // imageFormat 1
+        sub[4..8].copy_from_slice(&4u32.to_be_bytes()); // imageDataOffset
+        sub[8..12].copy_from_slice(&8u32.to_be_bytes()); // imageSize
+        sub[12] = 7; // bigGlyphMetrics.height, the misleading EBLC value
+        sub[13] = 5; // bigGlyphMetrics.width
+        eblc.extend_from_slice(&array);
+        eblc.extend_from_slice(&sub);
+
+        // EBDT record for glyph 0 sits at offset 4: smallGlyphMetrics 0x0.
+        let ebdt = vec![0u8; 16];
+
+        assert_eq!(
+            exact_alpha_bitmap_px_size(&eblc, &ebdt, 0, 12),
+            Some((0, 0)),
+            "must report the EBDT size swash decodes with, not the EBLC size"
+        );
+    }
+
     #[test]
     fn rasterize_zero_width_bitmap_strike_falls_back_to_outline() -> Result<()> {
         let text_system = CosmicTextSystem::new_without_system_fonts("GpuiBitmapStrikeTest");
@@ -1636,7 +1701,7 @@ mod tests {
             let a_bounds = text_system.glyph_raster_bounds(&a_params)?;
             assert!(
                 a_bounds.size.width.0 > 0 && a_bounds.size.height.0 > 0,
-                "'A' has a non-empty strike, so it should rasterize at {size}px"
+                "'A' should rasterize at {size}px, from its strike at 10-13 and its outline at 14"
             );
             text_system.rasterize_glyph(&a_params, a_bounds)?;
         }

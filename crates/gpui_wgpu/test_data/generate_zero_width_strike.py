@@ -156,6 +156,12 @@ def main():
     font["EBLC"] = eblc
     font["EBDT"] = ebdt
 
+    # fontTools stamps head.created/modified with the current time, which would
+    # make every regeneration differ from the committed file. Pin them so the
+    # output is byte-reproducible and a maintainer can diff it.
+    font["head"].created = 0
+    font["head"].modified = 0
+
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "zero_width_bitmap_strike.ttf")
     font.save(out)
