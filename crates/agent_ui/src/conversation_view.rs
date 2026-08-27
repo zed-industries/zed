@@ -6336,6 +6336,61 @@ pub(crate) mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct NoTitleSupportAgentConnection;
+
+    impl AgentConnection for NoTitleSupportAgentConnection {
+        fn agent_id(&self) -> AgentId {
+            AgentId::new("no-title-support")
+        }
+
+        fn telemetry_id(&self) -> SharedString {
+            "no-title-support".into()
+        }
+
+        fn new_session(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _work_dirs: PathList,
+            cx: &mut gpui::App,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            let thread = build_test_thread(
+                self,
+                project,
+                "NoTitleSupportAgentConnection",
+                acp::SessionId::new("new-session"),
+                cx,
+            );
+            Task::ready(Ok(thread))
+        }
+
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn prompt(
+            &self,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
+            Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
+
+        fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+            self
+        }
+    }
+
     /// Simulates an agent that requires authentication before a session can be
     /// created. `new_session` returns `AuthRequired` until `authenticate` is
     /// called with the correct method, after which sessions are created normally.
@@ -9877,6 +9932,34 @@ pub(crate) mod tests {
 
         // choices.get(999) is None, falls back to choices.last() → "Only this time".
         assert_eq!(outcome.option_id.0.as_ref(), "allow");
+    }
+
+    #[gpui::test]
+    async fn test_rename_updates_title_when_connection_does_not_support_set_title(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        // By default AgentConnecion sets title to None
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(NoTitleSupportAgentConnection), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let active = active_thread(&conversation_view, cx);
+        let thread = cx.read(|cx| active.read(cx).thread.clone());
+
+        // Original title
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title(), Some("NoTitleSupportAgentConnection".into()));
+        });
+
+        active.update_in(cx, |view, window, cx| {
+            view.rename(SharedString::new("Changed title"), window, cx);
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _cx| {
+            assert_eq!(thread.title(), Some("Changed title".into()));
+        });
     }
 
     #[test]
