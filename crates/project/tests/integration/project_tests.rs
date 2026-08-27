@@ -27,7 +27,7 @@ use buffer_diff::{
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind, RealFs};
-use futures::{FutureExt as _, StreamExt, future};
+use futures::{FutureExt as _, StreamExt, channel::oneshot, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
@@ -5124,6 +5124,229 @@ async fn test_workspace_diagnostics_pull_timeout_releases_waiters(cx: &mut gpui:
     assert!(
         !refreshed,
         "pull should report a failed refresh when the server never responds"
+    );
+}
+
+#[gpui::test]
+async fn test_workspace_diagnostics_long_poll_is_kept_open(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({ "a.rs": "one two three", "b.rs": "four five six" }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let workspace_requests = Arc::new(atomic::AtomicUsize::new(0));
+    let partial_result_token = Arc::new(Mutex::new(None));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-ws-long-poll".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let workspace_requests = workspace_requests.clone();
+                let partial_result_token = partial_result_token.clone();
+                move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>({
+                            let workspace_requests = workspace_requests.clone();
+                            let partial_result_token = partial_result_token.clone();
+                            move |params, _| {
+                                workspace_requests.fetch_add(1, atomic::Ordering::Release);
+                                *partial_result_token.lock() =
+                                    params.partial_result_params.partial_result_token;
+                                async move {
+                                    future::pending::<()>().await;
+                                    Err(anyhow::anyhow!("should never respond"))
+                                }
+                            }
+                        });
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+    assert_eq!(workspace_requests.load(atomic::Ordering::Acquire), 1);
+
+    cx.executor().advance_clock(DEFAULT_LSP_REQUEST_TIMEOUT * 3);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        workspace_requests.load(atomic::Ordering::Acquire),
+        1,
+        "an open workspace diagnostics request must be kept open instead of being cancelled and re-sent after a period of inactivity"
+    );
+
+    let token = partial_result_token
+        .lock()
+        .clone()
+        .expect("the workspace diagnostics pull should carry a partial result token");
+    fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        token,
+        value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
+            lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
+                items: vec![lsp::WorkspaceDocumentDiagnosticReport::Full(
+                    lsp::WorkspaceFullDocumentDiagnosticReport {
+                        uri: lsp::Uri::from_file_path(path!("/dir/b.rs")).unwrap(),
+                        version: None,
+                        full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
+                            result_id: Some("ws-1".to_string()),
+                            items: vec![lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 0),
+                                    lsp::Position::new(0, 3),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                message: lsp::DiagnosticMessage::from("streamed error"),
+                                ..lsp::Diagnostic::default()
+                            }],
+                        },
+                    },
+                )],
+            }),
+        ),
+    });
+    cx.executor().run_until_parked();
+    project.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            },
+            "partial results streamed over the open request must still be applied"
+        );
+    });
+
+    cx.executor().advance_clock(DEFAULT_LSP_REQUEST_TIMEOUT * 3);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        workspace_requests.load(atomic::Ordering::Acquire),
+        1,
+        "the request must stay open after streaming partial results"
+    );
+}
+
+#[gpui::test]
+async fn test_workspace_diagnostics_refresh_during_open_request_pulls_again(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let workspace_requests = Arc::new(atomic::AtomicUsize::new(0));
+    let (first_response_tx, first_response_rx) = oneshot::channel::<()>();
+    let first_response_rx = Arc::new(Mutex::new(Some(first_response_rx)));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-ws-repull".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let workspace_requests = workspace_requests.clone();
+                let first_response_rx = first_response_rx.clone();
+                move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>({
+                            let workspace_requests = workspace_requests.clone();
+                            let first_response_rx = first_response_rx.clone();
+                            move |_, _| {
+                                workspace_requests.fetch_add(1, atomic::Ordering::Release);
+                                let first_response_rx = first_response_rx.lock().take();
+                                async move {
+                                    if let Some(first_response_rx) = first_response_rx {
+                                        first_response_rx.await.ok();
+                                    }
+                                    Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                                        lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                                    ))
+                                }
+                            }
+                        });
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+    assert_eq!(workspace_requests.load(atomic::Ordering::Acquire), 1);
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let pull_task = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.pull_workspace_diagnostics_once(cx)
+    });
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        workspace_requests.load(atomic::Ordering::Acquire),
+        1,
+        "a refresh must not cancel or duplicate the open workspace diagnostics request"
+    );
+
+    first_response_tx.send(()).unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+    assert_eq!(
+        workspace_requests.load(atomic::Ordering::Acquire),
+        2,
+        "a refresh received while a pull was in flight must trigger one follow-up pull after it completes"
+    );
+
+    let refreshed = pull_task.await;
+    assert!(
+        refreshed,
+        "the waiter must be resolved by the follow-up pull"
     );
 }
 
