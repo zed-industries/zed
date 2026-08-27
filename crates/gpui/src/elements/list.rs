@@ -656,7 +656,13 @@ impl ListState {
         )
     }
 
-    /// Scroll the list to the given offset
+    /// Scroll the list to the given offset.
+    ///
+    /// A negative `offset_in_item` anchors the viewport top *above* the item:
+    /// the item's top edge ends up `-offset_in_item` pixels below the viewport
+    /// top. The next layout resolves the offset against real item heights by
+    /// walking upward, so a caller can keep an item at a fixed on-screen
+    /// position while items of unknown height are spliced in above it.
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
         let item_count = state.items.summary().count;
@@ -1056,6 +1062,29 @@ impl StateInner {
             }),
             AvailableSpace::MinContent,
         );
+
+        // Resolve a negative offset from `scroll_to` here rather than eagerly,
+        // because only layout can measure the items above the anchor. Walking
+        // upward against real heights is what keeps the anchor item at a fixed
+        // on-screen position when unmeasured items were spliced in above it.
+        if scroll_top.offset_in_item < px(0.) {
+            let mut cursor = old_items.cursor::<Count>(());
+            cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
+            while scroll_top.offset_in_item < px(0.) && scroll_top.item_ix > 0 {
+                cursor.prev();
+                let Some(item) = cursor.item() else {
+                    break;
+                };
+                let size = item.size().unwrap_or_else(|| {
+                    let mut element = render_item(cursor.start().0, window, cx);
+                    element.layout_as_root(available_item_space, window, cx)
+                });
+                scroll_top.item_ix = cursor.start().0;
+                scroll_top.offset_in_item += size.height;
+            }
+            scroll_top.offset_in_item = scroll_top.offset_in_item.max(px(0.));
+            self.logical_scroll_top = Some(scroll_top);
+        }
 
         let mut cursor = old_items.cursor::<Count>(());
 
