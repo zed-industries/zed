@@ -112,7 +112,8 @@ impl LspStore {
                     .fetched_servers
                     .iter()
                     .any(|server_id| !current_servers.contains(server_id)));
-        if !pending_refreshes.is_empty() || server_set_shrank {
+        let cache_invalidated = !pending_refreshes.is_empty() || server_set_shrank;
+        if cache_invalidated {
             semantic_tokens_data.update = None;
             semantic_tokens_data.generation += 1;
         }
@@ -154,6 +155,7 @@ impl LspStore {
 
         let mut servers_to_fetch = refreshed_servers;
         servers_to_fetch.extend(missing_servers);
+        let rebuild_from_cache_only = cache_invalidated && servers_to_fetch.is_empty();
         let for_server = if servers_to_fetch.len() == 1 {
             servers_to_fetch.iter().next().copied()
         } else {
@@ -162,13 +164,19 @@ impl LspStore {
             // with cheap deltas.
             None
         };
-        semantic_tokens_data
-            .fetched_servers
-            .extend(match for_server {
-                Some(server_id) => HashSet::from_iter([server_id]),
-                None => current_servers,
-            });
-        let new_tokens = self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx);
+        if !rebuild_from_cache_only {
+            semantic_tokens_data
+                .fetched_servers
+                .extend(match for_server {
+                    Some(server_id) => HashSet::from_iter([server_id]),
+                    None => current_servers,
+                });
+        }
+        let new_tokens = if rebuild_from_cache_only {
+            Task::ready(None)
+        } else {
+            self.fetch_semantic_tokens_for_buffer(&buffer, for_server, cx)
+        };
 
         let task_buffer = buffer.clone();
         let task_version_queried_for = version_queried_for.clone();
@@ -231,7 +239,13 @@ impl LspStore {
                             && let Some(semantic_tokens) = current_lsp_data.semantic_tokens.as_mut()
                             && semantic_tokens.generation == query_generation
                         {
-                            if for_server.is_none() || semantic_tokens.raw_tokens.servers.is_empty()
+                            if rebuild_from_cache_only {
+                                let buffer_snapshot =
+                                    buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                                remaining_tokens =
+                                    Some((semantic_tokens.raw_tokens.clone(), buffer_snapshot));
+                            } else if for_server.is_none()
+                                || semantic_tokens.raw_tokens.servers.is_empty()
                             {
                                 semantic_tokens.evict_all();
                             } else {
