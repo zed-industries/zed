@@ -6659,6 +6659,110 @@ async fn test_supports_range_formatting_ignores_unrelated_language_servers(
     }));
 }
 
+#[gpui::test]
+async fn test_range_formatting_prefers_range_capable_current_server(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let value = 1;" }))
+        .await;
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut full_format_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "full-format-server",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut range_format_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "range-format-server",
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let full_format_server = full_format_servers.next().await.unwrap();
+    let range_format_server = range_format_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let full_format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _full_format_requests = full_format_server
+        .set_request_handler::<lsp::request::Formatting, _, _>({
+            let full_format_request_count = full_format_request_count.clone();
+            move |_, _| {
+                full_format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let range_format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _range_format_requests = range_format_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>({
+            let range_format_request_count = range_format_request_count.clone();
+            move |_, _| {
+                range_format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+
+    let (buffer_id, range) = buffer.read_with(cx, |buffer, _| {
+        (
+            buffer.remote_id(),
+            buffer.anchor_before(0)..buffer.anchor_after(buffer.len()),
+        )
+    });
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer]),
+                project::lsp_store::LspFormatTarget::Ranges(std::collections::BTreeMap::from_iter(
+                    [(buffer_id, vec![range])],
+                )),
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        range_format_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the range-capable server to handle the range formatting request",
+    );
+    assert_eq!(
+        full_format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected manual range formatting not to use the full-format-only server",
+    );
+}
+
 #[gpui::test(iterations = 10)]
 async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     init_test(cx);

@@ -1937,17 +1937,50 @@ impl LocalLspStore {
                     settings::LanguageServerFormatterSpecifier::Current => {
                         lsp_store.read_with(cx, |lsp_store, cx| {
                             lsp_store.as_local().and_then(|local| {
-                                let buffer = buffer.handle.read(cx);
-                                adapters_and_servers
-                                    .iter()
-                                    .find(|(adapter, server)| {
+                                let buffer_snapshot = buffer.handle.read(cx);
+                                let adapter_and_server = if buffer.ranges.is_some() {
+                                    let range_formatter =
+                                        adapters_and_servers.iter().find(|(adapter, server)| {
+                                            buffer_supports_lsp_range_formatting(
+                                                local,
+                                                buffer_snapshot,
+                                                adapter,
+                                                server,
+                                            )
+                                        });
+                                    if range_formatter.is_some() {
+                                        range_formatter
+                                    } else if trigger == FormatTrigger::Save
+                                        && settings.format_on_save
+                                            == FormatOnSave::ModificationsIfAvailable
+                                    {
+                                        adapters_and_servers.iter().find(|(adapter, server)| {
+                                            buffer_supports_lsp_formatting(
+                                                local,
+                                                buffer_snapshot,
+                                                adapter,
+                                                server,
+                                            )
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    adapters_and_servers.iter().find(|(adapter, server)| {
                                         buffer_supports_lsp_formatting(
-                                            local, buffer, adapter, server,
+                                            local,
+                                            buffer_snapshot,
+                                            adapter,
+                                            server,
                                         ) || buffer_supports_lsp_range_formatting(
-                                            local, buffer, adapter, server,
+                                            local,
+                                            buffer_snapshot,
+                                            adapter,
+                                            server,
                                         )
                                     })
-                                    .cloned()
+                                };
+                                adapter_and_server.cloned()
                             })
                         })?
                     }
