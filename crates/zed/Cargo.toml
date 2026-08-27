@@ -89,6 +89,7 @@ call.workspace = true
 channel.workspace = true
 chrono.workspace = true
 clap.workspace = true
+claude_code_ide.workspace = true
 cli.workspace = true
 client.workspace = true
 clock = { workspace = true, optional = true }

@@ -1,0 +1,44 @@
+[package]
+name = "claude_code_ide"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/claude_code_ide.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+async-tungstenite.workspace = true
+collections.workspace = true
+editor.workspace = true
+futures.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+net.workspace = true
+paths.workspace = true
+project.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smol.workspace = true
+workspace.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }
+db = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
