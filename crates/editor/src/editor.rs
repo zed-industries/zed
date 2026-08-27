@@ -10754,6 +10754,10 @@ impl Editor {
     }
 
     pub fn handle_blur(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Losing focus ends the IME session, so a composition left marked here would
+        // otherwise be treated as still active once focus returns, making the next
+        // IME edit target a stale range.
+        self.unmark_text(window, cx);
         self.blink_manager.update(cx, BlinkManager::disable);
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
