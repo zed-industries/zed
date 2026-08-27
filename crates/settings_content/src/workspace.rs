@@ -778,10 +778,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the project panel.
+    /// What to show for directories in the project panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the project panel.
     ///
     /// Default: true
@@ -876,6 +876,41 @@ pub enum ProjectPanelEntrySpacing {
     Comfortable,
     /// The standard spacing of entries.
     Standard,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderIndicator {
+    /// Show a folder icon.
+    #[default]
+    Icon,
+    /// Show a disclosure chevron.
+    Chevron,
+    /// Show a disclosure chevron followed by a folder icon.
+    Both,
+}
+
+impl FolderIndicator {
+    pub fn shows_chevron(self) -> bool {
+        matches!(self, Self::Chevron | Self::Both)
+    }
+
+    pub fn shows_icon(self) -> bool {
+        matches!(self, Self::Icon | Self::Both)
+    }
 }
 
 #[derive(

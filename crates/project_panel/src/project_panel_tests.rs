@@ -7,11 +7,15 @@ use git::{
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use language::{
+    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
+    PointUtf16, Unclipped,
+};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
-use settings::{ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
+use settings::{FolderIndicator, ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -10538,6 +10542,90 @@ pub(crate) fn find_project_entry(
     })
 }
 
+/// Each visible entry as `(filename, chevron, icon)`, with the icon-theme paths reduced
+/// to their file names so assertions read clearly.
+fn visible_entry_indicators(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, Option<String>, Option<String>)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            let indicator_name = |indicator: Option<SharedString>| {
+                indicator.map(|indicator| {
+                    indicator
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(indicator.as_ref())
+                        .to_string()
+                })
+            };
+
+            result.push((
+                details.filename.clone(),
+                indicator_name(details.chevron.clone()),
+                indicator_name(details.icon),
+            ));
+        });
+    });
+
+    result
+}
+
+fn set_folder_indicator(indicator: FolderIndicator, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .folder_indicator = Some(indicator);
+            });
+        });
+    });
+}
+
+fn visible_entry_chevron_slots(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, bool)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.reserves_chevron_slot));
+        });
+    });
+
+    result
+}
+
+fn visible_entry_diagnostic_marks(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, Option<DiagnosticMark>)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.diagnostic_mark));
+        });
+    });
+
+    result
+}
+
+fn mark_for(marks: &[(String, Option<DiagnosticMark>)], filename: &str) -> Option<DiagnosticMark> {
+    marks
+        .iter()
+        .find(|(name, _)| name == filename)
+        .and_then(|(_, mark)| *mark)
+}
+
 fn visible_entries_as_strings(
     panel: &Entity<ProjectPanel>,
     range: Range<usize>,
@@ -11620,4 +11708,262 @@ async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::T
         .expect("restore should show a confirmation prompt");
 
     assert_eq!(message, "Discard changes to `__init__.py`?");
+}
+
+#[gpui::test]
+async fn test_folder_indicator_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir": { "nested.rs": "" },
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    set_folder_indicator(FolderIndicator::Icon, cx);
+    cx.run_until_parked();
+    let indicators = visible_entry_indicators(&panel, 0..50, cx);
+    assert_eq!(
+        indicators
+            .iter()
+            .map(|(name, chevron, _)| (name.as_str(), chevron.as_deref()))
+            .collect::<Vec<_>>(),
+        vec![("root", None), ("dir", None), ("file.rs", None)],
+        "`icon` must not produce a chevron on any row"
+    );
+    assert_eq!(
+        indicators
+            .iter()
+            .find(|(name, _, _)| name == "dir")
+            .and_then(|(_, _, icon)| icon.as_deref()),
+        Some("folder.svg"),
+        "a collapsed directory shows the collapsed folder icon"
+    );
+
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entry_indicators(&panel, 0..50, cx)
+            .into_iter()
+            .find(|(name, _, _)| name == "dir"),
+        Some((
+            "dir".to_string(),
+            Some("chevron_right.svg".to_string()),
+            None
+        )),
+        "`chevron` swaps the folder icon out rather than adding to it"
+    );
+
+    set_folder_indicator(FolderIndicator::Both, cx);
+    cx.run_until_parked();
+    let indicators = visible_entry_indicators(&panel, 0..50, cx);
+    assert_eq!(
+        indicators.iter().find(|(name, _, _)| name == "dir"),
+        Some(&(
+            "dir".to_string(),
+            Some("chevron_right.svg".to_string()),
+            Some("folder.svg".to_string())
+        )),
+        "`both` shows the chevron and the folder icon together"
+    );
+    assert_eq!(
+        indicators
+            .iter()
+            .find(|(name, _, _)| name == "file.rs")
+            .map(|(_, chevron, _)| chevron.as_deref()),
+        Some(None),
+        "files never take a chevron, so they stay flush in `both`"
+    );
+
+    // Expanding must flip the chevron and the icon, not just the icon.
+    toggle_expand_dir(&panel, "root/dir", cx);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entry_indicators(&panel, 0..50, cx)
+            .into_iter()
+            .find(|(name, _, _)| name == "dir"),
+        Some((
+            "dir".to_string(),
+            Some("chevron_down.svg".to_string()),
+            Some("folder_open.svg".to_string())
+        )),
+    );
+}
+
+#[gpui::test]
+async fn test_diagnostic_mark_decorates_the_row_glyph(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": { "nested.rs": "" },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostic_entries(
+                LanguageServerId(0),
+                PathBuf::from(path!("/root/dir/nested.rs")),
+                None,
+                None,
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 0)),
+                    Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: DiagnosticMessage::from("an error"),
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                )],
+                cx,
+            )
+            .unwrap();
+    });
+    // The panel debounces diagnostic summary updates before rebuilding its entries.
+    cx.executor().advance_clock(Duration::from_millis(50));
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/dir", cx);
+    cx.run_until_parked();
+
+    for (indicator, expected_dir_mark, expected_file_mark) in [
+        (
+            FolderIndicator::Icon,
+            DiagnosticMark::OnIcon(IconDecorationKind::Dot),
+            DiagnosticMark::OnIcon(IconDecorationKind::X),
+        ),
+        (
+            FolderIndicator::Chevron,
+            DiagnosticMark::OnChevron(IconDecorationKind::Dot),
+            DiagnosticMark::OnIcon(IconDecorationKind::X),
+        ),
+        (
+            FolderIndicator::Both,
+            DiagnosticMark::OnIcon(IconDecorationKind::Dot),
+            DiagnosticMark::OnIcon(IconDecorationKind::X),
+        ),
+    ] {
+        set_folder_indicator(indicator, cx);
+        cx.run_until_parked();
+
+        let marks = visible_entry_diagnostic_marks(&panel, 0..50, cx);
+        assert_eq!(
+            mark_for(&marks, "dir"),
+            Some(expected_dir_mark),
+            "{indicator:?}: a directory carrying diagnostics marks the glyph its mode renders"
+        );
+        assert_eq!(
+            mark_for(&marks, "nested.rs"),
+            Some(expected_file_mark),
+            "{indicator:?}: a file always marks its own icon"
+        );
+        assert_eq!(
+            mark_for(&marks, "root"),
+            Some(expected_dir_mark),
+            "{indicator:?}: the worktree root rolls its children's diagnostics up"
+        );
+    }
+
+    // With no icon and no chevron there is no glyph to decorate, so the mark stands alone.
+    set_folder_indicator(FolderIndicator::Chevron, cx);
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().file_icons = Some(false);
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    let marks = visible_entry_diagnostic_marks(&panel, 0..50, cx);
+    assert_eq!(
+        mark_for(&marks, "nested.rs"),
+        Some(DiagnosticMark::Standalone(IconName::Close)),
+        "a file with no icon has nothing to decorate"
+    );
+    assert_eq!(
+        mark_for(&marks, "dir"),
+        Some(DiagnosticMark::OnChevron(IconDecorationKind::Dot)),
+        "`file_icons` must not disturb how a directory is marked"
+    );
+}
+
+#[gpui::test]
+async fn test_file_rows_reserve_the_chevron_slot(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir": { "nested.rs": "" },
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    for (indicator, expected) in [
+        (FolderIndicator::Icon, false),
+        (FolderIndicator::Chevron, false),
+        (FolderIndicator::Both, true),
+    ] {
+        set_folder_indicator(indicator, cx);
+        cx.run_until_parked();
+
+        let slots = visible_entry_chevron_slots(&panel, 0..50, cx);
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(name, _)| name == "file.rs")
+                .map(|(_, reserved)| *reserved),
+            Some(expected),
+            "{indicator:?}: a file reserves the chevron's width only when directories draw one \
+             alongside their icon"
+        );
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(name, _)| name == "dir")
+                .map(|(_, reserved)| *reserved),
+            Some(false),
+            "{indicator:?}: a directory draws its own chevron, so it reserves nothing"
+        );
+    }
 }
