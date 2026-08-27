@@ -329,7 +329,7 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
+        LanguageModelToolSchemaFormat::JsonSchemaUnmodified
     }
 
     fn telemetry_id(&self) -> String {
