@@ -75,6 +75,12 @@ pub(crate) struct ImeMirror {
     /// between writes, and a mid-gesture barrage desynchronizes their word
     /// model.
     sync_scheduled: Cell<bool>,
+    /// Whether the `selectionchange` import saw an element selection move
+    /// it could not apply (the app selection changed underneath). Sync
+    /// normally defers to a pending import when the element's live
+    /// selection has moved; a rejected import means no import is coming,
+    /// so the next sync must reassert the app's state instead of waiting.
+    selection_import_rejected: Cell<bool>,
 }
 
 impl ImeMirror {
@@ -111,6 +117,7 @@ impl ImeMirror {
             selection: Cell::new((0, 0)),
             window_hint: Cell::new(0),
             sync_scheduled: Cell::new(false),
+            selection_import_rejected: Cell::new(false),
         };
         // Until an input handler asks otherwise, the element is an IME
         // conduit, not a form field: browser-side text assistance would
@@ -201,6 +208,10 @@ impl ImeMirror {
         self.element.selection_start().ok().flatten()
     }
 
+    pub(crate) fn element_selection_end(&self) -> Option<u32> {
+        self.element.selection_end().ok().flatten()
+    }
+
     pub(crate) fn stored_text(&self) -> String {
         self.text.borrow().clone()
     }
@@ -224,6 +235,13 @@ impl ImeMirror {
             .flatten()
             .unwrap_or(selection_start);
         self.selection.set((selection_start, selection_end));
+    }
+
+    /// Records that an element selection move could not be imported, so
+    /// the next sync reasserts the app's state rather than deferring to an
+    /// import that is no longer coming.
+    pub(crate) fn reject_selection_import(&self) {
+        self.selection_import_rejected.set(true);
     }
 
     /// Schedules a coalesced sync of the mirror for the next task.
@@ -286,6 +304,23 @@ impl ImeMirror {
                 return;
             }
             let mirror = &window.ime_mirror;
+            // A live element selection that differs from the stored baseline
+            // while the value still matches is an IME-driven selection move
+            // whose `selectionchange` import hasn't dispatched yet (the event
+            // is asynchronous, and this sync may run first). The element owns
+            // the selection until that import runs: writing now would clobber
+            // an in-progress gesture, e.g. Android's slide-on-backspace
+            // growing its selection. The import reconciles the two sides and
+            // schedules a fresh sync when it cannot adopt the move.
+            if !mirror.selection_import_rejected.replace(false)
+                && *mirror.text.borrow() == mirror.element.value()
+            {
+                let live_start = mirror.selection_start().unwrap_or(0);
+                let live_end = mirror.element_selection_end().unwrap_or(live_start);
+                if (live_start, live_end) != mirror.selection.get() {
+                    return;
+                }
+            }
             let selection = window
                 .with_input_handler(|handler| handler.selected_text_range(false))
                 .flatten();
@@ -297,8 +332,21 @@ impl ImeMirror {
                 mirror.selection.set((0, 0));
                 return;
             };
+            // The mirrored window never crosses the handler's editable
+            // range: everything in the element is reachable by multi-step
+            // IME edit gestures (word deletion, autocorrect rewrites), so
+            // text outside the range must not be mirrored at all. The IME
+            // sees the range's edges as the field's edges.
+            let editable_range = window
+                .with_input_handler(|handler| handler.text_input_editable_range())
+                .flatten();
 
-            if is_consistent(window, &selection.range, MIN_EDGE_CHARS) {
+            if is_consistent(
+                window,
+                &selection.range,
+                editable_range.as_ref(),
+                MIN_EDGE_CHARS,
+            ) {
                 return;
             }
 
@@ -307,12 +355,24 @@ impl ImeMirror {
             // tap in a plain textarea. Rewriting the value restarts the IME
             // connection, which desynchronizes the keyboard's word model
             // right when it is about to act on the tapped word.
-            if move_selection_within_window(window, &selection.range, MIN_EDGE_CHARS) {
+            if move_selection_within_window(
+                window,
+                &selection.range,
+                editable_range.as_ref(),
+                MIN_EDGE_CHARS,
+            ) {
                 return;
             }
 
-            let window_range = selection.range.start.saturating_sub(CONTEXT_CHARS)
+            let mut window_range = selection.range.start.saturating_sub(CONTEXT_CHARS)
                 ..selection.range.end + CONTEXT_CHARS;
+            if let Some(editable_range) = &editable_range {
+                window_range.start = window_range.start.max(editable_range.start);
+                window_range.end = window_range
+                    .end
+                    .min(editable_range.end)
+                    .max(window_range.start);
+            }
             let mut adjusted = None;
             let text = window
                 .with_input_handler(|handler| {
@@ -362,6 +422,7 @@ impl ImeMirror {
 fn move_selection_within_window(
     window: &WebWindowInner,
     app_selection: &std::ops::Range<usize>,
+    editable_range: Option<&std::ops::Range<usize>>,
     min_edge: usize,
 ) -> bool {
     let mirror = &window.ime_mirror;
@@ -373,10 +434,19 @@ fn move_selection_within_window(
     let window_start = mirror.window_hint.get();
 
     // The new selection must sit inside the window with enough context
-    // on both sides — except where the window is pinned to a document
-    // boundary, where less context is all the context there is. This is
-    // the common case: a chat thread's caret usually sits at the end of
-    // the document, where the window has no right margin at all.
+    // on both sides — except where the window is pinned to a boundary (of
+    // the document or of the editable range), where less context is all
+    // the context there is. This is the common case: a chat thread's
+    // caret usually sits at the end of the document, where the window has
+    // no right margin at all.
+    // A window that leaks outside the editable range mirrors text the IME
+    // must not reach, however consistent it is.
+    if let Some(range) = editable_range
+        && (window_start < range.start || window_start + stored_length > range.end)
+    {
+        return false;
+    }
+    let left_boundary = editable_range.map_or(0, |range| range.start);
     let Some(selection_start) = app_selection.start.checked_sub(window_start) else {
         return false;
     };
@@ -384,14 +454,15 @@ fn move_selection_within_window(
     if selection_end > stored_length {
         return false;
     }
-    if selection_start < min_edge && window_start != 0 {
+    if selection_start < min_edge && window_start > left_boundary {
         return false;
     }
 
     // Verify the hint: the stored window text must still equal the
     // document at this alignment. Asking for one unit extra also
     // determines whether the window reaches the document's end, which
-    // excuses a missing right margin.
+    // excuses a missing right margin, as does reaching the editable
+    // range's end.
     let mut adjusted = None;
     let document_text = window
         .with_input_handler(|handler| {
@@ -403,8 +474,9 @@ fn move_selection_within_window(
         .flatten()
         .unwrap_or_default();
     let document_text_length = document_text.encode_utf16().count();
-    let window_at_document_end = document_text_length == stored_length;
-    if selection_end + min_edge > stored_length && !window_at_document_end {
+    let window_at_right_boundary = document_text_length == stored_length
+        || editable_range.is_some_and(|range| window_start + stored_length >= range.end);
+    if selection_end + min_edge > stored_length && !window_at_right_boundary {
         return false;
     }
     if !document_text.starts_with(stored_text.as_str()) || document_text_length > stored_length + 1
@@ -434,6 +506,7 @@ fn move_selection_within_window(
 fn is_consistent(
     window: &WebWindowInner,
     app_selection: &std::ops::Range<usize>,
+    editable_range: Option<&std::ops::Range<usize>>,
     min_edge: usize,
 ) -> bool {
     let mirror = &window.ime_mirror;
@@ -453,28 +526,41 @@ fn is_consistent(
         return false;
     }
     // Enough context on both sides of the selection, unless the window
-    // is pinned to a document boundary (start of window at document
-    // offset 0, or window end at document end — approximated by the
-    // stored window being shorter than requested on that side).
+    // is pinned to a boundary of the document or of the editable range
+    // (start of window at the left boundary, or window end at the right
+    // boundary — the document's approximated by the stored window being
+    // shorter than requested on that side).
     let app_window_start = match app_selection.start.checked_sub(element_selection_start) {
         Some(start) => start,
         None => return false,
     };
-    let has_left_context = element_selection_start >= min_edge || app_window_start == 0;
+    // A window that leaks outside the editable range mirrors text the IME
+    // must not reach, however consistent it is.
+    if let Some(range) = editable_range
+        && (app_window_start < range.start || app_window_start + stored_length > range.end)
+    {
+        return false;
+    }
+    let left_boundary = editable_range.map_or(0, |range| range.start);
+    let has_left_context = element_selection_start >= min_edge || app_window_start <= left_boundary;
     let right_context = stored_length.saturating_sub(element_selection_end);
     if !has_left_context || right_context < min_edge {
-        // A short right side is fine when the window genuinely reaches
-        // the end of the document; verify by asking for one unit past
-        // the stored window.
-        let mut adjusted = None;
-        let past_end = app_window_start + stored_length;
-        let more = window
-            .with_input_handler(|handler| {
-                handler.text_for_range(past_end..past_end + 1, &mut adjusted)
-            })
-            .flatten()
-            .unwrap_or_default();
-        if !has_left_context || !more.is_empty() {
+        let window_end = app_window_start + stored_length;
+        let at_right_boundary = if let Some(range) = editable_range {
+            window_end >= range.end
+        } else {
+            // Verify the window genuinely reaches the end of the document
+            // by asking for one unit past the stored window.
+            let mut adjusted = None;
+            window
+                .with_input_handler(|handler| {
+                    handler.text_for_range(window_end..window_end + 1, &mut adjusted)
+                })
+                .flatten()
+                .unwrap_or_default()
+                .is_empty()
+        };
+        if !has_left_context || !at_right_boundary {
             return false;
         }
     }

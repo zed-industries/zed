@@ -142,6 +142,7 @@ impl WebWindowInner {
             self.register_blur(),
             self.register_pointer_enter(),
         ];
+        handles.extend(self.register_selection_change());
         handles.extend(self.register_visibility_change());
         handles.extend(self.register_appearance_change());
         handles.extend(self.register_fullscreen_change());
@@ -756,6 +757,83 @@ impl WebWindowInner {
 
             this.ime_mirror.adopt_element_state();
         })
+    }
+
+    /// Imports IME-driven selection moves on the mirror element into the app.
+    ///
+    /// Some IME gestures preview their effect by moving the field's
+    /// selection before committing an edit — Android's slide-on-backspace
+    /// grows a selection over the text it will delete. A native field
+    /// renders that selection itself; this import gives the app the same
+    /// chance. Like edit imports, the move is expressed relative to the
+    /// element's stored selection and applied to the app selection queried
+    /// in the same synchronous callback, never through document coordinates,
+    /// which go stale in a collaborative document.
+    ///
+    /// Self-inflicted events are filtered by state, not by suppression
+    /// flags: `selectionchange` dispatches asynchronously, after the sync or
+    /// import that caused it has already adopted the element's selection, so
+    /// a stored-state match means there is nothing to import.
+    ///
+    /// Registered on the document: Chrome dispatches text-control selection
+    /// changes there, not on the element.
+    fn register_selection_change(self: &Rc<Self>) -> Option<EventListenerHandle> {
+        let document = self.browser_window.document()?;
+        let this = Rc::clone(self);
+        Some(EventListenerHandle::add(
+            document.as_ref(),
+            "selectionchange",
+            move |_event: JsValue| {
+                if this.is_composing.get() || !this.ime_mirror.is_focused() {
+                    return;
+                }
+                // An in-flight edit owns the selection; its import adopts it.
+                if this.ime_mirror.value() != this.ime_mirror.stored_text() {
+                    return;
+                }
+                let Some(element_start) = this.ime_mirror.selection_start() else {
+                    return;
+                };
+                let element_end = this
+                    .ime_mirror
+                    .element_selection_end()
+                    .unwrap_or(element_start);
+                let (stored_start, stored_end) = this.ime_mirror.stored_selection();
+                if (element_start, element_end) == (stored_start, stored_end) {
+                    return;
+                }
+                let applied = this.with_input_handler(|handler| {
+                    let Some(selection) = handler.selected_text_range(false) else {
+                        return false;
+                    };
+                    // The app range corresponding to the stored element
+                    // selection is exactly `selection`; a single consistent
+                    // alignment between the two maps the moved endpoints.
+                    // Disagreeing alignments mean the app selection changed
+                    // underneath and the pending resync owns the element.
+                    let alignment = selection.range.start.checked_sub(stored_start as usize);
+                    if alignment.is_none()
+                        || alignment != selection.range.end.checked_sub(stored_end as usize)
+                    {
+                        return false;
+                    }
+                    let alignment = alignment.unwrap();
+                    handler.set_selected_text_range(
+                        alignment + element_start as usize..alignment + element_end as usize,
+                    );
+                    true
+                });
+                if applied == Some(true) {
+                    this.ime_mirror.adopt_element_state();
+                } else {
+                    // No import is coming for this move; without a forced
+                    // sync the mirror would keep deferring to it and show
+                    // the IME a selection the app never adopted.
+                    this.ime_mirror.reject_selection_import();
+                    this.schedule_ime_mirror_sync();
+                }
+            },
+        ))
     }
 
     /// Software keyboards (IMEs) express editing through `beforeinput`
