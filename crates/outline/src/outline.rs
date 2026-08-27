@@ -6,9 +6,9 @@ use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy_nucleo::StringMatch;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
-    div, rems,
+    AbsoluteLength, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle,
+    WeakEntity, Window, div, rems,
 };
 use language::{OffsetRangeExt, Outline, OutlineItem, OutlineSearchEntry};
 use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
@@ -463,11 +463,11 @@ impl PickerDelegate for OutlineViewDelegate {
     }
 }
 
-pub fn render_item<T>(
+pub fn render_item<T, M: IntoIterator<Item = Range<usize>>>(
     outline_item: &OutlineItem<T>,
-    match_ranges: impl IntoIterator<Item = Range<usize>>,
+    match_ranges: M,
     cx: &App,
-) -> StyledText {
+) -> impl IntoElement + use<T, M> {
     let highlight_style = HighlightStyle {
         background_color: Some(cx.theme().colors().text_accent.alpha(0.3)),
         ..Default::default()
@@ -477,6 +477,7 @@ pub fn render_item<T>(
         .map(|range| (range, highlight_style));
 
     let settings = ThemeSettings::get_global(cx);
+    let buffer_font_size = settings.buffer_font_size(cx);
 
     // TODO: We probably shouldn't need to build a whole new text style here
     // but I'm not sure how to get the current one and modify it.
@@ -486,7 +487,7 @@ pub fn render_item<T>(
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
         font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: settings.buffer_font_size(cx).into(),
+        font_size: AbsoluteLength::from(buffer_font_size),
         font_weight: settings.buffer_font.weight,
         line_height: relative(1.),
         ..Default::default()
@@ -496,7 +497,9 @@ pub fn render_item<T>(
         outline_item.highlight_ranges.iter().cloned(),
     );
 
-    StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights)
+    div().text_size(buffer_font_size).child(
+        StyledText::new(outline_item.text.clone()).with_default_highlights(&text_style, highlights),
+    )
 }
 
 #[cfg(test)]
