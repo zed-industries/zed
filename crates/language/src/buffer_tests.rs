@@ -397,6 +397,162 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     assert_eq!(language_name(language), "Dockerfile");
 }
 
+#[gpui::test]
+async fn test_reregistering_language_during_load_yields_current_language(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let (unblock_stale_load_tx, unblock_stale_load_rx) = futures::channel::oneshot::channel::<()>();
+    let unblock_stale_load_rx = std::sync::Mutex::new(Some(unblock_stale_load_rx));
+
+    let stale_config = LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["stale".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    };
+    registry.register_language(
+        stale_config.name.clone(),
+        None,
+        stale_config.matcher.clone(),
+        false,
+        None,
+        Arc::new(move || {
+            let unblock_stale_load_rx = unblock_stale_load_rx
+                .lock()
+                .expect("the stale loader mutex should not be poisoned")
+                .take();
+            let stale_config = stale_config.clone();
+            async move {
+                if let Some(unblock_stale_load_rx) = unblock_stale_load_rx {
+                    unblock_stale_load_rx.await.ok();
+                }
+                Ok(LoadedLanguage {
+                    config: stale_config,
+                    queries: LanguageQueries::default(),
+                    context_provider: None,
+                    toolchain_provider: None,
+                    manifest_name: None,
+                })
+            }
+            .boxed()
+        }),
+    );
+
+    let pending_language = registry.language_for_name("TheLanguage");
+    cx.executor().run_until_parked();
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fresh".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+
+    unblock_stale_load_tx.send(()).unwrap();
+    let language = pending_language.await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["fresh".to_string()],
+        "a load that races with a re-registration should resolve to the re-registered language"
+    );
+}
+
+#[gpui::test]
+async fn test_reregistering_language_during_failed_load_yields_current_language(
+    cx: &mut TestAppContext,
+) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let (unblock_stale_load_tx, unblock_stale_load_rx) = futures::channel::oneshot::channel::<()>();
+    let unblock_stale_load_rx = std::sync::Mutex::new(Some(unblock_stale_load_rx));
+
+    registry.register_language(
+        LanguageName::new_static("TheLanguage"),
+        None,
+        Arc::new(LanguageMatcher {
+            path_suffixes: vec!["stale".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        false,
+        None,
+        Arc::new(move || {
+            let unblock_stale_load_rx = unblock_stale_load_rx
+                .lock()
+                .expect("the stale loader mutex should not be poisoned")
+                .take();
+            async move {
+                if let Some(unblock_stale_load_rx) = unblock_stale_load_rx {
+                    unblock_stale_load_rx.await.ok();
+                }
+                Err(anyhow::anyhow!("simulated load failure"))
+            }
+            .boxed()
+        }),
+    );
+
+    let pending_language = registry.language_for_name("TheLanguage");
+    cx.executor().run_until_parked();
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fresh".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+
+    unblock_stale_load_tx.send(()).unwrap();
+    let language = pending_language.await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["fresh".to_string()],
+        "a failed load that races with a re-registration should resolve to the re-registered language"
+    );
+}
+
+#[gpui::test]
+async fn test_extension_grammar_cannot_shadow_native_grammar(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    registry.register_native_grammars([("rust", tree_sitter_rust::LANGUAGE)]);
+    registry.register_wasm_grammars(vec![(
+        Arc::from("rust"),
+        PathBuf::from("/extensions/bogus/grammars/rust.wasm"),
+    )]);
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        grammar: Some(Arc::from("rust")),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["the".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    let language = registry.language_for_name("TheLanguage").await.unwrap();
+    assert!(
+        language.grammar().is_some(),
+        "an extension grammar must not replace a native grammar with the same name"
+    );
+
+    registry.remove_languages(&[], &[Arc::from("rust")]);
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheOtherLanguage"),
+        grammar: Some(Arc::from("rust")),
+        ..LanguageConfig::default()
+    });
+    let language = registry
+        .language_for_name("TheOtherLanguage")
+        .await
+        .unwrap();
+    assert!(
+        language.grammar().is_some(),
+        "removing an extension grammar must not remove the native grammar it failed to shadow"
+    );
+}
+
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Arc::from(rel_path(path)),
@@ -4118,7 +4274,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             DiagnosticEntry::new(
                                 range,
                                 Diagnostic {
-                                    message: post_inc(&mut next_diagnostic_id).to_string(),
+                                    message: post_inc(&mut next_diagnostic_id).to_string().into(),
                                     ..Default::default()
                                 },
                             )
