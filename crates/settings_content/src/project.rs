@@ -40,7 +40,7 @@ impl RootUserSettings for ProjectSettingsContent {
 }
 
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
@@ -86,6 +86,14 @@ pub struct ProjectSettingsContent {
     /// Default: false
     pub disable_ai: Option<SaturatingBool>,
 }
+
+crate::fallible_options::flattened_deserialize!(ProjectSettingsContent {
+    sections: { all_languages, worktree },
+    options: {
+        terminal, context_server_timeout, load_direnv, git_hosting_providers, disable_ai,
+    },
+    defaults: { lsp, dap, context_servers },
+});
 
 /// When to scan content of linked directories.
 #[derive(
@@ -281,19 +289,24 @@ impl SemanticTokenRules {
     pub const FILE_NAME: &'static str = "semantic_token_rules.json";
 
     pub fn load(file_path: &Path) -> anyhow::Result<Self> {
-        let rules_content = std::fs::read(file_path).with_context(|| {
+        let rules_content = std::fs::read_to_string(file_path).with_context(|| {
             anyhow::anyhow!(
                 "Could not read semantic token rules from {}",
                 file_path.display()
             )
         })?;
 
-        serde_json_lenient::from_slice::<SemanticTokenRules>(&rules_content).with_context(|| {
+        Self::parse(&rules_content).with_context(|| {
             anyhow::anyhow!(
                 "Failed to parse semantic token rules from {}",
                 file_path.display()
             )
         })
+    }
+
+    pub fn parse(file_content: &str) -> anyhow::Result<Self> {
+        serde_json_lenient::from_str::<SemanticTokenRules>(file_content)
+            .context("failed to parse semantic token rules")
     }
 }
 

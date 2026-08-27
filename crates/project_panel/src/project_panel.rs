@@ -73,10 +73,11 @@ use util::{
 };
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenMode, OpenOptions, OpenVisible, PreviewTabsSettings,
-    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings,
+    SelectedEntry, SplitDirection, Workspace, WorkspaceSettings, copy_file_permalink,
     dock::{DockPosition, Panel, PanelEvent},
     focus_follows_mouse::FocusFollowsMouse as _,
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
+    open_file_permalink,
 };
 use worktree::CreatedEntry;
 use zed_actions::{
@@ -1214,6 +1215,16 @@ impl ProjectPanel {
                                     )
                                     .when(has_history, |menu| {
                                         menu.action("View History", Box::new(git::FileHistory))
+                                    })
+                                    .when(!is_dir, |menu| {
+                                        menu.action(
+                                            "Open File Permalink",
+                                            git::OpenFilePermalink.boxed_clone(),
+                                        )
+                                        .action(
+                                            "Copy File Permalink",
+                                            git::CopyFilePermalink.boxed_clone(),
+                                        )
                                     })
                             })
                             .when(!should_hide_rename, |menu| {
@@ -3804,6 +3815,53 @@ impl ProjectPanel {
         if !file_paths.is_empty() {
             cx.write_to_clipboard(ClipboardItem::new_string(file_paths.join("\n")));
         }
+    }
+
+    fn open_file_permalink(
+        &mut self,
+        _: &git::OpenFilePermalink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_file_project_path(cx) else {
+            return;
+        };
+        open_file_permalink(
+            self.project.clone(),
+            project_path,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    fn copy_file_permalink(
+        &mut self,
+        _: &git::CopyFilePermalink,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_path) = self.selected_file_project_path(cx) else {
+            return;
+        };
+        copy_file_permalink(
+            self.project.clone(),
+            project_path,
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+    }
+
+    fn selected_file_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        let (worktree, entry) = self.selected_sub_entry(cx)?;
+        if entry.is_dir() {
+            return None;
+        }
+        Some(ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: entry.path.clone(),
+        })
     }
 
     fn reveal_in_finder(
@@ -7185,6 +7243,8 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
                 .on_action(cx.listener(Self::copy_relative_path))
+                .on_action(cx.listener(Self::open_file_permalink))
+                .on_action(cx.listener(Self::copy_file_permalink))
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
