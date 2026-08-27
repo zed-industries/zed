@@ -2629,6 +2629,7 @@ impl OutlinePanel {
         cx: &mut Context<OutlinePanel>,
     ) -> Stateful<Div> {
         let settings = OutlinePanelSettings::get_global(cx);
+        let row_height = ThemeSettings::get_global(cx).ui_line_height();
         div()
             .text_ui(cx)
             .id(item_id.clone())
@@ -2654,13 +2655,19 @@ impl OutlinePanel {
             .cursor_pointer()
             .child(
                 ListItem::new(item_id)
+                    .when_some(row_height, |this, row_height| this.height(row_height))
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .toggle_state(is_active)
                     .child(
                         h_flex()
                             .child(h_flex().w(px(16.)).justify_center().child(icon_element))
-                            .child(h_flex().h_6().child(label_element).ml_1()),
+                            .child(
+                                h_flex()
+                                    .h(row_height.unwrap_or(rems_from_px(24_f32)))
+                                    .child(label_element)
+                                    .ml_1(),
+                            ),
                     )
                     .on_secondary_mouse_down(cx.listener(
                         move |outline_panel, event: &MouseDownEvent, window, cx| {

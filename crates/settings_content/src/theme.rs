@@ -202,6 +202,10 @@ pub struct ThemeSettingsContent {
     pub buffer_font_weight: Option<FontWeightContent>,
     /// The buffer's line height.
     pub buffer_line_height: Option<BufferLineHeight>,
+    /// The row height for entries in UI panels, as a multiple of `ui_font_size`.
+    ///
+    /// When unset, each panel uses its own row height.
+    pub ui_line_height: Option<UiLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeaturesContent>,
@@ -513,21 +517,60 @@ pub enum BufferLineHeight {
     /// The default line height.
     Standard,
     /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
-    Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
+    Custom(#[serde(deserialize_with = "deserialize_buffer_line_height")] f32),
 }
 
-fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
+/// The row height for entries in UI panels, as a multiple of `ui_font_size`.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    Default,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum UiLineHeight {
+    /// A less dense row height.
+    #[default]
+    Comfortable,
+    /// A denser row height.
+    Standard,
+    /// A custom row height, where 1.0 is the UI font's size. Must be at least 1.0.
+    Custom(#[serde(deserialize_with = "deserialize_ui_line_height")] f32),
+}
+
+fn deserialize_min_line_height<'de, D>(deserializer: D, field_name: &str) -> Result<f32, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
     let value = f32::deserialize(deserializer)?;
     if value < 1.0 {
-        return Err(serde::de::Error::custom(
-            "buffer_line_height.custom must be at least 1.0",
-        ));
+        return Err(serde::de::Error::custom(format!(
+            "{field_name}.custom must be at least 1.0"
+        )));
     }
 
     Ok(value)
+}
+
+fn deserialize_buffer_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_min_line_height(deserializer, "buffer_line_height")
+}
+
+fn deserialize_ui_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    deserialize_min_line_height(deserializer, "ui_line_height")
 }
 
 /// The content of a serialized theme.
@@ -1485,6 +1528,51 @@ mod tests {
                 .unwrap()
                 .to_string()
                 .contains("buffer_line_height.custom must be at least 1.0")
+        );
+    }
+
+    #[test]
+    fn test_ui_line_height_deserialize_valid() {
+        assert_eq!(
+            serde_json::from_value::<UiLineHeight>(json!("comfortable")).unwrap(),
+            UiLineHeight::Comfortable
+        );
+        assert_eq!(
+            serde_json::from_value::<UiLineHeight>(json!("standard")).unwrap(),
+            UiLineHeight::Standard
+        );
+        assert_eq!(
+            serde_json::from_value::<UiLineHeight>(json!({"custom": 1.0})).unwrap(),
+            UiLineHeight::Custom(1.0)
+        );
+        assert_eq!(
+            serde_json::from_value::<UiLineHeight>(json!({"custom": 1.5})).unwrap(),
+            UiLineHeight::Custom(1.5)
+        );
+    }
+
+    #[test]
+    fn test_ui_line_height_deserialize_invalid() {
+        assert!(
+            serde_json::from_value::<UiLineHeight>(json!({"custom": 0.99}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("ui_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<UiLineHeight>(json!({"custom": 0.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("ui_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<UiLineHeight>(json!({"custom": -1.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("ui_line_height.custom must be at least 1.0")
         );
     }
 

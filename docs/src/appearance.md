@@ -114,6 +114,16 @@ Adjust line spacing with `buffer_line_height`:
 - `"standard"` — 1.3 ratio
 - `{ "custom": 1.5 }` — Custom ratio
 
+### Panel Row Height
+
+Set `ui_line_height` to control the height of each row in the project, outline, git and collaboration panels. The value is a multiple of `ui_font_size`, and takes the same options as `buffer_line_height`. Leave it unset and each panel keeps its own row height.
+
+```json [settings]
+{
+  "ui_line_height": "standard"
+}
+```
+
 ## UI Elements
 
 Zed provides extensive control over UI elements including:

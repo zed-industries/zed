@@ -5949,6 +5949,16 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 `integer` values between `100` and `900`
 
+## UI Line Height
+
+- Description: The row height for entries in the project, outline, git and collaboration panels, as a multiple of `ui_font_size`. When null, each panel uses its own row height.
+- Setting: `ui_line_height`
+- Default: `null`
+
+**Options**
+
+`"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+
 ## Settings Profiles
 
 - Description: Configure any number of settings profiles that are temporarily applied when selected from {#action settings_profile_selector::Toggle}.

@@ -1050,7 +1050,7 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn ui_font_section() -> [SettingsPageItem; 6] {
+    fn ui_font_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("UI Font"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -1094,6 +1094,99 @@ fn appearance_page() -> SettingsPage {
                 }),
                 metadata: None,
                 files: USER,
+            }),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Row Height",
+                    description: "Row height for entries in the project, outline, git and collaboration panels.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("ui_line_height$"),
+                        pick: |settings_content| {
+                            Some(
+                                &dynamic_variants::<settings::UiLineHeight>()[settings_content
+                                    .theme
+                                    .ui_line_height
+                                    .as_ref()?
+                                    .discriminant()
+                                    as usize],
+                            )
+                        },
+                        write: |settings_content, value, _| {
+                            let Some(value) = value else {
+                                settings_content.theme.ui_line_height = None;
+                                return;
+                            };
+                            let settings_value = settings_content
+                                .theme
+                                .ui_line_height
+                                .get_or_insert_default();
+                            *settings_value = match value {
+                                settings::UiLineHeightDiscriminants::Comfortable => {
+                                    settings::UiLineHeight::Comfortable
+                                }
+                                settings::UiLineHeightDiscriminants::Standard => {
+                                    settings::UiLineHeight::Standard
+                                }
+                                settings::UiLineHeightDiscriminants::Custom => {
+                                    let custom_value =
+                                        theme_settings::ui_line_height_from_settings(
+                                            *settings_value,
+                                        )
+                                        .value();
+                                    settings::UiLineHeight::Custom(custom_value)
+                                }
+                            };
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        settings_content
+                            .theme
+                            .ui_line_height
+                            .as_ref()?
+                            .discriminant() as usize,
+                    )
+                },
+                fields: dynamic_variants::<settings::UiLineHeight>()
+                    .into_iter()
+                    .map(|variant| match variant {
+                        settings::UiLineHeightDiscriminants::Comfortable => vec![],
+                        settings::UiLineHeightDiscriminants::Standard => vec![],
+                        settings::UiLineHeightDiscriminants::Custom => vec![SettingItem {
+                            files: USER,
+                            title: "Custom Row Height",
+                            description: "Custom row height, as a multiple of the UI font size (must be at least 1.0).",
+                            field: Box::new(SettingField {
+                                organization_override: None,
+                                json_path: Some("ui_line_height"),
+                                pick: |settings_content| match settings_content
+                                    .theme
+                                    .ui_line_height
+                                    .as_ref()
+                                {
+                                    Some(settings::UiLineHeight::Custom(value)) => Some(value),
+                                    _ => None,
+                                },
+                                write: |settings_content, value, _| {
+                                    let Some(value) = value else {
+                                        return;
+                                    };
+                                    match settings_content.theme.ui_line_height.as_mut() {
+                                        Some(settings::UiLineHeight::Custom(line_height)) => {
+                                            *line_height = f32::max(value, 1.0)
+                                        }
+                                        _ => return,
+                                    }
+                                },
+                            }),
+                            metadata: None,
+                        }],
+                    })
+                    .collect(),
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 files: USER,
