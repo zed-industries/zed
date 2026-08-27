@@ -886,8 +886,8 @@ impl Vim {
 
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line
-                let buffer_point = movement::line_beginning(&display_map, selection.start, false)
-                    .to_point(&display_map);
+                let buffer_point =
+                    movement::line_beginning(&display_map, selection.start).to_point(&display_map);
 
                 // Check if cursor is on empty line by checking first character
                 let line_start_offset = buffer_snapshot.point_to_offset(buffer_point);
