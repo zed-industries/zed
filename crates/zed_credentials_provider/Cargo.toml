@@ -18,5 +18,4 @@ futures.workspace = true
 gpui.workspace = true
 paths.workspace = true
 release_channel.workspace = true
-serde.workspace = true
 serde_json.workspace = true

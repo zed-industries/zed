@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.18.0"
+version = "1.19.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -12,6 +12,11 @@ default-run = "zed"
 workspace = true
 
 [features]
+inspector = [
+    "gpui/inspector",
+    "inspector_ui/inspector",
+    "ui/derive_inspector_reflection",
+]
 tracy = ["ztracing/tracy"]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
@@ -81,6 +86,7 @@ auto_update.workspace = true
 auto_update_ui.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
+call_hierarchy.workspace = true
 channel.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -91,7 +97,6 @@ codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
-component.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
@@ -117,11 +122,16 @@ fs.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
-git_ui = { workspace = true, features = [ "call" ] }
+git_ui = { workspace = true, features = ["call"] }
 git_ui_core.workspace = true
 go_to_line.workspace = true
-gpui = { workspace = true, features = [ "profiler" ] }
-gpui_platform = { workspace = true, features = [ "screen-capture", "font-kit", "wayland", "x11" ] }
+gpui = { workspace = true, features = ["profiler", "stacker"] }
+gpui_platform = { workspace = true, features = [
+    "screen-capture",
+    "font-kit",
+    "wayland",
+    "x11",
+] }
 gpui_tokio.workspace = true
 image = { workspace = true, optional = true }
 spin = "0.10.0"
@@ -196,7 +206,6 @@ snippets_ui.workspace = true
 svg_preview.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
-task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
@@ -233,20 +242,13 @@ ztracing.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true
 windows.workspace = true
-gpui = { workspace = true, features = [
-    "profiler",
-    "windows-manifest",
-] }
+gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
 
 [build-dependencies]
 windows_resources = { path = "../windows_resources" }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui = { workspace = true, features = [
-    "profiler",
-    "wayland",
-    "x11",
-] }
+gpui = { workspace = true, features = ["profiler", "wayland", "x11"] }
 ashpd.workspace = true
 image.workspace = true
 
@@ -278,7 +280,6 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
-
 
 
 [package.metadata.bundle-dev]
@@ -313,5 +314,5 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
-[package.metadata.cargo-machete]
-ignored = ["profiling", "zstd", "tracing"]
+[package.metadata.cargo-shear]
+ignored = ["profiling", "tracing"]

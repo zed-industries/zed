@@ -1068,7 +1068,7 @@ impl Editor {
 
     pub fn go_to_declaration_split(
         &mut self,
-        _: &GoToDeclaration,
+        _: &GoToDeclarationSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {

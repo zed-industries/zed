@@ -392,6 +392,12 @@ impl Column for DataType {
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     connection: Arc<Mutex<Connection>>,
+    /// In production, saves take real time (serialization, zstd, disk I/O) while
+    /// the user keeps typing, so new save requests routinely arrive mid-write.
+    /// The test executor completes writes instantly, so tests use this gate to
+    /// hold a write in flight and interleave more save requests with it.
+    #[cfg(test)]
+    write_gate: Mutex<Option<Shared<futures::channel::oneshot::Receiver<()>>>>,
 }
 
 struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
@@ -481,6 +487,8 @@ impl ThreadsDatabase {
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
+            #[cfg(test)]
+            write_gate: Mutex::new(None),
         };
 
         Ok(db)
@@ -665,9 +673,21 @@ impl ThreadsDatabase {
         folder_paths: PathList,
     ) -> Task<Result<()>> {
         let connection = self.connection.clone();
+        #[cfg(test)]
+        let write_gate = self.write_gate.lock().clone();
 
-        self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
+        self.executor.spawn(async move {
+            #[cfg(test)]
+            if let Some(write_gate) = write_gate {
+                write_gate.await.ok();
+            }
+            Self::save_thread_sync(&connection, id, thread, &folder_paths)
+        })
+    }
+
+    #[cfg(test)]
+    pub fn set_write_gate(&self, gate: futures::channel::oneshot::Receiver<()>) {
+        *self.write_gate.lock() = Some(gate.shared());
     }
 
     fn deserialize_thread(data_type: DataType, data: Vec<u8>) -> Result<DbThread> {
