@@ -46,3 +46,12 @@ description: Add, modify, or test a custom dylint lint in `tooling/lints`. Cover
   ```
 
   (defaults to `--workspace` if no package is given; the script handles the `--force-warn` and cache-cleaning gotchas documented in the README).
+
+## UI fixture sections
+
+Every lint-specific `ui/*.rs` fixture MUST put cases expected to trigger the lint first, followed by cases expected not to trigger it, using exactly these headings:
+
+```rust
+// ==================== SHOULD FIRE ====================
+// ================== SHOULD NOT FIRE ==================
+```
