@@ -2669,6 +2669,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "call_hierarchy"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "futures 0.3.32",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "menu",
+ "picker",
+ "project",
+ "proto",
+ "serde_json",
+ "settings",
+ "theme",
+ "theme_settings",
+ "tree-sitter-rust",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
+]
+
+[[package]]
 name = "calloop"
 version = "0.14.3"
 source = "git+https://github.com/zed-industries/calloop#eb6b4fd17b9af5ecc226546bdd04185391b3e265"
@@ -9216,6 +9242,7 @@ dependencies = [
  "dap",
  "extension",
  "feature_flags",
+ "fs",
  "gpui",
  "language",
  "parking_lot",
@@ -9958,7 +9985,6 @@ dependencies = [
  "picker",
  "project",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -10357,7 +10383,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=f4dfa89a21ca35cd929b70354b1583fabae325f8#f4dfa89a21ca35cd929b70354b1583fabae325f8"
+source = "git+https://github.com/zed-industries/lsp-types?rev=f1783e63a7f4eb4397bf51d4148b4895a1f7ab16#f1783e63a7f4eb4397bf51d4148b4895a1f7ab16"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -12169,7 +12195,6 @@ dependencies = [
  "gpui",
  "picker",
  "project",
- "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
@@ -22721,6 +22746,7 @@ dependencies = [
  "auto_update_ui",
  "breadcrumbs",
  "call",
+ "call_hierarchy",
  "channel",
  "chrono",
  "clap",
