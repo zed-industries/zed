@@ -24,8 +24,13 @@ use util::{
 
 use crate::{Project, ProjectPath};
 
+#[derive(Default)]
 pub struct Terminals {
     pub(crate) local_handles: Vec<WeakEntity<terminal::Terminal>>,
+    /// Extra environment variables handed to every terminal this project
+    /// subsequently spawns, layered over the resolved directory environment and
+    /// the `terminal.env` setting. See [`Project::set_terminal_env_var`].
+    pub(crate) extra_env: HashMap<String, String>,
 }
 
 impl Project {
@@ -131,9 +136,13 @@ impl Project {
             .map(|p| self.active_toolchain(p, LanguageName::new_static("Python"), cx))
             .collect::<Vec<_>>();
         let lang_registry = self.languages.clone();
+        let extra_env = self.terminals.extra_env.clone();
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            // Project-injected vars win over the setting, so a caller that must
+            // be seen (a discovery port) is not silently shadowed by user config.
+            env.extend(extra_env);
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -372,10 +381,12 @@ impl Project {
             self.resolve_directory_environment(&env_shell, path.clone(), remote_client.clone(), cx);
 
         let lang_registry = self.languages.clone();
+        let extra_env = self.terminals.extra_env.clone();
         cx.spawn(async move |project, cx| {
             let shell_kind = ShellKind::new(&shell, path_style.is_windows());
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            env.extend(extra_env);
 
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
@@ -538,9 +549,11 @@ impl Project {
             cx,
         );
 
+        let extra_env = self.terminals.extra_env.clone();
         cx.spawn(async move |project, cx| {
             let mut env = env_task.await.unwrap_or_default();
             env.extend(settings.env);
+            env.extend(extra_env);
 
             project.update(cx, move |_, cx| {
                 match remote_client {
@@ -578,6 +591,19 @@ impl Project {
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
         &self.terminals.local_handles
+    }
+
+    /// Inject (or overwrite) an environment variable that every terminal
+    /// subsequently spawned by this project inherits, layered on top of the
+    /// resolved directory environment and the `terminal.env` setting. Only
+    /// affects terminals created after this call. Idempotent: setting the same
+    /// key again replaces the value.
+    pub fn set_terminal_env_var(&mut self, key: String, value: String) {
+        log::info!(
+            "project: injecting terminal env var {key}=<{} bytes>",
+            value.len()
+        );
+        self.terminals.extra_env.insert(key, value);
     }
 
     fn resolve_directory_environment(
