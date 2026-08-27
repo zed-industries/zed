@@ -797,6 +797,7 @@ impl VsCodeSettings {
                 .read_str("workbench.editor.editorActionsLocation")
                 .and_then(|str| if str == "hidden" { Some(false) } else { None }),
             show_pinned_tabs_in_separate_row: None,
+            wrap_tabs: self.read_bool("workbench.editor.wrapTabs"),
         })
     }
 

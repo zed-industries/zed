@@ -522,6 +522,11 @@ pub struct TabBarSettingsContent {
     ///
     /// Default: false
     pub show_pinned_tabs_in_separate_row: Option<bool>,
+    /// Whether to wrap tabs onto additional rows instead of scrolling horizontally
+    /// when the tab bar overflows.
+    ///
+    /// Default: false
+    pub wrap_tabs: Option<bool>,
 }
 
 #[with_fallible_options]
