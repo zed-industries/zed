@@ -155,6 +155,8 @@ actions!(
         ExpandSelectedEntry,
         /// Collapses the selected entry to hide its children.
         CollapseSelectedEntry,
+        /// Toggles cumulative diff stats for directories in the tree view.
+        ToggleDirectoryDiffStats,
         /// View unstaged changes
         ViewUnstagedChanges,
         /// View staged changes
@@ -199,6 +201,7 @@ struct GitPanelViewOptionsMenuState {
     sort_by: GitPanelSortBy,
     group_by: GitPanelGroupBy,
     tree_view: bool,
+    directory_diff_stats: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -374,6 +377,7 @@ fn git_panel_view_options_menu(
         sort_by: GitPanelSettings::get_global(cx).sort_by,
         group_by: GitPanelSettings::get_global(cx).group_by,
         tree_view: GitPanelSettings::get_global(cx).tree_view,
+        directory_diff_stats: GitPanelSettings::get_global(cx).directory_diff_stats,
     }));
 
     ContextMenu::build_persistent(window, cx, move |context_menu, _, _| {
@@ -409,6 +413,20 @@ fn git_panel_view_options_menu(
                             window.dispatch_action(Box::new(ToggleTreeView), cx);
                         }
                     })
+            })
+            .when(state.tree_view, |this| {
+                this.separator().header("Tree").item({
+                    let view_options_menu_state = view_options_menu_state.clone();
+                    ContextMenuEntry::new("Directory Diff Stats")
+                        .toggle(IconPosition::End, state.directory_diff_stats)
+                        .handler(move |window, cx| {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                directory_diff_stats: !state.directory_diff_stats,
+                                ..state
+                            });
+                            window.dispatch_action(Box::new(ToggleDirectoryDiffStats), cx);
+                        })
+                })
             })
             .when(!state.tree_view, |this| {
                 this.separator()
@@ -840,7 +858,7 @@ impl TreeViewState {
             }
         }
 
-        let (flattened, _) = self.flatten_tree(&root, section, 0, seen_directories);
+        let (flattened, _, _) = self.flatten_tree(&root, section, 0, seen_directories);
         flattened
     }
 
@@ -850,16 +868,21 @@ impl TreeViewState {
         section: Section,
         depth: usize,
         seen_directories: &mut HashSet<TreeKey>,
-    ) -> (Vec<(GitListEntry, bool)>, Vec<GitStatusEntry>) {
+    ) -> (
+        Vec<(GitListEntry, bool)>,
+        Vec<GitStatusEntry>,
+        Option<DiffStat>,
+    ) {
         let mut all_statuses = Vec::new();
         let mut flattened = Vec::new();
+        let mut subtree_diff_stat = None;
 
         for child in node.children.values() {
             let (terminal, name) = Self::compact_directory_chain(child);
             let Some(path) = terminal.path.clone().or_else(|| child.path.clone()) else {
                 continue;
             };
-            let (child_flattened, mut child_statuses) =
+            let (child_flattened, mut child_statuses, child_diff_stat) =
                 self.flatten_tree(terminal, section, depth + 1, seen_directories);
             let key = TreeKey { section, path };
             let expanded = *self.expanded_dirs.get(&key).unwrap_or(&true);
@@ -869,12 +892,15 @@ impl TreeViewState {
             self.directory_descendants
                 .insert(key.clone(), child_statuses.clone());
 
+            subtree_diff_stat = sum_diff_stats(subtree_diff_stat, child_diff_stat);
+
             flattened.push((
                 GitListEntry::Directory(GitTreeDirEntry {
                     key,
                     name,
                     depth,
                     expanded,
+                    diff_stat: child_diff_stat,
                 }),
                 true,
             ));
@@ -889,6 +915,7 @@ impl TreeViewState {
         }
 
         for file in &node.files {
+            subtree_diff_stat = sum_diff_stats(subtree_diff_stat, file.diff_stat);
             all_statuses.push(file.clone());
             flattened.push((
                 GitListEntry::TreeStatus(GitTreeStatusEntry {
@@ -899,7 +926,7 @@ impl TreeViewState {
             ));
         }
 
-        (flattened, all_statuses)
+        (flattened, all_statuses, subtree_diff_stat)
     }
 
     fn compact_directory_chain(mut node: &TreeNode) -> (&TreeNode, SharedString) {
@@ -938,6 +965,7 @@ struct GitTreeDirEntry {
     depth: usize,
     // staged_state: ToggleState,
     expanded: bool,
+    diff_stat: Option<DiffStat>,
 }
 
 #[derive(Default)]
@@ -946,6 +974,17 @@ struct TreeNode {
     path: Option<RepoPath>,
     children: BTreeMap<SharedString, TreeNode>,
     files: Vec<GitStatusEntry>,
+}
+
+fn sum_diff_stats(accumulated: Option<DiffStat>, stat: Option<DiffStat>) -> Option<DiffStat> {
+    match (accumulated, stat) {
+        (Some(accumulated), Some(stat)) => Some(DiffStat {
+            added: accumulated.added.saturating_add(stat.added),
+            deleted: accumulated.deleted.saturating_add(stat.deleted),
+        }),
+        (accumulated, None) => accumulated,
+        (None, stat) => stat,
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -1230,6 +1269,8 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_icons = GitPanelSettings::get_global(cx).folder_icons;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+            let mut was_directory_diff_stats =
+                GitPanelSettings::get_global(cx).directory_diff_stats;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
@@ -1238,6 +1279,7 @@ impl GitPanel {
                 let file_icons = settings.file_icons;
                 let folder_icons = settings.folder_icons;
                 let diff_stats = settings.diff_stats;
+                let directory_diff_stats = settings.directory_diff_stats;
                 if tree_view != was_tree_view {
                     match (&mut this.view_mode, tree_view) {
                         (GitPanelViewMode::Tree(state), false) => {
@@ -1263,7 +1305,10 @@ impl GitPanel {
                 if (diff_stats != was_diff_stats) || update_entries {
                     this.update_visible_entries(window, cx);
                 }
-                if file_icons != was_file_icons || folder_icons != was_folder_icons {
+                if file_icons != was_file_icons
+                    || folder_icons != was_folder_icons
+                    || directory_diff_stats != was_directory_diff_stats
+                {
                     cx.notify();
                 }
                 was_sort_by = sort_by;
@@ -1272,6 +1317,7 @@ impl GitPanel {
                 was_file_icons = file_icons;
                 was_folder_icons = folder_icons;
                 was_diff_stats = diff_stats;
+                was_directory_diff_stats = directory_diff_stats;
             })
             .detach();
 
@@ -4592,6 +4638,23 @@ impl GitPanel {
                 });
             })
         }
+    }
+
+    fn toggle_directory_diff_stats(
+        &mut self,
+        _: &ToggleDirectoryDiffStats,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Read the current value inside the closure so rapid repeated toggles
+        // queue up as sequential negations instead of racing the async write.
+        update_settings_file(self.fs.clone(), cx, |settings, cx| {
+            let git_panel = settings.git_panel.get_or_insert_default();
+            let current = git_panel
+                .directory_diff_stats
+                .unwrap_or_else(|| GitPanelSettings::get_global(cx).directory_diff_stats);
+            git_panel.directory_diff_stats = Some(!current);
+        });
     }
 
     pub(crate) fn increase_font_size(
@@ -8105,6 +8168,7 @@ impl GitPanel {
 
         let name_row = h_flex()
             .min_w_0()
+            .flex_1()
             .gap_1()
             .pl(px(entry.depth as f32 * TREE_INDENT))
             .child(
@@ -8130,7 +8194,6 @@ impl GitPanel {
             .pl_2p5()
             .pr_1()
             .gap_1p5()
-            .justify_between()
             .border_1()
             .border_r_2()
             .when(selected && self.focus_handle.is_focused(window), |el| {
@@ -8140,6 +8203,16 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
+            .when(settings.diff_stats && settings.directory_diff_stats, |el| {
+                el.when_some(entry.diff_stat, move |this, stat| {
+                    let id: ElementId = ("dir_diff_stat", ix).into();
+                    this.child(ui::DiffStat::new(
+                        id,
+                        stat.added as usize,
+                        stat.deleted as usize,
+                    ))
+                })
+            })
             .child(
                 div()
                     .id(checkbox_wrapper_id)
@@ -8558,6 +8631,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::set_group_by_status))
             .on_action(cx.listener(Self::set_group_by_staging))
             .on_action(cx.listener(Self::toggle_tree_view))
+            .on_action(cx.listener(Self::toggle_directory_diff_stats))
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
@@ -9337,6 +9411,66 @@ mod tests {
             new_entries.first(),
             Some((GitListEntry::Directory(entry), _)) if entry.expanded
         ));
+    }
+
+    #[test]
+    fn test_tree_view_directory_diff_stat_aggregates_descendants() {
+        let entry = |path, diff_stat| GitStatusEntry {
+            repo_path: repo_path(path),
+            status: StatusCode::Modified.worktree(),
+            staging: StageStatus::Unstaged,
+            diff_stat,
+        };
+        let mut state = TreeViewState::default();
+        let mut seen_directories = HashSet::default();
+
+        let entries = state.build_tree_entries(
+            Section::Tracked,
+            vec![
+                entry(
+                    "src/a.rs",
+                    Some(DiffStat {
+                        added: 10,
+                        deleted: 2,
+                    }),
+                ),
+                entry(
+                    "src/nested/b.rs",
+                    Some(DiffStat {
+                        added: 5,
+                        deleted: 1,
+                    }),
+                ),
+                entry("src/nested/c.rs", None),
+                entry("other/d.rs", None),
+            ],
+            &mut seen_directories,
+        );
+
+        let directory_diff_stat = |path: &str| {
+            entries.iter().find_map(|(entry, _)| match entry {
+                GitListEntry::Directory(dir) if dir.key.path == repo_path(path) => {
+                    Some(dir.diff_stat)
+                }
+                _ => None,
+            })
+        };
+
+        assert_eq!(
+            directory_diff_stat("src"),
+            Some(Some(DiffStat {
+                added: 15,
+                deleted: 3,
+            }))
+        );
+        assert_eq!(
+            directory_diff_stat("src/nested"),
+            Some(Some(DiffStat {
+                added: 5,
+                deleted: 1,
+            }))
+        );
+        assert_eq!(directory_diff_stat("other"), Some(None));
     }
 
     fn register_git_commit_language(project: &Entity<Project>, cx: &mut VisualTestContext) {

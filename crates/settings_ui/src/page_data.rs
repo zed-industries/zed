@@ -6259,21 +6259,52 @@ fn panels_page() -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Tree View",
-                description: "Enable to show entries in tree view list, disable to show in flat view list.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("git_panel.tree_view"),
-                    pick: |settings_content| {
-                        settings_content.git_panel.as_ref()?.tree_view.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.git_panel.get_or_insert_default().tree_view = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    title: "Tree View",
+                    description: "Enable to show entries in tree view list, disable to show in flat view list.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("git_panel.tree_view"),
+                        pick: |settings_content| {
+                            settings_content.git_panel.as_ref()?.tree_view.as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content.git_panel.get_or_insert_default().tree_view = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(settings_content.git_panel.as_ref()?.tree_view? as usize)
+                },
+                fields: vec![
+                    Vec::new(),
+                    vec![SettingItem {
+                        title: "Directory Diff Stats",
+                        description: "Whether to show the cumulative addition/deletion change count next to directories in the git panel tree view.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("git_panel.directory_diff_stats"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git_panel
+                                    .as_ref()?
+                                    .directory_diff_stats
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .git_panel
+                                    .get_or_insert_default()
+                                    .directory_diff_stats = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }],
+                ],
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "File Icons",
