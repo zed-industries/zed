@@ -1,0 +1,53 @@
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:13:24
+   |
+LL |     let _a: Arc<str> = String::from("hello").into();
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D owned-string-into-shared` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(owned_string_into_shared)]`
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:16:23
+   |
+LL |     let _b: Rc<str> = String::from("world").into();
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:19:28
+   |
+LL |     let _c: Cow<'_, str> = String::from("borrowed-or-owned").into();
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:22:24
+   |
+LL |     let _d: Arc<str> = "via-to-string".to_string().into();
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:25:24
+   |
+LL |     let _e: Arc<str> = "via-to-owned".to_owned().into();
+   |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:28:23
+   |
+LL |     let _f: Rc<str> = "rc-via-to-string".to_string().into();
+   |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:31:28
+   |
+LL |     let _g: Cow<'_, str> = "cow-via-to-owned".to_owned().into();
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: this allocates an owned `String` from a string literal only to convert it into a refcounted string
+  --> $DIR/owned_string_into_shared.rs:35:9
+   |
+LL |         String::from("this literal is definitely longer than twenty three bytes").into();
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 8 previous errors
+

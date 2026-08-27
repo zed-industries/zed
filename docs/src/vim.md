@@ -297,11 +297,11 @@ These ex commands open Zed's various panels and windows.
 
 These commands navigate diagnostics.
 
-| Command                  | Description                    |
-| ------------------------ | ------------------------------ |
-| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic      |
-| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostics |
-| `:cc` or `:ll`           | Open the errors page           |
+| Command                  | Description                   |
+| ------------------------ | ----------------------------- |
+| `:cn[ext]` or `:ln[ext]` | Go to the next diagnostic     |
+| `:cp[rev]` or `:lp[rev]` | Go to the previous diagnostic |
+| `:cc` or `:ll`           | Open the errors page          |
 
 ### Git
 

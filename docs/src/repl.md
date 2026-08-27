@@ -73,13 +73,7 @@ style.use('ggplot')
 
 #### Global environment
 
-<div class="warning">
-
-On macOS, your system Python will _not_ work. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment.
-
-</div>
-
-To setup your current Python to have an available kernel, run:
+To set up your current Python to have an available kernel, run:
 
 ```sh
 pip install ipykernel
@@ -101,6 +95,8 @@ source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
+
+> Note: **On macOS, your system Python will _not_ work**. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment. Zed uses separate selections for the Python [toolchain](./configuring-languages.md#toolchains) and REPL kernel. If diagnostics differ from the REPL, align the toolchain with the kernel using {#action toolchain::Select}. Read more about the [toolchain selector for Python](./languages/python.md#selecting-a-toolchain).
 
 ### R (Ark Kernel) {#r-ark}
 
@@ -217,4 +213,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control this, run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

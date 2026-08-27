@@ -742,7 +742,9 @@ pub fn to_pretty_json(
 
 pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
     let mut deserializer = serde_json_lenient::Deserializer::from_str(content);
-    Ok(serde_path_to_error::deserialize(&mut deserializer)?)
+    let value = serde_path_to_error::deserialize(&mut deserializer)?;
+    deserializer.end()?;
+    Ok(value)
 }
 
 #[cfg(test)]
@@ -2631,5 +2633,20 @@ mod tests {
   "d": "value2"
 }"#;
         assert_eq!(infer_json_indent_size(json_mixed), 2);
+    }
+
+    #[test]
+    fn test_parse_json_with_comments_rejects_trailing_content() {
+        let valid = r#"
+            // comment
+            [{"label": "a"}]
+        "#;
+        parse_json_with_comments::<Vec<Value>>(valid).unwrap();
+
+        let trailing = r#"
+            [{"label": "a"}]
+            [{"label": "b"}]
+        "#;
+        parse_json_with_comments::<Vec<Value>>(trailing).unwrap_err();
     }
 }

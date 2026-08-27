@@ -17,8 +17,11 @@
     "bindings": {
       "ctrl-g": null, // currently activates `go_to_line::Toggle` when there is nothing to cancel
       "ctrl-x": null, // currently activates `editor::Cut` if no following key is pressed for 1 second
-      "ctrl-p": null, // currently activates `file_finder::Toggle` when the cursor is on the first character of the buffer
-      "ctrl-n": null, // currently activates `workspace::NewFile` when the cursor is on the last character of the buffer
+      // `null` only stops binding resolution in a user keymap, so these use a targeted unbind:
+      // `editor::MoveUp`/`MoveDown` propagate when the cursor doesn't move, which at the ends of
+      // the buffer would otherwise fall through to these.
+      "ctrl-p": ["zed::Unbind", "file_finder::Toggle"],
+      "ctrl-n": ["zed::Unbind", "workspace::NewFile"],
     },
   },
   {

@@ -188,6 +188,14 @@ pub struct EditorSettingsContent {
     /// Default: FindAllReferences
     pub go_to_definition_fallback: Option<GoToDefinitionFallback>,
 
+    /// Where to show LSP results that can contain multiple locations
+    /// (Go to Definition, Go to Implementation, Find All References). A single
+    /// result always opens directly. Individual actions can override this with
+    /// their `open_results_in` argument.
+    ///
+    /// Default: multi_buffer
+    pub lsp_results_location: Option<OpenResultsIn>,
+
     /// How to scroll the target into view when navigating to a definition or reference
     /// (e.g. Go to Definition, Go to Type Definition, Find All References).
     ///
@@ -473,9 +481,32 @@ pub struct ScrollbarAxesContent {
     pub vertical: Option<bool>,
 }
 
+/// Controls the width of the git diff hunk indicators in the gutter.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum GitGutterWidth {
+    /// Width scales automatically with the buffer font size.
+    #[default]
+    Default,
+    /// A fixed pixel width for the git diff indicators.
+    Custom(crate::PixelSetting),
+}
+
 /// Gutter related settings
 #[with_fallible_options]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -501,6 +532,11 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub folds: Option<bool>,
+    /// The width of the git diff hunk indicators in the gutter.
+    /// Use "default" to scale with the buffer font size, or {"custom": <pixels>} for a fixed width.
+    ///
+    /// Default: "default"
+    pub git_gutter_width: Option<GitGutterWidth>,
 }
 
 /// Whether to display code lenses from language servers above code elements.
@@ -836,6 +872,30 @@ pub enum GoToDefinitionFallback {
     FindAllReferences,
 }
 
+/// Where to show LSP results that can contain multiple locations.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenResultsIn {
+    /// Open the results in a multibuffer.
+    #[default]
+    MultiBuffer,
+    /// Open the results in a filterable picker.
+    Picker,
+}
+
 /// How to scroll the target into view when navigating to a definition or reference.
 ///
 /// Default: center
@@ -941,6 +1001,8 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Start searching as you type in project search, without pressing Enter.
+    pub search_on_type: Option<bool>,
 }
 
 #[with_fallible_options]

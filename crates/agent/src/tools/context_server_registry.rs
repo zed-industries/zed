@@ -8,7 +8,11 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedStrin
 use language_model::{LanguageModelImage, LanguageModelImageExt, LanguageModelToolResultContent};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use std::sync::Arc;
-use util::ResultExt;
+use util::{ResultExt, markdown::MarkdownEscaped};
+
+/// Maximum number of characters to show from a tool argument in the
+/// collapsed tool-call header. Longer values are truncated with an ellipsis.
+const MAX_INLINE_ARG_LEN: usize = 120;
 
 /// Generates a tool ID for an MCP tool that can be used in settings.
 ///
@@ -310,8 +314,8 @@ impl AnyAgentTool for ContextServerTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: serde_json::Value, _cx: &mut App) -> SharedString {
-        format!("Run MCP tool `{}`", self.tool.name).into()
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
+        format_mcp_initial_title(&self.tool.name, &input).into()
     }
 
     fn input_schema(
@@ -474,6 +478,38 @@ impl AnyAgentTool for ContextServerTool {
     }
 }
 
+/// Builds the header label shown for an MCP tool call. When the input is an
+/// object with a single string-valued field, the value is inlined next to the
+/// tool name so the primary argument (e.g. a URL, path, or query) is visible
+/// without expanding the input block — matching the UX of built-in tools like
+/// `Fetch`. All other shapes fall back to the tool name alone.
+fn format_mcp_initial_title(tool_name: &str, input: &serde_json::Value) -> String {
+    if let Some(value) = single_string_arg(input) {
+        let preview = truncate_chars(value, MAX_INLINE_ARG_LEN);
+        format!("Run MCP tool `{}` {}", tool_name, MarkdownEscaped(&preview))
+    } else {
+        format!("Run MCP tool `{}`", tool_name)
+    }
+}
+
+fn single_string_arg(input: &serde_json::Value) -> Option<&str> {
+    let obj = input.as_object()?;
+    if obj.len() != 1 {
+        return None;
+    }
+    obj.values().next()?.as_str()
+}
+
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max).collect();
+        out.push('…');
+        out
+    }
+}
+
 pub fn get_prompt(
     server_store: &Entity<ContextServerStore>,
     server_id: &ContextServerId,
@@ -531,4 +567,92 @@ mod tests {
 
     // Note: Tests for MCP tool ID collision with built-in tools and permission
     // decisions are in crates/agent/src/tool_permissions.rs to avoid duplication.
+
+    #[test]
+    fn test_format_mcp_initial_title_inlines_single_string_arg() {
+        let input = serde_json::json!({ "url": "https://example.com/page" });
+        assert_eq!(
+            format_mcp_initial_title("open_url_in_browser", &input),
+            "Run MCP tool `open_url_in_browser` https://example.com/page"
+        );
+    }
+
+    #[test]
+    fn test_format_mcp_initial_title_no_args() {
+        let input = serde_json::json!({});
+        assert_eq!(
+            format_mcp_initial_title("cleanup", &input),
+            "Run MCP tool `cleanup`"
+        );
+    }
+
+    #[test]
+    fn test_format_mcp_initial_title_null_input() {
+        assert_eq!(
+            format_mcp_initial_title("cleanup", &serde_json::Value::Null),
+            "Run MCP tool `cleanup`"
+        );
+    }
+
+    #[test]
+    fn test_format_mcp_initial_title_multiple_fields_falls_back() {
+        let input = serde_json::json!({ "x": "a", "y": "b" });
+        assert_eq!(
+            format_mcp_initial_title("do_thing", &input),
+            "Run MCP tool `do_thing`"
+        );
+    }
+
+    #[test]
+    fn test_format_mcp_initial_title_non_string_field_falls_back() {
+        let input = serde_json::json!({ "count": 42 });
+        assert_eq!(
+            format_mcp_initial_title("tick", &input),
+            "Run MCP tool `tick`"
+        );
+    }
+
+    #[test]
+    fn test_format_mcp_initial_title_truncates_long_values() {
+        let long = "x".repeat(MAX_INLINE_ARG_LEN + 50);
+        let input = serde_json::json!({ "q": long });
+        let title = format_mcp_initial_title("search", &input);
+        assert!(
+            title.ends_with('…'),
+            "expected truncation ellipsis, got: {title}"
+        );
+        // Prefix + backticked name + space + MAX chars + ellipsis — no full 170-char value.
+        assert!(title.chars().count() < MAX_INLINE_ARG_LEN + 50);
+    }
+
+    #[test]
+    fn test_format_mcp_initial_title_escapes_markdown_in_value() {
+        let input = serde_json::json!({ "q": "**bold** _italic_" });
+        let title = format_mcp_initial_title("search", &input);
+        // Asterisks and underscores must be escaped so the header renders literally.
+        assert!(title.contains("\\*"), "expected \\*, got: {title}");
+        assert!(title.contains("\\_"), "expected \\_, got: {title}");
+    }
+
+    #[test]
+    fn test_truncate_chars_boundary() {
+        assert_eq!(truncate_chars("abc", 3), "abc");
+        assert_eq!(truncate_chars("abcd", 3), "abc…");
+    }
+
+    #[test]
+    fn test_truncate_chars_handles_multibyte() {
+        // "café" is 4 chars but 5 bytes — byte-based truncation would panic.
+        assert_eq!(truncate_chars("café", 4), "café");
+        assert_eq!(truncate_chars("café", 3), "caf…");
+    }
+
+    #[test]
+    fn test_single_string_arg_ignores_empty_string() {
+        // An empty string is still a string — we inline it rather than fall back,
+        // which lets callers tell "the server sent an empty arg" apart from
+        // "no args at all".
+        let input = serde_json::json!({ "q": "" });
+        assert_eq!(single_string_arg(&input), Some(""));
+    }
 }

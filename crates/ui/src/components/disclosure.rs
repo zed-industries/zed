@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use gpui::{AnyView, ClickEvent, CursorStyle, SharedString};
+use gpui::{AnyView, ClickEvent, SharedString};
 
+use crate::IconButtonShape;
 use crate::prelude::*;
 
 #[derive(IntoElement, RegisterComponent)]
@@ -10,12 +11,12 @@ pub struct Disclosure {
     is_open: bool,
     selected: bool,
     disabled: bool,
-    on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
-    cursor_style: CursorStyle,
-    opened_icon: IconName,
     closed_icon: IconName,
+    shape: Option<IconButtonShape>,
     visible_on_hover: Option<SharedString>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_toggle_expanded: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    opened_icon: IconName,
 }
 
 impl Disclosure {
@@ -26,9 +27,9 @@ impl Disclosure {
             selected: false,
             disabled: false,
             on_toggle_expanded: None,
-            cursor_style: CursorStyle::PointingHand,
             opened_icon: IconName::ChevronDown,
             closed_icon: IconName::ChevronRight,
+            shape: None,
             visible_on_hover: None,
             tooltip: None,
         }
@@ -61,23 +62,22 @@ impl Disclosure {
         self.disabled = disabled;
         self
     }
+
+    /// Sets the shape of the underlying [`IconButton`].
+    pub fn shape(mut self, shape: IconButtonShape) -> Self {
+        self.shape = Some(shape);
+        self
+    }
+
+    /// Alias for [`Self::on_toggle_expanded`].
+    pub fn on_click(self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        self.on_toggle_expanded(Arc::new(handler) as Arc<_>)
+    }
 }
 
 impl Toggleable for Disclosure {
     fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
-        self
-    }
-}
-
-impl Clickable for Disclosure {
-    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
-        self.on_toggle_expanded = Some(Arc::new(handler));
-        self
-    }
-
-    fn cursor_style(mut self, cursor_style: gpui::CursorStyle) -> Self {
-        self.cursor_style = cursor_style;
         self
     }
 }
@@ -103,6 +103,7 @@ impl RenderOnce for Disclosure {
         .aria_label(if self.is_open { "Collapse" } else { "Expand" })
         .aria_expanded(self.is_open)
         .disabled(self.disabled)
+        .when_some(self.shape, |this, shape| this.shape(shape))
         .toggle_state(self.selected)
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
             this.visible_on_hover(group_name)

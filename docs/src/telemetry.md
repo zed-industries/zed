@@ -39,7 +39,7 @@ Telemetry is sent from the application to our servers every 5 minutes (or when 5
 
 Crash reports consist of a [minidump](https://learn.microsoft.com/en-us/windows/win32/debug/minidump-files) and debug metadata. Reports are sent on the next launch after a crash, allowing Zed to identify and fix issues without requiring you to file a bug report.
 
-You can inspect what data is sent in the `Panic` struct in [crates/telemetry_events/src/telemetry_events.rs](https://github.com/zed-industries/zed/blob/main/crates/telemetry_events/src/telemetry_events.rs). See also: [Debugging Crashes](./development/debugging-crashes.md).
+You can inspect what data is sent in the `CrashInfo` struct in [crates/crashes/src/crashes.rs](https://github.com/zed-industries/zed/blob/main/crates/crashes/src/crashes.rs). See also: [Debugging Crashes](./development/debugging-crashes.md).
 
 ### Client-Side Metrics
 

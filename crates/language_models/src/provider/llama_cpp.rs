@@ -4,15 +4,16 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::util::parse_tool_arguments;
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage, env_var,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -25,8 +26,7 @@ use std::sync::LazyLock;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
-    prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*,
 };
 use ui_input::InputField;
 use util::ResultExt;
@@ -597,20 +597,17 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local models on your machine with LlamaCpp.".into(),
+            )),
+        ))
     }
 }
 
@@ -653,7 +650,7 @@ impl LlamaCppLanguageModel {
     fn to_llama_cpp_request(
         &self,
         request: LanguageModelRequest,
-    ) -> llama_cpp::ChatCompletionRequest {
+    ) -> Result<llama_cpp::ChatCompletionRequest> {
         build_llama_cpp_request(
             &self.name,
             self.supports_images,
@@ -700,7 +697,11 @@ fn build_llama_cpp_request(
     supports_images: bool,
     capabilities: LiveCapabilities,
     request: LanguageModelRequest,
-) -> llama_cpp::ChatCompletionRequest {
+) -> Result<llama_cpp::ChatCompletionRequest> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("llama.cpp does not support custom tools");
+    }
+
     let supports_tools = capabilities.supports_tools;
     let supports_thinking = capabilities.supports_thinking;
     let mut messages = Vec::new();
@@ -746,13 +747,15 @@ fn build_llama_cpp_request(
                     }
                 }
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use.input.as_json().ok_or_else(|| {
+                        anyhow::anyhow!("llama.cpp does not support custom tool calls")
+                    })?;
                     let tool_call = llama_cpp::ToolCall {
                         id: tool_use.id.to_string(),
                         content: llama_cpp::ToolCallContent::Function {
                             function: llama_cpp::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -814,14 +817,25 @@ fn build_llama_cpp_request(
         request
             .tools
             .into_iter()
-            .map(|tool| llama_cpp::ToolDefinition::Function {
-                function: llama_cpp::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("llama.cpp does not support custom tools"));
+                    }
+                };
+                Ok(llama_cpp::ToolDefinition::Function {
+                    function: llama_cpp::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect()
+            .collect::<Result<_>>()?
     } else {
         Vec::new()
     };
@@ -837,7 +851,7 @@ fn build_llama_cpp_request(
         })
     };
 
-    llama_cpp::ChatCompletionRequest {
+    Ok(llama_cpp::ChatCompletionRequest {
         model: model_name.to_string(),
         messages,
         stream: true,
@@ -856,7 +870,7 @@ fn build_llama_cpp_request(
         stream_options: Some(llama_cpp::StreamOptions {
             include_usage: true,
         }),
-    }
+    })
 }
 
 impl LanguageModel for LlamaCppLanguageModel {
@@ -922,7 +936,10 @@ impl LanguageModel for LlamaCppLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = self.to_llama_cpp_request(request);
+        let request = match self.to_llama_cpp_request(request) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = LlamaCppEventMapper::new();
@@ -1022,7 +1039,9 @@ impl LlamaCppEventMapper {
                                         id: tool_call.id.into(),
                                         name: tool_call.name.into(),
                                         is_input_complete: true,
-                                        input,
+                                        input: language_model::LanguageModelToolUseInput::Json(
+                                            input,
+                                        ),
                                         raw_input: tool_call.arguments,
                                         thought_signature: None,
                                     },
@@ -1327,31 +1346,42 @@ impl ConfigurationView {
     fn render_instructions(cx: &App) -> Div {
         v_flex()
             .gap_2()
-            .child(Label::new(
-                "Run open models locally with llama.cpp's built-in server, or connect to a \
+            .child(
+                Label::new(
+                    "Run open models locally with llama.cpp's built-in server, or connect to a \
                 remote llama.cpp server.",
-            ))
-            .child(Label::new("To use a local llama.cpp server:"))
+                )
+                .color(Color::Muted),
+            )
+            .child(Label::new("To use a local llama.cpp server:").color(Color::Muted))
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Install llama.cpp from"))
+                            .child(Label::new("Install llama.cpp from").color(Color::Muted))
                             .child(ButtonLink::new("llama.app", LLAMA_CPP_DOWNLOAD_URL)),
                     )
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Start the server in router mode:"))
+                            .child(
+                                Label::new("Start the server in router mode:").color(Color::Muted),
+                            )
                             .child(Label::new("llama serve").inline_code(cx)),
                     )
-                    .child(ListBulletItem::new(
-                        "Click 'Connect' below to start using llama.cpp in Zed",
-                    )),
+                    .child(
+                        ListBulletItem::new(
+                            "Click 'Connect' below to start using llama.cpp in Zed",
+                        )
+                        .label_color(Color::Muted),
+                    ),
             )
-            .child(Label::new(
-                "Alternatively, you can connect to a remote llama.cpp server by specifying its \
+            .child(
+                Label::new(
+                    "Alternatively, you can connect to a remote llama.cpp server by specifying its \
                 URL and API key (set with --api-key, may not be required):",
-            ))
+                )
+                .color(Color::Muted),
+            )
     }
 
     fn render_api_key_editor(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -1363,20 +1393,10 @@ impl ConfigurationView {
             "API key configured".to_string()
         };
 
-        if !state.api_key_state.has_key() {
-            v_flex()
-                .on_action(cx.listener(Self::save_api_key))
-                .child(self.api_key_editor.clone())
-                .child(
-                    Label::new(format!(
-                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
-                    ))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .into_any_element()
+        let api_key_control = if !state.api_key_state.has_key() {
+            self.api_key_editor.clone().into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("llama-cpp-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                 .when(env_var_set, |this| {
@@ -1385,7 +1405,20 @@ impl ConfigurationView {
                     ))
                 })
                 .into_any_element()
-        }
+        };
+
+        v_flex()
+            .on_action(cx.listener(Self::save_api_key))
+            .child(api_key_control)
+            .gap_1p5()
+            .mb_2()
+            .child(
+                Label::new(format!(
+                    "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
     }
 
     fn render_context_window_editor(&self, cx: &Context<Self>) -> Div {
@@ -1394,26 +1427,26 @@ impl ConfigurationView {
 
         if custom_context_window_set {
             h_flex()
-                .p_3()
+                .p_1()
                 .justify_between()
                 .rounded_md()
                 .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().background.opacity(0.5))
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(format!(
+                        .child(Label::new(format!(
                             "Context Window: {}",
                             settings.context_window.unwrap_or_default()
-                        )))),
+                        ))),
                 )
                 .child(
                     Button::new("reset-context-window", "Reset")
+                        .style(ButtonStyle::Outlined)
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| {
                                 this.reset_context_window(window, cx)
@@ -1428,8 +1461,9 @@ impl ConfigurationView {
                     }),
                 )
                 .child(self.context_window_editor.clone())
+                .gap_1p5()
                 .child(
-                    Label::new("Default: discovered from the server")
+                    Label::new("Default: Discovered from the server")
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
@@ -1442,23 +1476,23 @@ impl ConfigurationView {
 
         if custom_api_url_set {
             h_flex()
-                .p_3()
+                .p_1()
                 .justify_between()
                 .rounded_md()
                 .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().background.opacity(0.5))
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(api_url))),
+                        .child(Label::new(api_url)),
                 )
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
+                        .style(ButtonStyle::Outlined)
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
                         ),
@@ -1469,7 +1503,7 @@ impl ConfigurationView {
                     this.save_api_url(cx);
                     cx.notify();
                 }))
-                .gap_2()
+                .gap_1p5()
                 .child(self.api_url_editor.clone())
         }
     }
@@ -1481,12 +1515,15 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
+            .child(Headline::new("llama.cpp").size(HeadlineSize::Small))
             .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_context_window_editor(cx))
             .child(self.render_api_key_editor(cx))
+            .child(Divider::horizontal())
             .child(
                 h_flex()
+                    .pt_2()
                     .w_full()
                     .justify_between()
                     .gap_2()
@@ -1498,7 +1535,8 @@ impl Render for ConfigurationView {
                                 if is_authenticated {
                                     this.child(
                                         Button::new("llama-cpp-webui", "Open WebUI")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -1513,7 +1551,8 @@ impl Render for ConfigurationView {
                                     )
                                     .child(
                                         Button::new("llama-cpp-site", "llama.cpp")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -1527,7 +1566,8 @@ impl Render for ConfigurationView {
                                 } else {
                                     this.child(
                                         Button::new("download_llama_cpp_button", "Get llama.cpp")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -1542,7 +1582,8 @@ impl Render for ConfigurationView {
                             })
                             .child(
                                 Button::new("view-models", "Browse GGUF Models")
-                                    .style(ButtonStyle::Subtle)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .size(ButtonSize::Medium)
                                     .end_icon(
                                         Icon::new(IconName::ArrowUpRight)
                                             .size(IconSize::XSmall)
@@ -1555,17 +1596,16 @@ impl Render for ConfigurationView {
                         if is_authenticated {
                             this.child(
                                 ButtonLike::new("connected")
-                                    .disabled(true)
-                                    .cursor_style(CursorStyle::Arrow)
+                                    .size(ButtonSize::Medium)
                                     .child(
                                         h_flex()
-                                            .gap_2()
+                                            .gap_1()
                                             .child(Icon::new(IconName::Check).color(Color::Success))
-                                            .child(Label::new("Connected"))
-                                            .into_any_element(),
+                                            .child(Label::new("Connected")),
                                     )
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .icon_size(IconSize::Small)
                                             .tooltip(Tooltip::text("Refresh Models"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.state.update(cx, |state, _| {
@@ -1578,6 +1618,8 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_llama_cpp_models", "Connect")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
                                     .start_icon(
                                         Icon::new(IconName::PlayOutlined).size(IconSize::XSmall),
                                     )
@@ -1809,7 +1851,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1852,7 +1895,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {
@@ -1862,7 +1906,7 @@ mod tests {
                 tool_calls,
             } => {
                 assert_eq!(content, "answer");
-                assert_eq!(reasoning_content, &None);
+                assert!(reasoning_content.is_none());
                 assert!(tool_calls.is_empty());
             }
             message => panic!("unexpected message: {message:?}"),
@@ -1891,7 +1935,9 @@ mod tests {
                             id: "call_1".into(),
                             name: "weather".into(),
                             raw_input: r#"{"city":"Oslo"}"#.to_string(),
-                            input: serde_json::json!({ "city": "Oslo" }),
+                            input: language_model::LanguageModelToolUseInput::Json(
+                                serde_json::json!({ "city": "Oslo" }),
+                            ),
                             is_input_complete: true,
                             thought_signature: None,
                         }),
@@ -1901,7 +1947,8 @@ mod tests {
                 }],
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
 
         assert_eq!(request.messages.len(), 1);
         match &request.messages[0] {

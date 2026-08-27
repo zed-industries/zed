@@ -142,13 +142,13 @@ impl ObjectFit {
 #[derive(
     Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Default, JsonSchema, Serialize, Deserialize,
 )]
-pub enum TemplateColumnMinSize {
-    /// The column size may be 0
+pub enum GridTemplateMinSize {
+    /// The column or row size may be 0
     #[default]
     Zero,
-    /// The column size can be determined by the min content
+    /// The column or row size can be determined by the min content
     MinContent,
-    /// The column size can be determined by the max content
+    /// The column or row size can be determined by the max content
     MaxContent,
 }
 
@@ -171,7 +171,7 @@ pub struct GridTemplate {
     /// How this template directive should be repeated
     pub repeat: u16,
     /// The minimum size in the repeat(<>, minmax(_, 1fr)) equation
-    pub min_size: TemplateColumnMinSize,
+    pub min_size: GridTemplateMinSize,
 }
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
@@ -192,11 +192,15 @@ pub struct Style {
     pub scrollbar_width: AbsoluteLength,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
-    /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
+    /// Whether scrolling should be restricted to the input gesture's axis.
     ///
-    /// This means that:
-    /// - The mouse wheel alone will only ever scroll the Y axis.
-    /// - Holding `Shift` and using the mouse wheel will scroll the X axis.
+    /// Pixel-based scroll gestures are locked to their initially dominant axis. The lock may be
+    /// released when the gesture changes direction strongly. Touch phases delimit gestures when
+    /// available, with a timeout fallback for platforms that only emit moved events.
+    ///
+    /// This also prevents input from being remapped to another axis. For example, horizontal input
+    /// will not scroll a container that only has vertical overflow enabled. Mouse wheel platforms
+    /// typically report ordinary wheel input on the Y axis and Shift-modified input on the X axis.
     ///
     /// ## Motivation
     ///
@@ -1245,13 +1249,13 @@ pub enum Position {
 impl From<AlignItems> for taffy::style::AlignItems {
     fn from(value: AlignItems) -> Self {
         match value {
-            AlignItems::Start => Self::Start,
-            AlignItems::End => Self::End,
-            AlignItems::FlexStart => Self::FlexStart,
-            AlignItems::FlexEnd => Self::FlexEnd,
-            AlignItems::Center => Self::Center,
-            AlignItems::Baseline => Self::Baseline,
-            AlignItems::Stretch => Self::Stretch,
+            AlignItems::Start => Self::START,
+            AlignItems::End => Self::END,
+            AlignItems::FlexStart => Self::FLEX_START,
+            AlignItems::FlexEnd => Self::FLEX_END,
+            AlignItems::Center => Self::CENTER,
+            AlignItems::Baseline => Self::BASELINE,
+            AlignItems::Stretch => Self::STRETCH,
         }
     }
 }
@@ -1259,15 +1263,15 @@ impl From<AlignItems> for taffy::style::AlignItems {
 impl From<AlignContent> for taffy::style::AlignContent {
     fn from(value: AlignContent) -> Self {
         match value {
-            AlignContent::Start => Self::Start,
-            AlignContent::End => Self::End,
-            AlignContent::FlexStart => Self::FlexStart,
-            AlignContent::FlexEnd => Self::FlexEnd,
-            AlignContent::Center => Self::Center,
-            AlignContent::Stretch => Self::Stretch,
-            AlignContent::SpaceBetween => Self::SpaceBetween,
-            AlignContent::SpaceEvenly => Self::SpaceEvenly,
-            AlignContent::SpaceAround => Self::SpaceAround,
+            AlignContent::Start => Self::START,
+            AlignContent::End => Self::END,
+            AlignContent::FlexStart => Self::FLEX_START,
+            AlignContent::FlexEnd => Self::FLEX_END,
+            AlignContent::Center => Self::CENTER,
+            AlignContent::Stretch => Self::STRETCH,
+            AlignContent::SpaceBetween => Self::SPACE_BETWEEN,
+            AlignContent::SpaceEvenly => Self::SPACE_EVENLY,
+            AlignContent::SpaceAround => Self::SPACE_AROUND,
         }
     }
 }

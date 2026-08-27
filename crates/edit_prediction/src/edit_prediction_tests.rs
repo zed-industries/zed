@@ -9,7 +9,10 @@ use cloud_api_types::{
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsRequestTrigger,
     RejectEditPredictionsBody,
-    predict_edits_v3::{PredictEditsV3Request, PredictEditsV3Response},
+    predict_edits_v3::{
+        PredictEditsV3Request, PredictEditsV3Response, RawCompletionChoice, RawCompletionRequest,
+        RawCompletionResponse, RawCompletionUsage,
+    },
     predict_edits_v4::{PredictEditsV4Request, PredictEditsV4Response},
 };
 use db::AppDatabase;
@@ -92,6 +95,7 @@ async fn test_current_state(cx: &mut TestAppContext) {
             project.clone(),
             buffer1.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         )
@@ -127,6 +131,64 @@ async fn test_current_state(cx: &mut TestAppContext) {
     ep_store.update(cx, |ep_store, cx| {
         ep_store.reject_current_prediction(EditPredictionRejectReason::Discarded, &project, cx);
     });
+}
+
+#[gpui::test]
+async fn test_refresh_prediction_from_buffer_honors_debounce_duration(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    cx.update(|cx| set_jumps_feature_flag_override(cx, "on"));
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md": "Hello!\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(0, 0));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_project(&project, cx);
+        ep_store.register_buffer(&buffer, &project, cx);
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            Duration::from_millis(100),
+            EditPredictionRequestTrigger::Other,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    // The configured debounce duration should prevent the request from being sent immediately.
+    assert_no_predict_request_ready(&mut requests.predict_v4);
+
+    cx.background_executor
+        .advance_clock(Duration::from_millis(150));
+    cx.run_until_parked();
+
+    let (_request, respond_tx) = requests.predict_v4.next().await.unwrap();
+    respond_tx
+        .send(PredictEditsV4Response {
+            request_id: Uuid::new_v4().to_string(),
+            patch: "--- a/root/foo.md\n+++ b/root/foo.md\n@@ ... @@\n Hello!\n+world\n".to_string(),
+            model_version: None,
+        })
+        .unwrap();
+
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -183,6 +245,7 @@ async fn test_refresh_prediction_from_buffer_suppressed_while_following(cx: &mut
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1295,6 +1358,7 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Explicit,
             cx,
         );
@@ -1381,6 +1445,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1389,7 +1454,7 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
     let (request, respond_tx) = requests.predict.next().await.unwrap();
 
     buffer.update(cx, |buffer, cx| {
-        buffer.set_text("Hello!\nHow are you?\nBye", cx);
+        buffer.edit([(10..10, " are you?")], None, cx);
     });
 
     let mut response = model_response(&request, SIMPLE_DIFF);
@@ -1412,7 +1477,6 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
         assert!(shown_predictions[0].editable_range.is_some());
     });
 
-    // prediction is reported as rejected
     let (reject_request, _) = requests.reject.next().await.unwrap();
 
     assert_eq!(
@@ -1422,6 +1486,76 @@ async fn test_interpolated_empty(cx: &mut TestAppContext) {
             reason: EditPredictionRejectReason::InterpolatedEmpty,
             was_shown: false,
             model_version: Some("zeta2:test-interpolated-empty".to_string()),
+            e2e_latency_ms: Some(0),
+        }]
+    );
+}
+
+#[gpui::test]
+async fn test_interpolate_failed(cx: &mut TestAppContext) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.refresh_prediction_from_buffer(
+            project.clone(),
+            buffer.clone(),
+            position,
+            Duration::ZERO,
+            EditPredictionRequestTrigger::Other,
+            cx,
+        );
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(10..10, " is it?")], None, cx);
+    });
+
+    let mut response = model_response(&request, SIMPLE_DIFF);
+    response.model_version = Some("zeta2:test-interpolate-failed".to_string());
+    let id = response.request_id.clone();
+    respond_tx.send(response).unwrap();
+
+    cx.run_until_parked();
+
+    ep_store.update(cx, |ep_store, cx| {
+        assert!(
+            ep_store
+                .prediction_at(&buffer, None, &project, cx)
+                .is_none()
+        );
+        assert!(ep_store.rateable_predictions().next().is_none());
+    });
+
+    let (reject_request, _) = requests.reject.next().await.unwrap();
+
+    assert_eq!(
+        &reject_request.rejections,
+        &[EditPredictionRejection {
+            request_id: id,
+            reason: EditPredictionRejectReason::InterpolateFailed,
+            was_shown: false,
+            model_version: Some("zeta2:test-interpolate-failed".to_string()),
             e2e_latency_ms: Some(0),
         }]
     );
@@ -1465,6 +1599,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1494,6 +1629,7 @@ async fn test_replace_current(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1561,6 +1697,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1590,6 +1727,7 @@ async fn test_current_preferred(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1676,6 +1814,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1688,6 +1827,7 @@ async fn test_cancel_earlier_pending_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1782,6 +1922,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1794,6 +1935,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1810,6 +1952,7 @@ async fn test_cancel_second_on_third_request(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1947,6 +2090,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1960,6 +2104,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -1980,6 +2125,7 @@ async fn test_cloud_timeout_backs_off_zeta_requests(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2021,6 +2167,7 @@ async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2028,6 +2175,7 @@ async fn test_same_frame_duplicate_requests_deduplicated(cx: &mut TestAppContext
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2209,13 +2357,11 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         let snapshot = buffer.snapshot();
         let diagnostics = DiagnosticSet::new(
-            diagnostic_ranges
-                .iter()
-                .enumerate()
-                .map(|(index, range)| DiagnosticEntry {
-                    range: snapshot.offset_to_point_utf16(range.start)
+            diagnostic_ranges.iter().enumerate().map(|(index, range)| {
+                DiagnosticEntry::new(
+                    snapshot.offset_to_point_utf16(range.start)
                         ..snapshot.offset_to_point_utf16(range.end),
-                    diagnostic: Diagnostic {
+                    Diagnostic {
                         severity: match index {
                             0 => DiagnosticSeverity::WARNING,
                             1 => DiagnosticSeverity::ERROR,
@@ -2231,7 +2377,8 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                         source_kind: language::DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                }),
+                )
+            }),
             &snapshot,
         );
         buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
@@ -2300,9 +2447,9 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
         let snapshot = buffer.snapshot();
         let diagnostics = DiagnosticSet::new(
             vec![
-                DiagnosticEntry {
-                    range: text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
+                    Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "row zero".to_string(),
                         group_id: 1,
@@ -2310,10 +2457,10 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                         source_kind: language::DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                },
-                DiagnosticEntry {
-                    range: text::PointUtf16::new(2, 0)..text::PointUtf16::new(2, 5),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    text::PointUtf16::new(2, 0)..text::PointUtf16::new(2, 5),
+                    Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "row two".to_string(),
                         group_id: 2,
@@ -2321,10 +2468,10 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                         source_kind: language::DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                },
-                DiagnosticEntry {
-                    range: text::PointUtf16::new(4, 0)..text::PointUtf16::new(4, 4),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    text::PointUtf16::new(4, 0)..text::PointUtf16::new(4, 4),
+                    Diagnostic {
                         severity: DiagnosticSeverity::INFORMATION,
                         message: "row four".to_string(),
                         group_id: 3,
@@ -2332,7 +2479,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                         source_kind: language::DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     },
-                },
+                ),
             ],
             &snapshot,
         );
@@ -2385,16 +2532,18 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
         let snapshot = buffer.snapshot();
         let diagnostics = DiagnosticSet::new(
             (0..25)
-                .map(|row| DiagnosticEntry {
-                    range: text::PointUtf16::new(row, 0)..text::PointUtf16::new(row, 4),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: format!("row {row}"),
-                        group_id: row as usize,
-                        is_primary: true,
-                        source_kind: language::DiagnosticSourceKind::Pushed,
-                        ..Diagnostic::default()
-                    },
+                .map(|row| {
+                    DiagnosticEntry::new(
+                        text::PointUtf16::new(row, 0)..text::PointUtf16::new(row, 4),
+                        Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: format!("row {row}"),
+                            group_id: row as usize,
+                            is_primary: true,
+                            source_kind: language::DiagnosticSourceKind::Pushed,
+                            ..Diagnostic::default()
+                        },
+                    )
                 })
                 .collect::<Vec<_>>(),
             &snapshot,
@@ -2427,9 +2576,9 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         let snapshot = buffer.snapshot();
         let diagnostics = DiagnosticSet::new(
-            vec![DiagnosticEntry {
-                range: text::PointUtf16::new(150, 0)..text::PointUtf16::new(150, 4),
-                diagnostic: Diagnostic {
+            vec![DiagnosticEntry::new(
+                text::PointUtf16::new(150, 0)..text::PointUtf16::new(150, 4),
+                Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
                     message: long_message.clone(),
                     group_id: 1,
@@ -2437,7 +2586,7 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
                     source_kind: language::DiagnosticSourceKind::Pushed,
                     ..Diagnostic::default()
                 },
-            }],
+            )],
             &snapshot,
         );
         buffer.update_diagnostics(LanguageServerId(0), diagnostics, cx);
@@ -2932,6 +3081,7 @@ async fn test_edit_prediction_v4_end_of_buffer(cx: &mut TestAppContext) {
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -2993,6 +3143,7 @@ async fn test_edit_prediction_no_spurious_trailing_newline(cx: &mut TestAppConte
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3063,6 +3214,7 @@ async fn test_v3_prediction_strips_cursor_marker_from_edit_text(cx: &mut TestApp
             project.clone(),
             buffer.clone(),
             position,
+            Duration::ZERO,
             EditPredictionRequestTrigger::Other,
             cx,
         );
@@ -3135,7 +3287,10 @@ async fn apply_edit_prediction(
     let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
     let (ep_store, response) = make_test_ep_store(&project, cx).await;
     *response.lock() = completion_response.to_string();
-    let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, cx).await;
+    let edit_prediction = run_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
+        .await
+        .expect("expected an edit prediction")
+        .prediction;
     buffer.update(cx, |buffer, cx| {
         buffer.edit(edit_prediction.edits.iter().cloned(), None, cx)
     });
@@ -3146,9 +3301,10 @@ async fn run_edit_prediction(
     buffer: &Entity<Buffer>,
     project: &Entity<Project>,
     ep_store: &Entity<EditPredictionStore>,
+    cursor: Point,
     cx: &mut TestAppContext,
-) -> EditPrediction {
-    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
+) -> Option<EditPredictionResult> {
+    let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(cursor));
     ep_store.update(cx, |ep_store, cx| {
         ep_store.register_buffer(buffer, &project, cx)
     });
@@ -3162,7 +3318,7 @@ async fn run_edit_prediction(
             cx,
         )
     });
-    prediction_task.await.unwrap().unwrap().prediction
+    prediction_task.await.unwrap()
 }
 
 async fn make_test_ep_store(
@@ -3290,6 +3446,112 @@ async fn make_test_ep_store(
     (ep_store, completion_response)
 }
 
+async fn make_sweep_prompt_test_ep_store(
+    project: &Entity<Project>,
+    cx: &mut TestAppContext,
+) -> (
+    Entity<EditPredictionStore>,
+    Arc<Mutex<String>>,
+    Arc<Mutex<Vec<RawCompletionRequest>>>,
+) {
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.edit_predictions =
+                    Some(settings::EditPredictionSettingsContent {
+                        provider: Some(settings::EditPredictionProvider::OpenAiCompatibleApi),
+                        open_ai_compatible_api: Some(
+                            settings::CustomEditPredictionProviderSettingsContent {
+                                api_url: Some("http://localhost:8080/v1/completions".to_string()),
+                                model: Some("sweep-next-edit-1.5b".to_string()),
+                                prompt_format: Some(
+                                    settings::EditPredictionPromptFormatContent::Sweep,
+                                ),
+                                max_output_tokens: Some(64),
+                                prediction_debounce: None,
+                            },
+                        ),
+                        ..Default::default()
+                    });
+            });
+        });
+    });
+
+    let default_response = String::new();
+    let completion_response = Arc::new(Mutex::new(default_response));
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let http_client = FakeHttpClient::create({
+        let completion_response = completion_response.clone();
+        let requests = requests.clone();
+        let mut next_request_id = 0;
+        move |request| {
+            let completion_response = completion_response.clone();
+            let requests = requests.clone();
+            let method = request.method().clone();
+            let uri = request.uri().path().to_string();
+            let mut body = request.into_body();
+            async move {
+                match (method, uri.as_str()) {
+                    (Method::POST, "/v1/completions") => {
+                        let mut body_bytes = Vec::new();
+                        body.read_to_end(&mut body_bytes)
+                            .await
+                            .expect("fake completion server should read request body");
+                        let request: RawCompletionRequest =
+                            serde_json::from_slice(&body_bytes).unwrap();
+                        requests.lock().push(request);
+
+                        next_request_id += 1;
+                        let response = RawCompletionResponse {
+                            id: format!("request-{next_request_id}"),
+                            object: "text_completion".to_string(),
+                            created: 0,
+                            model: "sweep-next-edit-1.5b".to_string(),
+                            choices: vec![RawCompletionChoice {
+                                text: completion_response.lock().clone(),
+                                finish_reason: Some("stop".to_string()),
+                            }],
+                            usage: RawCompletionUsage {
+                                prompt_tokens: 0,
+                                completion_tokens: 0,
+                                total_tokens: 0,
+                            },
+                        };
+
+                        Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(serde_json::to_string(&response).unwrap().into())
+                            .unwrap())
+                    }
+                    _ => Ok(http_client::Response::builder()
+                        .status(404)
+                        .body("Not Found".to_string().into())
+                        .unwrap()),
+                }
+            }
+        }
+    });
+
+    cx.update(|cx| {
+        cx.set_http_client(http_client.clone());
+    });
+    let client =
+        cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client.clone(), cx));
+    let user_store = cx.update(|cx| cx.new(|cx| client::UserStore::new(client.clone(), cx)));
+    cx.update(|cx| {
+        RefreshLlmTokenListener::register(client.clone(), user_store.clone(), cx);
+    });
+    let _server = FakeServer::for_client(42, &client, cx).await;
+
+    let ep_store = cx.new(|cx| {
+        let mut ep_store = EditPredictionStore::new(client, project.read(cx).user_store(), cx);
+        ep_store.set_edit_prediction_model(EditPredictionModel::SweepPrompt);
+        ep_store
+    });
+
+    (ep_store, completion_response, requests)
+}
+
 fn to_completion_edits(
     iterator: impl IntoIterator<Item = (Range<usize>, Arc<str>)>,
     buffer: &Entity<Buffer>,
@@ -3391,6 +3653,107 @@ async fn test_unauthenticated_without_custom_url_blocks_prediction_impl(cx: &mut
 
     assert!(completion_task.await.unwrap().is_none());
     assert_eq!(request_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[gpui::test]
+async fn test_sweep_prompt_request_prediction_diffs_rewritten_window_into_anchored_edits(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "line 0\nline 1\nline 2\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let (ep_store, completion_response, requests) =
+        make_sweep_prompt_test_ep_store(&project, cx).await;
+    *completion_response.lock() = "line 0\nline 1 updated\nline 2\n".to_string();
+
+    let result = run_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx)
+        .await
+        .expect("expected a sweep prompt prediction");
+    let prediction = result.prediction;
+
+    let edits = cx.update(|cx| from_completion_edits(&prediction.edits, &buffer, cx));
+    assert_eq!(edits, vec![(13..13, " updated".into())]);
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit(prediction.edits.iter().cloned(), None, cx)
+    });
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        "line 0\nline 1 updated\nline 2\n"
+    );
+
+    let requests = requests.lock();
+    assert_eq!(requests.len(), 1);
+    let stop_tokens = requests[0]
+        .stop
+        .iter()
+        .map(|token| token.as_ref())
+        .collect::<Vec<_>>();
+    assert_eq!(stop_tokens, vec!["<|file_sep|>", "</s>"]);
+}
+
+#[gpui::test]
+async fn test_sweep_prompt_request_prediction_returns_none_for_identical_rewrite(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project",
+        serde_json::json!({
+            "main.rs": "line 0\nline 1\nline 2\n"
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project
+                .find_project_path(path!("/project/main.rs"), cx)
+                .unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+
+    let (ep_store, completion_response, requests) =
+        make_sweep_prompt_test_ep_store(&project, cx).await;
+    *completion_response.lock() = "line 0\nline 1\nline 2\n".to_string();
+
+    let result = run_edit_prediction(&buffer, &project, &ep_store, Point::new(1, 0), cx).await;
+
+    assert!(
+        result.is_none(),
+        "identical rewrites should produce no prediction"
+    );
+
+    let requests = requests.lock();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        requests[0].prompt.contains("<|file_sep|>updated/"),
+        "expected Sweep-style rewrite prompt"
+    );
 }
 
 #[gpui::test]
@@ -4059,12 +4422,21 @@ async fn test_edit_prediction_settled_drops_future_events_when_their_oss_status_
 }
 
 #[gpui::test]
-fn test_buffer_path_with_id_fallback_for_untitled_buffers(cx: &mut TestAppContext) {
+fn test_buffer_path_with_id_fallback(cx: &mut TestAppContext) {
     let buffer_1 = cx.new(|cx| Buffer::local("one", cx));
     let buffer_2 = cx.new(|cx| Buffer::local("two", cx));
 
     let snapshot_1 = buffer_1.read_with(cx, |buffer, _| buffer.text_snapshot());
     let snapshot_2 = buffer_2.read_with(cx, |buffer, _| buffer.text_snapshot());
+
+    let windows_file: Arc<dyn language::File> = Arc::new(language::TestFile {
+        path: util::rel_path::rel_path("src/main.rs").into(),
+        root_name: "workspace".into(),
+        local_root: None,
+    });
+    let windows_path =
+        cx.read(|cx| buffer_path_with_id_fallback(Some(&windows_file), &snapshot_1, cx));
+    assert_eq!(windows_path.to_string_lossy(), "workspace/src/main.rs");
 
     let path_1 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_1, cx));
     let path_2 = cx.read(|cx| buffer_path_with_id_fallback(None, &snapshot_2, cx));

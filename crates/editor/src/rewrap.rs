@@ -430,8 +430,13 @@ fn is_grapheme_ideographic(text: &str) -> bool {
     text.chars().any(is_char_ideographic)
 }
 
+fn is_non_breaking_whitespace(character: char) -> bool {
+    matches!(character, '\u{00A0}' | '\u{2007}' | '\u{202F}')
+}
+
 fn is_grapheme_whitespace(text: &str) -> bool {
-    text.chars().any(|x| x.is_whitespace())
+    text.chars()
+        .any(|character| character.is_whitespace() && !is_non_breaking_whitespace(character))
 }
 
 fn should_stay_with_preceding_ideograph(text: &str) -> bool {
@@ -690,7 +695,23 @@ mod tests {
                     word("笔", 1),
                 ],
             ),
-            (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+            (
+                "\u{2003}mutton",
+                &[whitespace("\u{2003}", 1), word("mutton", 6)],
+            ),
+            (
+                "a\u{2009}b\u{2009}c",
+                &[
+                    word("a", 1),
+                    whitespace("\u{2009}", 1),
+                    word("b", 1),
+                    whitespace("\u{2009}", 1),
+                    word("c", 1),
+                ],
+            ),
+            ("a\u{a0}b\u{a0}c", &[word("a\u{a0}b\u{a0}c", 5)]),
+            ("a\u{2007}b\u{2007}c", &[word("a\u{2007}b\u{2007}c", 5)]),
+            ("a\u{202f}b\u{202f}c", &[word("a\u{202f}b\u{202f}c", 5)]),
         ];
 
         fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
@@ -778,5 +799,19 @@ mod tests {
             ),
             format!("foo{}bar", '\u{2009}')
         );
+        for non_breaking_space in ['\u{a0}', '\u{2007}', '\u{202f}'] {
+            let input = format!("a{0}a{0}a{0}a{0}a", non_breaking_space);
+            assert_eq!(
+                wrap_with_prefix(
+                    String::new(),
+                    String::new(),
+                    input.clone(),
+                    4,
+                    NonZeroU32::new(4).unwrap(),
+                    false,
+                ),
+                input
+            );
+        }
     }
 }

@@ -2,7 +2,7 @@ use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::ClientUserMessageId;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use collections::{HashMap, IndexMap};
 use futures::{FutureExt, future::Shared};
@@ -93,9 +93,13 @@ pub struct DbThread {
 /// thread blob; round-trips with [`crate::sandboxing::ThreadSandboxGrants`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DbSandboxGrants {
-    /// Canonicalized paths granted write access; each covers its whole subtree.
+    /// Paths granted write access, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved; each
+    /// covers its whole subtree. Legacy rows stored a bare path string per
+    /// entry, which still deserializes (as a grant with no resolved canonical)
+    /// via [`settings::GrantedWritePath`]'s string-or-object format.
     #[serde(default)]
-    pub write_paths: Vec<PathBuf>,
+    pub write_paths: Vec<settings::GrantedWritePath>,
     /// Host patterns granted network access, in canonical string form (e.g.
     /// `github.com`, `*.npmjs.org`). Parsed back into patterns on load.
     #[serde(default)]
@@ -107,9 +111,7 @@ pub struct DbSandboxGrants {
     /// granted.
     #[serde(default)]
     pub allow_fs_write_all: bool,
-    /// Whether access to protected Git directories (`.git`) was granted.
-    #[serde(default)]
-    pub allow_git_access: bool,
+
     /// Whether the model-requested fully-unsandboxed escape was granted.
     #[serde(default)]
     pub unsandboxed: bool,
@@ -283,7 +285,9 @@ impl DbThread {
                                 name: tool_use.name.into(),
                                 raw_input: serde_json::to_string(&tool_use.input)
                                     .unwrap_or_default(),
-                                input: tool_use.input,
+                                input: language_model::LanguageModelToolUseInput::Json(
+                                    tool_use.input,
+                                ),
                                 is_input_complete: true,
                                 thought_signature: None,
                             },
@@ -388,6 +392,12 @@ impl Column for DataType {
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
     connection: Arc<Mutex<Connection>>,
+    /// In production, saves take real time (serialization, zstd, disk I/O) while
+    /// the user keeps typing, so new save requests routinely arrive mid-write.
+    /// The test executor completes writes instantly, so tests use this gate to
+    /// hold a write in flight and interleave more save requests with it.
+    #[cfg(test)]
+    write_gate: Mutex<Option<Shared<futures::channel::oneshot::Receiver<()>>>>,
 }
 
 struct GlobalThreadsDatabase(Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>);
@@ -446,7 +456,7 @@ impl ThreadsDatabase {
                 data BLOB NOT NULL
             )
         "})?()
-        .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
+        .map_err(|e| e.context("Failed to create threads table"))?;
 
         if let Ok(mut s) = connection.exec(indoc! {"
             ALTER TABLE threads ADD COLUMN parent_id TEXT
@@ -477,6 +487,8 @@ impl ThreadsDatabase {
         let db = Self {
             executor,
             connection: Arc::new(Mutex::new(connection)),
+            #[cfg(test)]
+            write_gate: Mutex::new(None),
         };
 
         Ok(db)
@@ -625,9 +637,21 @@ impl ThreadsDatabase {
         folder_paths: PathList,
     ) -> Task<Result<()>> {
         let connection = self.connection.clone();
+        #[cfg(test)]
+        let write_gate = self.write_gate.lock().clone();
 
-        self.executor
-            .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
+        self.executor.spawn(async move {
+            #[cfg(test)]
+            if let Some(write_gate) = write_gate {
+                write_gate.await.ok();
+            }
+            Self::save_thread_sync(&connection, id, thread, &folder_paths)
+        })
+    }
+
+    #[cfg(test)]
+    pub fn set_write_gate(&self, gate: futures::channel::oneshot::Receiver<()>) {
+        *self.write_gate.lock() = Some(gate.shared());
     }
 
     fn deserialize_thread(data_type: DataType, data: Vec<u8>) -> Result<DbThread> {
@@ -947,10 +971,18 @@ mod tests {
             Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
         );
         let grants = DbSandboxGrants {
-            write_paths: vec![PathBuf::from("/tmp/build")],
+            write_paths: vec![
+                // A legacy bare-string grant (no resolved canonical) and a grant
+                // carrying its resolved canonical, to exercise both forms of the
+                // string-or-object round-trip.
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::resolved(
+                    PathBuf::from("/tmp/link"),
+                    PathBuf::from("/tmp/real"),
+                ),
+            ],
             network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
             network_any_host: false,
-            allow_git_access: true,
             allow_fs_write_all: false,
             unsandboxed: true,
             sandbox_fallback: true,

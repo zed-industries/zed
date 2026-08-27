@@ -57,12 +57,19 @@
         "area:integrations/git",
         "area:integrations/git/blame",
         "area:integrations/git/git graph",
+        "area:integrations/git/panel",
         "area:integrations/git/split view"
       ]
     },
     {
       "name": "GPUI & Input",
-      "labels": ["area:controls/ime", "area:controls/mouse", "area:gpui"]
+      "labels": [
+        "area:controls/ime",
+        "area:controls/mouse",
+        "area:gpui",
+        "area:gpui/graphics",
+        "area:gpui/graphics/wgpu"
+      ]
     },
     {
       "name": "Auth & Zed.dev",
@@ -91,12 +98,14 @@
       "name": "Workspace & Navigation",
       "labels": [
         "area:command palette",
+        "area:breadcrumbs",
         "area:file finder",
         "area:fs",
         "area:navigation",
         "area:outline",
         "area:project panel",
         "area:scanning",
+        "area:text finder",
         "area:workspace"
       ]
     },
@@ -124,6 +133,7 @@
         "area:settings",
         "area:settings/ui",
         "area:status bar",
+        "area:title bar",
         "area:ui/animations",
         "area:ui/dock",
         "area:ui/file icons",
@@ -143,7 +153,10 @@
         "area:ai",
         "area:ai/acp",
         "area:ai/agent thread",
+        "area:ai/agent thread/checkpoints",
+        "area:ai/agent thread/sandbox",
         "area:ai/agent thread/skills",
+        "area:ai/agent thread/tools",
         "area:ai/anthropic",
         "area:ai/assistant",
         "area:ai/bedrock",

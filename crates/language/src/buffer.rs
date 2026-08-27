@@ -1,4 +1,7 @@
+mod bracket_ranges;
 pub mod row_chunk;
+
+pub use bracket_ranges::BracketMatch;
 
 use crate::{
     ByteContent, DebuggerTextObject, LanguageScope, ModelineSettings, Outline, OutlineConfig,
@@ -23,7 +26,7 @@ pub use crate::{
 use anyhow::{Context as _, Result};
 use clock::Lamport;
 pub use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use encoding_rs::Encoding;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -144,25 +147,21 @@ pub struct Buffer {
 #[derive(Debug)]
 pub struct TreeSitterData {
     chunks: RowChunks,
-    brackets_by_chunks: Mutex<Vec<Option<Vec<BracketMatch<usize>>>>>,
+    brackets_by_chunks: Mutex<HashMap<usize, Vec<BracketMatch>>>,
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
-        self.chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
+        self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
         self.brackets_by_chunks.get_mut().clear();
-        self.brackets_by_chunks
-            .get_mut()
-            .resize(self.chunks.len(), None);
     }
 
     fn new(snapshot: &text::BufferSnapshot) -> Self {
-        let chunks = RowChunks::new(&snapshot, MAX_ROWS_IN_A_CHUNK);
         Self {
-            brackets_by_chunks: Mutex::new(vec![None; chunks.len()]),
-            chunks,
+            chunks: RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK),
+            brackets_by_chunks: Mutex::new(HashMap::default()),
         }
     }
 
@@ -951,19 +950,14 @@ impl EditPreview {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BracketMatch<T> {
-    pub open_range: Range<T>,
-    pub close_range: Range<T>,
-    pub newline_only: bool,
-    pub syntax_layer_depth: usize,
-    pub color_index: Option<usize>,
-}
-
-impl<T> BracketMatch<T> {
-    pub fn bracket_ranges(self) -> (Range<T>, Range<T>) {
-        (self.open_range, self.close_range)
-    }
+/// Which pre-existing line to exclude from auto-indentation when inserting
+/// text.
+#[derive(Clone, Copy, Debug)]
+pub enum AutoIndentExclusion {
+    /// Exclude the preceding line when the inserted text starts with a newline.
+    PrecedingLine,
+    /// Exclude the following line when the inserted text ends with a newline.
+    FollowingLine,
 }
 
 impl Buffer {
@@ -1024,7 +1018,9 @@ impl Buffer {
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
+            rpc::proto::LineEnding::try_from(message.line_ending)
+                .ok()
+                .context("missing line_ending")?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
@@ -1880,7 +1876,12 @@ impl Buffer {
                 language.clone(),
                 sync_parse_timeout,
             ) {
-                self.did_finish_parsing(syntax_snapshot, Some(Duration::from_millis(300)), cx);
+                self.did_finish_parsing(
+                    syntax_snapshot,
+                    Some(Duration::from_millis(300)),
+                    false,
+                    cx,
+                );
                 self.reparse = None;
                 return;
             }
@@ -1912,7 +1913,7 @@ impl Buffer {
                 let parse_again = this.version.changed_since(&parsed_version)
                     || language_registry_changed()
                     || grammar_changed();
-                this.did_finish_parsing(new_syntax_map, None, cx);
+                this.did_finish_parsing(new_syntax_map, None, parse_again, cx);
                 this.reparse = None;
                 if parse_again {
                     this.reparse(cx, false);
@@ -1926,13 +1927,21 @@ impl Buffer {
         &mut self,
         syntax_snapshot: SyntaxSnapshot,
         block_budget: Option<Duration>,
+        parse_again: bool,
         cx: &mut Context<Self>,
     ) {
         self.non_text_state_update_count += 1;
         self.syntax_map.lock().did_parse(syntax_snapshot);
         self.was_changed();
-        self.request_autoindent(cx, block_budget);
-        self.parse_status.0.send(ParseStatus::Idle).unwrap();
+
+        let parsing_complete = !parse_again || self.language.is_none();
+        if self.language.is_none() {
+            self.syntax_map.lock().clear(&self.text);
+        }
+        if parsing_complete {
+            self.request_autoindent(cx, block_budget);
+            self.parse_status.0.send(ParseStatus::Idle).unwrap();
+        }
         Self::invalidate_tree_sitter_data(&mut self.tree_sitter_data, &self.text.snapshot());
         cx.emit(BufferEvent::Reparsed);
         cx.notify();
@@ -2090,7 +2099,7 @@ impl Buffer {
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
-                                        .indent_size_for_line(suggestion.basis_row)
+                                        .logical_indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
                             old_suggestions
@@ -2131,7 +2140,7 @@ impl Buffer {
                                 .copied()
                                 .map(|e| e.0)
                                 .unwrap_or_else(|| {
-                                    snapshot.indent_size_for_line(suggestion.basis_row)
+                                    snapshot.logical_indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
@@ -2163,6 +2172,11 @@ impl Buffer {
                             for row in row_range.skip(1) {
                                 indent_sizes.entry(row).or_insert_with(|| {
                                     let mut size = snapshot.indent_size_for_line(row);
+                                    // A line with no indentation has an arbitrary
+                                    // indent kind, so it can adopt the new kind.
+                                    if size.len == 0 {
+                                        size.kind = new_indent.kind;
+                                    }
                                     if size.kind == new_indent.kind {
                                         match delta.cmp(&0) {
                                             Ordering::Greater => size.len += delta as u32,
@@ -2279,14 +2293,21 @@ impl Buffer {
         })
     }
 
-    /// Spawns a background task that searches the buffer for any whitespace
-    /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
-    pub fn remove_trailing_whitespace(&self, cx: &App) -> Task<Diff> {
+    /// Spawns a background task that returns a `Diff` removing trailing whitespace from line ends.
+    ///
+    /// When `modified_rows` is `Some`, only lines whose row falls within one of the given ranges
+    /// are trimmed; when it is `None`, the whole buffer is scanned.
+    pub fn remove_trailing_whitespace(
+        &self,
+        modified_rows: Option<&[Range<u32>]>,
+        cx: &App,
+    ) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
+        let modified_rows = modified_rows.map(|rows| rows.to_vec());
         cx.background_spawn(async move {
-            let ranges = trailing_whitespace_ranges(&old_text);
+            let ranges = trailing_whitespace_ranges(&old_text, modified_rows.as_deref());
             let empty = Arc::<str>::from("");
             Diff {
                 base_version,
@@ -2299,28 +2320,60 @@ impl Buffer {
         })
     }
 
-    /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace. Skips if the buffer is empty.
-    pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
+    /// Returns a `Diff` ensuring the buffer ends with a trailing newline.
+    ///
+    /// When `modified_rows` is `None`, the whole buffer is considered: trailing whitespace and
+    /// blank lines at the end of the file are collapsed into a single newline.
+    ///
+    /// When `modified_rows` is `Some`, the operation is scoped to a "Format Selection": a single
+    /// newline is appended only when the last line is non-empty and its row falls within one of
+    /// the ranges. Trailing blank lines are left intact so that formatting a selection cannot
+    /// delete unselected rows.
+    pub fn ensure_final_newline(&self, modified_rows: Option<&[Range<u32>]>) -> Diff {
         let len = self.len();
-        if len == 0 {
-            return;
-        }
-        let mut offset = len;
-        for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
-            let non_whitespace_len = chunk
-                .trim_end_matches(|c: char| c.is_ascii_whitespace())
-                .len();
-            offset -= chunk.len();
-            offset += non_whitespace_len;
-            if non_whitespace_len != 0 {
-                if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                    return;
-                }
-                break;
+        let line_ending = self.line_ending();
+        let base_version = self.version();
+        let newline = Arc::<str>::from("\n");
+
+        let edits = if len == 0 {
+            Vec::new()
+        } else if let Some(modified_rows) = modified_rows {
+            let max_point = self.max_point();
+            let last_line_is_empty = max_point.column == 0;
+            let last_row_is_modified = modified_rows
+                .iter()
+                .any(|range| range.contains(&max_point.row));
+            if last_line_is_empty || !last_row_is_modified {
+                Vec::new()
+            } else {
+                Vec::from([(len..len, newline)])
             }
+        } else {
+            let mut offset = len;
+            let mut already_normalized = false;
+            for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
+                let non_whitespace_len = chunk
+                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                    .len();
+                offset -= chunk.len();
+                offset += non_whitespace_len;
+                if non_whitespace_len != 0 {
+                    already_normalized =
+                        offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n");
+                    break;
+                }
+            }
+            if already_normalized {
+                Vec::new()
+            } else {
+                Vec::from([(offset..len, newline)])
+            }
+        };
+        Diff {
+            base_version,
+            line_ending,
+            edits,
         }
-        self.edit([(offset..len, "\n")], None, cx);
     }
 
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was
@@ -2704,7 +2757,35 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits_iter, autoindent_mode, true, cx)
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            true,
+            AutoIndentExclusion::PrecedingLine,
+            cx,
+        )
+    }
+
+    /// Like [`edit`](Self::edit), but preserves the following line's
+    /// indentation when the inserted text ends with a newline.
+    pub fn edit_before<I, S, T>(
+        &mut self,
+        edits_iter: I,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut Context<Self>,
+    ) -> Option<clock::Lamport>
+    where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            true,
+            AutoIndentExclusion::FollowingLine,
+            cx,
+        )
     }
 
     /// Like [`edit`](Self::edit), but does not coalesce adjacent edits.
@@ -2719,7 +2800,13 @@ impl Buffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits_iter, autoindent_mode, false, cx)
+        self.edit_internal(
+            edits_iter,
+            autoindent_mode,
+            false,
+            AutoIndentExclusion::PrecedingLine,
+            cx,
+        )
     }
 
     fn edit_internal<I, S, T>(
@@ -2727,6 +2814,7 @@ impl Buffer {
         edits_iter: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
+        autoindent_exclusion: AutoIndentExclusion,
         cx: &mut Context<Self>,
     ) -> Option<clock::Lamport>
     where
@@ -2807,6 +2895,7 @@ impl Buffer {
                 .map(|((ix, (range, _)), new_text)| {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
+                    let old_end = range.end.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
                     let range_len = range.end - range.start;
                     delta += new_text_length as isize - range_len as isize;
@@ -2825,17 +2914,26 @@ impl Buffer {
                     }
 
                     if !new_text.contains('\n')
-                        && (old_start.column + (range_len as u32) < old_line_end
-                            || old_line_end == old_line_start)
+                        && (old_end.row == old_start.row || old_line_end == old_line_start)
                     {
                         first_line_is_new = false;
                     }
 
-                    // When inserting text starting with a newline, avoid auto-indenting the
-                    // previous line.
-                    if new_text.starts_with('\n') {
-                        range_of_insertion_to_indent.start += 1;
-                        first_line_is_new = true;
+                    // When the insertion introduces a line boundary, exclude
+                    // the adjacent pre-existing line from auto-indentation.
+                    match autoindent_exclusion {
+                        AutoIndentExclusion::PrecedingLine => {
+                            if new_text.starts_with('\n') {
+                                range_of_insertion_to_indent.start += 1;
+                                first_line_is_new = true;
+                            }
+                        }
+                        AutoIndentExclusion::FollowingLine => {
+                            if new_text.ends_with('\n') {
+                                range_of_insertion_to_indent.end -= 1;
+                                first_line_is_new = true;
+                            }
+                        }
                     }
 
                     let mut original_indent_column = None;
@@ -3123,16 +3221,15 @@ impl Buffer {
                 if triggers.is_empty() {
                     self.completion_triggers_per_language_server
                         .remove(&server_id);
-                    self.completion_triggers = self
-                        .completion_triggers_per_language_server
-                        .values()
-                        .flat_map(|triggers| triggers.iter().cloned())
-                        .collect();
                 } else {
                     self.completion_triggers_per_language_server
-                        .insert(server_id, triggers.iter().cloned().collect());
-                    self.completion_triggers.extend(triggers);
+                        .insert(server_id, triggers.into_iter().collect());
                 }
+                self.completion_triggers = self
+                    .completion_triggers_per_language_server
+                    .values()
+                    .flat_map(|triggers| triggers.iter().cloned())
+                    .collect();
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
             Operation::UpdateLineEnding {
@@ -3304,16 +3401,15 @@ impl Buffer {
         if triggers.is_empty() {
             self.completion_triggers_per_language_server
                 .remove(&server_id);
-            self.completion_triggers = self
-                .completion_triggers_per_language_server
-                .values()
-                .flat_map(|triggers| triggers.iter().cloned())
-                .collect();
         } else {
             self.completion_triggers_per_language_server
                 .insert(server_id, triggers.clone());
-            self.completion_triggers.extend(triggers.iter().cloned());
         }
+        self.completion_triggers = self
+            .completion_triggers_per_language_server
+            .values()
+            .flat_map(|triggers| triggers.iter().cloned())
+            .collect();
         self.send_operation(
             Operation::UpdateCompletionTriggers {
                 triggers: triggers.into_iter().collect(),
@@ -3392,7 +3488,7 @@ impl Buffer {
         self.text.fast_forward(edited.text);
         if edited.snapshot.language == self.language {
             self.reparse = None;
-            self.did_finish_parsing(edited.snapshot.syntax, None, cx);
+            self.did_finish_parsing(edited.snapshot.syntax, None, false, cx);
             if did_edit {
                 cx.emit(BufferEvent::Edited {
                     source: BufferEditSource::User,
@@ -3506,6 +3602,83 @@ impl BufferSnapshot {
         indent_size_for_line(self, row)
     }
 
+    /// The indentation that the block comment closed on `position`'s row belongs
+    /// at, or `None` if that row is not the closing line of a multi-line block
+    /// comment.
+    ///
+    /// A closing delimiter is conventionally indented one column past its opening
+    /// delimiter, so that it lines up with the comment's prefixes:
+    ///
+    /// ```text
+    /// /**
+    ///  * doc
+    ///  */
+    /// ```
+    ///
+    /// That extra column belongs to the comment rather than to the surrounding
+    /// code, which makes the closing row's own indentation a poor basis for
+    /// indenting whatever follows it. The opening row's indentation is used
+    /// instead.
+    ///
+    /// Requires the row to hold nothing but whitespace and the closing delimiter,
+    /// and `position` to be at or past the end of that delimiter, so that
+    /// splitting the delimiter itself is left alone. Also requires the syntax node
+    /// containing the delimiter to end there, so that a line which merely looks
+    /// like a closing delimiter is not mistaken for one.
+    pub fn block_comment_closing_indent(&self, position: Point) -> Option<IndentSize> {
+        let row = position.row;
+        let indent_len = self.indent_size_for_line(row).len;
+        let delimiter_start = Point::new(row, indent_len);
+        let language = self.language_scope_at(delimiter_start)?;
+        // A few languages describe a string literal in `block_comment` rather
+        // than a comment (Python's `"""`), so either scope is accepted. Relying
+        // on the override scope keeps this out of the business of guessing at
+        // grammar node names.
+        if !matches!(language.override_name(), Some("comment" | "string")) {
+            return None;
+        }
+
+        let delimiter_len = [language.documentation_comment(), language.block_comment()]
+            .into_iter()
+            .flatten()
+            .find_map(|config| {
+                let delimiter = config.end.trim_start();
+                if delimiter.is_empty() {
+                    return None;
+                }
+                let mut chars = self.chars_at(delimiter_start);
+                if !delimiter
+                    .chars()
+                    .all(|expected| chars.next() == Some(expected))
+                {
+                    return None;
+                }
+                if !chars.take_while(|c| *c != '\n').all(char::is_whitespace) {
+                    return None;
+                }
+                Some(delimiter.len() as u32)
+            })?;
+        if position.column < indent_len + delimiter_len {
+            return None;
+        }
+
+        let delimiter_end = Point::new(row, indent_len + delimiter_len);
+        let node = self.syntax_ancestor(delimiter_start..delimiter_end)?;
+        if Point::from_ts_point(node.end_position()) != delimiter_end {
+            return None;
+        }
+        let opening_row = Point::from_ts_point(node.start_position()).row;
+        (opening_row < row).then(|| self.indent_size_for_line(opening_row))
+    }
+
+    /// Like [`Self::indent_size_for_line`], but reports the indentation a row
+    /// logically sits at, which differs from its physical indentation on the
+    /// closing line of a block comment. See [`Self::block_comment_closing_indent`].
+    fn logical_indent_size_for_line(&self, row: u32) -> IndentSize {
+        self.block_comment_closing_indent(Point::new(row, self.line_len(row)))
+            .unwrap_or_else(|| self.indent_size_for_line(row))
+    }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
@@ -3537,7 +3710,7 @@ impl BufferSnapshot {
                     result
                         .get(&suggestion.basis_row)
                         .copied()
-                        .unwrap_or_else(|| self.indent_size_for_line(suggestion.basis_row))
+                        .unwrap_or_else(|| self.logical_indent_size_for_line(suggestion.basis_row))
                         .with_delta(suggestion.delta, single_indent_size)
                 } else {
                     self.indent_size_for_line(row)
@@ -3580,7 +3753,12 @@ impl BufferSnapshot {
         let indent_configs = matches
             .grammars()
             .iter()
-            .map(|grammar| grammar.indents_config.as_ref().unwrap())
+            .map(|grammar| {
+                grammar
+                    .indents_config
+                    .as_ref()
+                    .expect("grammar in indent match set has indents_config")
+            })
             .collect::<Vec<_>>();
 
         let mut indent_ranges = Vec::<Range<Point>>::new();
@@ -4723,307 +4901,6 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    /// Finds all [`RowChunks`] applicable to the given range, then returns all bracket pairs that intersect with those chunks.
-    /// Hence, may return more bracket pairs than the range contains.
-    ///
-    /// Will omit known chunks.
-    /// The resulting bracket match collections are not ordered.
-    pub fn fetch_bracket_ranges(
-        &self,
-        range: Range<usize>,
-        known_chunks: Option<&HashSet<Range<BufferRow>>>,
-    ) -> HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>> {
-        let mut all_bracket_matches = HashMap::default();
-
-        for chunk in self
-            .tree_sitter_data
-            .chunks
-            .applicable_chunks(&[range.to_point(self)])
-        {
-            if known_chunks.is_some_and(|chunks| chunks.contains(&chunk.row_range())) {
-                continue;
-            }
-            let chunk_range = chunk.anchor_range();
-            let chunk_range = chunk_range.to_offset(&self);
-
-            if let Some(cached_brackets) =
-                &self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                all_bracket_matches.insert(chunk.row_range(), cached_brackets.clone());
-                continue;
-            }
-
-            let mut all_brackets: Vec<(BracketMatch<usize>, usize, bool)> = Vec::new();
-            let mut opens = Vec::new();
-            let mut color_pairs = Vec::new();
-
-            let mut matches = self.syntax.matches_with_options(
-                chunk_range.clone(),
-                &self.text,
-                TreeSitterOptions {
-                    max_bytes_to_query: Some(MAX_BYTES_TO_QUERY),
-                    max_start_depth: None,
-                },
-                |grammar| grammar.brackets_config.as_ref().map(|c| &c.query),
-            );
-            let configs = matches
-                .grammars()
-                .iter()
-                .map(|grammar| grammar.brackets_config.as_ref().unwrap())
-                .collect::<Vec<_>>();
-
-            // Group matches by open range so we can either trust grammar output
-            // or repair it by picking a single closest close per open.
-            let mut open_to_close_ranges = BTreeMap::new();
-            while let Some(mat) = matches.peek() {
-                let mut open = None;
-                let mut close = None;
-                let syntax_layer_depth = mat.depth;
-                let pattern_index = mat.pattern_index;
-                let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[pattern_index];
-                for capture in mat.captures {
-                    if capture.index == config.open_capture_ix {
-                        open = Some(capture.node.byte_range());
-                    } else if capture.index == config.close_capture_ix {
-                        close = Some(capture.node.byte_range());
-                    }
-                }
-
-                matches.advance();
-
-                let Some((open_range, close_range)) = open.zip(close) else {
-                    continue;
-                };
-
-                let bracket_range = open_range.start..=close_range.end;
-                if !bracket_range.overlaps(&chunk_range) {
-                    continue;
-                }
-
-                open_to_close_ranges
-                    .entry((open_range.start, open_range.end, pattern_index))
-                    .or_insert_with(BTreeMap::new)
-                    .insert(
-                        (close_range.start, close_range.end),
-                        BracketMatch {
-                            open_range: open_range.clone(),
-                            close_range: close_range.clone(),
-                            syntax_layer_depth,
-                            newline_only: pattern.newline_only,
-                            color_index: None,
-                        },
-                    );
-
-                all_brackets.push((
-                    BracketMatch {
-                        open_range,
-                        close_range,
-                        syntax_layer_depth,
-                        newline_only: pattern.newline_only,
-                        color_index: None,
-                    },
-                    pattern_index,
-                    pattern.rainbow_exclude,
-                ));
-            }
-
-            let has_bogus_matches = open_to_close_ranges
-                .iter()
-                .any(|(_, end_ranges)| end_ranges.len() > 1);
-            if has_bogus_matches {
-                // Grammar is producing bogus matches where one open is paired with multiple
-                // closes. Build a valid stack by walking through positions in order.
-                // For each close, we know the expected open_len from tree-sitter matches.
-
-                // Map each close to its expected open length (for inferring opens)
-                let close_to_open_len: HashMap<(usize, usize, usize), usize> = all_brackets
-                    .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            (
-                                bracket_match.close_range.start,
-                                bracket_match.close_range.end,
-                                *pattern_index,
-                            ),
-                            bracket_match.open_range.len(),
-                        )
-                    })
-                    .collect();
-
-                // Collect unique opens and closes within this chunk
-                let mut unique_opens: HashSet<(usize, usize, usize)> = all_brackets
-                    .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            bracket_match.open_range.start,
-                            bracket_match.open_range.end,
-                            *pattern_index,
-                        )
-                    })
-                    .filter(|(start, _, _)| chunk_range.contains(start))
-                    .collect();
-
-                let mut unique_closes: Vec<(usize, usize, usize)> = all_brackets
-                    .iter()
-                    .map(|(bracket_match, pattern_index, _)| {
-                        (
-                            bracket_match.close_range.start,
-                            bracket_match.close_range.end,
-                            *pattern_index,
-                        )
-                    })
-                    .filter(|(start, _, _)| chunk_range.contains(start))
-                    .collect();
-                unique_closes.sort_unstable();
-                unique_closes.dedup();
-
-                // Build valid pairs by walking through closes in order
-                let mut unique_opens_vec: Vec<_> = unique_opens.iter().copied().collect();
-                unique_opens_vec.sort();
-
-                let mut valid_pairs: HashSet<((usize, usize, usize), (usize, usize, usize))> =
-                    HashSet::default();
-                let mut open_stacks: HashMap<usize, Vec<(usize, usize)>> = HashMap::default();
-                let mut open_idx = 0;
-
-                for close in &unique_closes {
-                    // Push all opens before this close onto stack
-                    while open_idx < unique_opens_vec.len()
-                        && unique_opens_vec[open_idx].0 < close.0
-                    {
-                        let (start, end, pattern_index) = unique_opens_vec[open_idx];
-                        open_stacks
-                            .entry(pattern_index)
-                            .or_default()
-                            .push((start, end));
-                        open_idx += 1;
-                    }
-
-                    // Try to match with most recent open
-                    let (close_start, close_end, pattern_index) = *close;
-                    if let Some(open) = open_stacks
-                        .get_mut(&pattern_index)
-                        .and_then(|open_stack| open_stack.pop())
-                    {
-                        valid_pairs.insert(((open.0, open.1, pattern_index), *close));
-                    } else if let Some(&open_len) = close_to_open_len.get(close) {
-                        // No open on stack - infer one based on expected open_len
-                        if close_start >= open_len {
-                            let inferred = (close_start - open_len, close_start, pattern_index);
-                            unique_opens.insert(inferred);
-                            valid_pairs.insert((inferred, *close));
-                            all_brackets.push((
-                                BracketMatch {
-                                    open_range: inferred.0..inferred.1,
-                                    close_range: close_start..close_end,
-                                    newline_only: false,
-                                    syntax_layer_depth: 0,
-                                    color_index: None,
-                                },
-                                pattern_index,
-                                false,
-                            ));
-                        }
-                    }
-                }
-
-                all_brackets.retain(|(bracket_match, pattern_index, _)| {
-                    let open = (
-                        bracket_match.open_range.start,
-                        bracket_match.open_range.end,
-                        *pattern_index,
-                    );
-                    let close = (
-                        bracket_match.close_range.start,
-                        bracket_match.close_range.end,
-                        *pattern_index,
-                    );
-                    valid_pairs.contains(&(open, close))
-                });
-            }
-
-            let mut all_brackets = all_brackets
-                .into_iter()
-                .enumerate()
-                .map(|(index, (bracket_match, _, rainbow_exclude))| {
-                    // Certain languages have "brackets" that are not brackets, e.g. tags. and such
-                    // bracket will match the entire tag with all text inside.
-                    // For now, avoid highlighting any pair that has more than single char in each bracket.
-                    // We need to  colorize `<Element/>` bracket pairs, so cannot make this check stricter.
-                    let should_color = !rainbow_exclude
-                        && (bracket_match.open_range.len() == 1
-                            || bracket_match.close_range.len() == 1);
-                    if should_color {
-                        opens.push(bracket_match.open_range.clone());
-                        color_pairs.push((
-                            bracket_match.open_range.clone(),
-                            bracket_match.close_range.clone(),
-                            index,
-                        ));
-                    }
-                    bracket_match
-                })
-                .collect::<Vec<_>>();
-
-            opens.sort_by_key(|r| (r.start, r.end));
-            opens.dedup_by(|a, b| a.start == b.start && a.end == b.end);
-            color_pairs.sort_by_key(|(_, close, _)| close.end);
-
-            let mut open_stack = Vec::new();
-            let mut open_index = 0;
-            for (open, close, index) in color_pairs {
-                while open_index < opens.len() && opens[open_index].start < close.start {
-                    open_stack.push(opens[open_index].clone());
-                    open_index += 1;
-                }
-
-                if open_stack.last() == Some(&open) {
-                    let depth_index = open_stack.len() - 1;
-                    all_brackets[index].color_index = Some(depth_index);
-                    open_stack.pop();
-                }
-            }
-
-            all_brackets.sort_by_key(|bracket_match| {
-                (bracket_match.open_range.start, bracket_match.open_range.end)
-            });
-
-            if let empty_slot @ None =
-                &mut self.tree_sitter_data.brackets_by_chunks.lock()[chunk.id]
-            {
-                *empty_slot = Some(all_brackets.clone());
-            }
-            all_bracket_matches.insert(chunk.row_range(), all_brackets);
-        }
-
-        all_bracket_matches
-    }
-
-    pub fn all_bracket_ranges(
-        &self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = BracketMatch<usize>> {
-        self.fetch_bracket_ranges(range.clone(), None)
-            .into_values()
-            .flatten()
-            .filter(move |bracket_match| {
-                let bracket_range = bracket_match.open_range.start..bracket_match.close_range.end;
-                bracket_range.overlaps(&range)
-            })
-    }
-
-    /// Returns bracket range pairs overlapping or adjacent to `range`
-    pub fn bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
-        self.all_bracket_ranges(range)
-            .filter(|pair| !pair.newline_only)
-    }
-
     pub fn debug_variables_query<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -5157,61 +5034,6 @@ impl BufferSnapshot {
                 matches.advance();
             }
         })
-    }
-
-    /// Returns enclosing bracket ranges containing the given range
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = BracketMatch<usize>> + '_ {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        let result: Vec<_> = self.bracket_ranges(range.clone()).collect();
-        let max_depth = result
-            .iter()
-            .map(|mat| mat.syntax_layer_depth)
-            .max()
-            .unwrap_or(0);
-        result.into_iter().filter(move |pair| {
-            pair.open_range.start <= range.start
-                && pair.close_range.end >= range.end
-                && pair.syntax_layer_depth == max_depth
-        })
-    }
-
-    /// Returns the smallest enclosing bracket ranges containing the given range or None if no brackets contain range
-    ///
-    /// Can optionally pass a range_filter to filter the ranges of brackets to consider
-    pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
-    ) -> Option<(Range<usize>, Range<usize>)> {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        // Get the ranges of the innermost pair of brackets.
-        let mut result: Option<(Range<usize>, Range<usize>)> = None;
-
-        for pair in self.enclosing_bracket_ranges(range) {
-            if let Some(range_filter) = range_filter
-                && !range_filter(pair.open_range.clone(), pair.close_range.clone())
-            {
-                continue;
-            }
-
-            let len = pair.close_range.end - pair.open_range.start;
-
-            if let Some((existing_open, existing_close)) = &result {
-                let existing_len = existing_close.end - existing_open.start;
-                if len > existing_len {
-                    continue;
-                }
-            }
-
-            result = Some((pair.open_range, pair.close_range));
-        }
-
-        result
     }
 
     /// Returns anchor ranges for any matches of the redaction query.
@@ -5351,12 +5173,26 @@ impl BufferSnapshot {
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
+        self.diagnostic_entries_in_range(search_range, reversed)
+            .map(|entry| entry.resolve(self))
+    }
+
+    /// Returns the stored entries that intersect the given range, with their ranges
+    /// and related information left in the buffer's own coordinates.
+    pub fn diagnostic_entries_in_range<'a, T>(
+        &'a self,
+        search_range: Range<T>,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = &'a DiagnosticEntry<Anchor>>
+    where
+        T: 'a + Clone + ToOffset,
+    {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
             .map(|(_, collection)| {
                 collection
-                    .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
+                    .entries_in_range::<T>(search_range.clone(), self, true, reversed)
                     .peekable()
             })
             .collect();
@@ -5377,15 +5213,7 @@ impl BufferSnapshot {
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
                     if reversed { cmp.reverse() } else { cmp }
                 })?;
-            iterators[next_ix]
-                .next()
-                .map(
-                    |DiagnosticEntryRef { range, diagnostic }| DiagnosticEntryRef {
-                        diagnostic,
-                        range: FromAnchor::from_anchor(&range.start, self)
-                            ..FromAnchor::from_anchor(&range.end, self),
-                    },
-                )
+            iterators[next_ix].next()
         })
     }
 
@@ -6133,10 +5961,24 @@ impl CharClassifier {
 ///
 /// This could also be done with a regex search, but this implementation
 /// avoids copying text.
-pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
+/// Returns the byte ranges of trailing whitespace at the end of each line.
+///
+/// When `row_ranges` is `Some`, only lines whose row falls within one of the ranges are
+/// included. The single pass keeps filtering cheap, avoiding collecting every range up front.
+pub(crate) fn trailing_whitespace_ranges(
+    rope: &Rope,
+    row_ranges: Option<&[Range<u32>]>,
+) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
 
+    let is_row_included = |row: u32| match row_ranges {
+        Some(row_ranges) => row_ranges.iter().any(|range| range.contains(&row)),
+        None => true,
+    };
+
     let mut offset = 0;
+    let mut current_row: u32 = 0;
+    let mut prev_row: Option<u32> = None;
     let mut prev_chunk_trailing_whitespace_range = 0..0;
     for chunk in rope.chunks() {
         let mut prev_line_trailing_whitespace_range = 0..0;
@@ -6148,19 +5990,24 @@ pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
             if i == 0 && trimmed_line_len == 0 {
                 trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
             }
-            if !prev_line_trailing_whitespace_range.is_empty() {
-                ranges.push(prev_line_trailing_whitespace_range);
+            if let Some(row) = prev_row {
+                if !prev_line_trailing_whitespace_range.is_empty() && is_row_included(row) {
+                    ranges.push(prev_line_trailing_whitespace_range);
+                }
             }
 
+            prev_row = Some(current_row);
             offset = line_end_offset + 1;
+            current_row += 1;
             prev_line_trailing_whitespace_range = trailing_whitespace_range;
         }
 
         offset -= 1;
+        current_row -= 1;
         prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
     }
 
-    if !prev_chunk_trailing_whitespace_range.is_empty() {
+    if !prev_chunk_trailing_whitespace_range.is_empty() && is_row_included(current_row) {
         ranges.push(prev_chunk_trailing_whitespace_range);
     }
 

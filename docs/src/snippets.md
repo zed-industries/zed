@@ -39,6 +39,8 @@ The scope is determined by the language name in lowercase e.g. `python.json` for
 
 To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and TypeScript which follow the above rule.
 
+Path separators (`/` and `\`) are removed from the file name, so a language named `PL/X` uses `plx.json`.
+
 ## Known Limitations
 
 - Only the first prefix is used when a list of prefixes is passed in.

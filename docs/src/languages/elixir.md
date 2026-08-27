@@ -11,17 +11,22 @@ Elixir support is available through the [Elixir extension](https://github.com/ze
   - [elixir-lang/tree-sitter-elixir](https://github.com/elixir-lang/tree-sitter-elixir)
   - [phoenixframework/tree-sitter-heex](https://github.com/phoenixframework/tree-sitter-heex)
 - Language Servers:
-  - [elixir-lang/expert](https://github.com/elixir-lang/expert)
+  - [expert-lsp/expert](https://github.com/expert-lsp/expert)
   - [elixir-lsp/elixir-ls](https://github.com/elixir-lsp/elixir-ls)
   - [elixir-tools/next-ls](https://github.com/elixir-tools/next-ls)
   - [lexical-lsp/lexical](https://github.com/lexical-lsp/lexical)
   - [remoteoss/dexter](https://github.com/remoteoss/dexter)
+- Debug Adapter: [ElixirLS](https://github.com/elixir-lsp/elixir-ls)
 
 Furthermore, the extension provides support for [EEx](https://hexdocs.pm/eex/EEx.html) (Embedded Elixir) templates and [HEEx](https://hexdocs.pm/phoenix/components.html#heex) templates, a mix of HTML and EEx used by Phoenix LiveView applications.
 
 ## Language Servers
 
 The Elixir extension offers language server support for ElixirLS, Expert, Dexter, Next LS, and Lexical. By default, only ElixirLS is enabled. You can change or disable the enabled language servers in your settings ({#kb zed::OpenSettings}) under Languages > Elixir/EEx/HEEx or directly within your settings file.
+
+The extension will try to find and use local binaries in your `$PATH` for the enabled language servers. If it cannot find them there, it will fallback to installing them for you instead.
+
+Alternatively, you can provide your own custom binaries by passing the path and arguments in your settings file via `lsp.{language-server-id}.binary.path` and `lsp.{language-server-id}.binary.arguments` respectively; note that a few of the language servers will require specific arguments to work. For more information, read the corresponding sections below for the language servers you wish to use with a custom binary.
 
 Some of the language servers can also accept initialization or workspace configuration options. See the sections below for an outline of what each server supports. The configuration can be passed in your settings file via `lsp.{language-server-id}.initialization_options` and `lsp.{language-server-id}.settings` respectively.
 
@@ -46,6 +51,8 @@ The following example disables [Dialyzer](https://github.com/elixir-lsp/elixir-l
 See the official list of [ElixirLS configuration settings](https://github.com/elixir-lsp/elixir-ls#elixirls-configuration-settings) for all available options.
 
 ### Using Expert
+
+[Expert](https://expert-lsp.org) is the official language server for Elixir. It is an amalgamation of ElixirLS, Next LS, and Lexical. The features it supports include: go-to-definition, go-to-references, hover docs, autocompletion, code actions, compiler diagnostics, and format on save.
 
 Enable Expert by adding the following to your settings file:
 
@@ -81,7 +88,7 @@ The following example sets the minimum number of characters required for a proje
 
 See the [Expert configuration](https://expert-lsp.org/docs/configuration/) page for all available options.
 
-To use a custom Expert build, add the following to your settings file:
+To use a custom Expert binary, add the following to your settings file:
 
 ```json [settings]
   "lsp": {
@@ -96,7 +103,7 @@ To use a custom Expert build, add the following to your settings file:
 
 ### Using Dexter
 
-[Dexter](https://github.com/remoteoss/dexter) is a fast, full-featured Elixir language server optimized for large codebases. It works by parsing source files directly, no compilation required. Supports go-to-definition, references, hover docs, autocompletion, rename, and format on save.
+[Dexter](https://github.com/remoteoss/dexter) is a fast, full-featured Elixir language server optimized for large codebases. It works by parsing source files directly, no compilation required. The features it supports include: go-to-definition, go-to-references, hover docs, autocompletion, rename, and format on save.
 
 Enable Dexter by adding the following to your settings file:
 
@@ -128,6 +135,8 @@ The following example disables following `defdelegate` to the target function:
   }
 ```
 
+See the official list of [Dexter initialization settings](https://github.com/remoteoss/dexter#lsp-options) for all available options.
+
 To use a custom Dexter binary, add the following to your settings file:
 
 ```json [settings]
@@ -140,8 +149,6 @@ To use a custom Dexter binary, add the following to your settings file:
     }
   }
 ```
-
-See the [Dexter documentation](https://github.com/remoteoss/dexter) for more details.
 
 ### Using Next LS
 
@@ -163,7 +170,7 @@ Enable Next LS by adding the following to your settings file:
 
 Next LS can accept initialization options.
 
-Completions are an experimental feature within Next LS, they are enabled by default in Zed. Disable them by adding the following to your settings file:
+Completions are an experimental feature within Next LS, and are enabled by default in Zed. Disable them by adding the following to your settings file:
 
 ```json [settings]
   "lsp": {
@@ -212,6 +219,19 @@ Next LS can also pass CLI options directly to Credo. The following example passe
 ```
 
 See the [Credo Command Line Switches](https://hexdocs.pm/credo/suggest_command.html#command-line-switches) page for more CLI options.
+
+To use a custom Next LS binary, add the following to your settings file:
+
+```json [settings]
+  "lsp": {
+    "next-ls": {
+      "binary": {
+        "path": "/path/to/next-ls",
+        "arguments": ["--stdio"]
+      }
+    }
+  }
+```
 
 ### Using Lexical
 
@@ -269,6 +289,51 @@ If you prefer to work without a language server but would still like code format
     }
   }
 ```
+
+## Debugging
+
+The Elixir extension also provides a debug adapter via ElixirLS. Like the language servers, the extension will try to find and use a local binary in your `$PATH`. If it cannot find one, it will fallback to installing it instead.
+
+Alternatively, you can provide your own custom binary by passing the path and arguments in your settings file via `dap.ElixirLS.binary` and `dap.ElixirLS.args` respectively.
+
+Refer to the [Debugger](../debugger.md#getting-started) documentation for more information on how debugging works in Zed.
+
+### Using ElixirLS
+
+The following example allows you to debug the test files of a project:
+
+```json [debug]
+[
+  {
+    "label": "Debug tests",
+    "adapter": "ElixirLS",
+    "request": "launch",
+    "projectDir": "$ZED_WORKTREE_ROOT",
+    "task": "test",
+    "taskArgs": ["--trace"],
+    "requireFiles": ["test/**/test_helper.exs", "test/**/*_test.exs"]
+  }
+]
+```
+
+The following example allows you to debug a Phoenix server:
+
+```json [debug]
+[
+  {
+    "label": "Debug Phoenix server",
+    "adapter": "ElixirLS",
+    "request": "launch",
+    "projectDir": "$ZED_WORKTREE_ROOT",
+    "task": "phx.server",
+    "debugAutoInterpretAllModules": false,
+    "debugInterpretModulesPatterns": ["MyApp*", "MyAppWeb*"],
+    "exitAfterTaskReturns": false
+  }
+]
+```
+
+See the official [ElixirLS documentation](https://github.com/elixir-lsp/elixir-ls#debugger-support) for more information.
 
 ## Using the Tailwind CSS Language Server with HEEx templates
 

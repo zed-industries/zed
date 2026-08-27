@@ -20,11 +20,12 @@ use futures_lite::future::yield_now;
 use gpui::{App, Context, Entity, EventEmitter};
 use itertools::Itertools;
 use language::{
-    AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow, BufferSnapshot, Capability,
-    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, File,
-    IndentGuideSettings, IndentSize, Language, LanguageAwareStyling, LanguageScope, OffsetRangeExt,
-    OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject,
-    ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
+    AutoIndentExclusion, AutoindentMode, Buffer, BufferChunks, BufferEditSource, BufferRow,
+    BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape,
+    DiagnosticEntryRef, File, IndentGuideSettings, IndentSize, Language, LanguageAwareStyling,
+    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
+    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
+    Unclipped,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 
@@ -116,6 +117,7 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
+    CapabilityChanged,
     LanguageChanged(BufferId, bool),
     Reparsed(BufferId),
     Saved,
@@ -626,7 +628,7 @@ impl DiffState {
                     this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::BaseTextChanged | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                BufferDiffEvent::BaseTextChanged => {}
             }),
             diff,
             main_buffer: None,
@@ -660,8 +662,7 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::BaseTextChanged
-                        | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                        BufferDiffEvent::BaseTextChanged => {}
                     }
                 }
             }),
@@ -1378,7 +1379,32 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits, autoindent_mode, true, cx);
+        self.edit_internal(
+            edits,
+            autoindent_mode,
+            true,
+            AutoIndentExclusion::PrecedingLine,
+            cx,
+        );
+    }
+
+    pub fn edit_before<I, S, T>(
+        &mut self,
+        edits: I,
+        autoindent_mode: Option<AutoindentMode>,
+        cx: &mut Context<Self>,
+    ) where
+        I: IntoIterator<Item = (Range<S>, T)>,
+        S: ToOffset,
+        T: Into<Arc<str>>,
+    {
+        self.edit_internal(
+            edits,
+            autoindent_mode,
+            true,
+            AutoIndentExclusion::FollowingLine,
+            cx,
+        );
     }
 
     pub fn edit_non_coalesce<I, S, T>(
@@ -1391,7 +1417,13 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<Arc<str>>,
     {
-        self.edit_internal(edits, autoindent_mode, false, cx);
+        self.edit_internal(
+            edits,
+            autoindent_mode,
+            false,
+            AutoIndentExclusion::PrecedingLine,
+            cx,
+        );
     }
 
     fn edit_internal<I, S, T>(
@@ -1399,6 +1431,7 @@ impl MultiBuffer {
         edits: I,
         autoindent_mode: Option<AutoindentMode>,
         coalesce_adjacent: bool,
+        autoindent_exclusion: AutoIndentExclusion,
         cx: &mut Context<Self>,
     ) where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -1421,7 +1454,14 @@ impl MultiBuffer {
             })
             .collect::<Vec<_>>();
 
-        return edit_internal(self, edits, autoindent_mode, coalesce_adjacent, cx);
+        return edit_internal(
+            self,
+            edits,
+            autoindent_mode,
+            coalesce_adjacent,
+            autoindent_exclusion,
+            cx,
+        );
 
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn edit_internal(
@@ -1429,6 +1469,7 @@ impl MultiBuffer {
             edits: Vec<(Range<MultiBufferOffset>, Arc<str>)>,
             mut autoindent_mode: Option<AutoindentMode>,
             coalesce_adjacent: bool,
+            autoindent_exclusion: AutoIndentExclusion,
             cx: &mut Context<MultiBuffer>,
         ) {
             let original_indent_columns = match &mut autoindent_mode {
@@ -1516,8 +1557,16 @@ impl MultiBuffer {
                         };
 
                     if coalesce_adjacent {
-                        buffer.edit(deletions, deletion_autoindent_mode, cx);
-                        buffer.edit(insertions, insertion_autoindent_mode, cx);
+                        match autoindent_exclusion {
+                            AutoIndentExclusion::PrecedingLine => {
+                                buffer.edit(deletions, deletion_autoindent_mode, cx);
+                                buffer.edit(insertions, insertion_autoindent_mode, cx);
+                            }
+                            AutoIndentExclusion::FollowingLine => {
+                                buffer.edit_before(deletions, deletion_autoindent_mode, cx);
+                                buffer.edit_before(insertions, insertion_autoindent_mode, cx);
+                            }
+                        }
                     } else {
                         buffer.edit_non_coalesce(deletions, deletion_autoindent_mode, cx);
                         buffer.edit_non_coalesce(insertions, insertion_autoindent_mode, cx);
@@ -1964,7 +2013,7 @@ impl MultiBuffer {
             BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             BufferEvent::CapabilityChanged => {
                 self.capability = buffer.read(cx).capability();
-                return;
+                Event::CapabilityChanged
             }
             BufferEvent::Operation { .. } | BufferEvent::ReloadNeeded => return,
         });
@@ -2115,6 +2164,9 @@ impl MultiBuffer {
         self.title.as_deref()
     }
 
+    /// The title used for buffers not backed by a file and with no title of their own.
+    pub const DEFAULT_TITLE: &str = "untitled";
+
     pub fn title<'a>(&'a self, cx: &'a App) -> Cow<'a, str> {
         if let Some(title) = self.title.as_ref() {
             return title.into();
@@ -2132,7 +2184,7 @@ impl MultiBuffer {
             }
         };
 
-        "untitled".into()
+        Self::DEFAULT_TITLE.into()
     }
 
     fn buffer_content_title(&self, buffer: &Buffer) -> Option<Cow<'_, str>> {
@@ -2551,7 +2603,7 @@ impl MultiBuffer {
             *non_text_state_update_count += 1;
         }
 
-        paths_to_edit.sort_unstable_by_key(|(path, _, _, _)| path.clone());
+        paths_to_edit.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::default();
@@ -3079,7 +3131,7 @@ impl MultiBuffer {
     }
 }
 
-fn build_excerpt_ranges(
+pub fn build_excerpt_ranges(
     ranges: impl IntoIterator<Item = Range<Point>>,
     context_line_count: u32,
     buffer_snapshot: &BufferSnapshot,

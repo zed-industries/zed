@@ -558,6 +558,8 @@ impl Editor {
                         let end = selection.end;
                         let selection_is_empty = start == end;
                         let language_scope = buffer.language_scope_at(start);
+                        existing_indent =
+                            logical_indent_for_newline(&start_point, &buffer, existing_indent);
                         let (delimiter, newline_config) = if let Some(language) = &language_scope {
                             let needs_extra_newline = NewlineConfig::insert_extra_newline_brackets(
                                 &buffer,
@@ -988,7 +990,7 @@ impl Editor {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::previous_word_start(map, selection.head())
+                            movement::previous_word_start(map, selection.head(), true)
                         } else {
                             movement::previous_word_start_or_newline(map, selection.head())
                         };
@@ -1053,7 +1055,7 @@ impl Editor {
                 s.move_with(&mut |map, selection| {
                     if selection.is_empty() {
                         let mut cursor = if action.ignore_newlines {
-                            movement::next_word_end(map, selection.head())
+                            movement::next_word_end(map, selection.head(), true)
                         } else {
                             movement::next_word_end_or_newline(map, selection.head())
                         };
@@ -1666,10 +1668,8 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
 
             let selections = this.selections.all::<Point>(&this.display_snapshot(cx));
-            let selections_on_single_row = selections.windows(2).all(|selections| {
-                selections[0].start.row == selections[1].start.row
-                    && selections[0].end.row == selections[1].end.row
-                    && selections[0].start.row == selections[0].end.row
+            let selections_on_single_row = selections.array_windows::<2>().all(|[a, b]| {
+                a.start.row == b.start.row && a.end.row == b.end.row && a.start.row == a.end.row
             });
             let selections_selecting = selections
                 .iter()
@@ -2399,7 +2399,7 @@ impl NewlineConfig {
             _ => return false,
         };
         let pair = {
-            let mut result: Option<BracketMatch<usize>> = None;
+            let mut result: Option<BracketMatch> = None;
 
             for pair in buffer
                 .all_bracket_ranges(range.start.0..range.end.0)
@@ -2619,6 +2619,28 @@ fn documentation_delimiter_for_newline(
     } else {
         None
     }
+}
+
+/// The indentation a line inserted at `start_point` should start at, which is
+/// `existing_indent` unless the cursor sits after the closing delimiter of a
+/// multi-line block comment. See [`language::BufferSnapshot::block_comment_closing_indent`].
+fn logical_indent_for_newline(
+    start_point: &Point,
+    buffer: &MultiBufferSnapshot,
+    existing_indent: IndentSize,
+) -> IndentSize {
+    let Some((snapshot, line_range)) = buffer.buffer_line_for_row(MultiBufferRow(start_point.row))
+    else {
+        return existing_indent;
+    };
+    // Columns agree between the multi-buffer and the underlying buffer for a line
+    // an excerpt shows in full, which is the case we care about. For a partial
+    // first line the column comes out too small and the lookup below declines,
+    // leaving the indent alone.
+    let position = Point::new(line_range.start.row, start_point.column);
+    snapshot
+        .block_comment_closing_indent(position)
+        .unwrap_or(existing_indent)
 }
 
 fn list_delimiter_for_newline(

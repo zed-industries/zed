@@ -18,6 +18,7 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
+aws-sigv4.workspace = true
 aws_http_client.workspace = true
 base64.workspace = true
 bedrock = { workspace = true, features = ["schemars"] }
@@ -27,7 +28,6 @@ cloud_api_types.workspace = true
 collections.workspace = true
 component.workspace = true
 convert_case.workspace = true
-copilot.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true
 credentials_provider.workspace = true
@@ -48,24 +48,22 @@ lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true
 mistral = { workspace = true, features = ["schemars"] }
-oauth_callback_server.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+openai_subscribed.workspace = true
 opencode = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
 rand.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
-sha2.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-smol.workspace = true
+sha2.workspace = true
 strum.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 ui_input.workspace = true
-url.workspace = true
 util.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
 
@@ -79,5 +77,7 @@ gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
-pretty_assertions.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+
+[package.metadata.cargo-shear]
+ignored = ["component"]

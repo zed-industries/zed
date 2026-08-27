@@ -396,10 +396,16 @@ impl AnyProtoClient {
                             Response::GetDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetEditPredictionDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                             Response::GetDeclarationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetTypeDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetEditPredictionTypeDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {

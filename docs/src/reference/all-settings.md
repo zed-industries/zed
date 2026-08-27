@@ -130,7 +130,7 @@ Non-negative `float` values
 }
 ```
 
-Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
+> Note: This setting has no effect in Vim mode, as rewrap is already allowed everywhere.
 
 ## Auto Indent
 
@@ -304,11 +304,19 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 
 - Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 - Setting: `base_keymap`
-- Default: `VSCode`
+- Default: `Zed`
 
 **Options**
 
-1. VS Code
+1. Zed
+
+```json [settings]
+{
+  "base_keymap": "Zed"
+}
+```
+
+2. VS Code
 
 ```json [settings]
 {
@@ -316,7 +324,7 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-2. Atom
+3. Atom
 
 ```json [settings]
 {
@@ -324,19 +332,11 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 }
 ```
 
-3. JetBrains
+4. JetBrains
 
 ```json [settings]
 {
   "base_keymap": "JetBrains"
-}
-```
-
-4. None
-
-```json [settings]
-{
-  "base_keymap": "None"
 }
 ```
 
@@ -353,6 +353,30 @@ Note that a save will be triggered when an unsaved tab is closed, even if this i
 ```json [settings]
 {
   "base_keymap": "TextMate"
+}
+```
+
+7. Emacs
+
+```json [settings]
+{
+  "base_keymap": "Emacs"
+}
+```
+
+8. Cursor
+
+```json [settings]
+{
+  "base_keymap": "Cursor"
+}
+```
+
+9. None
+
+```json [settings]
+{
+  "base_keymap": "None"
 }
 ```
 
@@ -476,7 +500,7 @@ left and right padding of the central pane from the workspace when the centered 
 
 When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
 
-Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+> Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Code Lens
 
@@ -661,6 +685,29 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 List of `string` values.
 
+### Prediction Debounce
+
+- Description: How long Zed waits after you stop typing before automatically requesting an edit prediction.
+- Setting: `edit_predictions.<provider>.prediction_debounce`
+- Default: `75` for GitHub Copilot, `150` for Codestral, and `0` for Zed, Mercury, Ollama, and OpenAI-compatible APIs.
+
+**Options**
+
+Non-negative integer values representing milliseconds. Set this to `0` to disable the additional delay. Configure the value under the settings object for the selected provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "prediction_debounce": 500
+    }
+  }
+}
+```
+
+See [Configuring the Prediction Debounce](../ai/edit-prediction.md#configuring-the-prediction-debounce) for more information.
+
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
@@ -814,7 +861,8 @@ List of `string` values
     "runnables": true,
     "breakpoints": true,
     "folds": true,
-    "min_line_number_digits": 4
+    "min_line_number_digits": 4,
+    "git_gutter_width": "default"
   }
 }
 ```
@@ -826,6 +874,7 @@ List of `string` values
 - `breakpoints`: Whether to show breakpoints in the gutter
 - `folds`: Whether to show fold buttons in the gutter
 - `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
+- `git_gutter_width`: The width, in pixels, of the git diff hunk indicators in the gutter. When `default`, the width scales with the buffer font size
 
 ## Hide Mouse
 
@@ -855,6 +904,30 @@ List of `string` values
 ```json [settings]
 {
   "hide_mouse": "on_typing_and_action"
+}
+```
+
+## Reduce Motion
+
+- Description: Whether to reduce non-essential motion in the UI, such as loading spinners and pulsating labels, by rendering them in a static state.
+- Setting: `reduce_motion`
+- Default: `off`
+
+**Options**
+
+1. Always reduce motion:
+
+```json [settings]
+{
+  "reduce_motion": "on"
+}
+```
+
+2. Never reduce motion:
+
+```json [settings]
+{
+  "reduce_motion": "off"
 }
 ```
 
@@ -1643,6 +1716,30 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 This setting enables integration with macOS’s native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
 
+## Fullscreen Mode
+
+- Description: Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+- Setting: `fullscreen_mode`
+- Default: `native`
+
+**Options**
+
+1. Use macOS's native fullscreen, which moves the window into its own Mission Control space:
+
+```json
+{
+  "fullscreen_mode": "native"
+}
+```
+
+2. Resize the window to cover the entire screen, including the menu bar and, on notched displays, the area around the notch:
+
+```json
+{
+  "fullscreen_mode": "simple"
+}
+```
+
 ## Enable Language Server
 
 - Description: Whether or not to use language servers to provide code intelligence.
@@ -1827,6 +1924,7 @@ While other options may be changed at a runtime and should be placed under `sett
   "global_lsp_settings": {
     "button": true,
     "request_timeout": 120,
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -1840,6 +1938,7 @@ While other options may be changed at a runtime and should be placed under `sett
 
 - `button`: Whether to show the LSP status button in the status bar
 - `request_timeout`: The maximum amount of time to wait for responses from language servers, in seconds. A value of `0` will result in no timeout being applied (causing all LSP responses to wait indefinitely until completed). Default: `120`
+- `max_buffer_line_length`: The maximum line length a buffer may contain before Zed disables all language server features for that entire buffer. If any line exceeds this value, Zed does not open the buffer with language servers or send them buffer-specific requests. Default: `20000`
 - `notifications`: Notification-related settings.
   - `dismiss_timeout_ms`: Timeout in milliseconds for automatically dismissing language server notifications. Set to 0 to disable auto-dismiss.
 
@@ -1905,7 +2004,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-## Format On Save
+## Format On Save {#format-on-save}
 
 - Description: Whether or not to perform a buffer format before saving.
 - Setting: `format_on_save`
@@ -1928,6 +2027,26 @@ While other options may be changed at a runtime and should be placed under `sett
   "format_on_save": "off"
 }
 ```
+
+3. `modifications`, formats only lines with unstaged changes:
+
+```json [settings]
+{
+  "format_on_save": "modifications"
+}
+```
+
+This mode requires source control and LSP range formatting support. If no git diff is available or if the LSP doesn't support range formatting, formatting is skipped. This is useful for editing legacy codebases where you want to avoid formatting changes in unrelated code.
+
+4. `modifications_if_available`, formats only modified lines with fallback to full file formatting:
+
+```json [settings]
+{
+  "format_on_save": "modifications_if_available"
+}
+```
+
+Similar to `modifications`, but behaves like `on` when range formatting cannot be applied: when no git diff is available (e.g., when source control is unavailable) or when the language server does not support range formatting. When a git diff is available but contains no unstaged changes, nothing is formatted.
 
 ## Formatter
 
@@ -1957,6 +2076,8 @@ While other options may be changed at a runtime and should be placed under `sett
   }
 }
 ```
+
+Tools that rewrite files on disk instead of printing the formatted contents to stdout (such as `cargo fmt`) are not compatible with `"external"`: since Zed reads the formatted buffer from stdout, a formatter that emits nothing there will not update the buffer. For Rust, use `"formatter": "language_server"` or invoke `rustfmt` directly (which supports stdin/stdout via `--emit stdout`) instead of `cargo fmt`.
 
 3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then be used to impact formatting decisions.
 
@@ -2054,6 +2175,8 @@ The result is still `)))` and not `))))))`, which is what it would be by default
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
+    "**/.repo",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -2063,7 +2186,23 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
+Note that specifying `file_scan_exclusions` in `settings.json` will override the defaults (listed above). Use `"..."` to keep them:
+
+```json [settings]
+{
+  "file_scan_exclusions": ["**/node_modules", "..."]
+}
+```
+
+The `"..."` entry expands to the list you are overriding, so the example above excludes `node_modules` in addition to every default. Entries you list by name keep their position, and `"..."` fills in the inherited ones at that point in the list. If you want full control over what is excluded, omit `"..."` — only the entries you list by name will be used.
+
+| Configuration                | Result                               |
+| ---------------------------- | ------------------------------------ |
+| `["..."]`                    | The defaults, unchanged              |
+| `["**/node_modules", "..."]` | `**/node_modules`, then the defaults |
+| `["**/node_modules"]`        | `**/node_modules` only               |
+
+> Note: `"..."` resolves one settings layer at a time. In a project’s `.zed/settings.json` it expands to whatever your user settings resolved to, rather than to Zed’s defaults.
 
 ## File Scan Inclusions
 
@@ -2076,6 +2215,37 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
   "file_scan_inclusions": [".env*"]
 }
 ```
+
+## File Scan Depth
+
+- Setting: `file_scan_depth`
+- Description: Maximum directory depth that Zed eagerly indexes outside of git repositories. Directories at this depth or deeper are indexed on demand: when expanded in the project panel or when a file inside them is opened. Contents of directories that were not indexed yet are invisible to the file finder and project search. When directories get deferred, the status bar of the affected window shows a brief "Partial file index" message. Set to `0` to always index everything eagerly and activate all git repositories immediately.
+- Default: `5`
+
+```json [settings]
+{
+  "file_scan_depth": 0
+}
+```
+
+How the limit applies, case by case:
+
+| Case                                                                    | Behavior                                                                                                    |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Project rooted at a git repository, or at a subdirectory of one         | Indexed fully, the limit never applies                                                                      |
+| Git repository rooted shallower than the limit (e.g. a repo under `~/`) | Its whole subtree is indexed fully, no matter how deep                                                      |
+| Git repository rooted at or deeper than the limit                       | Not discovered eagerly; opening any file inside it registers it and indexes its whole subtree from then on  |
+| Non-git tree shallower than the limit                                   | Indexed fully, nothing changes                                                                              |
+| Non-git tree deeper than the limit (e.g. `~/`, `/`, large datasets)     | Indexed up to the limit, the rest on demand; unindexed contents are invisible to the file finder and search |
+| Gitignored directories                                                  | Indexed on demand regardless of this setting, as always                                                     |
+| `file_scan_inclusions` matches                                          | Always indexed, regardless of depth                                                                         |
+| `file_scan_exclusions` matches                                          | Never indexed, regardless of depth                                                                          |
+
+Directories loaded on demand stay indexed, but are deferred again after a restart or after a settings change triggers a worktree rescan.
+
+`file_scan_depth` bounds where git repositories can be discovered; [repository activation](../git.md#repository-activation) decides what a discovered repository costs.
+Note that any non-zero value defers git activation for repositories that are not directly inside a project root folder, no matter how large the value is; raising the limit indexes more directories eagerly but does not activate deeper repositories any earlier.
+In multi-folder projects, depth is measured from each root folder separately.
 
 ## Scan Symbolic Links
 
@@ -2472,6 +2642,42 @@ Example:
 }
 ```
 
+### Diff Base
+
+- Description: Whether git features show changes relative to HEAD (uncommitted changes) or to the default branch (all changes on the current branch). Also available in the editor controls menu as "Diff Against Default Branch".
+- Setting: `diff_base`
+- Default:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+**Options**
+
+1. Show working changes relative to HEAD:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "head"
+  }
+}
+```
+
+2. Show all branch changes relative to the merge base with the repository's default branch:
+
+```json [settings]
+{
+  "git": {
+    "diff_base": "default_branch"
+  }
+}
+```
+
 ## Go to Definition Fallback
 
 - Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition
@@ -2740,7 +2946,7 @@ Example:
 
 **Options**
 
-Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon theme names.
 
 ### Light
 
@@ -2750,7 +2956,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 
 **Options**
 
-Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon theme names.
 
 ## Image Viewer
 
@@ -2825,10 +3031,10 @@ At this point, the server may or may not return hints depending on its implement
 
 The following languages have inlay hints preconfigured by Zed:
 
-- [Go](https://docs.zed.dev/languages/go)
-- [Rust](https://docs.zed.dev/languages/rust)
-- [Svelte](https://docs.zed.dev/languages/svelte)
-- [TypeScript](https://docs.zed.dev/languages/typescript)
+- [Go](../languages/go.md)
+- [Rust](../languages/rust.md)
+- [Svelte](../languages/svelte.md)
+- [TypeScript](../languages/typescript.md)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
@@ -3279,7 +3485,7 @@ Examples:
 
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
-   There are several ways to convert a preview tab into a regular tab:
+  There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
@@ -3688,7 +3894,8 @@ Non-negative `integer` values
     "case_sensitive": false,
     "include_ignored": false,
     "regex": false,
-    "center_on_match": false
+    "center_on_match": false,
+    "search_on_type": true
   }
 }
 ```
@@ -3730,6 +3937,12 @@ Non-negative `integer` values
 - Description: Whether to center the cursor on each search match when navigating.
 - Setting: `center_on_match`
 - Default: `false`
+
+### Search On Type
+
+- Description: Start searching as you type in project search, without pressing Enter.
+- Setting: `search_on_type`
+- Default: `true`
 
 ## Search Wrap
 
@@ -4158,7 +4371,9 @@ List of `integer` column numbers
     "blinking": "terminal_controlled",
     "copy_on_select": false,
     "keep_selection_on_copy": true,
+    "open_links_in_mouse_mode": true,
     "dock": "bottom",
+    "starts_open": false,
     "default_width": 640,
     "default_height": 320,
     "detect_venv": {
@@ -4197,6 +4412,24 @@ List of `integer` column numbers
 **Options**
 
 `"bottom"`, `"left"` or `"right"`
+
+### Terminal: Starts Open
+
+- Description: Whether the terminal panel should open on startup.
+- Setting: `starts_open`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+```json [settings]
+{
+  "terminal": {
+    "starts_open": true
+  }
+}
+```
 
 ### Terminal: Alternate Scroll
 
@@ -4352,6 +4585,26 @@ List of `integer` column numbers
 }
 ```
 
+### Terminal: Open Links In Mouse Mode
+
+- Description: Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even when the terminal application has enabled mouse reporting (e.g. vim with `mouse=a`, htop). When `false`, these clicks are forwarded to the application instead, and hyperlinks can still be opened with shift-cmd-click (shift-ctrl-click).
+- Setting: `open_links_in_mouse_mode`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+**Example**
+
+```json [settings]
+{
+  "terminal": {
+    "open_links_in_mouse_mode": false
+  }
+}
+```
+
 ### Terminal: Env
 
 - Description: Any key-value pairs added to this object will be added to the terminal's environment. Keys must be unique, use `:` to separate multiple values in a single variable
@@ -4403,6 +4656,24 @@ The name of any font family installed on the user's system
 {
   "terminal": {
     "font_family": "Berkeley Mono"
+  }
+}
+```
+
+### Terminal: Font Fallbacks
+
+- Description: The font fallbacks to use for text in the terminal. Uses the buffer's font fallback if unset.
+- Setting: "font_fallbacks"
+- Default: `null`
+
+**Options**
+
+For example, to use Nerd Font as a fallback, add the following to your settings:
+
+```json [settings]
+{
+  "terminal": {
+    "font_fallbacks": ["Nerd Font"]
   }
 }
 ```
@@ -4855,7 +5126,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid theme names.
 
 ### Light
 
@@ -4865,7 +5136,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 **Options**
 
-Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid theme names.
 
 ## Title Bar
 
@@ -4878,6 +5149,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "title_bar": {
     "show_branch_status_icon": false,
     "show_branch_name": true,
+    "show_worktree_name": true,
     "show_project_items": true,
     "show_onboarding_banner": true,
     "show_user_picture": true,
@@ -4893,6 +5165,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 - `show_branch_status_icon`: Whether to show git status indicators on the branch icon in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
+- `show_worktree_name`: Whether to show the worktree name button in the titlebar
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar
 - `show_user_picture`: Whether to show user picture in the titlebar
@@ -4900,6 +5173,32 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 - `show_sign_in`: Whether to show the sign in button in the titlebar
 - `show_menus`: Whether to show the menus in the titlebar
 - `button_layout`: The layout of window control buttons in the title bar (Linux only). Can be set to `"platform_default"` to follow the system setting, `"standard"` to use Zed's built-in layout, or a custom format like `"close:minimize,maximize"`
+
+## Window Decorations
+
+- Description: Controls whether Zed or the window manager or compositor draws window decorations.
+- Setting: `window_decorations`
+- Default: `"client"`
+
+**Options**
+
+1. To have Zed draw its own window decorations, use `"client"`:
+
+```json [settings]
+{
+  "window_decorations": "client"
+}
+```
+
+2. To have the window manager or compositor draw the window decorations, use `"server"`:
+
+```json [settings]
+{
+  "window_decorations": "server"
+}
+```
+
+> Note: This setting only affects Linux. GNOME Wayland does not support server-side decorations. Changes only apply to newly created windows. Restart Zed to apply the setting to all windows.
 
 ## Vim
 
@@ -4950,7 +5249,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
   "project_panel": {
     "button": true,
     "default_width": 240,
-    "dock": "left",
+    "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
@@ -4986,7 +5285,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 - Description: Control the position of the dock
 - Setting: `dock`
-- Default: `left`
+- Default: `right`
 
 **Options**
 

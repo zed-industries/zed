@@ -19,7 +19,7 @@ convert_case.workspace = true
 log.workspace = true
 streaming-iterator.workspace = true
 tree-sitter-json.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, features = ["wasm"] }
 serde_json_lenient.workspace = true
 serde_json.workspace = true
 settings_content.workspace = true

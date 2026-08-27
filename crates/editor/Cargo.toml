@@ -82,7 +82,6 @@ sum_tree.workspace = true
 task.workspace = true
 telemetry.workspace = true
 text.workspace = true
-time.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 tree-sitter-c = { workspace = true, optional = true }
@@ -91,13 +90,13 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 ztracing.workspace = true
-tracing.workspace = true
 unicode-segmentation.workspace = true
 unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
 ui_input.workspace = true
 url.workspace = true
+urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
 vim_mode_setting.workspace = true

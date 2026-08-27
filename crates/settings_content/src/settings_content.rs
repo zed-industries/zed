@@ -15,6 +15,7 @@ mod workspace;
 
 pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
+use anyhow::Context;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -32,10 +33,40 @@ pub use theme::*;
 pub use title_bar::*;
 pub use workspace::*;
 
-use collections::{HashMap, IndexMap};
+use collections::{HashMap, IndexMap, IndexSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
+
+/// A non-negative size in pixels.
+///
+/// Valid range: 0.0 and up
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    PartialOrd,
+    derive_more::FromStr,
+    derive_more::Deref,
+    derive_more::From,
+)]
+#[serde(transparent)]
+pub struct PixelSetting(
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")] pub f32,
+);
+
+impl std::fmt::Display for PixelSetting {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let rounded = (self.0 * 100.0).round() / 100.0;
+        write!(f, "{rounded}")
+    }
+}
 
 /// Defines a settings override struct where each field is
 /// `Option<Box<SettingsContent>>`, along with:
@@ -111,8 +142,35 @@ pub enum HideMouseMode {
     OnTypingAndAction,
 }
 
+/// Determines whether to reduce non-essential motion in the UI, such as
+/// loading spinners and pulsating labels, by rendering them in a static state.
+///
+/// Default: off
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ReduceMotionMode {
+    /// Always reduce motion
+    On,
+    /// Never reduce motion
+    #[default]
+    Off,
+}
+
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Default, Clone, Serialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
@@ -211,13 +269,16 @@ pub struct SettingsContent {
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
-    /// Configuration for the Message Editor
-    pub message_editor: Option<MessageEditorSettings>,
-
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
     pub proxy: Option<String>,
+
+    /// Whether to reduce non-essential motion in the UI, such as loading
+    /// spinners and pulsating labels, by rendering them in a static state.
+    ///
+    /// Default: off
+    pub reduce_motion: Option<ReduceMotionMode>,
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
@@ -333,6 +394,26 @@ impl SettingsContent {
     }
 }
 
+fallible_options::flattened_deserialize!(SettingsContent {
+    sections: { project, theme, extension, workspace, editor, remote },
+    options: {
+        file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent, agent_servers,
+        audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics, git,
+        global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
+        journal, log, line_indicator_format, language_models, outline_panel, project_panel,
+        node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
+        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
+        instrumentation,
+    },
+    defaults: {},
+});
+
+fallible_options::flattened_deserialize!(UserSettingsContent {
+    sections: { content, release_channel_overrides, platform_overrides },
+    options: {},
+    defaults: { profiles },
+});
+
 // These impls are there to optimize builds by avoiding monomorphization downstream. Yes, they're repetitive, but using default impls
 // break the optimization, for whatever reason.
 pub trait RootUserSettings: Sized + DeserializeOwned {
@@ -408,7 +489,7 @@ pub struct SettingsProfile {
 }
 
 #[with_fallible_options]
-#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
@@ -429,7 +510,7 @@ pub struct ExtensionsSettingsContent {
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
-/// Default: VSCode
+/// Default: Zed
 #[derive(
     Copy,
     Clone,
@@ -445,6 +526,7 @@ pub struct ExtensionsSettingsContent {
 )]
 pub enum BaseKeymapContent {
     #[default]
+    Zed,
     VSCode,
     JetBrains,
     SublimeText,
@@ -457,6 +539,7 @@ pub enum BaseKeymapContent {
 
 impl strum::VariantNames for BaseKeymapContent {
     const VARIANTS: &'static [&'static str] = &[
+        "Zed",
         "VSCode",
         "JetBrains",
         "Sublime Text",
@@ -650,8 +733,7 @@ pub struct GitPanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 360
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<PixelSetting>,
     /// How entry statuses are displayed.
     ///
     /// Default: icon
@@ -790,6 +872,7 @@ pub enum GitPanelGroupBy {
     None,
     #[default]
     Status,
+    Staging,
 }
 
 #[derive(
@@ -835,18 +918,7 @@ pub struct PanelSettingsContent {
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct MessageEditorSettings {
-    /// Whether to automatically replace emoji shortcodes with emoji characters.
-    /// For example: typing `:wave:` gets replaced with `👋`.
-    ///
-    /// Default: false
-    pub auto_replace_emoji_shortcode: Option<bool>,
+    pub default_width: Option<PixelSetting>,
 }
 
 #[with_fallible_options]
@@ -1071,8 +1143,7 @@ pub struct OutlinePanelSettingsContent {
     /// Customize default width (in pixels) taken by outline panel
     ///
     /// Default: 240
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<PixelSetting>,
     /// The position of outline panel
     ///
     /// Default: right (Agentic layout), left (Classic layout)
@@ -1092,8 +1163,7 @@ pub struct OutlinePanelSettingsContent {
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub indent_size: Option<f32>,
+    pub indent_size: Option<PixelSetting>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -1187,7 +1257,7 @@ pub struct MarkdownPreviewSettingsContent {
     /// `limit_content_width` is enabled.
     ///
     /// Default: 800
-    pub max_width: Option<f32>,
+    pub max_width: Option<PixelSetting>,
 }
 
 /// The settings for the image viewer.
@@ -1376,6 +1446,67 @@ impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
     }
 }
 
+pub const REST_OF_FILE_SCAN_EXCLUSIONS: &str = "...";
+
+// A SplicingVec in the settings replaces the value it merges over, except that
+// a `...` entry expands to that previous value.
+//
+// This lets a settings file add to a list without restating what it inherits,
+// while omitting `...` still replaces the list outright. Unlike ExtendingVec,
+// entries can be dropped by leaving `...` out and listing what to keep.
+//
+// Entries collapse to their first occurrence, so naming a value that `...`
+// already covers keeps it at the position it was written in rather than
+// repeating it.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SplicingVec(pub Vec<String>);
+
+impl From<Vec<String>> for SplicingVec {
+    fn from(vec: Vec<String>) -> Self {
+        SplicingVec(vec)
+    }
+}
+
+impl merge_from::MergeFrom for SplicingVec {
+    fn merge_from(&mut self, other: &Self) {
+        let inherited = std::mem::take(&mut self.0);
+        self.0 = other
+            .0
+            .iter()
+            .flat_map(|entry| {
+                if entry == REST_OF_FILE_SCAN_EXCLUSIONS {
+                    inherited.clone()
+                } else {
+                    vec![entry.clone()]
+                }
+            })
+            .collect::<IndexSet<_>>()
+            .into_iter()
+            .collect();
+    }
+}
+
+// An ExtendingSet in the settings can only accumulate new values, and ignores
+// values that are already present, so merging the same source more than once
+// (e.g. re-importing VS Code settings) is idempotent.
+//
+// Insertion order is preserved, so it round-trips through the user's settings
+// file without reordering their entries.
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ExtendingSet<T: std::hash::Hash + Eq>(pub IndexSet<T>);
+
+impl<T: std::hash::Hash + Eq> From<Vec<T>> for ExtendingSet<T> {
+    fn from(vec: Vec<T>) -> Self {
+        ExtendingSet(vec.into_iter().collect())
+    }
+}
+
+impl<T: Clone + std::hash::Hash + Eq> merge_from::MergeFrom for ExtendingSet<T> {
+    fn merge_from(&mut self, other: &Self) {
+        self.0.extend(other.0.iter().cloned());
+    }
+}
+
 // A SaturatingBool in the settings can only ever be set to true,
 // later attempts to set it to false will be ignored.
 //
@@ -1414,7 +1545,6 @@ impl merge_from::MergeFrom for SaturatingBool {
     Deserialize,
     MergeFrom,
     JsonSchema,
-    derive_more::FromStr,
 )]
 #[serde(transparent)]
 pub struct DelayMs(pub u64);
@@ -1428,5 +1558,18 @@ impl From<u64> for DelayMs {
 impl std::fmt::Display for DelayMs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}ms", self.0)
+    }
+}
+
+impl std::str::FromStr for DelayMs {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.trim()
+            .strip_suffix("ms")
+            .unwrap_or(s.trim())
+            .parse::<u64>()
+            .map(DelayMs)
+            .with_context(|| format!("failed to parse delay duration: {s}"))
     }
 }
