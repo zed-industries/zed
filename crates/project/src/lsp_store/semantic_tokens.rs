@@ -95,26 +95,52 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let capability_probe = SemanticTokensFull { for_server: None };
         let current_servers = self.language_server_ids_for_request(&buffer, &capability_probe, cx);
+        let empty_current_servers_are_authoritative = self.as_local().is_some();
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
-        let mut refreshed_servers = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
-        refreshed_servers.retain(|server_id| current_servers.contains(server_id));
-        if !refreshed_servers.is_empty() {
+        let pending_refreshes = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
+        let current_servers_are_authoritative = !current_servers.is_empty()
+            || empty_current_servers_are_authoritative
+            || !pending_refreshes.is_empty();
+        let server_set_shrank = current_servers_are_authoritative
+            && (semantic_tokens_data
+                .raw_tokens
+                .servers
+                .keys()
+                .any(|server_id| !current_servers.contains(server_id))
+                || semantic_tokens_data
+                    .fetched_servers
+                    .iter()
+                    .any(|server_id| !current_servers.contains(server_id)));
+        if !pending_refreshes.is_empty() || server_set_shrank {
             semantic_tokens_data.update = None;
             semantic_tokens_data.generation += 1;
         }
-        for refreshed_server in &refreshed_servers {
+        for refreshed_server in &pending_refreshes {
             semantic_tokens_data
                 .raw_tokens
                 .servers
                 .remove(refreshed_server);
+            semantic_tokens_data
+                .fetched_servers
+                .remove(refreshed_server);
         }
-        let missing_servers = missing_servers_to_query(
-            &mut semantic_tokens_data.raw_tokens.servers,
-            &mut semantic_tokens_data.fetched_servers,
-            &current_servers,
-        )
-        .unwrap_or_default();
+        let refreshed_servers = pending_refreshes
+            .into_iter()
+            .filter(|server_id| current_servers.contains(server_id))
+            .collect::<HashSet<_>>();
+        let missing_servers = if current_servers.is_empty() && current_servers_are_authoritative {
+            semantic_tokens_data.raw_tokens.servers.clear();
+            semantic_tokens_data.fetched_servers.clear();
+            HashSet::default()
+        } else {
+            missing_servers_to_query(
+                &mut semantic_tokens_data.raw_tokens.servers,
+                &mut semantic_tokens_data.fetched_servers,
+                &current_servers,
+            )
+            .unwrap_or_default()
+        };
         if !missing_servers.is_empty() {
             semantic_tokens_data.update = None;
         }

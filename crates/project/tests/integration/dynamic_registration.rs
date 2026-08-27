@@ -1520,6 +1520,87 @@ async fn test_dynamic_registration_refreshes_lsp_data(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
+async fn test_semantic_tokens_server_set_shrink_invalidates_completed_task(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/semanticTokens";
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    register_capability(
+        &fake_server,
+        method,
+        "semantic-tokens",
+        serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+            text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                document_selector: None,
+            },
+            semantic_tokens_options: lsp::SemanticTokensOptions {
+                legend: lsp::SemanticTokensLegend {
+                    token_types: vec!["keyword".into()],
+                    token_modifiers: Vec::new(),
+                },
+                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                ..lsp::SemanticTokensOptions::default()
+            },
+            static_registration_options: lsp::StaticRegistrationOptions::default(),
+        })
+        .ok(),
+    )
+    .await;
+    fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                lsp::SemanticTokens {
+                    result_id: None,
+                    data: vec![0, 0, 2, 0, 0],
+                },
+            )))
+        },
+    );
+    cx.executor().run_until_parked();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let initial_tokens = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        initial_tokens
+            .tokens
+            .as_ref()
+            .map(|tokens| tokens.keys().copied().collect::<HashSet<_>>()),
+        Some(HashSet::from_iter([server_id])),
+    );
+
+    unregister_capabilities(&fake_server, method, &["semantic-tokens"]).await;
+    cx.executor().run_until_parked();
+
+    let tokens_after_unregistration = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    assert!(
+        tokens_after_unregistration
+            .tokens
+            .is_none_or(|tokens| tokens.is_empty()),
+        "expected the completed semantic-token task to drop the inapplicable server",
+    );
+}
+
+#[gpui::test]
 async fn test_semantic_tokens_refresh_invalidates_only_the_refreshed_server(
     cx: &mut gpui::TestAppContext,
 ) {
