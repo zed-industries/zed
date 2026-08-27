@@ -2166,6 +2166,124 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_level_chain_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let text = "
+            fn foo(
+                a: i32,
+            ) {
+                if true {
+                    let b = a;
+                } else {
+                    let b = a;
+                }
+            }
+        "
+        .unindent();
+        let buffer = cx.new(|cx| Buffer::local(&text, cx).with_language(rust_lang(), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(⋯) {⋯}
+            "
+                .unindent(),
+            );
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(
+                    a: i32,
+                ) {
+                    if true {⋯} else {⋯}
+                }
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_single_row_crease(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\n@file.txt and more\ncccccc\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
+
+            editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                aaaaaa
+                ⋯ and more
+                cccccc
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd eee\nfff\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let outer =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 7));
+            let inner =
+                snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 3));
+
+            editor.insert_creases(
+                [
+                    Crease::simple(outer, FoldPlaceholder::test()),
+                    Crease::simple(inner, FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\n⋯\nfff\n");
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\nbbb\nccc\nddd eee\nfff\n");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5594,8 +5712,12 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
          *
          */
-         ˇ
+        ˇ
     "});
+
+        cx.set_state("fn test() {\n    /**\n     *\n     */ˇ\n}");
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state("fn test() {\n    /**\n     *\n     */\n    ˇ\n}");
 
         // Ensure that inline comment followed by code
         // doesn't add comment prefix on newline
@@ -5620,7 +5742,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
          *
          */
-         ˇtext
+        ˇtext
     "});
 
         // Ensure if not comment block it doesn't
@@ -5647,6 +5769,71 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
         ˇ
     "});
+}
+
+#[gpui::test]
+async fn test_newline_closing_comment_indent_across_languages(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let go_language = languages::language("go", tree_sitter_go::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(go_language), cx));
+    cx.set_state("func test() {\n\t/**\n\t * doc\n\t */ˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\t/**\n\t * doc\n\t */\n\tˇ\n}");
+
+    let typescript_language = languages::language(
+        "typescript",
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(typescript_language), cx));
+    cx.set_state("function test() {\n    /**\n     * doc\n     */ˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("function test() {\n    /**\n     * doc\n     */\n    ˇ\n}");
+
+    let python_language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(python_language), cx));
+    cx.set_state("def test():\n    \"\"\"doc\n    \"\"\"ˇ\n");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("def test():\n    \"\"\"doc\n    \"\"\"\n    ˇ\n");
+}
+
+#[gpui::test]
+async fn test_newline_after_closing_delimiter_lookalike_in_string(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // A line inside a string literal that happens to look like a block comment's
+    // closing delimiter does not close anything, so it keeps its own indentation.
+    cx.set_state("func test() {\n\tvar s = `\n*/ˇ\n`\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\tvar s = `\n*/\nˇ\n`\n}");
+}
+
+#[gpui::test]
+async fn test_newline_twice_inside_block(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    cx.set_state("func test() {ˇ}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n    ˇ\n}");
+    // The blank line the cursor sits on holds nothing but auto-indent
+    // whitespace, but the line that replaces it still belongs inside the block.
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\n    ˇ\n}");
 }
 
 #[gpui::test]
@@ -5972,6 +6159,24 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
             ˇ)
         );
     "});
+}
+
+#[gpui::test]
+async fn test_tab_after_closing_comment_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // The suggested indent is taken from the line the comment opened on, so that
+    // it agrees with what pressing enter after the closing delimiter produces.
+    cx.set_state("func test() {\n\t/**\n\t * doc\n\t */\nˇ\n}");
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state("func test() {\n\t/**\n\t * doc\n\t */\n\tˇ\n}");
 }
 
 #[gpui::test]
@@ -10701,6 +10906,81 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
         ˇ
         }
     "});
+}
+
+#[gpui::test]
+async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        "func find() {\n\treturn 1\n}\n".into(),
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+    cx.set_state("package test\n\n/**\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/**\n * test\n */\nfunc find() {\n\treturn 1\n}\nˇ");
+
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        " func find() {\n \treturn 1\n }".into(),
+    ));
+    cx.set_state("package test\n\n/**\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/**\n * test\n */\nfunc find() {\n\treturn 1\n}ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        " func find() {\n \treturn 1\n }".into(),
+    ));
+    cx.set_state("package test\n\nˇ");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\nfunc find() {\n\treturn 1\n}ˇ");
+
+    // The block moves by however far its first line moved, so a first line that
+    // is indented deeper than the lines below it stays deeper.
+    cx.write_to_clipboard(ClipboardItem::new_string("        foo()\n    bar()".into()));
+    cx.set_state("func test() {\nˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("func test() {\n    foo()\nbar()ˇ\n}");
+}
+
+#[gpui::test]
+async fn test_paste_after_closing_comment_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // The closing delimiter's line is not part of the paste, so it keeps its own
+    // indentation even though that indentation differs from the opening line's.
+    cx.write_to_clipboard(ClipboardItem::new_string("x := 1\ny := 2".into()));
+    cx.set_state("package test\n\n/*\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/*\n * test\n */x := 1\n y := 2ˇ");
 }
 
 #[gpui::test]
@@ -33421,6 +33701,120 @@ async fn test_active_bookmarks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clearing_bookmark_store_notifies_editor(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new("Line 0\nLine 1\nLine 2\nLine 3", cx).await;
+
+    ctx.toggle_bookmarks_at_rows(&[1, 3]);
+
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.contains(&DisplayRow(1)));
+    assert!(active.contains(&DisplayRow(3)));
+
+    let editor = ctx.editor.clone();
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = ctx.cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    // `workspace::ClearBookmarks` mutates only the store, so the editor's gutter
+    // repaint relies entirely on its observation of the bookmark store.
+    ctx.project.update(&mut ctx.cx, |project, cx| {
+        project.bookmark_store().update(cx, |bookmark_store, cx| {
+            bookmark_store.clear_bookmarks(cx);
+        });
+    });
+    ctx.cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "clearing the bookmark store should notify the editor so its gutter repaints"
+    );
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.is_empty());
+}
+
+#[gpui::test]
+async fn test_clear_bookmarks_action_repaints_workspace_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({ "main.rs": "Line 0\nLine 1\nLine 2\nLine 3" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let workspace = window
+        .read_with(&mut cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let worktree_id = workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(&mut cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx.run_until_parked();
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.contains(&DisplayRow(1)));
+
+    // Drain the effects still pending from the toggle above, so that the only
+    // thing that can notify the editor below is the action dispatch.
+    cx.run_until_parked();
+
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    cx.dispatch_action(workspace::ClearBookmarks);
+    cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "workspace::ClearBookmarks should notify the editor so its gutter repaints"
+    );
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.is_empty());
+}
+
+#[gpui::test]
 async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -35489,6 +35883,7 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
                 summary: None,
                 previous: None,
                 filename: String::new(),
+                boundary: false,
             },
             gpui::point(gpui::px(0.), gpui::px(0.)),
             false,
@@ -44906,4 +45301,62 @@ fn last_display_row(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Disp
         editor.buffer.read(cx).snapshot(cx).max_point()
     });
     display_row_for(editor, last_point, cx)
+}
+#[gpui::test]
+async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        let bounds = size(px(1800.), px(900.));
+        let settled = |width: f32, height: f32, editor_width: f32, bounds: Size<Pixels>| {
+            Some(SettledScrollRange {
+                range: size(px(width), px(height)),
+                editor_width: px(editor_width),
+                editor_bounds_size: bounds,
+            })
+        };
+        editor.hold_scrollbar_range(true);
+        assert_eq!(
+            editor.frozen_scroll_range(false, size(px(1780.), px(100.)), px(1786.), bounds),
+            settled(1780., 100., 1786., bounds),
+            "a hold that engages before any settled frame must freeze on the first \
+             state it sees instead of falling through to the live churning range"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(9000.), px(400.)), px(1776.), bounds),
+            settled(1780., 100., 1786., bounds),
+            "an unwrapped interpolation spike and a gutter-driven viewport change \
+             mid-churn must not leak into the held state; comparing a settled width \
+             against a viewport from another gutter regime blinks the scrollbar"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
+            settled(1780., 100., 1786., bounds),
+            "while held, the settled pair stays even when the live state shrinks"
+        );
+        let resized_bounds = size(px(1300.), px(900.));
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(1300.), px(160.)), px(1276.), resized_bounds),
+            settled(1300., 160., 1276., resized_bounds),
+            "a window resize invalidates the frozen state even mid-churn, otherwise the \
+             scrollbar thumbs stay sized for the old window until the search settles"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(9000.), px(400.)), px(1276.), resized_bounds),
+            settled(1300., 160., 1276., resized_bounds),
+            "after re-freezing on the resize, churn at the same bounds stays frozen again"
+        );
+        editor.hold_scrollbar_range(false);
+        assert_eq!(
+            editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
+            None,
+            "once released and not rewrapping, the live state settles"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(9000.), px(400.)), px(1786.), bounds),
+            settled(1770., 160., 1776., bounds),
+            "a rewrap after release keeps the last settled pair frozen"
+        );
+    });
 }

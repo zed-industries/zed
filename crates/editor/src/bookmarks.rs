@@ -88,7 +88,7 @@ impl Editor {
         let multi_buffer_snapshot = snapshot.buffer_snapshot();
 
         let mut selections = self.selections.all::<Point>(&snapshot.display_snapshot);
-        selections.sort_by_key(|s| s.head());
+        selections.sort_unstable_by_key(|s| s.head());
         selections.dedup_by_key(|s| s.head().row);
 
         let mut exist_targets: Vec<BookmarkTarget> = vec![];
@@ -128,8 +128,6 @@ impl Editor {
             // Only add new (unnamed) bookmarks and leave existing ones unchanged.
             self.toggle_bookmarks(absent_targets, String::new(), cx);
         }
-
-        cx.notify();
     }
 
     pub fn toggle_bookmark_at_row(&mut self, row: DisplayRow, cx: &mut Context<Self>) {
@@ -157,8 +155,6 @@ impl Editor {
         bookmark_store.update(cx, |bookmark_store, cx| {
             bookmark_store.toggle_bookmark(buffer, position, String::new(), cx);
         });
-
-        cx.notify();
     }
 
     pub fn edit_bookmark(&mut self, _: &EditBookmark, window: &mut Window, cx: &mut Context<Self>) {
