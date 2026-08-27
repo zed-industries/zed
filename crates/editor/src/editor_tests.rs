@@ -73,8 +73,8 @@ use util::{
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ToolbarItemLocation, ViewId,
+    CloseActiveItem, CloseAllItems, CloseItemInAllPanes, CloseOtherItems, MultiWorkspace,
+    NavigationEntry, OpenOptions, ToolbarItemLocation, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -31012,6 +31012,91 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0.0, (target_row - center_offset).max(0.0)),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_close_item_in_all_panes_with_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "foo.rs": "bar" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/root/foo.rs"), cx)
+        })
+        .await
+        .expect("failed to open buffer");
+    let multibuffer = cx.new(|cx| {
+        let range = Point::zero()..buffer.read(cx).snapshot().max_point();
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        multibuffer.set_excerpts_for_buffer(buffer.clone(), [range], 0, cx);
+        multibuffer
+    });
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("workspace should exist");
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let singleton = cx.new_window_entity(|window, cx| {
+        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+    });
+    let first_multibuffer = cx.new_window_entity(|window, cx| {
+        Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx)
+    });
+    let second_multibuffer = cx.new_window_entity(|window, cx| {
+        Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx)
+    });
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(singleton.clone()), None, true, window, cx);
+        workspace.add_item_to_active_pane(
+            Box::new(first_multibuffer.clone()),
+            None,
+            true,
+            window,
+            cx,
+        );
+
+        let active_item = workspace.active_item(cx).expect("active item should exist");
+        assert_eq!(active_item.buffer_kind(cx), ItemBufferKind::Multibuffer);
+        assert_eq!(active_item.project_path(cx), singleton.project_path(cx));
+        workspace.close_item_in_all_panes(&CloseItemInAllPanes::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        assert_eq!(
+            workspace
+                .items_of_type::<Editor>(cx)
+                .map(|item| item.item_id())
+                .collect::<Vec<_>>(),
+            [singleton.item_id()]
+        );
+
+        workspace.add_item_to_active_pane(
+            Box::new(second_multibuffer.clone()),
+            None,
+            true,
+            window,
+            cx,
+        );
+        assert!(workspace.activate_item(&singleton, true, true, window, cx));
+        workspace.close_item_in_all_panes(&CloseItemInAllPanes::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(
+            workspace
+                .items_of_type::<Editor>(cx)
+                .map(|item| item.item_id())
+                .collect::<Vec<_>>(),
+            [second_multibuffer.item_id()]
         );
     });
 }

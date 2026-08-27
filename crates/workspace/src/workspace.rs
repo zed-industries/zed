@@ -4223,7 +4223,9 @@ impl Workspace {
         let save_intent = action.save_intent.unwrap_or(SaveIntent::Close);
         let close_pinned = action.close_pinned;
 
-        if let Some(project_path) = active_item.project_path(cx) {
+        if active_item.buffer_kind(cx) == ItemBufferKind::Singleton
+            && let Some(project_path) = active_item.project_path(cx)
+        {
             self.close_items_with_project_path(
                 &project_path,
                 save_intent,

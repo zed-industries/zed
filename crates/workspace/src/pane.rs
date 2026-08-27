@@ -1682,7 +1682,10 @@ impl Pane {
         let pinned_item_ids = self.pinned_item_ids();
         let matching_item_ids: Vec<_> = self
             .items()
-            .filter(|item| item.project_path(cx).as_ref() == Some(project_path))
+            .filter(|item| {
+                item.buffer_kind(cx) == ItemBufferKind::Singleton
+                    && item.project_path(cx).as_ref() == Some(project_path)
+            })
             .map(|item| item.item_id())
             .collect();
         self.close_items(window, cx, save_intent, &move |item_id| {
