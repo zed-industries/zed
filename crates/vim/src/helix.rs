@@ -901,10 +901,14 @@ impl Vim {
                 let rows_to_select = count as u32 + extra_line;
 
                 selection.start = buffer_point.to_display_point(&display_map);
-                selection.end = display_map.start_of_relative_buffer_row(
-                    DisplayPoint::new(selection.end.row(), 0),
-                    rows_to_select as isize,
-                );
+                let selection_end = display_map
+                    .start_of_relative_buffer_row(selection.end, rows_to_select as isize);
+
+                if selection_end == selection.end {
+                    selection.end = movement::line_end(&display_map, selection.end, false);
+                } else {
+                    selection.end = selection_end
+                }
                 selection.reversed = false;
             }
 
