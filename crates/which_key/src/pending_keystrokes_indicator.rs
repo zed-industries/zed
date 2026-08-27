@@ -1,7 +1,7 @@
 use command_palette::humanize_action_name;
-use gpui::{App, Context, KeybindingKeystroke, PENDING_INPUT_TIMEOUT, Render, Task, Window};
+use gpui::{Animation, AnimationExt, App, Context, KeybindingKeystroke, Render, Window};
 use settings::Settings;
-use std::{rc::Rc, time::Instant};
+use std::{rc::Rc, time::Duration};
 use ui::{ButtonLike, CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keystrokes};
 use util::ResultExt;
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
@@ -14,14 +14,15 @@ const MAX_TOOLTIP_BINDINGS: usize = 10;
 /// longer bindings, counting down until the shorter binding is applied.
 pub struct PendingKeystrokesIndicator {
     pending: Option<PendingKeystrokes>,
-    _countdown_task: Option<Task<()>>,
+    pending_input_generation: u64,
 }
 
 #[derive(Clone)]
 struct PendingKeystrokes {
     keystrokes: Rc<[KeybindingKeystroke]>,
-    started_at: Instant,
+    pending_input_generation: u64,
     bindings: Vec<(Rc<[KeybindingKeystroke]>, SharedString)>,
+    timeout: Duration,
 }
 
 impl PendingKeystrokesIndicator {
@@ -34,19 +35,20 @@ impl PendingKeystrokesIndicator {
 
         Self {
             pending: None,
-            _countdown_task: None,
+            pending_input_generation: 0,
         }
     }
 
     fn update_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(keystrokes) = window
-            .pending_input_keystrokes()
-            .filter(|_| window.pending_input_will_timeout())
-        else {
+        let Some(pending_input) = window.pending_input() else {
             self.pending = None;
-            self._countdown_task = None;
             return;
         };
+        let Some(timeout) = pending_input.timeout() else {
+            self.pending = None;
+            return;
+        };
+        let keystrokes = pending_input.keystrokes();
 
         let pending_len = keystrokes.len();
         let mut bindings = window
@@ -92,33 +94,19 @@ impl PendingKeystrokesIndicator {
             text_a == text_b && action_a == action_b
         });
 
+        self.pending_input_generation = self.pending_input_generation.wrapping_add(1);
         self.pending = Some(PendingKeystrokes {
             keystrokes: keystrokes
                 .iter()
                 .map(|keystroke| KeybindingKeystroke::from_keystroke(keystroke.clone()))
                 .collect(),
-            started_at: Instant::now(),
+            pending_input_generation: self.pending_input_generation,
             bindings: bindings
                 .into_iter()
                 .map(|(_, keystrokes, action)| (Rc::from(keystrokes), action))
                 .collect(),
+            timeout,
         });
-        self._countdown_task = Some(cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(PENDING_INPUT_TIMEOUT / 30)
-                    .await;
-                let done = this
-                    .update(cx, |this, cx| {
-                        cx.notify();
-                        this.pending.is_none()
-                    })
-                    .unwrap_or(true);
-                if done {
-                    break;
-                }
-            }
-        }));
     }
 }
 
@@ -131,22 +119,26 @@ impl Render for PendingKeystrokesIndicator {
             return div().hidden().into_any_element();
         };
 
-        let remaining = 1.0
-            - (pending.started_at.elapsed().as_secs_f32() / PENDING_INPUT_TIMEOUT.as_secs_f32())
-                .clamp(0.0, 1.0);
-
         ButtonLike::new("pending-keystrokes-indicator")
             .child(
                 h_flex()
                     .gap_1()
                     .child(
-                        CircularProgress::new(remaining, 1.0, px(13.), cx)
+                        CircularProgress::new(1.0, 1.0, px(13.), cx)
                             .stroke_width(px(2.))
-                            .progress_color(cx.theme().colors().text_muted),
+                            .progress_color(cx.theme().colors().text_muted)
+                            .with_animation(
+                                (
+                                    "pending-keystrokes-countdown",
+                                    pending.pending_input_generation,
+                                ),
+                                Animation::new(pending.timeout).with_max_fps(30.0),
+                                |progress, delta| progress.value(1.0 - delta),
+                            ),
                     )
                     .child(
                         KeyBinding::from_keystrokes(pending.keystrokes.clone(), false)
-                            .size(rems_from_px(12.)),
+                            .size(rems_from_px(12_f32)),
                     ),
             )
             .tooltip(Tooltip::element(move |_, _| {

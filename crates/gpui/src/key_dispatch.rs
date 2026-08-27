@@ -1104,8 +1104,18 @@ mod tests {
         cx.simulate_keystrokes("ctrl-b");
         cx.simulate_modifiers_change(crate::Modifiers::default());
         cx.update(|window, _| {
-            assert!(window.has_pending_keystrokes());
-            assert!(window.pending_input_will_timeout());
+            assert_eq!(
+                window
+                    .pending_input()
+                    .map(|pending_input| pending_input.keystrokes().len()),
+                Some(1)
+            );
+            assert_eq!(
+                window
+                    .pending_input()
+                    .and_then(|pending_input| pending_input.timeout()),
+                Some(crate::PENDING_INPUT_TIMEOUT)
+            );
         });
         assert_eq!(action_count.get(), 0);
 

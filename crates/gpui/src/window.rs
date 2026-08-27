@@ -1278,16 +1278,32 @@ pub(crate) enum DrawPhase {
     Focus,
 }
 
-/// How long the window waits for more keystrokes before flushing pending input, when the
-/// keystrokes typed so far both match a binding and are a prefix of longer bindings.
-pub const PENDING_INPUT_TIMEOUT: Duration = Duration::from_secs(1);
+pub(crate) const PENDING_INPUT_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Pending input for a potential multi-stroke key binding.
+pub struct PendingInputStatus<'a> {
+    keystrokes: &'a [Keystroke],
+    timeout: Option<Duration>,
+}
+
+impl<'a> PendingInputStatus<'a> {
+    /// Returns the keystrokes entered so far.
+    pub fn keystrokes(&self) -> &'a [Keystroke] {
+        self.keystrokes
+    }
+
+    /// Returns how long GPUI waits before flushing this input, if it needs a timeout.
+    pub fn timeout(&self) -> Option<Duration> {
+        self.timeout
+    }
+}
 
 #[derive(Default, Debug)]
 struct PendingInput {
     keystrokes: SmallVec<[Keystroke; 1]>,
     focus: Option<FocusId>,
     timer: Option<Task<()>>,
-    needs_timeout: bool,
+    timeout: Option<Duration>,
 }
 
 pub(crate) struct ElementStateBox {
@@ -5565,12 +5581,13 @@ impl Window {
                     accepts
                 });
 
-            currently_pending.needs_timeout |=
-                match_result.pending_has_binding || text_input_requires_timeout;
+            if match_result.pending_has_binding || text_input_requires_timeout {
+                currently_pending.timeout = Some(PENDING_INPUT_TIMEOUT);
+            }
 
-            if currently_pending.needs_timeout {
+            if let Some(timeout) = currently_pending.timeout {
                 currently_pending.timer = Some(self.spawn(cx, async move |cx| {
-                    cx.background_executor.timer(PENDING_INPUT_TIMEOUT).await;
+                    cx.background_executor.timer(timeout).await;
                     cx.update(move |window, cx| {
                         let Some(currently_pending) = window
                             .pending_input
@@ -5729,17 +5746,9 @@ impl Window {
         }
     }
 
-    /// Pending input that can still complete a binding. Input left over from a previous focus can
-    /// never complete one.
-    fn active_pending_input(&self) -> Option<&PendingInput> {
-        self.pending_input
-            .as_ref()
-            .filter(|pending_input| pending_input.focus == self.focus)
-    }
-
     /// Determine whether a potential multi-stroke key binding is in progress on this window.
     pub fn has_pending_keystrokes(&self) -> bool {
-        self.active_pending_input().is_some()
+        self.pending_input().is_some()
     }
 
     #[cfg(test)]
@@ -5753,17 +5762,22 @@ impl Window {
         }
     }
 
-    /// Whether the currently pending input keystrokes will be flushed after
-    /// [`PENDING_INPUT_TIMEOUT`], because they also match a shorter binding or text input.
-    pub fn pending_input_will_timeout(&self) -> bool {
-        self.active_pending_input()
-            .is_some_and(|pending_input| pending_input.timer.is_some())
+    /// Returns pending input that can still complete a multi-stroke key binding. Input left over
+    /// from a previous focus can never complete one.
+    pub fn pending_input(&self) -> Option<PendingInputStatus<'_>> {
+        self.pending_input
+            .as_ref()
+            .filter(|pending_input| pending_input.focus == self.focus)
+            .map(|pending_input| PendingInputStatus {
+                keystrokes: pending_input.keystrokes.as_slice(),
+                timeout: pending_input.timeout,
+            })
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
     pub fn pending_input_keystrokes(&self) -> Option<&[Keystroke]> {
-        self.active_pending_input()
-            .map(|pending_input| pending_input.keystrokes.as_slice())
+        self.pending_input()
+            .map(|pending_input| pending_input.keystrokes())
     }
 
     fn replay_pending_input(&mut self, replays: SmallVec<[Replay; 1]>, cx: &mut App) {
