@@ -1084,6 +1084,13 @@ pub struct GitPanel {
     max_width_item_index: Option<usize>,
     selected_entry: Option<usize>,
     marked_entries: Vec<usize>,
+    /// The fixed endpoint for shift-click/shift-arrow range selection. Set on every
+    /// non-extending selection (plain click, plain arrow move) and left untouched
+    /// while a range is being extended, so a chain of shift-clicks or shift-arrows
+    /// always measures from the same origin, matching platform file-manager
+    /// convention (Finder, Explorer): the range can grow or shrink back, rather
+    /// than only ever accumulating.
+    range_selection_anchor: Option<usize>,
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
@@ -1386,6 +1393,7 @@ impl GitPanel {
                 max_width_item_index: None,
                 selected_entry: None,
                 marked_entries: Vec::new(),
+                range_selection_anchor: None,
                 tracked_count: 0,
                 tracked_staged_count: 0,
                 update_visible_entries_task: Task::ready(()),
@@ -1797,7 +1805,7 @@ impl GitPanel {
     fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.active_tab == GitPanelTab::History {
@@ -1868,11 +1876,15 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(candidate);
+        if window.modifiers().shift {
+            self.mark_range(candidate);
+        } else {
+            self.select_single_entry(candidate);
+        }
         self.scroll_to_selected_entry(cx);
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == GitPanelTab::History {
             self.select_next_history_entry(cx);
             return;
@@ -1946,7 +1958,11 @@ impl GitPanel {
             return;
         };
 
-        self.selected_entry = Some(candidate);
+        if window.modifiers().shift {
+            self.mark_range(candidate);
+        } else {
+            self.select_single_entry(candidate);
+        }
         self.scroll_to_selected_entry(cx);
     }
 
@@ -2065,19 +2081,27 @@ impl GitPanel {
         self.selected_entry.and_then(|i| self.entries.get(i))
     }
 
-    /// Extends `marked_entries` to cover every row between the current
-    /// selection (the anchor) and `target`, then moves the anchor to
-    /// `target`. Used by shift-click range selection.
+    /// Sets `marked_entries` to exactly the rows between `range_selection_anchor`
+    /// and `target` (replacing any previous marks), then moves the selection
+    /// cursor to `target` without disturbing the anchor. Used by shift-click and
+    /// shift-arrow range selection, so a chain of shift-selections always measures
+    /// from the same fixed point and can shrink a range back, not just grow it.
     fn mark_range(&mut self, target: usize) {
-        let Some(anchor) = self.selected_entry else {
+        let Some(anchor) = self.range_selection_anchor.or(self.selected_entry) else {
             return;
         };
-        for ix in anchor.min(target)..=anchor.max(target) {
-            if !self.marked_entries.contains(&ix) {
-                self.marked_entries.push(ix);
-            }
-        }
+        self.range_selection_anchor = Some(anchor);
+        self.marked_entries = (anchor.min(target)..=anchor.max(target)).collect();
         self.selected_entry = Some(target);
+    }
+
+    /// Resets range selection to a single row: clears any marks and sets both the
+    /// selection and the range anchor to `ix`. Used by plain clicks and plain
+    /// arrow moves, so the next shift-selection starts fresh from here.
+    fn select_single_entry(&mut self, ix: usize) {
+        self.marked_entries.clear();
+        self.selected_entry = Some(ix);
+        self.range_selection_anchor = Some(ix);
     }
 
     fn change_entries_by_path(&self) -> impl Iterator<Item = &GitStatusEntry> {
@@ -2137,6 +2161,15 @@ impl GitPanel {
                 .cloned()
                 .into_iter()
                 .collect();
+        }
+        // A lone mark on the currently selected directory (e.g. a shift-click on
+        // the already-selected row) still means "this directory", not "expand it
+        // to its descendants" the way effective_status_entries would.
+        if let [ix] = self.marked_entries.as_slice()
+            && Some(*ix) == self.selected_entry
+            && let Some(entry @ GitListEntry::Directory(_)) = self.entries.get(*ix)
+        {
+            return entry.repo_path().cloned().into_iter().collect();
         }
         self.effective_status_entries()
             .into_iter()
@@ -3020,6 +3053,40 @@ impl GitPanel {
         }
 
         self.change_file_stage(stage, repo_paths, cx);
+    }
+
+    /// Like `toggle_staged_for_entry`, but when `ix` is part of a multi-row
+    /// mark, applies the toggle to the whole marked set instead of just the
+    /// clicked row, so the checkbox stays consistent with the keyboard and
+    /// context-menu actions (which already go through `effective_status_entries`).
+    fn toggle_staged_for_entry_or_marked(
+        &mut self,
+        ix: usize,
+        entry: &GitListEntry,
+        intent: StageIntent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.marked_entries.len() <= 1 || !self.marked_entries.contains(&ix) {
+            self.toggle_staged_for_entry(entry, intent, window, cx);
+            return;
+        }
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+        let repo = active_repository.read(cx);
+        let entries = self
+            .effective_status_entries()
+            .into_iter()
+            .filter(|entry| {
+                !(entry.status.is_conflicted()
+                    && GitPanel::stage_status_for_entry(entry, repo) == StageStatus::Staged)
+            })
+            .collect::<Vec<_>>();
+        let stage = entries
+            .iter()
+            .any(|entry| intent.resolve_with(|| GitPanel::stage_status_for_entry(entry, repo)));
+        self.change_file_stage(stage, entries, cx);
     }
 
     fn change_file_stage(
@@ -7856,9 +7923,11 @@ impl GitPanel {
     ) {
         // Right-clicking a row outside the current mark set clears the marks first, so
         // a stray right-click doesn't silently apply a bulk action to files the user
-        // forgot were marked.
+        // forgot were marked. This also re-anchors range selection at `ix`, so a
+        // follow-up shift-click ranges from the row that was actually right-clicked.
         if !self.marked_entries.contains(&ix) {
             self.marked_entries.clear();
+            self.range_selection_anchor = Some(ix);
         }
 
         if matches!(self.entries.get(ix), Some(GitListEntry::Directory(_))) {
@@ -8246,7 +8315,8 @@ impl GitPanel {
                                                 } else {
                                                     GitListEntry::Status(entry.clone())
                                                 };
-                                            this.toggle_staged_for_entry(
+                                            this.toggle_staged_for_entry_or_marked(
+                                                ix,
                                                 &list_entry,
                                                 stage_intent,
                                                 window,
@@ -8275,8 +8345,7 @@ impl GitPanel {
                         cx.notify();
                         return;
                     }
-                    this.marked_entries.clear();
-                    this.selected_entry = Some(ix);
+                    this.select_single_entry(ix);
                     cx.notify();
                     this.open_selected_entry_on_click(event.modifiers().secondary(), window, cx);
                 })
@@ -8445,7 +8514,8 @@ impl GitPanel {
                                         if !has_write_access || resolved_conflict {
                                             return;
                                         }
-                                        this.toggle_staged_for_entry(
+                                        this.toggle_staged_for_entry_or_marked(
+                                            ix,
                                             &GitListEntry::Directory(entry.clone()),
                                             stage_intent,
                                             window,
@@ -8474,8 +8544,7 @@ impl GitPanel {
                         cx.notify();
                         return;
                     }
-                    this.marked_entries.clear();
-                    this.selected_entry = Some(ix);
+                    this.select_single_entry(ix);
                     this.toggle_directory(&key, window, cx);
                 })
             })
@@ -9545,7 +9614,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
+    use gpui::{Modifiers, TestAppContext, UpdateGlobal, VisualTestContext, px};
     use indoc::indoc;
     use project::FakeFs;
     use search::{BufferSearchBar, buffer_search::Deploy};
@@ -10079,10 +10148,37 @@ mod tests {
             cx.read_from_clipboard().and_then(|item| item.text()),
             Some(path!("/project/src").to_owned())
         );
+
+        // A directory that is both selected and (trivially) marked, e.g. via a
+        // shift-click on the already-selected row, must still copy its own path
+        // rather than expanding to its descendant files.
+        panel.update(&mut cx, |panel, _| {
+            let entry_index = panel
+                .entries
+                .iter()
+                .position(|entry| {
+                    matches!(entry, GitListEntry::Directory(dir) if dir.key.path == repo_path("src"))
+                })
+                .expect("src directory should exist in the changes list");
+            panel.selected_entry = Some(entry_index);
+            panel.mark_range(entry_index);
+        });
+
+        cx.dispatch_action(CopyRelativePath);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(path!("src").to_owned())
+        );
+
+        cx.dispatch_action(CopyPath);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some(path!("/project/src").to_owned())
+        );
     }
 
     #[gpui::test]
-    async fn test_mark_range_extends_and_moves_anchor(cx: &mut TestAppContext) {
+    async fn test_mark_range_keeps_fixed_anchor(cx: &mut TestAppContext) {
         init_test(cx);
 
         let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
@@ -10123,8 +10219,8 @@ mod tests {
             assert_eq!(marked, vec![ix_a, ix_b, ix_c]);
         });
 
-        // Shift-clicking again from the new anchor (c) extends further, without
-        // dropping entries already marked on the other side of the anchor.
+        // Shift-clicking again extends further from the same fixed anchor (a),
+        // not from the row that was last shift-clicked (c).
         panel.update(&mut cx, |panel, _| {
             panel.mark_range(ix_d);
         });
@@ -10134,6 +10230,169 @@ mod tests {
             marked.sort();
             assert_eq!(marked, vec![ix_a, ix_b, ix_c, ix_d]);
         });
+
+        // Shift-clicking back toward the anchor shrinks the range instead of only
+        // ever growing it, matching platform (Finder/Explorer) convention.
+        panel.update(&mut cx, |panel, _| {
+            panel.mark_range(ix_b);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_b));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_b]);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_shift_arrow_extends_and_shrinks_range(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.rs": "a",
+                "b.rs": "b",
+                "c.rs": "c",
+            }),
+            &[
+                ("a.rs", StatusCode::Modified),
+                ("b.rs", StatusCode::Modified),
+                ("c.rs", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        let (ix_a, ix_b, ix_c) = panel.read_with(&cx, |panel, _| {
+            (
+                entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("b.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("c.rs")).unwrap(),
+            )
+        });
+
+        panel.update(&mut cx, |panel, _| {
+            panel.select_single_entry(ix_a);
+        });
+
+        // Shift-Down extends the range from the fixed anchor (a) without requiring
+        // a mouse gesture, mirroring shift-click.
+        cx.simulate_modifiers_change(Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_next(&menu::SelectNext, window, cx);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_b));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_b]);
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_next(&menu::SelectNext, window, cx);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_c));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_b, ix_c]);
+        });
+
+        // Shift-Up shrinks the range back toward the anchor instead of only
+        // ever growing it.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_previous(&menu::SelectPrevious, window, cx);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_b));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_b]);
+        });
+
+        // Releasing shift and moving again collapses the selection to a single
+        // row and re-anchors it there, so a later shift-move starts fresh.
+        cx.simulate_modifiers_change(Default::default());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_next(&menu::SelectNext, window, cx);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_c));
+            assert!(panel.marked_entries.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_checkbox_click_stages_whole_marked_set(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.rs": "a",
+                "b.rs": "b",
+                "c.rs": "c",
+            }),
+            &[
+                ("a.rs", StatusCode::Modified),
+                ("b.rs", StatusCode::Modified),
+                ("c.rs", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        let (ix_a, ix_b) = panel.read_with(&cx, |panel, _| {
+            (
+                entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("b.rs")).unwrap(),
+            )
+        });
+
+        // Mark a.rs and b.rs (as a shift-click range would), leaving c.rs unmarked.
+        panel.update(&mut cx, |panel, _| {
+            panel.selected_entry = Some(ix_a);
+            panel.mark_range(ix_b);
+        });
+
+        // Clicking the checkbox on one of the marked rows (b.rs) must stage the
+        // whole marked set, not just the clicked row, to stay consistent with
+        // the keyboard/menu stage actions.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let entry = panel.entries[ix_b].status_entry().cloned().unwrap();
+            panel.toggle_staged_for_entry_or_marked(
+                ix_b,
+                &GitListEntry::Status(entry),
+                StageIntent::Stage,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let stage_status_of = |panel: &Entity<GitPanel>, cx: &VisualTestContext, path: &str| {
+            panel.read_with(cx, |panel, cx| {
+                let repo = panel
+                    .active_repository
+                    .as_ref()
+                    .expect("active repository should exist")
+                    .read(cx);
+                let entry = panel
+                    .change_entries_by_path()
+                    .find(|entry| entry.repo_path == repo_path(path))
+                    .expect("entry should exist")
+                    .clone();
+                GitPanel::stage_status_for_entry(&entry, repo)
+            })
+        };
+
+        assert_eq!(stage_status_of(&panel, &cx, "a.rs"), StageStatus::Staged);
+        assert_eq!(stage_status_of(&panel, &cx, "b.rs"), StageStatus::Staged);
+        assert_eq!(stage_status_of(&panel, &cx, "c.rs"), StageStatus::Unstaged);
     }
 
     #[gpui::test]
