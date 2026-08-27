@@ -16,7 +16,9 @@ use parking_lot::RwLock;
 use smallvec::SmallVec;
 use std::{borrow::Cow, ops::Range, sync::Arc};
 use swash::{
+    FontRef,
     scale::{Render, ScaleContext, Source, StrikeWith},
+    tag_from_bytes,
     zeno::{Format, Vector},
 };
 use unicode_segmentation::UnicodeSegmentation;
@@ -453,15 +455,11 @@ impl CosmicTextSystemState {
             .hint(true)
             .build();
 
-        let sources: &[Source] = if params.is_emoji {
-            &[
-                Source::ColorOutline(0),
-                Source::ColorBitmap(StrikeWith::BestFit),
-                Source::Outline,
-            ]
-        } else {
-            &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline]
-        };
+        let glyph_id: u16 = params.glyph_id.0.try_into()?;
+        let sources = glyph_render_sources(
+            params.is_emoji,
+            alpha_bitmap_is_renderable(font_ref, glyph_id, pixel_size * params.scale_factor),
+        );
 
         let mut renderer = Render::new(sources);
         if params.subpixel_rendering {
@@ -473,7 +471,6 @@ impl CosmicTextSystemState {
             renderer.format(Format::Alpha).offset(subpixel_offset);
         }
 
-        let glyph_id: u16 = params.glyph_id.0.try_into()?;
         renderer
             .render(&mut scaler, glyph_id)
             .with_context(|| format!("unable to render glyph via swash for {params:?}"))
@@ -754,6 +751,123 @@ impl CosmicTextSystemState {
             len: text.len(),
         }
     }
+}
+
+fn glyph_render_sources(is_emoji: bool, use_alpha_bitmap: bool) -> &'static [Source] {
+    if is_emoji {
+        &[
+            Source::ColorOutline(0),
+            Source::ColorBitmap(StrikeWith::BestFit),
+            Source::Outline,
+        ]
+    } else if use_alpha_bitmap {
+        &[Source::Bitmap(StrikeWith::ExactSize), Source::Outline]
+    } else {
+        &[Source::Outline]
+    }
+}
+
+fn alpha_bitmap_is_renderable(font: FontRef<'_>, glyph_id: u16, size: f32) -> bool {
+    if size == 0.0 {
+        return false;
+    }
+    let Some(eblc) = font.table(tag_from_bytes(b"EBLC")) else {
+        return false;
+    };
+    let Some(ebdt) = font.table(tag_from_bytes(b"EBDT")) else {
+        return false;
+    };
+    match exact_alpha_bitmap_px_size(eblc, ebdt, glyph_id, size as u16) {
+        Some((width, height)) => width != 0 && height != 0,
+        None => false,
+    }
+}
+
+fn be_u16(data: &[u8], offset: usize) -> Option<u16> {
+    data.get(offset..offset + 2)?
+        .try_into()
+        .ok()
+        .map(u16::from_be_bytes)
+}
+
+fn be_u32(data: &[u8], offset: usize) -> Option<u32> {
+    data.get(offset..offset + 4)?
+        .try_into()
+        .ok()
+        .map(u32::from_be_bytes)
+}
+
+// Image formats 1/2/6/7/17/18 store smallGlyphMetrics at the EBDT offset (height, width).
+fn ebdt_mask_px(ebdt: &[u8], offset: u32, image_format: u16) -> Option<(u8, u8)> {
+    if offset == 0 {
+        return None;
+    }
+    let offset = offset as usize;
+    match image_format {
+        1 | 2 | 6 | 7 | 17 | 18 => {
+            let height = *ebdt.get(offset)?;
+            let width = *ebdt.get(offset + 1)?;
+            Some((width, height))
+        }
+        _ => None,
+    }
+}
+
+fn exact_alpha_bitmap_px_size(
+    eblc: &[u8],
+    ebdt: &[u8],
+    glyph_id: u16,
+    ppem: u16,
+) -> Option<(u8, u8)> {
+    let num_strikes = (be_u32(eblc, 4)? as usize).min(eblc.len().saturating_sub(8) / 48);
+    for strike_ix in 0..num_strikes {
+        let strike = 8 + strike_ix * 48;
+        if *eblc.get(strike + 45)? as u16 != ppem {
+            continue;
+        }
+        let start = be_u16(eblc, strike + 40)?;
+        let end = be_u16(eblc, strike + 42)?;
+        if glyph_id < start || glyph_id > end {
+            continue;
+        }
+        let count = be_u32(eblc, strike + 8)? as usize;
+        let array_offset = be_u32(eblc, strike)? as usize;
+        for sub_ix in 0..count {
+            let rec = array_offset.checked_add(sub_ix.checked_mul(8)?)?;
+            let first = be_u16(eblc, rec)?;
+            if glyph_id < first {
+                return None;
+            }
+            if glyph_id > be_u16(eblc, rec + 2)? {
+                continue;
+            }
+            let sub = array_offset.checked_add(be_u32(eblc, rec + 4)? as usize)?;
+            let index_format = be_u16(eblc, sub)?;
+            let image_format = be_u16(eblc, sub + 2)?;
+            let image_offset = be_u32(eblc, sub + 4)?;
+            let base = sub.checked_add(8)?;
+            let delta = (glyph_id - first) as usize;
+            return match index_format {
+                1 => {
+                    let offset =
+                        image_offset.checked_add(be_u32(eblc, base.checked_add(delta * 4)?)?)?;
+                    ebdt_mask_px(ebdt, offset, image_format)
+                }
+                2 => {
+                    let height = *eblc.get(base.checked_add(4)?)?;
+                    let width = *eblc.get(base.checked_add(5)?)?;
+                    Some((width, height))
+                }
+                3 => {
+                    let offset = image_offset
+                        .checked_add(be_u16(eblc, base.checked_add(delta * 2)?)? as u32)?;
+                    ebdt_mask_px(ebdt, offset, image_format)
+                }
+                _ => None,
+            };
+        }
+    }
+    None
 }
 
 #[inline(always)]
@@ -1062,6 +1176,8 @@ mod tests {
 
     const IBM_PLEX: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+    // Anonymous Pro subset (OFL) with 0×0 1-bit strikes for space.
+    const ZERO_WIDTH_STRIKE: &[u8] = include_bytes!("test_data/zero_width_bitmap_strike.ttf");
 
     /// Every code point of `Bidi_Class=B`, each of which starts a new bidi
     /// paragraph and so can split one line into mixed-direction paragraphs.
@@ -1450,5 +1566,69 @@ mod tests {
         let covers = |_: FontId, _: char| true;
         let spans = compute_run_spans("anything", 3, 0, primary, &fb, &covers);
         assert!(spans.is_empty());
+    }
+
+    fn zero_width_strike_font() -> FontRef<'static> {
+        FontRef::from_index(ZERO_WIDTH_STRIKE, 0).expect("valid test font")
+    }
+
+    #[test]
+    fn exact_alpha_bitmap_px_size_skips_empty_strikes() {
+        let font = zero_width_strike_font();
+        let eblc = font.table(tag_from_bytes(b"EBLC")).unwrap();
+        let ebdt = font.table(tag_from_bytes(b"EBDT")).unwrap();
+        let space = font.charmap().map(' ');
+        let capital_a = font.charmap().map('A');
+
+        assert_eq!(
+            exact_alpha_bitmap_px_size(eblc, ebdt, space, 12),
+            Some((0, 0))
+        );
+        let a_size = exact_alpha_bitmap_px_size(eblc, ebdt, capital_a, 12).unwrap();
+        assert!(a_size.0 > 0 && a_size.1 > 0);
+        assert_eq!(exact_alpha_bitmap_px_size(eblc, ebdt, space, 14), None);
+        assert!(!alpha_bitmap_is_renderable(font, space, 12.0));
+        assert!(alpha_bitmap_is_renderable(font, capital_a, 12.0));
+        assert!(!alpha_bitmap_is_renderable(font, space, 14.0));
+    }
+
+    #[test]
+    fn rasterize_zero_width_bitmap_strike_falls_back_to_outline() -> Result<()> {
+        let text_system = CosmicTextSystem::new_without_system_fonts("Anonymous Pro");
+        text_system.add_fonts(vec![Cow::Borrowed(ZERO_WIDTH_STRIKE)])?;
+        let font_id = text_system.font_id(&gpui::font("Anonymous Pro"))?;
+        let space = text_system
+            .glyph_for_char(font_id, ' ')
+            .expect("space glyph");
+        let capital_a = text_system.glyph_for_char(font_id, 'A').expect("A glyph");
+
+        for size in [10.0, 11.0, 12.0, 13.0, 14.0] {
+            let space_params = RenderGlyphParams {
+                font_id,
+                glyph_id: space,
+                font_size: gpui::px(size),
+                subpixel_variant: point(0u8, 0u8),
+                scale_factor: 1.0,
+                is_emoji: false,
+                subpixel_rendering: false,
+                dilation: 0,
+            };
+            let space_bounds = text_system.glyph_raster_bounds(&space_params)?;
+            if space_bounds.size.width.0 != 0 && space_bounds.size.height.0 != 0 {
+                text_system.rasterize_glyph(&space_params, space_bounds)?;
+            }
+
+            let a_params = RenderGlyphParams {
+                glyph_id: capital_a,
+                ..space_params
+            };
+            let a_bounds = text_system.glyph_raster_bounds(&a_params)?;
+            assert!(
+                a_bounds.size.width.0 > 0 && a_bounds.size.height.0 > 0,
+                "Anonymous Pro 'A' should rasterize at {size}px"
+            );
+            text_system.rasterize_glyph(&a_params, a_bounds)?;
+        }
+        Ok(())
     }
 }
