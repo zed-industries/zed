@@ -35,9 +35,14 @@ pub enum Anchor {
 }
 
 pub(crate) enum AnchorSeekTarget<'a> {
-    // buffer no longer exists at its original path key in the multibuffer
+    // The buffer no longer exists at its original path key in the
+    // multibuffer. Resolves to the start or the end of the region the path
+    // currently occupies, choosing the side so that resolution agrees with
+    // `ExcerptAnchor::cmp`, which orders same-path anchors from different
+    // buffers by buffer id.
     Missing {
         path_key: &'a PathKey,
+        buffer_id: BufferId,
     },
     // we have excerpts for the buffer at the expected path key
     Excerpt {
@@ -63,9 +68,13 @@ impl std::fmt::Debug for AnchorSeekTarget<'_> {
                 .field("path_key", path_key)
                 .field("anchor", anchor)
                 .finish(),
-            Self::Missing { path_key } => f
+            Self::Missing {
+                path_key,
+                buffer_id,
+            } => f
                 .debug_struct("Missing")
                 .field("path_key", path_key)
+                .field("buffer_id", buffer_id)
                 .finish(),
             Self::Empty => f.debug_struct("Empty").finish(),
         }
@@ -272,7 +281,10 @@ impl ExcerptAnchor {
             .get(&self.buffer_id())
             .filter(|state| &state.path_key == path_key)
         else {
-            return Some(AnchorSeekTarget::Missing { path_key });
+            return Some(AnchorSeekTarget::Missing {
+                path_key,
+                buffer_id: self.buffer_id(),
+            });
         };
 
         Some(AnchorSeekTarget::Excerpt {

@@ -7537,11 +7537,24 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
         _cx: <ExcerptSummary as sum_tree::Summary>::Context<'_>,
     ) -> cmp::Ordering {
         match self {
-            AnchorSeekTarget::Missing { path_key } => {
-                // Want to end up after any excerpts for (a different buffer at) the original path
+            AnchorSeekTarget::Missing {
+                path_key,
+                buffer_id,
+            } => {
                 match Ord::cmp(*path_key, &cursor_location.path_key) {
                     Ordering::Less => Ordering::Less,
-                    Ordering::Equal | Ordering::Greater => Ordering::Greater,
+                    // The anchor's buffer is no longer at this path, so the
+                    // anchor resolves to a boundary of the region the path
+                    // now occupies. `ExcerptAnchor::cmp` orders same-path
+                    // anchors from different buffers by buffer id, so pick
+                    // the boundary that agrees with that immutable order:
+                    // before the region when the departed buffer's id is
+                    // lower than the current occupant's, after it otherwise.
+                    Ordering::Equal => match &cursor_location.max_anchor {
+                        Some(max_anchor) if *buffer_id < max_anchor.buffer_id => Ordering::Less,
+                        _ => Ordering::Greater,
+                    },
+                    Ordering::Greater => Ordering::Greater,
                 }
             }
             AnchorSeekTarget::Excerpt {

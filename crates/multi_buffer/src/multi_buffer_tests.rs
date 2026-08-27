@@ -6290,11 +6290,13 @@ fn test_is_valid_anchor_past_last_excerpt_for_buffer(cx: &mut TestAppContext) {
 ///    that sort ranges with end tie-breaks, but it is tolerated here so
 ///    that outright inversions stay visible.)
 ///
-/// Both properties are violated today — stale-path anchors sort by buffer id
-/// but resolve to the end of their path's region, and diff base anchors'
-/// validity filter changes comparison results when the base text changes —
-/// so this test stays red until the root cause is fixed. Shrinking yields a
-/// minimal operation sequence for whichever violating mechanism it finds.
+/// Property 1 is violated today by diff base anchors: their validity filter
+/// changes comparison results when the base text changes, so this test
+/// stays red until that mechanism is fixed. Shrinking yields a minimal
+/// operation sequence for whichever violating mechanism it finds; its first
+/// find (stale-path anchors sorting by buffer id while resolving to the end
+/// of their path's region) is fixed and pinned by
+/// `test_stale_path_anchor_comparison_tracks_resolution`.
 #[gpui::property_test(config = proptest::prelude::ProptestConfig {
     failure_persistence: Some(Box::new(
         proptest::test_runner::FileFailurePersistence::WithSource("proptest-regressions"),
@@ -6475,12 +6477,13 @@ async fn test_anchor_comparison_tracks_resolution(
 /// Distilled from `test_anchor_comparison_tracks_resolution`'s minimal
 /// shrunk counterexample (create anchor, re-key the path, create anchor).
 /// After a path key is reused for a different buffer, an anchor into the
-/// departed buffer resolves to the end of the path's region but sorts
-/// before anchors into the new buffer, because same-path anchors order by
-/// buffer id. Sorted-input consumers that feed comparison-sorted anchors to
-/// forward-only cursors then walk backward in offset space — the "cannot
-/// seek backward" crash family (e.g. ZED-95K). Red until anchor comparison
-/// is made consistent with resolution for stale-path anchors.
+/// departed buffer sorts against anchors into the new buffer by buffer id,
+/// so resolution must land it on the matching side of the path's region:
+/// the start when the departed buffer's id is lower than the current
+/// occupant's, the end otherwise. When resolution instead ignored that
+/// order (it always chose the end), sorted-input consumers feeding
+/// comparison-sorted anchors to forward-only cursors walked backward in
+/// offset space — the "cannot seek backward" crash family (e.g. ZED-95K).
 #[gpui::test]
 async fn test_stale_path_anchor_comparison_tracks_resolution(cx: &mut TestAppContext) {
     let old_buffer = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
