@@ -4,13 +4,13 @@ use collections::HashMap;
 use settings::RegisterSetting;
 
 use crate::provider::{
-    aimlapi, aimlapi::AimlapiSettings, anthropic, anthropic::AnthropicSettings, anthropic_compatible::AnthropicCompatibleSettings,
-    bedrock, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings, deepseek::DeepSeekSettings,
-    google::GoogleSettings, llama_cpp::LlamaCppSettings, lmstudio::LmStudioSettings, mistral,
-    mistral::MistralSettings, ollama::OllamaSettings, open_ai::OpenAiSettings,
-    open_ai_compatible::OpenAiCompatibleSettings, open_router, open_router::OpenRouterSettings,
-    opencode, opencode::OpenCodeSettings, resolve_custom_headers,
-    vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
+    aimlapi, aimlapi::AimlapiSettings, anthropic, anthropic::AnthropicSettings,
+    anthropic_compatible::AnthropicCompatibleSettings, bedrock, bedrock::AmazonBedrockSettings,
+    cloud::ZedDotDevSettings, deepseek::DeepSeekSettings, google::GoogleSettings,
+    llama_cpp::LlamaCppSettings, lmstudio::LmStudioSettings, mistral, mistral::MistralSettings,
+    ollama::OllamaSettings, open_ai::OpenAiSettings, open_ai_compatible::OpenAiCompatibleSettings,
+    open_router, open_router::OpenRouterSettings, opencode, opencode::OpenCodeSettings,
+    resolve_custom_headers, vercel_ai_gateway::VercelAiGatewaySettings, x_ai::XAiSettings,
 };
 
 #[derive(Debug, RegisterSetting)]
@@ -65,7 +65,10 @@ fn aimlapi_headers_from(raw: Option<HashMap<String, String>>) -> http_client::Cu
             aimlapi::AIMLAPI_PARTNER_ID,
         ),
     ] {
-        match (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value)) {
+        match (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(value),
+        ) {
             (Ok(name), Ok(value)) => headers.push((name, value)),
             _ => log::warn!("aimlapi.com attribution header `{name}` is not a valid header"),
         }
@@ -416,7 +419,8 @@ mod aimlapi_wire_tests {
             Some("agent/zed"),
         );
         assert_eq!(
-            sent.get("x-aimlapi-partner-id").map(|v| v.to_str().unwrap()),
+            sent.get("x-aimlapi-partner-id")
+                .map(|v| v.to_str().unwrap()),
             Some(crate::provider::aimlapi::AIMLAPI_PARTNER_ID),
         );
     }

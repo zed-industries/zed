@@ -15,8 +15,8 @@ use language_model::{
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
-pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 pub use settings::AimlapiAvailableModel as AvailableModel;
+pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use ui::IconName;
