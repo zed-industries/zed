@@ -310,7 +310,12 @@ impl ImeMirror {
                 .with_input_handler(|handler| handler.text_input_editable_range())
                 .flatten();
 
-            if is_consistent(window, &selection.range, editable_range.as_ref(), MIN_EDGE_CHARS) {
+            if is_consistent(
+                window,
+                &selection.range,
+                editable_range.as_ref(),
+                MIN_EDGE_CHARS,
+            ) {
                 return;
             }
 
@@ -332,7 +337,10 @@ impl ImeMirror {
                 ..selection.range.end + CONTEXT_CHARS;
             if let Some(editable_range) = &editable_range {
                 window_range.start = window_range.start.max(editable_range.start);
-                window_range.end = window_range.end.min(editable_range.end).max(window_range.start);
+                window_range.end = window_range
+                    .end
+                    .min(editable_range.end)
+                    .max(window_range.start);
             }
             let mut adjusted = None;
             let text = window
@@ -503,8 +511,7 @@ fn is_consistent(
         return false;
     }
     let left_boundary = editable_range.map_or(0, |range| range.start);
-    let has_left_context =
-        element_selection_start >= min_edge || app_window_start <= left_boundary;
+    let has_left_context = element_selection_start >= min_edge || app_window_start <= left_boundary;
     let right_context = stored_length.saturating_sub(element_selection_end);
     if !has_left_context || right_context < min_edge {
         let window_end = app_window_start + stored_length;

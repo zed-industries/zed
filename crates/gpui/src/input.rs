@@ -273,7 +273,11 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
             .update(cx, |view, cx| view.text_input_configuration(window, cx))
     }
 
-    fn text_input_editable_range(&mut self, window: &mut Window, cx: &mut App) -> Option<Range<usize>> {
+    fn text_input_editable_range(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Range<usize>> {
         self.view
             .update(cx, |view, cx| view.text_input_editable_range(window, cx))
     }
