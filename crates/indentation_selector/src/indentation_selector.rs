@@ -1,25 +1,18 @@
 mod indentation_indicator;
 
 use editor::Editor;
-use editor::actions::{ConvertIndentationToSpaces, ConvertIndentationToTabs};
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity, actions};
 pub use indentation_indicator::IndentationIndicator;
+use language::Buffer;
 use language::language_settings::LanguageSettings;
-use language::{Buffer, IndentOverride};
 use picker::{Picker, PickerDelegate};
-use project::Project;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::ModalView;
 
-actions!(
-    indentation_selector,
-    [
-        Toggle
-    ]
-);
+actions!(indentation_selector, [Toggle]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(IndentationSelector::register).detach();
@@ -49,9 +42,8 @@ impl IndentationSelector {
         };
         let editor_handle = editor.clone();
         workspace.update(cx, |workspace, cx| {
-            let project = workspace.project().clone();
             workspace.toggle_modal(window, cx, move |window, cx| {
-                IndentationSelector::new(editor_handle, buffer, project, window, cx)
+                IndentationSelector::new(editor_handle, buffer, window, cx)
             });
         })
     }
@@ -59,12 +51,10 @@ impl IndentationSelector {
     fn new(
         editor: WeakEntity<Editor>,
         buffer: Entity<Buffer>,
-        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate =
-            IndentationSelectorDelegate::new(cx.entity().downgrade(), editor, buffer, project);
+        let delegate = IndentationSelectorDelegate::new(cx.entity().downgrade(), editor, buffer);
         let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
         Self { picker }
     }
@@ -89,27 +79,24 @@ impl ModalView for IndentationSelector {}
 enum MainEntry {
     IndentUsingTabs,
     IndentUsingSpaces,
-    ChangeTabDisplaySize,
     ConvertIndentationToSpaces,
     ConvertIndentationToTabs,
     DetectIndentationFromContent,
 }
 
 impl MainEntry {
-    const ALL: [MainEntry; 6] = [
-        MainEntry::IndentUsingTabs,
+    const ALL: [MainEntry; 5] = [
         MainEntry::IndentUsingSpaces,
-        MainEntry::ChangeTabDisplaySize,
+        MainEntry::IndentUsingTabs,
+        MainEntry::DetectIndentationFromContent,
         MainEntry::ConvertIndentationToSpaces,
         MainEntry::ConvertIndentationToTabs,
-        MainEntry::DetectIndentationFromContent,
     ];
 
     fn label(&self) -> &'static str {
         match self {
             MainEntry::IndentUsingTabs => "Indent Using Tabs",
             MainEntry::IndentUsingSpaces => "Indent Using Spaces",
-            MainEntry::ChangeTabDisplaySize => "Change Tab Display Size",
             MainEntry::ConvertIndentationToSpaces => "Convert Indentation to Spaces",
             MainEntry::ConvertIndentationToTabs => "Convert Indentation to Tabs",
             MainEntry::DetectIndentationFromContent => "Detect Indentation from Content",
@@ -117,22 +104,15 @@ impl MainEntry {
     }
 }
 
-#[derive(Clone, Copy)]
-enum SizePickerIntent {
-    IndentUsing { hard_tabs: bool },
-    DisplaySizeOnly,
-}
-
 enum Mode {
     Main,
-    TabSize { intent: SizePickerIntent },
+    TabSize { hard_tabs: bool },
 }
 
 struct IndentationSelectorDelegate {
     indentation_selector: WeakEntity<IndentationSelector>,
     editor: WeakEntity<Editor>,
     buffer: Entity<Buffer>,
-    project: Entity<Project>,
     mode: Mode,
     selected_index: usize,
 }
@@ -144,13 +124,11 @@ impl IndentationSelectorDelegate {
         indentation_selector: WeakEntity<IndentationSelector>,
         editor: WeakEntity<Editor>,
         buffer: Entity<Buffer>,
-        project: Entity<Project>,
     ) -> Self {
         Self {
             indentation_selector,
             editor,
             buffer,
-            project,
             mode: Mode::Main,
             selected_index: 0,
         }
@@ -160,59 +138,23 @@ impl IndentationSelectorDelegate {
         LanguageSettings::for_buffer(self.buffer.read(cx), cx)
     }
 
-    fn set_override(&self, hard_tabs: bool, tab_size: NonZeroU32, cx: &mut Context<Picker<Self>>) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.set_indent_override(
-                Some(IndentOverride {
-                    hard_tabs,
-                    tab_size,
-                }),
-                cx,
-            );
-        });
-    }
-
     fn change_indentation(
         &self,
         hard_tabs: bool,
         tab_size: NonZeroU32,
-        window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
         let Some(editor) = self.editor.upgrade() else {
             return;
         };
         editor.update(cx, |editor, cx| {
-            editor.change_indentation(hard_tabs, tab_size, window, cx);
-        });
-        let buffer = self.buffer.clone();
-        let project = self.project.clone();
-        cx.defer(move |cx| {
-            project.update(cx, |project, cx| project.save_buffer(buffer, cx).detach());
+            editor.change_indentation(hard_tabs, tab_size, cx);
         });
     }
 
-    fn dispatch_convert(
-        &self,
-        to_spaces: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
-        let Some(editor) = self.editor.upgrade() else {
-            return;
-        };
-        editor.update(cx, |editor, cx| {
-            if to_spaces {
-                editor.convert_indentation_to_spaces(&ConvertIndentationToSpaces, window, cx);
-            } else {
-                editor.convert_indentation_to_tabs(&ConvertIndentationToTabs, window, cx);
-            }
-        });
-        let buffer = self.buffer.clone();
-        let project = self.project.clone();
-        cx.defer(move |cx| {
-            project.update(cx, |project, cx| project.save_buffer(buffer, cx).detach());
-        });
+    fn convert_indentation(&self, hard_tabs: bool, cx: &mut Context<Picker<Self>>) {
+        let tab_size = self.resolved_settings(cx).tab_size;
+        self.change_indentation(hard_tabs, tab_size, cx);
     }
 
     fn detect_from_content(&self, cx: &mut Context<Picker<Self>>) {
@@ -273,37 +215,27 @@ impl PickerDelegate for IndentationSelectorDelegate {
                 };
                 match entry {
                     MainEntry::IndentUsingTabs => {
-                        self.mode = Mode::TabSize {
-                            intent: SizePickerIntent::IndentUsing { hard_tabs: true },
-                        };
-                        self.selected_index = 0;
+                        self.mode = Mode::TabSize { hard_tabs: true };
+                        let tab_size = self.resolved_settings(cx).tab_size.get();
+                        self.selected_index = tab_size.saturating_sub(1).min(7) as usize;
                         cx.notify();
                         return;
                     }
                     MainEntry::IndentUsingSpaces => {
-                        self.mode = Mode::TabSize {
-                            intent: SizePickerIntent::IndentUsing { hard_tabs: false },
-                        };
-                        self.selected_index = 0;
-                        cx.notify();
-                        return;
-                    }
-                    MainEntry::ChangeTabDisplaySize => {
-                        self.mode = Mode::TabSize {
-                            intent: SizePickerIntent::DisplaySizeOnly,
-                        };
-                        self.selected_index = 0;
+                        self.mode = Mode::TabSize { hard_tabs: false };
+                        let tab_size = self.resolved_settings(cx).tab_size.get();
+                        self.selected_index = tab_size.saturating_sub(1).min(7) as usize;
                         cx.notify();
                         return;
                     }
                     MainEntry::ConvertIndentationToSpaces => {
-                        self.dispatch_convert(true, window, cx);
+                        self.convert_indentation(false, cx);
                     }
-                    MainEntry::ConvertIndentationToTabs => self.dispatch_convert(false, window, cx),
+                    MainEntry::ConvertIndentationToTabs => self.convert_indentation(true, cx),
                     MainEntry::DetectIndentationFromContent => self.detect_from_content(cx),
                 }
             }
-            Mode::TabSize { intent } => {
+            Mode::TabSize { hard_tabs } => {
                 let Some(size) = TAB_SIZES
                     .get(self.selected_index)
                     .copied()
@@ -311,14 +243,7 @@ impl PickerDelegate for IndentationSelectorDelegate {
                 else {
                     return;
                 };
-                match intent {
-                    SizePickerIntent::IndentUsing { hard_tabs } => {
-                        self.change_indentation(hard_tabs, size, window, cx);
-                    }
-                    SizePickerIntent::DisplaySizeOnly => {
-                        self.set_override(self.resolved_settings(cx).hard_tabs, size, cx);
-                    }
-                }
+                self.change_indentation(hard_tabs, size, cx);
             }
         }
         self.dismissed(window, cx);

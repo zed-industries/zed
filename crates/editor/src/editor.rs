@@ -180,10 +180,10 @@ use itertools::{Either, Itertools};
 use language::{
     AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
     BufferSnapshot, Capability, CharClassifier, CharKind, CharScopeContext, CodeLabel, CursorShape,
-    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview,
-    HighlightedText, IndentKind, IndentOverride, IndentSize, Language, LanguageAwareStyling,
-    LanguageName, LanguageRegistry, LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    DiagnosticEntryRef, DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind,
+    IndentOverride, IndentSize, Language, LanguageAwareStyling, LanguageName, LanguageRegistry,
+    LanguageScope, LocalFile, OffsetRangeExt, OutlineItem, Point, Selection, SelectionGoal,
+    TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
         WordsCompletionMode, all_language_settings,
@@ -6878,7 +6878,6 @@ impl Editor {
         &mut self,
         hard_tabs: bool,
         tab_size: NonZeroU32,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let Some(buffer) = self.active_buffer(cx) else {

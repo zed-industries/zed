@@ -7458,6 +7458,56 @@ async fn test_convert_indentation_to_tabs(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_change_indentation_rewrites_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state("«    one\n        twoˇ»");
+    let Some(tab_size) = NonZeroU32::new(2) else {
+        panic!("tab size should be nonzero");
+    };
+
+    cx.update_editor(|editor, _window, cx| {
+        editor.change_indentation(true, tab_size, cx);
+    });
+
+    cx.assert_editor_state("\t«one\n\t\ttwoˇ»");
+    cx.update_editor(|editor, _window, cx| {
+        let Some(buffer) = editor.active_buffer(cx) else {
+            panic!("editor should have an active buffer");
+        };
+        assert_eq!(
+            buffer
+                .read(cx)
+                .indent_override()
+                .map(|value| (value.hard_tabs, value.tab_size.get())),
+            Some((true, 2))
+        );
+    });
+
+    let Some(tab_size) = NonZeroU32::new(3) else {
+        panic!("tab size should be nonzero");
+    };
+    cx.update_editor(|editor, _window, cx| {
+        editor.change_indentation(false, tab_size, cx);
+    });
+
+    cx.assert_editor_state("   «one\n      twoˇ»");
+    cx.update_editor(|editor, _window, cx| {
+        let Some(buffer) = editor.active_buffer(cx) else {
+            panic!("editor should have an active buffer");
+        };
+        assert_eq!(
+            buffer
+                .read(cx)
+                .indent_override()
+                .map(|value| (value.hard_tabs, value.tab_size.get())),
+            Some((false, 3))
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_toggle_case(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
