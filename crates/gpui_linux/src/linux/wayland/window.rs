@@ -271,7 +271,21 @@ impl WaylandSurfaceState {
             None
         };
 
-        if let Some(size) = params.window_min_size {
+        let rigid = !params.is_resizable
+            && matches!(params.kind, WindowKind::Dialog | WindowKind::Floating)
+            && (params.window_min_size.is_none()
+                || params.window_min_size == Some(params.bounds.size));
+
+        if rigid {
+            toplevel.set_min_size(
+                f32::from(params.bounds.size.width) as i32,
+                f32::from(params.bounds.size.height) as i32,
+            );
+            toplevel.set_max_size(
+                f32::from(params.bounds.size.width) as i32,
+                f32::from(params.bounds.size.height) as i32,
+            );
+        } else if let Some(size) = params.window_min_size {
             toplevel.set_min_size(f32::from(size.width) as i32, f32::from(size.height) as i32);
         }
 
@@ -288,6 +302,7 @@ impl WaylandSurfaceState {
             toplevel,
             decoration,
             dialog,
+            rigid,
         }))
     }
 }
@@ -297,6 +312,7 @@ pub struct WaylandXdgSurfaceState {
     toplevel: xdg_toplevel::XdgToplevel,
     decoration: Option<zxdg_toplevel_decoration_v1::ZxdgToplevelDecorationV1>,
     dialog: Option<XdgDialogV1>,
+    rigid: bool,
 }
 
 pub struct WaylandLayerSurfaceState {
@@ -418,8 +434,17 @@ impl WaylandSurfaceState {
 
     fn set_geometry(&self, x: i32, y: i32, width: i32, height: i32) {
         match self {
-            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState { xdg_surface, .. }) => {
+            WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
+                xdg_surface,
+                toplevel,
+                rigid,
+                ..
+            }) => {
                 xdg_surface.set_window_geometry(x, y, width, height);
+                if *rigid {
+                    toplevel.set_min_size(width, height);
+                    toplevel.set_max_size(width, height);
+                }
             }
             WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
                 // cannot set window position of a layer surface
@@ -506,6 +531,7 @@ impl WaylandSurfaceState {
                 toplevel,
                 decoration: _decoration,
                 dialog,
+                ..
             }) => {
                 // drop the dialog before toplevel so compositor can explicitly unapply it's effects
                 if let Some(dialog) = dialog {
@@ -586,12 +612,14 @@ impl WaylandWindowState {
                 xdg_state.toplevel.set_app_id(app_id.clone());
             }
 
-            // Set max window size based on the GPU's maximum texture dimension.
-            // This prevents the window from being resized larger than what the GPU can render.
-            let max_texture_size = renderer.max_texture_size() as i32;
-            xdg_state
-                .toplevel
-                .set_max_size(max_texture_size, max_texture_size);
+            if !xdg_state.rigid {
+                // Set max window size based on the GPU's maximum texture dimension.
+                // This prevents the window from being resized larger than what the GPU can render.
+                let max_texture_size = renderer.max_texture_size() as i32;
+                xdg_state
+                    .toplevel
+                    .set_max_size(max_texture_size, max_texture_size);
+            }
         }
 
         Ok(Self {
