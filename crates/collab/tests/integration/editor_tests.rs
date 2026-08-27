@@ -1199,6 +1199,166 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 }
 
 #[gpui::test]
+async fn test_remote_rename_uses_server_that_prepared_it(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+
+    let unprepared_capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        })),
+        ..lsp::ServerCapabilities::default()
+    };
+    let prepared_capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut unprepared_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "unprepared-rename-server",
+            capabilities: unprepared_capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let mut prepared_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "prepared-rename-server",
+            capabilities: prepared_capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "unprepared-rename-server",
+            capabilities: unprepared_capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "prepared-rename-server",
+            capabilities: prepared_capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ "one.rs": "const ONE: usize = 1;" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let unprepared_server = unprepared_servers.next().await.unwrap();
+    let prepared_server = prepared_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let unprepared_prepare_count = Arc::new(AtomicUsize::new(0));
+    let _unprepared_prepare_requests = unprepared_server
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>({
+            let unprepared_prepare_count = unprepared_prepare_count.clone();
+            move |_, _| {
+                unprepared_prepare_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let _prepared_prepare_requests = prepared_server
+        .set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(|_, _| async move {
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                lsp::Position::new(0, 6),
+                lsp::Position::new(0, 9),
+            ))))
+        });
+    let unprepared_rename_count = Arc::new(AtomicUsize::new(0));
+    let _unprepared_rename_requests = unprepared_server
+        .set_request_handler::<lsp::request::Rename, _, _>({
+            let unprepared_rename_count = unprepared_rename_count.clone();
+            move |_, _| {
+                unprepared_rename_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let prepared_rename_count = Arc::new(AtomicUsize::new(0));
+    let _prepared_rename_requests = prepared_server
+        .set_request_handler::<lsp::request::Rename, _, _>({
+            let prepared_rename_count = prepared_rename_count.clone();
+            move |_, _| {
+                prepared_rename_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+
+    let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([MultiBufferOffset(7)..MultiBufferOffset(7)])
+        });
+        editor.rename(&Rename, window, cx).unwrap()
+    });
+    prepare_rename.await.unwrap();
+    editor_b.update(cx_b, |editor, cx| {
+        let rename = editor.pending_rename().unwrap();
+        rename.editor.update(cx, |rename_editor, cx| {
+            rename_editor.buffer().update(cx, |rename_buffer, cx| {
+                rename_buffer.edit(
+                    [(MultiBufferOffset(0)..MultiBufferOffset(3), "TWO")],
+                    None,
+                    cx,
+                );
+            });
+        });
+    });
+
+    let confirm_rename = editor_b.update_in(cx_b, |editor, window, cx| {
+        Editor::confirm_rename(editor, &ConfirmRename, window, cx).unwrap()
+    });
+    confirm_rename.await.unwrap();
+
+    assert_eq!(unprepared_prepare_count.load(atomic::Ordering::SeqCst), 0);
+    assert_eq!(
+        unprepared_rename_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected remote rename not to switch back to the first capable server",
+    );
+    assert_eq!(
+        prepared_rename_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected remote rename to use the server that prepared it",
+    );
+}
+
+#[gpui::test]
 async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;

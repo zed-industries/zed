@@ -8932,7 +8932,7 @@ async fn test_dynamic_rename_registration_routes_prepare_rename(cx: &mut gpui::T
         })
         .await
         .unwrap();
-    let PrepareRenameResponse::Success(range) = response else {
+    let PrepareRenameResponse::Success { range, .. } = response else {
         panic!("expected prepare rename request, got {response:?}");
     };
     let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
@@ -9107,6 +9107,24 @@ async fn test_prepare_rename_prefers_server_with_prepare_support(cx: &mut gpui::
                 lsp::Position::new(0, 9),
             ))))
         });
+    let unprepared_rename_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _unprepared_rename_requests = unprepared_server
+        .set_request_handler::<lsp::request::Rename, _, _>({
+            let unprepared_rename_request_count = unprepared_rename_request_count.clone();
+            move |_, _| {
+                unprepared_rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let prepared_rename_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _prepared_rename_requests = prepared_server
+        .set_request_handler::<lsp::request::Rename, _, _>({
+            let prepared_rename_request_count = prepared_rename_request_count.clone();
+            move |_, _| {
+                prepared_rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
 
     let response = project
         .update(cx, |project, cx| {
@@ -9115,12 +9133,34 @@ async fn test_prepare_rename_prefers_server_with_prepare_support(cx: &mut gpui::
         .await
         .unwrap();
 
-    let PrepareRenameResponse::Success(range) = response else {
+    let PrepareRenameResponse::Success {
+        range,
+        language_server_id,
+    } = response
+    else {
         panic!("expected the prepare-capable server to serve the request, got {response:?}");
     };
     let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
     assert_eq!(range, 6..9);
+    assert_eq!(language_server_id, Some(prepared_server.server.server_id()),);
     assert_eq!(unprepared_request_count.load(atomic::Ordering::SeqCst), 0);
+
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer, 7, "TWO".to_string(), language_server_id, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        unprepared_rename_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected rename not to switch back to the first rename-capable server",
+    );
+    assert_eq!(
+        prepared_rename_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected rename to use the server that prepared it",
+    );
 }
 
 #[gpui::test]
@@ -9503,14 +9543,24 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     let response = response.await.unwrap();
-    let PrepareRenameResponse::Success(range) = response else {
+    let PrepareRenameResponse::Success {
+        range,
+        language_server_id,
+    } = response
+    else {
         panic!("{:?}", response);
     };
     let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
     assert_eq!(range, 6..9);
 
     let response = project.update(cx, |project, cx| {
-        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+        project.perform_rename(
+            buffer.clone(),
+            7,
+            "THREE".to_string(),
+            language_server_id,
+            cx,
+        )
     });
     fake_server
         .set_request_handler::<lsp::request::Rename, _, _>(|params, _| async move {
@@ -9628,7 +9678,7 @@ async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
 
     let response = project.update(cx, |project, cx| {
-        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), None, cx)
     });
     fake_server
         .set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {

@@ -486,6 +486,7 @@ message PrepareRenameResponse {
   Anchor end = 3;
   repeated VectorClockEntry version = 4;
   bool only_unprepared_rename_supported = 5;
+  optional uint64 language_server_id = 6;
 }
 
 message PerformRename {
@@ -494,6 +495,7 @@ message PerformRename {
   Anchor position = 3;
   string new_name = 4;
   repeated VectorClockEntry version = 5;
+  optional uint64 language_server_id = 6;
 }
 
 message OnTypeFormatting {

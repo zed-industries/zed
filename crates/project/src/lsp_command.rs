@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
+    lsp_store::{LanguageServerToQuery, LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -99,6 +99,10 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         None
     }
 
+    fn server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::FirstCapable
+    }
+
     /// Returns whether the given static or dynamic capability supports this request.
     fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool;
 
@@ -164,6 +168,7 @@ pub(crate) struct PerformRename {
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
+    pub language_server_id: Option<LanguageServerId>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -998,7 +1003,7 @@ impl LspCommand for PrepareRename {
         message: Option<lsp::PrepareRenameResponse>,
         _: Entity<LspStore>,
         buffer: Entity<Buffer>,
-        _: LanguageServerId,
+        server_id: LanguageServerId,
         cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
         buffer.read_with(&cx, |buffer, _| match message {
@@ -1008,9 +1013,10 @@ impl LspCommand for PrepareRename {
                 if buffer.clip_point_utf16(start, Bias::Left) == start.0
                     && buffer.clip_point_utf16(end, Bias::Left) == end.0
                 {
-                    Ok(PrepareRenameResponse::Success(
-                        buffer.anchor_after(start)..buffer.anchor_before(end),
-                    ))
+                    Ok(PrepareRenameResponse::Success {
+                        range: buffer.anchor_after(start)..buffer.anchor_before(end),
+                        language_server_id: Some(server_id),
+                    })
                 } else {
                     Ok(PrepareRenameResponse::InvalidPosition)
                 }
@@ -1019,7 +1025,10 @@ impl LspCommand for PrepareRename {
                 let snapshot = buffer.snapshot();
                 let (range, _) = snapshot.surrounding_word(self.position, None);
                 let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
-                Ok(PrepareRenameResponse::Success(range))
+                Ok(PrepareRenameResponse::Success {
+                    range,
+                    language_server_id: Some(server_id),
+                })
             }
             None => Ok(PrepareRenameResponse::InvalidPosition),
         })
@@ -1065,12 +1074,16 @@ impl LspCommand for PrepareRename {
         _: &mut App,
     ) -> proto::PrepareRenameResponse {
         match response {
-            PrepareRenameResponse::Success(range) => proto::PrepareRenameResponse {
+            PrepareRenameResponse::Success {
+                range,
+                language_server_id,
+            } => proto::PrepareRenameResponse {
                 can_rename: true,
                 only_unprepared_rename_supported: false,
                 start: Some(language::proto::serialize_anchor(&range.start)),
                 end: Some(language::proto::serialize_anchor(&range.end)),
                 version: serialize_version(buffer_version),
+                language_server_id: language_server_id.map(LanguageServerId::to_proto),
             },
             PrepareRenameResponse::OnlyUnpreparedRenameSupported => proto::PrepareRenameResponse {
                 can_rename: false,
@@ -1078,6 +1091,7 @@ impl LspCommand for PrepareRename {
                 start: None,
                 end: None,
                 version: vec![],
+                language_server_id: None,
             },
             PrepareRenameResponse::InvalidPosition => proto::PrepareRenameResponse {
                 can_rename: false,
@@ -1085,6 +1099,7 @@ impl LspCommand for PrepareRename {
                 start: None,
                 end: None,
                 version: vec![],
+                language_server_id: None,
             },
         }
     }
@@ -1106,7 +1121,12 @@ impl LspCommand for PrepareRename {
                 message.start.and_then(deserialize_anchor),
                 message.end.and_then(deserialize_anchor),
             ) {
-                Ok(PrepareRenameResponse::Success(start..end))
+                Ok(PrepareRenameResponse::Success {
+                    range: start..end,
+                    language_server_id: message
+                        .language_server_id
+                        .map(LanguageServerId::from_proto),
+                })
             } else {
                 anyhow::bail!(
                     "Missing start or end position in remote project PrepareRenameResponse"
@@ -1132,6 +1152,12 @@ impl LspCommand for PerformRename {
 
     fn display_name(&self) -> &str {
         "Rename"
+    }
+
+    fn server_to_query(&self) -> LanguageServerToQuery {
+        self.language_server_id
+            .map(LanguageServerToQuery::Other)
+            .unwrap_or(LanguageServerToQuery::FirstCapable)
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
@@ -1192,6 +1218,7 @@ impl LspCommand for PerformRename {
             )),
             new_name: self.new_name.clone(),
             version: serialize_version(&buffer.version()),
+            language_server_id: self.language_server_id.map(LanguageServerId::to_proto),
         }
     }
 
@@ -1214,6 +1241,7 @@ impl LspCommand for PerformRename {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             new_name: message.new_name,
             push_to_history: false,
+            language_server_id: message.language_server_id.map(LanguageServerId::from_proto),
         })
     }
 

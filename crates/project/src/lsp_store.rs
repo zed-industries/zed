@@ -10276,14 +10276,10 @@ impl LspStore {
             cx.clone(),
         )
         .await?;
+        let server_to_query = request.server_to_query();
         let response = this
             .update(&mut cx, |this, cx| {
-                this.request_lsp(
-                    buffer_handle.clone(),
-                    LanguageServerToQuery::FirstCapable,
-                    request,
-                    cx,
-                )
+                this.request_lsp(buffer_handle.clone(), server_to_query, request, cx)
             })
             .await?;
         this.update(&mut cx, |this, cx| {
