@@ -11,13 +11,16 @@ use serde_json::{Map, Value, json};
 pub enum LanguageModelToolSchemaFormat {
     /// A JSON schema, see https://json-schema.org
     JsonSchema,
+    /// A JSON schema that is passed to the provider without modification.
+    JsonSchemaUnmodified,
     /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
     JsonSchemaSubset,
 }
 
 pub fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
     let mut generator = match format {
-        LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07()
+        LanguageModelToolSchemaFormat::JsonSchema
+        | LanguageModelToolSchemaFormat::JsonSchemaUnmodified => SchemaSettings::draft07()
             .with(|settings| {
                 settings.meta_schema = None;
                 settings.inline_subschemas = true;
@@ -76,6 +79,10 @@ pub fn adapt_schema_to_format(
 ) -> Result<()> {
     log::trace!("Adapting schema to format {:?}: {}", format, json);
 
+    if format == LanguageModelToolSchemaFormat::JsonSchemaUnmodified {
+        return Ok(());
+    }
+
     if let Value::Object(obj) = json {
         obj.remove("$schema");
         obj.remove("title");
@@ -86,6 +93,7 @@ pub fn adapt_schema_to_format(
 
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => preprocess_json_schema(json),
+        LanguageModelToolSchemaFormat::JsonSchemaUnmodified => Ok(()),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
     }?;
 
@@ -880,6 +888,39 @@ mod tests {
         });
 
         assert!(adapt_to_json_schema_subset(&mut json).is_err());
+    }
+
+    #[test]
+    fn test_unmodified_json_schema_is_preserved() {
+        let original = json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "title": "Search input",
+            "description": "Searches files",
+            "type": "object",
+            "properties": {
+                "globs": {
+                    "anyOf": [
+                        { "type": "string" },
+                        {
+                            "type": "array",
+                            "items": { "$ref": "#/$defs/glob" }
+                        }
+                    ]
+                }
+            },
+            "$defs": {
+                "glob": { "type": "string" }
+            }
+        });
+        let mut adapted = original.clone();
+
+        adapt_schema_to_format(
+            &mut adapted,
+            LanguageModelToolSchemaFormat::JsonSchemaUnmodified,
+        )
+        .unwrap();
+
+        assert_eq!(adapted, original);
     }
 
     #[test]

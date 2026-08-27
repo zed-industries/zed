@@ -687,8 +687,10 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
             | cloud_llm_client::LanguageModelProvider::OpenAi => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            cloud_llm_client::LanguageModelProvider::Google
-            | cloud_llm_client::LanguageModelProvider::XAi => {
+            cloud_llm_client::LanguageModelProvider::Google => {
+                LanguageModelToolSchemaFormat::JsonSchemaUnmodified
+            }
+            cloud_llm_client::LanguageModelProvider::XAi => {
                 LanguageModelToolSchemaFormat::JsonSchemaSubset
             }
         }
