@@ -10207,10 +10207,7 @@ impl LspStore {
                 .context("querying for inlay hints")?
             }
             Request::PrepareCallHierarchy(prepare_call_hierarchy) => {
-                let position = prepare_call_hierarchy
-                    .position
-                    .clone()
-                    .and_then(deserialize_anchor);
+                let position = prepare_call_hierarchy.position.and_then(deserialize_anchor);
                 Self::query_lsp_locally::<PrepareCallHierarchy>(
                     lsp_store,
                     server_id,
