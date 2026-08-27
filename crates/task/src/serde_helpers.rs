@@ -1,5 +1,26 @@
-use serde::de::{self, Deserializer, Visitor};
+use serde::Deserialize;
+use serde::de::{self, DeserializeOwned, Deserializer, Visitor};
 use std::fmt;
+
+/// Deserializes `T` after first materializing the input into an owned
+/// [`serde_json_lenient::Value`].
+///
+/// `serde_json_lenient` tolerates trailing commas in the values it actually
+/// deserializes, but its value-skipping codepath (used for object fields the
+/// target type does not model) rejects them. VS Code's `tasks.json` and
+/// `launch.json` regularly contain fields Zed doesn't model — such as
+/// `compounds` or `inputs` — and editors happily leave trailing commas inside
+/// them, which would otherwise abort the entire parse. Building a `Value`
+/// first tolerates those trailing commas, and the subsequent `from_value` has
+/// nothing to skip mid-stream.
+pub fn ignore_unknown_fields_lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let value = serde_json_lenient::Value::deserialize(deserializer)?;
+    serde_json_lenient::from_value(value).map_err(de::Error::custom)
+}
 
 /// Deserializes a non-empty string array.
 pub fn non_empty_string_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>

@@ -46,12 +46,37 @@ impl VsCodeDebugTaskDefinition {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VsCodeDebugTaskFile {
-    #[serde(default)]
     version: Option<String>,
     configurations: Vec<VsCodeDebugTaskDefinition>,
+}
+
+impl<'de> Deserialize<'de> for VsCodeDebugTaskFile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize via `ignore_unknown_fields_lenient` so that trailing
+        // commas inside fields we don't model (e.g. `compounds`, `inputs`)
+        // don't abort the parse of the configurations we do care about.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct VsCodeDebugTaskFileContents {
+            #[serde(default)]
+            version: Option<String>,
+            configurations: Vec<VsCodeDebugTaskDefinition>,
+        }
+
+        let VsCodeDebugTaskFileContents {
+            version,
+            configurations,
+        } = crate::serde_helpers::ignore_unknown_fields_lenient(deserializer)?;
+        Ok(Self {
+            version,
+            configurations,
+        })
+    }
 }
 
 impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
@@ -190,5 +215,37 @@ mod tests {
                 build: None
             }])
         );
+    }
+
+    #[test]
+    fn test_parsing_launch_json_with_compounds_and_trailing_commas() {
+        // Regression test: an editor-formatted `launch.json` with trailing
+        // commas and a `compounds` section (which Zed does not model) must not
+        // cause the modeled `configurations` to be dropped.
+        let raw = r#"
+            {
+                "version": "0.2.0",
+                "configurations": [
+                    { "name": "Server", "type": "node", "request": "launch" },
+                    { "name": "Client", "type": "node", "request": "launch" },
+                ],
+                "compounds": [
+                    {
+                        "name": "Full Stack",
+                        "configurations": ["Server", "Client"],
+                    },
+                ],
+            }
+        "#;
+        let parsed: VsCodeDebugTaskFile =
+            serde_json_lenient::from_str(raw).expect("deserializing launch.json");
+        let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
+
+        let labels = zed
+            .0
+            .iter()
+            .map(|scenario| scenario.label.to_string())
+            .collect::<Vec<_>>();
+        pretty_assertions::assert_eq!(labels, vec!["Server", "Client"]);
     }
 }

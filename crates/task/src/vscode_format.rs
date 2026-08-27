@@ -138,9 +138,28 @@ impl VsCodeTaskDefinition {
 }
 
 /// [`VsCodeTaskFile`] is a superset of Code's task definition format.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct VsCodeTaskFile {
     tasks: Vec<VsCodeTaskDefinition>,
+}
+
+impl<'de> Deserialize<'de> for VsCodeTaskFile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Deserialize via `ignore_unknown_fields_lenient` so that trailing
+        // commas inside fields we don't model (e.g. `version`, `inputs`) don't
+        // abort the parse of the tasks we do care about.
+        #[derive(Deserialize)]
+        struct VsCodeTaskFileContents {
+            tasks: Vec<VsCodeTaskDefinition>,
+        }
+
+        let VsCodeTaskFileContents { tasks } =
+            crate::serde_helpers::ignore_unknown_fields_lenient(deserializer)?;
+        Ok(Self { tasks })
+    }
 }
 
 impl TryFrom<VsCodeTaskFile> for TaskTemplates {
@@ -529,6 +548,34 @@ mod tests {
         assert_eq!(vscode_definitions.tasks[1].label, "Explicit Label");
         assert_eq!(vscode_definitions.tasks[2].label, "gulp: build");
         assert_eq!(vscode_definitions.tasks[3].label, "echo hello");
+    }
+
+    #[test]
+    fn can_deserialize_tasks_with_unknown_fields_and_trailing_commas() {
+        // Regression test: an editor-formatted `tasks.json` with trailing
+        // commas and fields Zed does not model (`version`, `inputs`) must not
+        // cause the modeled `tasks` to be dropped.
+        let raw = r#"
+            {
+                "version": "2.0.0",
+                "tasks": [
+                    { "label": "build", "type": "shell", "command": "make" },
+                    { "label": "test", "type": "shell", "command": "make test" },
+                ],
+                "inputs": [
+                    { "id": "target", "type": "promptString", "description": "Target" },
+                ],
+            }
+        "#;
+        let vscode_definitions: VsCodeTaskFile =
+            serde_json_lenient::from_str(raw).unwrap();
+
+        let labels = vscode_definitions
+            .tasks
+            .iter()
+            .map(|task| task.label.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(labels, vec!["build", "test"]);
     }
 
     #[test]
