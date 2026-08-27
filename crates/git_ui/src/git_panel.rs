@@ -44,8 +44,7 @@ use git::{
 use git::{
     ExpandCommitEditor, GitHostingProviderRegistry, GitRemote, RestoreTrackedFiles, StageAll,
     StashAll, StashApply, StashPop, StashStaged, StashTracked, ToggleCommitEditor,
-    ToggleFillCommitEditor,
-    TrashUntrackedFiles, UnstageAll, ViewFile, parse_git_remote_url,
+    ToggleFillCommitEditor, TrashUntrackedFiles, UnstageAll, ViewFile, parse_git_remote_url,
 };
 use gpui::{
     AbsoluteLength, Action, Anchor, AnyElement, AsyncApp, AsyncWindowContext, ClickEvent,
@@ -1557,7 +1556,9 @@ impl GitPanel {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let signoff_enabled = self.signoff_enabled;
-        let commit_editor_collapsed = self.commit_editor_toggled.then_some(self.commit_editor_collapsed);
+        let commit_editor_collapsed = self
+            .commit_editor_toggled
+            .then_some(self.commit_editor_collapsed);
         let commit_messages = self.serialized_commit_messages(cx);
         let kvp = KeyValueStore::global(cx);
 
@@ -6300,28 +6301,28 @@ impl GitPanel {
                             window.focus(&this.commit_editor.focus_handle(cx), cx);
                         }))
                         .child(
-                        h_flex()
-                            .size_full()
-                            .child(
-                                div()
-                                    .pt_2()
-                                    .px_2()
-                                    .h_full()
-                                    .flex_grow_1()
-                                    .cursor_text()
-                                    .on_action(|&zed_actions::editor::MoveUp, _, cx| {
-                                        cx.stop_propagation();
-                                    })
-                                    .on_action(|&zed_actions::editor::MoveDown, _, cx| {
-                                        cx.stop_propagation();
-                                    })
-                                    .child(EditorElement::new(
-                                        &self.commit_editor,
-                                        panel_editor_style,
-                                    )),
-                            )
-                            .child(vertical_buttons),
-                    )
+                            h_flex()
+                                .size_full()
+                                .child(
+                                    div()
+                                        .pt_2()
+                                        .px_2()
+                                        .h_full()
+                                        .flex_grow_1()
+                                        .cursor_text()
+                                        .on_action(|&zed_actions::editor::MoveUp, _, cx| {
+                                            cx.stop_propagation();
+                                        })
+                                        .on_action(|&zed_actions::editor::MoveDown, _, cx| {
+                                            cx.stop_propagation();
+                                        })
+                                        .child(EditorElement::new(
+                                            &self.commit_editor,
+                                            panel_editor_style,
+                                        )),
+                                )
+                                .child(vertical_buttons),
+                        )
                     })
                     .child(
                         h_flex()
