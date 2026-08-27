@@ -47,7 +47,9 @@ use project::{
 use remote::RemoteClient;
 use rpc::proto;
 use serde_json::json;
-use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
+use settings::{
+    Settings, SettingsLocation, SettingsStore, SplicingVec, initial_server_settings_content,
+};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -609,6 +611,145 @@ async fn test_remote_project_search_inclusion(
         cx.clone(),
     )
     .await;
+}
+
+#[gpui::test]
+async fn test_remote_project_search_reports_open_excluded_file_once(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "aaa.rs": "fn needle_aa() {}",
+                "mmm.rs": "fn needle_mm() {}",
+                "zzz.rs": "fn needle_zz() {}",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    server_cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(SplicingVec::from(vec!["**/mmm.rs".to_string()]));
+            });
+        });
+    });
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let _excluded_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("mmm.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    worktree.read_with(cx, |worktree, _| {
+        assert_eq!(
+            worktree
+                .entry_for_path(rel_path("mmm.rs"))
+                .map(|entry| entry.id),
+            None,
+            "mmm.rs must have no worktree entry for this test to be meaningful"
+        );
+    });
+
+    do_search_and_assert(
+        &project,
+        "needle",
+        Default::default(),
+        false,
+        &[
+            path!("project1/aaa.rs"),
+            path!("project1/mmm.rs"),
+            path!("project1/zzz.rs"),
+        ],
+        cx.clone(),
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_remote_project_search_reports_untitled_buffer_once(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "aaa.rs": "fn needle_aa() {}",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let untitled_buffer = project
+        .update(cx, |project, cx| project.create_buffer(None, true, cx))
+        .await
+        .unwrap();
+    untitled_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "fn needle_untitled() {}")], None, cx)
+    });
+    cx.run_until_parked();
+
+    let receiver = project.update(cx, |project, cx| {
+        project.search(
+            SearchQuery::text(
+                "needle",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx,
+        )
+    });
+    let mut result_buffers = Vec::new();
+    while let Ok(result) = receiver.rx.recv().await {
+        match result {
+            SearchResult::Buffer { buffer, .. } => result_buffers.push(buffer),
+            SearchResult::LimitReached => panic!("unexpected limit"),
+            SearchResult::WaitingForScan | SearchResult::Searching => {}
+        }
+    }
+    assert_eq!(
+        result_buffers
+            .iter()
+            .filter(|buffer| **buffer == untitled_buffer)
+            .count(),
+        1,
+        "an untitled buffer on a remote project must be searched by the server only, \
+         not once per side"
+    );
+    assert_eq!(result_buffers.len(), 2);
 }
 
 #[gpui::test]
