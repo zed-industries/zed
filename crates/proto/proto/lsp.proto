@@ -117,6 +117,62 @@ message DocumentHighlight {
   }
 }
 
+message CallHierarchyItem {
+  string name = 1;
+  int32 kind = 2;
+  optional string detail = 3;
+  uint64 buffer_id = 4;
+  uint64 server_id = 5;
+  Anchor range_start = 6;
+  Anchor range_end = 7;
+  Anchor selection_range_start = 8;
+  Anchor selection_range_end = 9;
+  optional bytes data = 10;
+}
+
+message CallHierarchyIncomingCall {
+  CallHierarchyItem from = 1;
+  repeated Location from_ranges = 2;
+}
+
+message CallHierarchyOutgoingCall {
+  CallHierarchyItem to = 1;
+  repeated Location from_ranges = 2;
+}
+
+message PrepareCallHierarchy {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  Anchor position = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message PrepareCallHierarchyResponse {
+  repeated CallHierarchyItem items = 1;
+}
+
+message GetIncomingCalls {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CallHierarchyItem item = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetIncomingCallsResponse {
+  repeated CallHierarchyIncomingCall calls = 1;
+}
+
+message GetOutgoingCalls {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  CallHierarchyItem item = 3;
+  repeated VectorClockEntry version = 4;
+}
+
+message GetOutgoingCallsResponse {
+  repeated CallHierarchyOutgoingCall calls = 1;
+}
+
 message GetProjectSymbols {
   uint64 project_id = 1;
   string query = 2;
@@ -363,11 +419,6 @@ message Documentation {
     string value = 1;
     MarkupContent markup_content = 2;
   }
-}
-
-enum MarkupKind {
-  PlainText = 0;
-  Markdown = 1;
 }
 
 message ParameterInformation {
@@ -951,6 +1002,9 @@ message LspQuery {
     GetDocumentLinks get_document_links = 19;
     GetEditPredictionDefinition get_edit_prediction_definition = 20;
     GetEditPredictionTypeDefinition get_edit_prediction_type_definition = 21;
+    PrepareCallHierarchy prepare_call_hierarchy = 22;
+    GetIncomingCalls get_incoming_calls = 23;
+    GetOutgoingCalls get_outgoing_calls = 24;
   }
 }
 
@@ -980,6 +1034,9 @@ message LspResponse {
     GetDocumentLinksResponse get_document_links_response = 17;
     GetEditPredictionDefinitionResponse get_edit_prediction_definition_response = 18;
     GetEditPredictionTypeDefinitionResponse get_edit_prediction_type_definition_response = 19;
+    PrepareCallHierarchyResponse prepare_call_hierarchy_response = 20;
+    GetIncomingCallsResponse get_incoming_calls_response = 21;
+    GetOutgoingCallsResponse get_outgoing_calls_response = 22;
   }
   uint64 server_id = 7;
 }
@@ -1063,6 +1120,8 @@ message LspDiagnostic {
   repeated LspDiagnosticRelatedInformation related_information = 8;
   repeated LspDiagnosticTag tags = 9;
   optional string data = 10;
+  // Set when the message is a MarkupContent rather than a plain string.
+  optional MarkupKind markup_message_kind = 11;
 
   enum Severity {
     None = 0;

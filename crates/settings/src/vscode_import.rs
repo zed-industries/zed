@@ -184,6 +184,7 @@ impl VsCodeSettings {
             diagnostics: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
+            call_hierarchy: None,
             file_finder: None,
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
@@ -377,6 +378,7 @@ impl VsCodeSettings {
     fn search_content(&self) -> Option<SearchSettingsContent> {
         skip_default(SearchSettingsContent {
             include_ignored: self.read_bool("search.useIgnoreFiles"),
+            search_on_type: self.read_bool("search.searchOnType"),
             ..Default::default()
         })
     }
