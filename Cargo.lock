@@ -10584,6 +10584,7 @@ dependencies = [
  "linkify",
  "log",
  "markup5ever_rcdom",
+ "menu",
  "mermaid_render",
  "node_runtime",
  "pulldown-cmark 0.13.4",

@@ -433,6 +433,8 @@ impl MarkdownStyle {
 struct MermaidViewState {
     /// Whether the source code is shown instead of the rendered diagram.
     showing_code: bool,
+    /// Whether the diagram is shown in a full-window overlay panel.
+    expanded: bool,
     /// The display scale relative to the diagram's natural size; 1.0 is 1:1.
     zoom: f32,
     /// Whether the user zoomed out to the fit-to-width floor. While set, the
@@ -442,6 +444,15 @@ struct MermaidViewState {
     zoomed_to_fit: bool,
     /// Horizontal scroll position, used when the diagram overflows.
     scroll_handle: ScrollHandle,
+    /// Horizontal scroll position of the expanded overlay panel, kept
+    /// separate from `scroll_handle` since both containers can be laid out
+    /// simultaneously.
+    expanded_horizontal_scroll_handle: ScrollHandle,
+    /// Vertical scroll position of the expanded overlay panel.
+    expanded_vertical_scroll_handle: ScrollHandle,
+    /// Focus handle of the expanded overlay panel, created lazily when the
+    /// panel first opens, so Esc can dismiss it.
+    expanded_focus_handle: Option<FocusHandle>,
     /// The pending debounced re-raster scheduled by the last zoom change.
     debounce_task: Option<Task<()>>,
     /// Overrides the scroll container width, which tests can't obtain from
@@ -466,9 +477,13 @@ impl Default for MermaidViewState {
     fn default() -> Self {
         Self {
             showing_code: false,
+            expanded: false,
             zoom: 1.0,
             zoomed_to_fit: false,
             scroll_handle: ScrollHandle::new(),
+            expanded_horizontal_scroll_handle: ScrollHandle::new(),
+            expanded_vertical_scroll_handle: ScrollHandle::new(),
+            expanded_focus_handle: None,
             debounce_task: None,
             #[cfg(test)]
             container_width_for_test: None,
@@ -775,6 +790,45 @@ impl Markdown {
     pub(crate) fn toggle_mermaid_tab(&mut self, source_offset: usize) {
         let view = self.mermaid_views.entry(source_offset).or_default();
         view.showing_code = !view.showing_code;
+    }
+
+    pub(crate) fn is_mermaid_expanded(&self, source_offset: usize) -> bool {
+        self.mermaid_views
+            .get(&source_offset)
+            .is_some_and(|view| view.expanded)
+    }
+
+    pub(crate) fn set_mermaid_expanded(&mut self, source_offset: usize, expanded: bool) {
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        view.expanded = expanded;
+    }
+
+    /// The (horizontal, vertical) scroll handles of a diagram's expanded
+    /// overlay panel.
+    pub(crate) fn mermaid_expanded_scroll_handles(
+        &mut self,
+        source_offset: usize,
+    ) -> (ScrollHandle, ScrollHandle) {
+        let view = self.mermaid_views.entry(source_offset).or_default();
+        (
+            view.expanded_horizontal_scroll_handle.clone(),
+            view.expanded_vertical_scroll_handle.clone(),
+        )
+    }
+
+    /// The focus handle of a diagram's expanded overlay panel, so the panel
+    /// can take focus while open and be dismissed with Esc.
+    pub(crate) fn mermaid_expanded_focus_handle(
+        &mut self,
+        source_offset: usize,
+        cx: &mut App,
+    ) -> FocusHandle {
+        self.mermaid_views
+            .entry(source_offset)
+            .or_default()
+            .expanded_focus_handle
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone()
     }
 
     pub(crate) fn mermaid_zoom_level(&self, source_offset: usize) -> f32 {
