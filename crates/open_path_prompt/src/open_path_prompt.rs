@@ -22,7 +22,7 @@ use std::{
 use ui::{Context, LabelLike, ListItem, Window};
 use ui::{HighlightedLabel, ListItemSpacing, prelude::*};
 use util::{
-    maybe,
+    ResultExt, maybe,
     paths::{PathStyle, compare_paths},
 };
 use workspace::Workspace;
@@ -671,8 +671,17 @@ impl PickerDelegate for OpenPathDelegate {
                     if parent_path == &self.prompt_root && candidate.path.string.is_empty() {
                         PathBuf::from(&self.prompt_root)
                     } else {
-                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
-                            .join(&candidate.path.string)
+                        let Some(confirmed_path) = self
+                            .path_style
+                            .join_path_preserving_components(
+                                Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
+                                &candidate.path.string,
+                            )
+                            .log_err()
+                        else {
+                            return;
+                        };
+                        confirmed_path
                     };
                 if let Some(tx) = self.tx.take() {
                     tx.send(Some(vec![confirmed_path])).ok();
@@ -692,8 +701,17 @@ impl PickerDelegate for OpenPathDelegate {
                         if parent_path == &self.prompt_root && user_input.file.string.is_empty() {
                             PathBuf::from(&self.prompt_root)
                         } else {
-                            Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
-                                .join(&user_input.file.string)
+                            let Some(prompted_path) = self
+                                .path_style
+                                .join_path_preserving_components(
+                                    Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref()),
+                                    &user_input.file.string,
+                                )
+                                .log_err()
+                            else {
+                                return;
+                            };
+                            prompted_path
                         };
                     if user_input.exists {
                         self.should_dismiss = false;

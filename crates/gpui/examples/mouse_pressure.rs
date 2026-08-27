@@ -26,8 +26,8 @@ impl Render for MousePressureExample {
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(format!("Pressure stage: {:?}", &self.pressure_stage))
-            .child(format!("Pressure amount: {:.2}", &self.pressure_amount))
+            .child(format!("Pressure stage: {:?}", self.pressure_stage))
+            .child(format!("Pressure amount: {:.2}", self.pressure_amount))
             .on_mouse_pressure(cx.listener(Self::on_mouse_pressure))
     }
 }

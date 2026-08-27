@@ -1,8 +1,12 @@
 pub(super) mod blame;
 
 use super::*;
-use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage, status::FileStatus};
+use ::git::{
+    Oid, Restore, blame::BlameEntry, commit::ParsedCommitMessage, repository::RepoPath,
+    status::FileStatus,
+};
 use buffer_diff::{BufferDiff, DiffHunkStatus, DiffHunkStatusKind};
+use project::git_store::Repository;
 
 #[derive(Clone)]
 pub struct ResolvedDiffHunk {
@@ -1665,7 +1669,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to copy permalink: {err}");
+                let message = format!("Failed to copy permalink to line: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -1706,7 +1710,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to open permalink: {err}");
+                let message = format!("Failed to open permalink to line: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -2145,15 +2149,36 @@ impl Editor {
         })
     }
 
+    pub fn set_blame(
+        &mut self,
+        blame: Entity<GitBlame>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.blame_subscription = Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
+        self.blame = Some(blame);
+        self.show_git_blame_gutter = true;
+        cx.notify();
+    }
+
     fn start_git_blame(
         &mut self,
         user_triggered: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self
+            .blame
+            .as_ref()
+            .is_some_and(|blame| blame.read(cx).is_static())
+        {
+            return;
+        }
         if let Some(project) = self.project() {
             if let Some(buffer) = self.buffer().read(cx).as_singleton()
-                && buffer.read(cx).file().is_none()
+                && buffer.read(cx).file().is_none_or(|file| {
+                    matches!(file.disk_state(), language::DiskState::Historic { .. })
+                })
             {
                 return;
             }
@@ -2248,7 +2273,19 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let blame = self.blame.as_ref()?;
+        let (blame_entry, repo) = self.blame_entry_at_cursor(window, cx)?;
+        let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
+        let workspace = self.workspace()?.downgrade();
+        renderer.open_blame_commit(blame_entry, repo, workspace, window, cx);
+        None
+    }
+
+    fn blame_entry_at_cursor(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(BlameEntry, Entity<Repository>)> {
+        let blame = self.blame.clone()?;
         let snapshot = self.snapshot(window, cx);
         let cursor = self
             .selections
@@ -2269,11 +2306,79 @@ impl Editor {
                     .next()
             })
             .flatten()?;
+        let repository = blame.read(cx).repository(cx, buffer.remote_id())?;
+        Some((blame_entry, repository))
+    }
+
+    pub(crate) fn blame_revision_target(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(RepoPath, Oid, Entity<Repository>)> {
+        let (blame_entry, repository) = self.blame_entry_at_cursor(window, cx)?;
+        let highlighted_sha = self
+            .blame
+            .as_ref()
+            .and_then(|blame| blame.read(cx).highlighted_sha());
+        let (revision, path) = blame_entry.revision_target(highlighted_sha)?;
+        Some((path, revision, repository))
+    }
+
+    pub(crate) fn blame_previous_revision_target(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(RepoPath, Oid, Entity<Repository>)> {
+        let (blame_entry, repository) = self.blame_entry_at_cursor(window, cx)?;
+        let (revision, path) = blame_entry.previous_revision_target()?;
+        Some((path, revision, repository))
+    }
+
+    pub(super) fn blame_revision(
+        &mut self,
+        _: &BlameRevision,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((path, revision, repository)) = self.blame_revision_target(window, cx) else {
+            return;
+        };
+        self.open_blame_revision(path, revision, repository, window, cx);
+    }
+
+    pub(super) fn blame_previous_revision(
+        &mut self,
+        _: &BlamePreviousRevision,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((path, revision, repository)) = self.blame_previous_revision_target(window, cx)
+        else {
+            return;
+        };
+        self.open_blame_revision(path, revision, repository, window, cx);
+    }
+
+    fn open_blame_revision(
+        &mut self,
+        path: RepoPath,
+        revision: Oid,
+        repository: Entity<Repository>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-        let repo = blame.read(cx).repository(cx, buffer.remote_id())?;
-        let workspace = self.workspace()?.downgrade();
-        renderer.open_blame_commit(blame_entry, repo, workspace, window, cx);
-        None
+        renderer.open_blame_revision(
+            path,
+            revision,
+            repository,
+            workspace.downgrade(),
+            window,
+            cx,
+        );
     }
 
     fn has_blame_entries(&self, cx: &App) -> bool {

@@ -3,13 +3,10 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrder,
+    DockSide, IntoGpui, ProjectPanelEntrySpacing, ProjectPanelSortMode, ProjectPanelSortOrder,
     RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
 };
-use ui::{
-    px,
-    scrollbars::{ScrollbarVisibility, ShowScrollbar},
-};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct ProjectPanelSettings {
@@ -102,7 +99,7 @@ impl Settings for ProjectPanelSettings {
         Self {
             button: project_panel.button.unwrap(),
             hide_gitignore: project_panel.hide_gitignore.unwrap(),
-            default_width: px(project_panel.default_width.unwrap()),
+            default_width: project_panel.default_width.unwrap().into_gpui(),
             dock: project_panel.dock.unwrap(),
             entry_spacing: project_panel.entry_spacing.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
@@ -115,7 +112,7 @@ impl Settings for ProjectPanelSettings {
                     .enabled
                     .unwrap()
                     .is_git_status_enabled(),
-            indent_size: project_panel.indent_size.unwrap(),
+            indent_size: *project_panel.indent_size.unwrap(),
             indent_guides: IndentGuidesSettings {
                 show: project_panel.indent_guides.unwrap().show.unwrap(),
             },

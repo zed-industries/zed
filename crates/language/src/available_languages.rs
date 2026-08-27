@@ -1,5 +1,4 @@
-use crate::{LanguageId, LanguageMatcher, LanguageName, LoadedLanguage, ManifestName};
-use anyhow::Result;
+use crate::{LanguageId, LanguageLoader, LanguageMatcher, LanguageName, ManifestName};
 use collections::FxHashMap;
 use globset::GlobSet;
 use smallvec::SmallVec;
@@ -15,7 +14,7 @@ pub struct AvailableLanguage {
     pub(super) grammar: Option<Arc<str>>,
     pub(super) matcher: Arc<LanguageMatcher>,
     pub(super) hidden: bool,
-    pub(super) load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+    pub(super) load: LanguageLoader,
     pub(super) loaded: bool,
     pub(super) manifest_name: Option<ManifestName>,
 }
@@ -57,7 +56,7 @@ impl AvailableLanguages {
         matcher: Arc<LanguageMatcher>,
         hidden: bool,
         manifest_name: Option<ManifestName>,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+        load: LanguageLoader,
     ) -> bool {
         if let Some(existing_language) = self
             .0

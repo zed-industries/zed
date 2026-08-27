@@ -1666,7 +1666,7 @@ fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &m
 }
 
 #[gpui::test]
-fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut App) {
+async fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut TestAppContext) {
     let text = indoc! {r#"
         CLAY(CLAY_ID("MenuContainer"),
              CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
@@ -1693,7 +1693,10 @@ fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut App) {
         .unwrap(),
     );
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
-    let snapshot = buffer.read(cx).snapshot();
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
     assert_has_syntax_errors(&snapshot);
 
     let mut matches = snapshot
@@ -2670,6 +2673,42 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
             }
             "
             .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_replacing_line_content_keeps_manual_indent(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let (text, ranges_to_replace) = marked_text_ranges(
+            // 8 spaces here to represent the additional manual indentation
+            indoc! {r#"
+                fn main() {
+                        «println!("hello");»
+                }
+            "#},
+            false,
+        );
+
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        buffer.edit(
+            [(ranges_to_replace[0].clone(), "let x = 1;")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            indoc! {r#"
+                fn main() {
+                        let x = 1;
+                }
+            "#}
         );
 
         buffer
@@ -4076,13 +4115,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             let range = buffer.random_byte_range(0, &mut rng);
                             let range = range.to_point_utf16(buffer);
                             let range = range.start..range.end;
-                            DiagnosticEntry {
+                            DiagnosticEntry::new(
                                 range,
-                                diagnostic: Diagnostic {
-                                    message: post_inc(&mut next_diagnostic_id).to_string(),
+                                Diagnostic {
+                                    message: post_inc(&mut next_diagnostic_id).to_string().into(),
                                     ..Default::default()
                                 },
-                            }
+                            )
                         }),
                         buffer,
                     );
