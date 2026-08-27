@@ -440,22 +440,23 @@ impl WindowsWindow {
             draw_coordinator,
         } = creation_info;
         register_window_class(icon);
-        let parent_hwnd = if params.kind == WindowKind::Dialog || params.kind == WindowKind::Floating {
-            let parent_window = unsafe { GetActiveWindow() };
-            if parent_window.is_invalid() {
-                None
-            } else {
-                // Disable the parent window to make this dialog modal
-                if params.kind == WindowKind::Dialog {
-                    unsafe {
-                        EnableWindow(parent_window, false).as_bool();
-                    };
+        let parent_hwnd =
+            if params.kind == WindowKind::Dialog || params.kind == WindowKind::Floating {
+                let parent_window = unsafe { GetActiveWindow() };
+                if parent_window.is_invalid() {
+                    None
+                } else {
+                    // Disable the parent window to make this dialog modal
+                    if params.kind == WindowKind::Dialog {
+                        unsafe {
+                            EnableWindow(parent_window, false).as_bool();
+                        };
+                    }
+                    Some(parent_window)
                 }
-                Some(parent_window)
-            }
-        } else {
-            None
-        };
+            } else {
+                None
+            };
         let hide_title_bar = params
             .titlebar
             .as_ref()
