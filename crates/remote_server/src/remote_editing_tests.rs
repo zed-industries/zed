@@ -30,7 +30,8 @@ use gpui::{
 };
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Point,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    OffsetRangeExt, Point, PointUtf16,
     language_settings::{AllLanguageSettings, ConfiguredLanguageServer, LanguageSettings},
 };
 use lsp::{
@@ -1118,6 +1119,182 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
+}
+
+#[gpui::test]
+async fn test_remote_call_hierarchy(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn main() { helper(); }\nfn helper() {}\n"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    fs.insert_tree(
+        path!("/code/project1/.zed"),
+        json!({
+            "settings.json": r#"
+          {
+            "languages": {"Rust":{"language_servers":["rust-analyzer"]}},
+            "lsp": {
+              "rust-analyzer": {
+                "binary": {
+                  "path": "~/.cargo/bin/rust-analyzer"
+                }
+              }
+            }
+          }"#
+        }),
+    )
+    .await;
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: Arc::new(LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..LanguageMatcher::default()
+            }),
+            ..LanguageConfig::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: lsp::ServerCapabilities {
+                    call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
+                    ..lsp::ServerCapabilities::default()
+                },
+                ..FakeLspAdapter::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                call_hierarchy_provider: Some(lsp::CallHierarchyServerCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            None,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let fake_lsp = fake_lsp.next().await.unwrap();
+    let test_uri = lsp::Uri::from_file_path(path!("/code/project1/src/lib.rs")).unwrap();
+
+    fake_lsp.set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+        let uri = test_uri.clone();
+        move |_, _| {
+            let uri = uri.clone();
+            async move {
+                Ok(Some(vec![lsp::CallHierarchyItem {
+                    name: "main".into(),
+                    kind: lsp::SymbolKind::FUNCTION,
+                    tags: None,
+                    detail: Some("fn main()".into()),
+                    uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 21)),
+                    selection_range: lsp::Range::new(
+                        lsp::Position::new(0, 3),
+                        lsp::Position::new(0, 7),
+                    ),
+                    data: None,
+                }]))
+            }
+        }
+    });
+
+    fake_lsp.set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+        move |_, _| {
+            let uri = test_uri.clone();
+            async move {
+                Ok(Some(vec![lsp::CallHierarchyOutgoingCall {
+                    to: lsp::CallHierarchyItem {
+                        name: "helper".into(),
+                        kind: lsp::SymbolKind::FUNCTION,
+                        tags: None,
+                        detail: Some("fn helper()".into()),
+                        uri,
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 13)),
+                        selection_range: lsp::Range::new(
+                            lsp::Position::new(1, 3),
+                            lsp::Position::new(1, 9),
+                        ),
+                        data: None,
+                    },
+                    from_ranges: Vec::new(),
+                }]))
+            }
+        }
+    });
+
+    let items = project
+        .update(cx, |project, cx| {
+            project.prepare_call_hierarchy(&buffer, PointUtf16::new(0, 3), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].name, "main");
+    assert_eq!(items[0].buffer, buffer);
+    items[0].buffer.read_with(cx, |item_buffer, _| {
+        assert_eq!(
+            items[0].selection_range.to_point(item_buffer),
+            Point::new(0, 3)..Point::new(0, 7)
+        );
+    });
+
+    let outgoing_calls = project
+        .update(cx, |project, cx| {
+            project.outgoing_calls(items[0].clone(), cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(outgoing_calls.len(), 1);
+    assert_eq!(outgoing_calls[0].to.name, "helper");
+    assert_eq!(outgoing_calls[0].to.buffer, buffer);
+    outgoing_calls[0].to.buffer.read_with(cx, |item_buffer, _| {
+        assert_eq!(
+            outgoing_calls[0].to.selection_range.to_point(item_buffer),
+            Point::new(1, 3)..Point::new(1, 9)
+        );
+    });
 }
 
 #[gpui::test]

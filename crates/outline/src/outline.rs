@@ -16,7 +16,6 @@ use settings::Settings;
 use theme::ActiveTheme;
 use theme_settings::ThemeSettings;
 use ui::{ListItem, ListItemSpacing, prelude::*};
-use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
@@ -434,7 +433,7 @@ impl PickerDelegate for OutlineViewDelegate {
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<OutlineViewDelegate>>) {
         self.outline_view
             .update(cx, |_, cx| cx.emit(DismissEvent))
-            .log_err();
+            .ok();
         self.restore_active_editor(window, cx);
     }
 
