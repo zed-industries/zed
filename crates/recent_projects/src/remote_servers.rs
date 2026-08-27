@@ -382,10 +382,10 @@ impl Focusable for ProjectPicker {
 impl ProjectPicker {
     fn new(
         create_new_window: bool,
-        index: ServerIndex,
+        index: Option<ServerIndex>,
         connection: RemoteConnectionOptions,
         project: Entity<Project>,
-        home_dir: RemotePathBuf,
+        initial_directory: RemotePathBuf,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<RemoteServerProjects>,
@@ -396,7 +396,7 @@ impl ProjectPicker {
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx).embedded();
-            picker.set_query(&home_dir.to_string(), window, cx);
+            picker.set_query(&initial_directory.to_string(), window, cx);
             picker
         });
 
@@ -453,38 +453,38 @@ impl ProjectPicker {
                     let (paths, paths_with_positions) =
                         determine_paths_with_positions(&remote_connection, paths).await;
 
-                    cx.update(|_, cx| {
-                        let fs = app_state.fs.clone();
-                        update_settings_file(fs, cx, {
-                            let paths = paths
-                                .iter()
-                                .map(|path| path.to_string_lossy().into_owned())
-                                .collect();
-                            move |settings, _| match index {
-                                ServerIndex::Ssh(index) => {
-                                    if let Some(server) = settings
-                                        .remote
-                                        .ssh_connections
-                                        .as_mut()
-                                        .and_then(|connections| connections.get_mut(index.0))
-                                    {
-                                        server.projects.insert(RemoteProject { paths });
-                                    };
+                    if let Some(index) = index {
+                        cx.update(|_, cx| {
+                            let fs = app_state.fs.clone();
+                            update_settings_file(fs, cx, {
+                                let paths = paths
+                                    .iter()
+                                    .map(|path| path.to_string_lossy().into_owned())
+                                    .collect();
+                                move |settings, _| match index {
+                                    ServerIndex::Ssh(index) => {
+                                        if let Some(server) =
+                                            settings.remote.ssh_connections.as_mut().and_then(
+                                                |connections| connections.get_mut(index.0),
+                                            )
+                                        {
+                                            server.projects.insert(RemoteProject { paths });
+                                        };
+                                    }
+                                    ServerIndex::Wsl(index) => {
+                                        if let Some(server) =
+                                            settings.remote.wsl_connections.as_mut().and_then(
+                                                |connections| connections.get_mut(index.0),
+                                            )
+                                        {
+                                            server.projects.insert(RemoteProject { paths });
+                                        };
+                                    }
                                 }
-                                ServerIndex::Wsl(index) => {
-                                    if let Some(server) = settings
-                                        .remote
-                                        .wsl_connections
-                                        .as_mut()
-                                        .and_then(|connections| connections.get_mut(index.0))
-                                    {
-                                        server.projects.insert(RemoteProject { paths });
-                                    };
-                                }
-                            }
-                        });
-                    })
-                    .log_err();
+                            });
+                        })
+                        .log_err();
+                    }
 
                     let window = if create_new_window {
                         let options = cx
@@ -1206,7 +1206,13 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                         let index = *index;
                         remote_server_projects
                             .update(cx, |this, cx| {
-                                this.create_remote_project(index, connection.into(), window, cx);
+                                this.create_remote_project(
+                                    Some(index),
+                                    connection.into(),
+                                    None,
+                                    window,
+                                    cx,
+                                );
                             })
                             .ok();
                     }
@@ -1217,8 +1223,9 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                             .update(cx, |this, cx| {
                                 let new_ix = this.create_host_from_ssh_config(&host, cx);
                                 this.create_remote_project(
-                                    new_ix.into(),
+                                    Some(new_ix.into()),
                                     connection.into(),
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -1548,10 +1555,10 @@ impl RemoteServerProjects {
 
     fn project_picker(
         create_new_window: bool,
-        index: ServerIndex,
+        index: Option<ServerIndex>,
         connection_options: remote::RemoteConnectionOptions,
         project: Entity<Project>,
-        home_dir: RemotePathBuf,
+        initial_directory: RemotePathBuf,
         window: &mut Window,
         cx: &mut Context<Self>,
         workspace: WeakEntity<Workspace>,
@@ -1563,7 +1570,7 @@ impl RemoteServerProjects {
             index,
             connection_options,
             project,
-            home_dir,
+            initial_directory,
             workspace,
             window,
             cx,
@@ -1774,8 +1781,9 @@ impl RemoteServerProjects {
 
     fn create_remote_project(
         &mut self,
-        index: ServerIndex,
+        index: Option<ServerIndex>,
         connection_options: RemoteConnectionOptions,
+        initial_directory: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1840,17 +1848,21 @@ impl RemoteServerProjects {
                         )
                     })?;
 
-                    let home_dir = project
-                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))
-                        .await
-                        .and_then(|path| path.into_abs_path())
-                        .map(|path| RemotePathBuf::new(path, path_style))
-                        .unwrap_or_else(|| match path_style {
-                            PathStyle::Unix => RemotePathBuf::from_str("/", PathStyle::Unix),
-                            PathStyle::Windows => {
-                                RemotePathBuf::from_str("C:\\", PathStyle::Windows)
-                            }
-                        });
+                    let initial_directory = if let Some(initial_directory) = initial_directory {
+                        RemotePathBuf::new(initial_directory, path_style)
+                    } else {
+                        project
+                            .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))
+                            .await
+                            .and_then(|path| path.into_abs_path())
+                            .map(|path| RemotePathBuf::new(path, path_style))
+                            .unwrap_or_else(|| match path_style {
+                                PathStyle::Unix => RemotePathBuf::from_str("/", PathStyle::Unix),
+                                PathStyle::Windows => {
+                                    RemotePathBuf::from_str("C:\\", PathStyle::Windows)
+                                }
+                            })
+                    };
 
                     workspace
                         .update_in(cx, |workspace, window, cx| {
@@ -1861,7 +1873,7 @@ impl RemoteServerProjects {
                                     index,
                                     connection_options,
                                     project,
-                                    home_dir,
+                                    initial_directory,
                                     window,
                                     cx,
                                     weak,
