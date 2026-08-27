@@ -7,13 +7,14 @@ use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use semver::Version as SemanticVersion;
 use std::collections::BTreeMap;
+use std::process::Output;
 use std::time::Instant;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 use util::ResultExt;
-use util::command::Stdio;
+use util::command::{Command, Stdio};
 use util::shell::ShellKind;
 use util::{
     paths::{PathStyle, RemotePathBuf},
@@ -50,6 +51,101 @@ pub struct DockerConnectionOptions {
     pub upload_binary_over_docker_exec: bool,
     pub use_podman: bool,
     pub remote_env: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct RunningContainer {
+    #[serde(rename = "ID", alias = "Id")]
+    pub id: String,
+    pub image: String,
+    pub names: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunningContainerDefaults {
+    pub remote_user: String,
+    pub working_directory: String,
+}
+
+const CONTAINER_DEFAULTS_MARKER: &str = "=====ZED_CONTAINER_DEFAULTS_7f3a9c=====";
+
+fn container_cli(use_podman: bool) -> &'static str {
+    if use_podman { "podman" } else { "docker" }
+}
+
+fn parse_running_containers(output: &str) -> Result<Vec<RunningContainer>> {
+    output
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str(line)
+                .with_context(|| format!("failed to parse container list entry: {line}"))
+        })
+        .collect()
+}
+
+fn command_output(command: &Command, output: Output) -> Result<String> {
+    anyhow::ensure!(
+        output.status.success(),
+        "failed to run command {command:?}: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+pub async fn running_containers(use_podman: bool) -> Result<Vec<RunningContainer>> {
+    let mut command = util::command::new_command(container_cli(use_podman));
+    command.args([
+        "ps",
+        "--no-trunc",
+        r#"--format={"ID":{{json .ID}},"Image":{{json .Image}},"Names":{{json .Names}}}"#,
+    ]);
+    let output = command
+        .output()
+        .await
+        .with_context(|| format!("failed to run {command:?}"))?;
+    let output = command_output(&command, output)?;
+    parse_running_containers(&output)
+}
+
+fn parse_running_container_defaults(output: &str) -> Result<RunningContainerDefaults> {
+    let Some((_, after_start)) = output.split_once(CONTAINER_DEFAULTS_MARKER) else {
+        anyhow::bail!("container defaults output did not contain the opening marker");
+    };
+    let Some((defaults, _)) = after_start.split_once(CONTAINER_DEFAULTS_MARKER) else {
+        anyhow::bail!("container defaults output did not contain the closing marker");
+    };
+    let mut lines = defaults.trim_matches(['\r', '\n']).lines();
+    let remote_user = lines.next().unwrap_or_default().trim().to_string();
+    let working_directory = lines.collect::<Vec<_>>().join("\n").trim().to_string();
+    anyhow::ensure!(!remote_user.is_empty(), "container user was empty");
+    anyhow::ensure!(
+        !working_directory.is_empty(),
+        "container working directory was empty"
+    );
+    Ok(RunningContainerDefaults {
+        remote_user,
+        working_directory,
+    })
+}
+
+pub async fn running_container_defaults(
+    container_id: &str,
+    use_podman: bool,
+) -> Result<RunningContainerDefaults> {
+    let script = format!(
+        "user=\"$(id -un 2>/dev/null || id -u)\" || exit 1; printf '{CONTAINER_DEFAULTS_MARKER}\\n%s\\n' \"$user\"; pwd; printf '{CONTAINER_DEFAULTS_MARKER}\\n'"
+    );
+    let mut command = util::command::new_command(container_cli(use_podman));
+    command.args(["exec", container_id, "sh", "-c", &script]);
+    let output = command
+        .output()
+        .await
+        .with_context(|| format!("failed to inspect running container {container_id}"))?;
+    let output = command_output(&command, output)
+        .with_context(|| format!("failed to inspect running container {container_id}"))?;
+    parse_running_container_defaults(&output)
 }
 
 pub(crate) struct DockerExecConnection {
@@ -120,11 +216,7 @@ impl DockerExecConnection {
     }
 
     fn docker_cli(&self) -> &str {
-        if self.connection_options.use_podman {
-            "podman"
-        } else {
-            "docker"
-        }
+        container_cli(self.connection_options.use_podman)
     }
 
     /// Run a shell command inside the container and reliably extract its output
@@ -875,5 +967,44 @@ impl RemoteConnection for DockerExecConnection {
 
     fn default_system_shell(&self) -> String {
         String::from("/bin/sh")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_running_containers() {
+        let output = concat!(
+            r#"{"ID":"0123456789abcdef","Image":"example/api:latest","Names":"api"}"#,
+            "\n",
+            r#"{"Id":"fedcba9876543210","Image":"postgres:17","Names":"database"}"#,
+            "\n"
+        );
+
+        let containers = parse_running_containers(output).expect("container output should parse");
+
+        assert_eq!(containers.len(), 2);
+        assert_eq!(containers[0].id, "0123456789abcdef");
+        assert_eq!(containers[0].names, "api");
+        assert_eq!(containers[0].image, "example/api:latest");
+        assert_eq!(containers[1].id, "fedcba9876543210");
+        assert_eq!(containers[1].names, "database");
+    }
+
+    #[test]
+    fn parses_running_container_defaults_with_surrounding_output() {
+        let output = format!(
+            "shell noise\n{CONTAINER_DEFAULTS_MARKER}\n1001\n/workspaces/project with spaces\n{CONTAINER_DEFAULTS_MARKER}\nmore noise"
+        );
+
+        assert_eq!(
+            parse_running_container_defaults(&output).expect("container defaults should parse"),
+            RunningContainerDefaults {
+                remote_user: "1001".to_string(),
+                working_directory: "/workspaces/project with spaces".to_string(),
+            }
+        );
     }
 }

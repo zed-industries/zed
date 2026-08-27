@@ -15,7 +15,10 @@ pub use remote_client::{
 pub use remote_identity::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
 };
-pub use transport::docker::DockerConnectionOptions;
+pub use transport::docker::{
+    DockerConnectionOptions, RunningContainer, RunningContainerDefaults,
+    running_container_defaults, running_containers,
+};
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;
 #[cfg(target_os = "windows")]
