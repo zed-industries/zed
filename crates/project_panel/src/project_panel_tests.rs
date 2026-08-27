@@ -8,7 +8,8 @@ use git::{
 };
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSourceKind, LanguageServerId, PointUtf16, Unclipped,
+    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
+    PointUtf16, Unclipped,
 };
 use menu::Cancel;
 use pretty_assertions::assert_eq;
@@ -11836,7 +11837,7 @@ async fn test_diagnostic_mark_decorates_the_row_glyph(cx: &mut gpui::TestAppCont
                     Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 0)),
                     Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "an error".to_string(),
+                        message: DiagnosticMessage::from("an error"),
                         source_kind: DiagnosticSourceKind::Pushed,
                         is_primary: true,
                         ..Default::default()
