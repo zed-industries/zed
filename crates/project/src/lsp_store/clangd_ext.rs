@@ -30,7 +30,7 @@ impl lsp::notification::Notification for InactiveRegions {
 pub fn is_inactive_region(diag: &Diagnostic) -> bool {
     diag.is_unnecessary
         && diag.severity == INACTIVE_DIAGNOSTIC_SEVERITY
-        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag.message.as_str() == INACTIVE_REGION_MESSAGE
         && diag
             .source
             .as_ref()
@@ -39,7 +39,7 @@ pub fn is_inactive_region(diag: &Diagnostic) -> bool {
 
 pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
     diag.severity == Some(INACTIVE_DIAGNOSTIC_SEVERITY)
-        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag.message.as_str() == INACTIVE_REGION_MESSAGE
         && diag
             .source
             .as_ref()
@@ -71,7 +71,7 @@ pub fn register_notifications(
                             range,
                             severity: Some(INACTIVE_DIAGNOSTIC_SEVERITY),
                             source: Some(CLANGD_SERVER_NAME.to_string()),
-                            message: INACTIVE_REGION_MESSAGE.to_string(),
+                            message: lsp::DiagnosticMessage::from(INACTIVE_REGION_MESSAGE),
                             tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
                             ..lsp::Diagnostic::default()
                         })
