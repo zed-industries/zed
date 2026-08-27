@@ -6,16 +6,13 @@ use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
 use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy_nucleo::StringMatch;
 use gpui::{
-    AbsoluteLength, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    HighlightStyle, ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle,
-    WeakEntity, Window, div, rems,
+    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, WeakEntity, Window, div, rems,
 };
 use language::{OffsetRangeExt, Outline, OutlineItem, OutlineSearchEntry};
 use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
-use settings::Settings;
 use theme::ActiveTheme;
-use theme_settings::ThemeSettings;
-use ui::{ListItem, ListItemSpacing, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*, utils::buffer_text_style};
 use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
@@ -476,22 +473,8 @@ pub fn render_item<T, M: IntoIterator<Item = Range<usize>>>(
         .into_iter()
         .map(|range| (range, highlight_style));
 
-    let settings = ThemeSettings::get_global(cx);
-    let buffer_font_size = settings.buffer_font_size(cx);
-
-    // TODO: We probably shouldn't need to build a whole new text style here
-    // but I'm not sure how to get the current one and modify it.
-    // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
-    let text_style = TextStyle {
-        color: cx.theme().colors().text,
-        font_family: settings.buffer_font.family.clone(),
-        font_features: settings.buffer_font.features.clone(),
-        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: AbsoluteLength::from(buffer_font_size),
-        font_weight: settings.buffer_font.weight,
-        line_height: relative(1.),
-        ..Default::default()
-    };
+    let text_style = buffer_text_style(cx);
+    let buffer_font_size = text_style.font_size;
     let highlights = gpui::combine_highlights(
         custom_highlights,
         outline_item.highlight_ranges.iter().cloned(),
