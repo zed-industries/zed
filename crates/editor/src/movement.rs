@@ -190,26 +190,16 @@ pub(crate) fn down_by_rows(
 }
 
 /// Returns a position of the start of line.
-/// If `stop_at_soft_boundaries` is true, the returned position is that of the
-/// displayed line (e.g. it could actually be in the middle of a text line if that line is soft-wrapped).
-/// Otherwise it's always going to be the start of a logical line.
-pub fn line_beginning(
-    map: &DisplaySnapshot,
-    display_point: DisplayPoint,
-    stop_at_soft_boundaries: bool,
-) -> DisplayPoint {
-    let point = display_point.to_point(map);
-    let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
-    let line_start = map.prev_line_boundary(point).1;
-
-    if stop_at_soft_boundaries && display_point != soft_line_start {
-        soft_line_start
-    } else {
-        line_start
-    }
+///
+/// It's always going to be the start of a logical line.
+/// If you want to stop at last indented position or soft boundaries,
+/// use [`indented_line_beginning`] instead.
+pub fn line_beginning(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    map.prev_line_boundary(display_point.to_point(map)).1
 }
 
-/// Returns the last indented position on a given line.
+/// Returns the last indented position or the start of a given line.
+///
 /// If `stop_at_soft_boundaries` is true, the returned [`DisplayPoint`] is that of a
 /// displayed line (e.g. if there's soft wrap it's gonna be returned),
 /// otherwise it's always going to be a start of a logical line.
