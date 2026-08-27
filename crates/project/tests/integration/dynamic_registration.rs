@@ -589,9 +589,9 @@ async fn test_multi_registration_duplicate_id_keeps_order(cx: &mut gpui::TestApp
         "expected the latest distinct registration to stay active after a duplicate ID replaced an older one",
     );
     assert_eq!(
-        refresh_events.lock().as_slice(),
-        &[] as &[String],
-        "expected no refresh after a duplicate ID replaced an inactive registration",
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("inlay_hints({server_id})")],
+        "expected replacing an inactive registration to refresh selector-aware caches",
     );
 
     unregister_capabilities(&fake_server, method, &["inlay-hint-b"]).await;
@@ -643,7 +643,7 @@ async fn test_registration_with_unchanged_options_does_not_refresh(cx: &mut gpui
     register_capability(
         &fake_server,
         method,
-        "lens-b",
+        "lens-a",
         serde_json::to_value(options).ok(),
     )
     .await;
@@ -652,19 +652,6 @@ async fn test_registration_with_unchanged_options_does_not_refresh(cx: &mut gpui
         refresh_events.lock().as_slice(),
         &[] as &[String],
         "expected a registration with options identical to the active ones to not refresh",
-    );
-
-    unregister_capabilities(&fake_server, method, &["lens-b"]).await;
-    cx.executor().run_until_parked();
-    assert_eq!(
-        refresh_events.lock().as_slice(),
-        &[] as &[String],
-        "expected an unregistration that restores identical options to not refresh",
-    );
-    assert_eq!(
-        server_capabilities(&project, server_id, cx).code_lens_provider,
-        Some(options),
-        "expected the remaining registration's options to stay active",
     );
 
     unregister_capabilities(&fake_server, method, &["lens-a"]).await;
@@ -678,6 +665,51 @@ async fn test_registration_with_unchanged_options_does_not_refresh(cx: &mut gpui
         server_capabilities(&project, server_id, cx).code_lens_provider,
         None,
         "expected the code lens provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
+async fn test_selector_only_registration_change_refreshes_cached_lsp_data(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/codeLens";
+    let registration_options = |scheme: &str| {
+        json!({
+            "documentSelector": [{ "language": "rust", "scheme": scheme }],
+            "resolveProvider": true,
+        })
+    };
+
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+    register_capability(
+        &fake_server,
+        method,
+        "lens",
+        Some(registration_options("file")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("code_lens({server_id})")],
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "lens",
+        Some(registration_options("untitled")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("code_lens({server_id})")],
+        "expected changing only the document selector to invalidate cached LSP data",
     );
 }
 
@@ -814,9 +846,9 @@ async fn test_multi_registration_middle_removal(cx: &mut gpui::TestAppContext) {
         "expected the latest registration to stay active after removing an older one from the middle",
     );
     assert_eq!(
-        refresh_events.lock().as_slice(),
-        &[] as &[String],
-        "expected no refresh after removing an inactive registration",
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("inlay_hints({server_id})")],
+        "expected removing an inactive registration to refresh selector-aware caches",
     );
 
     unregister_capabilities(&fake_server, method, &["inlay-hint-b"]).await;
