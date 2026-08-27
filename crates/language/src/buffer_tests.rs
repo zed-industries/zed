@@ -4118,7 +4118,7 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             DiagnosticEntry::new(
                                 range,
                                 Diagnostic {
-                                    message: post_inc(&mut next_diagnostic_id).to_string(),
+                                    message: post_inc(&mut next_diagnostic_id).to_string().into(),
                                     ..Default::default()
                                 },
                             )
