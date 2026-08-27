@@ -30470,6 +30470,135 @@ let foo = 15;"#,
 }
 
 #[gpui::test]
+async fn test_goto_definition_reveals_existing_editor_in_other_pane(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.reveal_if_open = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn main() { ˇtarget(); }");
+
+    let origin_path = cx.update_editor(|editor, _, cx| editor.active_project_path(cx).unwrap());
+    let (fake_fs, worktree_id) = cx.update_workspace(|workspace, _, cx| {
+        let project = workspace.project();
+        let fake_fs = project.read(cx).fs().as_fake();
+        let worktree_id = project.read(cx).worktrees(cx).next().unwrap().read(cx).id();
+        (fake_fs, worktree_id)
+    });
+    let target_abs_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("definition.rs");
+    fake_fs
+        .insert_file(&target_abs_path, b"fn target() {}\n".to_vec())
+        .await;
+    cx.run_until_parked();
+
+    let (left_pane, right_pane) = cx.update_workspace(|workspace, window, cx| {
+        let left_pane = workspace.active_pane().clone();
+        let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, window, cx);
+        (left_pane, right_pane)
+    });
+    let origin_editor = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_path(origin_path, Some(right_pane.downgrade()), true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let target_editor = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("dir/definition.rs")),
+                Some(left_pane.downgrade()),
+                false,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let target_buffer = target_editor.read_with(&cx.cx.cx, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+    cx.update_workspace(|workspace, window, cx| {
+        assert!(workspace.activate_item(&origin_editor, true, true, window, cx));
+    });
+    cx.run_until_parked();
+    cx.update_workspace(|workspace, _, _| {
+        assert_eq!(workspace.active_pane(), &right_pane);
+    });
+
+    let target_uri = lsp::Uri::from_file_path(target_abs_path).unwrap();
+    let _go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(move |_, _| {
+            let target_uri = target_uri.clone();
+            async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                    uri: target_uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 9)),
+                })))
+            }
+        });
+
+    let navigated = origin_editor
+        .update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
+        .await
+        .expect("Failed to navigate to definition");
+    assert_eq!(navigated, Navigated::Yes);
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        assert_eq!(workspace.active_pane(), &left_pane);
+        assert_eq!(
+            left_pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap(),
+            target_editor
+        );
+        assert_eq!(
+            right_pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap(),
+            origin_editor
+        );
+        assert_eq!(
+            workspace
+                .items_of_type::<Editor>(cx)
+                .filter(|editor| {
+                    editor.read(cx).buffer().read(cx).as_singleton().as_ref()
+                        == Some(&target_buffer)
+                })
+                .count(),
+            1
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
@@ -34670,6 +34799,75 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         actions, new_actions,
         "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
     );
+}
+
+#[gpui::test]
+async fn test_reveal_if_open_uses_user_setting_for_loaded_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store
+            .set_user_settings(r#"{ "reveal_if_open": true }"#, cx)
+            .unwrap();
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "content" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let left_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let original_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("file.txt")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let buffer = original_editor.read_with(cx, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+
+    let right_pane = workspace.update_in(cx, |workspace, window, cx| {
+        let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, window, cx);
+        window.focus(&right_pane.focus_handle(cx), cx);
+        right_pane
+    });
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.active_pane(), &right_pane);
+    });
+
+    let revealed_editor = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_project_item(None, buffer.clone(), true, true, false, false, window, cx)
+    });
+    assert_eq!(revealed_editor, original_editor);
+    assert_eq!(left_pane.read_with(cx, |pane, _| pane.items_len()), 1);
+    assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 0);
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.active_pane(), &left_pane);
+    });
+
+    let duplicate_editor = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_project_item(
+            Some(right_pane.clone()),
+            buffer,
+            true,
+            true,
+            false,
+            false,
+            window,
+            cx,
+        )
+    });
+    assert_ne!(duplicate_editor, original_editor);
+    assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 1);
 }
 
 #[gpui::test]
