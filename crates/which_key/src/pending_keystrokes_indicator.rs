@@ -12,11 +12,10 @@ const MAX_TOOLTIP_BINDINGS: usize = 10;
 /// A status bar item shown while pending keystrokes both match a key binding and are a prefix of
 /// longer bindings, counting down until the shorter binding is applied.
 pub struct PendingKeystrokesIndicator {
-    pending: Option<PendingKeystrokes>,
+    pending: Option<Rc<PendingKeystrokes>>,
     pending_input_generation: u64,
 }
 
-#[derive(Clone)]
 struct PendingKeystrokes {
     keystrokes: Rc<[KeybindingKeystroke]>,
     pending_input_generation: u64,
@@ -94,7 +93,7 @@ impl PendingKeystrokesIndicator {
         });
 
         self.pending_input_generation = self.pending_input_generation.wrapping_add(1);
-        self.pending = Some(PendingKeystrokes {
+        self.pending = Some(Rc::new(PendingKeystrokes {
             keystrokes: keystrokes
                 .iter()
                 .map(|keystroke| KeybindingKeystroke::from_keystroke(keystroke.clone()))
@@ -105,7 +104,7 @@ impl PendingKeystrokesIndicator {
                 .map(|(_, keystrokes, action)| (Rc::from(keystrokes), action))
                 .collect(),
             timeout,
-        });
+        }));
     }
 }
 
