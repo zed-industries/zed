@@ -2229,6 +2229,11 @@ impl GitPanel {
             self.toggle_directory(&dir_entry.key, window, cx);
             return;
         }
+        // Opening a diff only makes sense for a single file; when more than one
+        // is marked this is a no-op, mirroring the disabled "Open Diff" menu item.
+        if self.effective_status_entries().len() > 1 {
+            return;
+        }
         maybe!({
             let selected_index = self.selected_entry?;
             let entry = self.entries.get(selected_index)?.status_entry()?;
@@ -2276,6 +2281,11 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Opening a diff only makes sense for a single file; when more than one
+        // is marked this is a no-op, mirroring the disabled "Open File Diff" menu item.
+        if self.effective_status_entries().len() > 1 {
+            return;
+        }
         maybe!({
             let entry = self
                 .entries
@@ -2292,6 +2302,11 @@ impl GitPanel {
     }
 
     fn view_file(&mut self, _: &ViewFile, window: &mut Window, cx: &mut Context<Self>) {
+        // Viewing a file only makes sense for a single file; when more than one
+        // is marked this is a no-op, mirroring the disabled "View File" menu item.
+        if self.effective_status_entries().len() > 1 {
+            return;
+        }
         maybe!({
             let entry = self.entries.get(self.selected_entry?)?.status_entry()?;
             let project_path = self
@@ -2448,7 +2463,7 @@ impl GitPanel {
         };
         let workspace = self.workspace.clone();
 
-        let all_created = entries.iter().all(|entry| entry.status.is_created());
+        let created_count = entries.iter().filter(|entry| entry.status.is_created()).count();
         let mut details = entries
             .iter()
             .filter_map(|entry| entry.repo_path.as_ref().file_name())
@@ -2458,10 +2473,16 @@ impl GitPanel {
         if entries.len() > 5 {
             details.push_str(&format!("\nand {} more…", entries.len() - 5));
         }
-        let message = if all_created {
+        // Trashing an untracked file is a permanent deletion, unlike discarding
+        // changes to a tracked file (which just reverts the working copy), so a
+        // marked set that mixes the two must say so rather than picking whichever
+        // wording matches the majority of the set.
+        let message = if created_count == entries.len() {
             "Trash these files?"
-        } else {
+        } else if created_count == 0 {
             "Discard changes to these files?"
+        } else {
+            "Discard changes to these files? Untracked files will be permanently deleted."
         };
 
         let prompt_task = if action.skip_prompt {
@@ -10507,6 +10528,171 @@ mod tests {
             !detail.contains("c.rs"),
             "prompt should not list the unmarked file, got: {detail}"
         );
+    }
+
+    #[gpui::test]
+    async fn test_discard_mixed_marked_entries_warns_about_permanent_deletion(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // a.rs is a tracked modification (discarding it just reverts the working
+        // copy); new.rs is untracked (discarding it permanently trashes the file).
+        // Marking both together must not silently pick one wording over the other.
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.rs": "changed a\n",
+                "new.rs": "new\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("a.rs", "original a\n".into())],
+        );
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        let (ix_a, ix_new) = panel.read_with(&cx, |panel, _| {
+            (
+                entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("new.rs")).unwrap(),
+            )
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(ix_a);
+            panel.marked_entries = vec![ix_a, ix_new];
+            panel.revert_selected(&git::RestoreFile::default(), window, cx);
+        });
+
+        let (message, detail) = cx
+            .pending_prompt()
+            .expect("discarding a mixed marked set should show one combined prompt");
+        assert_eq!(
+            message,
+            "Discard changes to these files? Untracked files will be permanently deleted."
+        );
+        assert!(
+            detail.contains("a.rs") && detail.contains("new.rs"),
+            "prompt should list both marked files, got: {detail}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_discard_multiple_marked_untracked_files_trashes_them(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // No status entries are set up, so both files are untracked by default
+        // (there is no head/index content for them at all).
+        let (fs, _, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "new_a.rs": "a",
+                "new_b.rs": "b",
+            }),
+            &[],
+        )
+        .await;
+
+        let (ix_a, ix_b) = panel.read_with(&cx, |panel, _| {
+            (
+                entry_index_for_repo_path(panel, &repo_path("new_a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("new_b.rs")).unwrap(),
+            )
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(ix_a);
+            panel.marked_entries = vec![ix_a, ix_b];
+            panel.revert_selected(&git::RestoreFile::default(), window, cx);
+        });
+
+        let (message, _detail) = cx
+            .pending_prompt()
+            .expect("discarding untracked marked files should show a trash confirmation");
+        assert_eq!(message, "Trash these files?");
+
+        cx.simulate_prompt_answer("Trash");
+        cx.run_until_parked();
+
+        assert!(!fs.is_file(Path::new(path!("/project/new_a.rs"))).await);
+        assert!(!fs.is_file(Path::new(path!("/project/new_b.rs"))).await);
+    }
+
+    #[gpui::test]
+    async fn test_single_file_actions_are_noop_with_multiple_marked_entries(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        // Open Diff / Open File Diff / View File are single-file actions and are
+        // shown disabled in the context menu once more than one entry is marked;
+        // the underlying Confirm/SecondaryConfirm/ViewFile keybindings must agree
+        // and no-op too, rather than silently acting on whichever row happens to
+        // be `selected_entry`.
+        let (_, _, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.rs": "a",
+                "b.rs": "b",
+            }),
+            &[
+                ("a.rs", StatusCode::Modified),
+                ("b.rs", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        let (ix_a, ix_b) = panel.read_with(&cx, |panel, _| {
+            (
+                entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("b.rs")).unwrap(),
+            )
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.selected_entry = Some(ix_a);
+            panel.marked_entries = vec![ix_a, ix_b];
+            panel.open_diff(&menu::Confirm, window, cx);
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+            panel.view_file(&ViewFile, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.update(&mut cx, |workspace, cx| {
+            assert!(workspace.item_of_type::<ProjectDiff>(cx).is_none());
+            assert!(workspace.item_of_type::<SoloDiffView>(cx).is_none());
+            assert!(workspace.item_of_type::<Editor>(cx).is_none());
+        });
     }
 
     async fn history_panel_for_project(
