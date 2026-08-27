@@ -755,6 +755,12 @@ impl CosmicTextSystemState {
 
 fn glyph_render_sources(is_emoji: bool, use_alpha_bitmap: bool) -> &'static [Source] {
     if is_emoji {
+        // The color path is left unguarded on purpose. swash only reaches the
+        // alpha decoder that panics when a strike is neither packed, PNG, nor
+        // 32-bit, and color strikes in practice are PNG or 32-bit, so they take
+        // the Png/Color branches instead. A 1-, 2- or 4-bit CBLC/CBDT strike
+        // could still reach it, but that needs nearest-ppem selection rather
+        // than the exact-size lookup below, so it is a separate change.
         &[
             Source::ColorOutline(0),
             Source::ColorBitmap(StrikeWith::BestFit),
@@ -768,9 +774,9 @@ fn glyph_render_sources(is_emoji: bool, use_alpha_bitmap: bool) -> &'static [Sou
 }
 
 fn alpha_bitmap_is_renderable(font: FontRef<'_>, glyph_id: u16, size: f32) -> bool {
-    if size == 0.0 {
-        return false;
-    }
+    // Zero width makes swash's chunk size `((0 * bits) + 7) / 8 == 0`, and
+    // `slice::chunks(0)` panics. Zero height leaves the destination buffer empty
+    // while the source still yields chunks. Neither is renderable.
     let Some(eblc) = font.table(tag_from_bytes(b"EBLC")) else {
         return false;
     };
@@ -1176,8 +1182,9 @@ mod tests {
 
     const IBM_PLEX: &[u8] =
         include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
-    // Anonymous Pro subset (OFL) with 0×0 1-bit strikes for space.
-    const ZERO_WIDTH_STRIKE: &[u8] = include_bytes!("test_data/zero_width_bitmap_strike.ttf");
+    // Generated font whose space glyph has a 0x0 mask in 1-bit strikes, the
+    // shape that crashes with Anonymous Pro. See test_data/README.md.
+    const ZERO_WIDTH_STRIKE: &[u8] = include_bytes!("../test_data/zero_width_bitmap_strike.ttf");
 
     /// Every code point of `Bidi_Class=B`, each of which starts a new bidi
     /// paragraph and so can split one line into mixed-direction paragraphs.
@@ -1594,9 +1601,9 @@ mod tests {
 
     #[test]
     fn rasterize_zero_width_bitmap_strike_falls_back_to_outline() -> Result<()> {
-        let text_system = CosmicTextSystem::new_without_system_fonts("Anonymous Pro");
+        let text_system = CosmicTextSystem::new_without_system_fonts("GpuiBitmapStrikeTest");
         text_system.add_fonts(vec![Cow::Borrowed(ZERO_WIDTH_STRIKE)])?;
-        let font_id = text_system.font_id(&gpui::font("Anonymous Pro"))?;
+        let font_id = text_system.font_id(&gpui::font("GpuiBitmapStrikeTest"))?;
         let space = text_system
             .glyph_for_char(font_id, ' ')
             .expect("space glyph");
@@ -1613,10 +1620,14 @@ mod tests {
                 subpixel_rendering: false,
                 dilation: 0,
             };
+            // This call is the regression gate: without the fix it panics inside
+            // swash with "chunk size must be non-zero" at strike.rs:439, because
+            // the space glyph's 1-bit mask is 0 wide at 10-13ppem.
             let space_bounds = text_system.glyph_raster_bounds(&space_params)?;
-            if space_bounds.size.width.0 != 0 && space_bounds.size.height.0 != 0 {
-                text_system.rasterize_glyph(&space_params, space_bounds)?;
-            }
+            assert!(
+                space_bounds.size.width.0 == 0 || space_bounds.size.height.0 == 0,
+                "space has no ink, so it should have empty raster bounds at {size}px"
+            );
 
             let a_params = RenderGlyphParams {
                 glyph_id: capital_a,
@@ -1625,7 +1636,7 @@ mod tests {
             let a_bounds = text_system.glyph_raster_bounds(&a_params)?;
             assert!(
                 a_bounds.size.width.0 > 0 && a_bounds.size.height.0 > 0,
-                "Anonymous Pro 'A' should rasterize at {size}px"
+                "'A' has a non-empty strike, so it should rasterize at {size}px"
             );
             text_system.rasterize_glyph(&a_params, a_bounds)?;
         }
