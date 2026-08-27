@@ -105,6 +105,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: none
     pub max_tabs: Option<NonZeroUsize>,
+    /// What to show when opening a new window.
+    /// Values: empty_tab, launchpad
+    /// Default: empty_tab
+    pub on_new_window: Option<OnNewWindow>,
     /// What to do when the last window is closed
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
@@ -676,6 +680,28 @@ pub struct CenteredLayoutSettings {
     ///
     /// Default: 0.2
     pub right_padding: Option<CenteredPaddingSettings>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OnNewWindow {
+    /// Show an empty untitled buffer when opening a new window
+    #[default]
+    EmptyTab,
+    /// Show the launchpad with recent projects when opening a new window
+    Launchpad,
 }
 
 #[derive(

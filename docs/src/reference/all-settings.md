@@ -3418,6 +3418,17 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 }
 ```
 
+## On New Window
+
+- Description: What to show when opening a new window.
+- Setting: `on_new_window`
+- Default: `"empty_tab"`
+
+**Options**
+
+1. `"empty_tab"`: Show an empty untitled buffer
+2. `"launchpad"`: Show the launchpad
+
 ## Instrumentation
 
 - Description: Configuration for developer-oriented instrumentation tools (profilers, tracers, etc.) that can be toggled at runtime.
