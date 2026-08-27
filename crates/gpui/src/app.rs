@@ -8,7 +8,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{Arc, atomic::Ordering::SeqCst},
+    sync::Arc,
     time::Duration,
 };
 
@@ -1761,7 +1761,7 @@ impl App {
             .clone()
             .write()
             .retain(|handle_id, focus| {
-                if focus.ref_count.load(SeqCst) == 0 {
+                if focus.liveness.upgrade().is_none() {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, cx| {

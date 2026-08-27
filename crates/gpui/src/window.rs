@@ -55,7 +55,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, Weak,
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -70,7 +70,7 @@ use self::a11y::A11y;
 #[cfg(not(target_family = "wasm"))]
 use self::a11y::ROOT_NODE_ID;
 use crate::util::{
-    atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
+    ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_stroke_to_device_pixel, round_to_device_pixel,
 };
 pub use prompts::*;
@@ -487,7 +487,7 @@ impl ArenaClearNeeded {
 
 pub(crate) type FocusMap = RwLock<SlotMap<FocusId, FocusRef>>;
 pub(crate) struct FocusRef {
-    pub(crate) ref_count: AtomicUsize,
+    pub(crate) liveness: Weak<()>,
     pub(crate) tab_index: isize,
     pub(crate) tab_stop: bool,
 }
@@ -526,6 +526,7 @@ impl FocusId {
 pub struct FocusHandle {
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
+    liveness: Arc<()>,
     /// The index of this element in the tab order.
     pub tab_index: isize,
     /// Whether this element can be focused by tab navigation.
@@ -540,8 +541,9 @@ impl std::fmt::Debug for FocusHandle {
 
 impl FocusHandle {
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
+        let liveness = Arc::new(());
         let id = handles.write().insert(FocusRef {
-            ref_count: AtomicUsize::new(1),
+            liveness: Arc::downgrade(&liveness),
             tab_index: 0,
             tab_stop: false,
         });
@@ -551,20 +553,20 @@ impl FocusHandle {
             tab_index: 0,
             tab_stop: false,
             handles: handles.clone(),
+            liveness,
         }
     }
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let focus = lock.get(id)?;
-        if atomic_incr_if_not_zero(&focus.ref_count) == 0 {
-            return None;
-        }
+        let liveness = focus.liveness.upgrade()?;
         Some(Self {
             id,
             tab_index: focus.tab_index,
             tab_stop: focus.tab_stop,
             handles: handles.clone(),
+            liveness,
         })
     }
 
@@ -637,7 +639,19 @@ impl FocusHandle {
 
 impl Clone for FocusHandle {
     fn clone(&self) -> Self {
-        Self::for_id(self.id, &self.handles).unwrap()
+        let (tab_index, tab_stop) = self
+            .handles
+            .read()
+            .get(self.id)
+            .map(|focus| (focus.tab_index, focus.tab_stop))
+            .unwrap_or((self.tab_index, self.tab_stop));
+        Self {
+            id: self.id,
+            handles: self.handles.clone(),
+            liveness: self.liveness.clone(),
+            tab_index,
+            tab_stop,
+        }
     }
 }
 
@@ -648,17 +662,6 @@ impl PartialEq for FocusHandle {
 }
 
 impl Eq for FocusHandle {}
-
-impl Drop for FocusHandle {
-    fn drop(&mut self) {
-        self.handles
-            .read()
-            .get(self.id)
-            .unwrap()
-            .ref_count
-            .fetch_sub(1, SeqCst);
-    }
-}
 
 /// A weak reference to a focus handle.
 #[derive(Clone, Debug)]
@@ -6926,11 +6929,12 @@ mod tests {
         cell::{Cell, RefCell},
         path::PathBuf,
         rc::Rc,
+        sync::Arc,
     };
 
     use crate::{
         AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
-        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
+        ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle, FocusMap,
         InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
         MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
         StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
@@ -6943,6 +6947,50 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
         }
+    }
+
+    #[test]
+    fn test_stale_focus_handle_mouse_listener_can_be_dropped() {
+        let focus_map = Arc::new(FocusMap::default());
+        let focus_handle = FocusHandle::new(&focus_map);
+        let focus_id = focus_handle.id;
+        let mut mouse_listeners: Vec<Box<dyn FnMut()>> = vec![Box::new(move || {
+            std::hint::black_box(&focus_handle);
+        })];
+
+        assert!(focus_map.write().remove(focus_id).is_some());
+        mouse_listeners.clear();
+    }
+
+    #[gpui::test]
+    fn test_focus_handle_liveness_tracks_clones(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| EmptyView);
+        let focus_handle = cx.update(|cx| cx.focus_handle());
+        let weak_focus_handle = focus_handle.downgrade();
+        let cloned_focus_handle = focus_handle.clone();
+
+        assert!(
+            window
+                .update(cx, |_, window, cx| window.focus(&focus_handle, cx))
+                .is_ok()
+        );
+        drop(focus_handle);
+        cx.update(|_| {});
+        assert!(weak_focus_handle.upgrade().is_some());
+        assert!(
+            window
+                .update(cx, |_, window, cx| assert!(window.focused(cx).is_some()))
+                .is_ok()
+        );
+
+        drop(cloned_focus_handle);
+        cx.update(|_| {});
+        assert!(weak_focus_handle.upgrade().is_none());
+        assert!(
+            window
+                .update(cx, |_, window, cx| assert!(window.focused(cx).is_none()))
+                .is_ok()
+        );
     }
 
     struct OpensWindowOnPaint {
