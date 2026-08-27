@@ -25,8 +25,9 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
-    remote_client::ConnectionIdentifier,
+    DockerConnectionOptions, RemoteClient, RemoteConnectionOptions, RunningContainer,
+    SshConnectionOptions, WslConnectionOptions, remote_client::ConnectionIdentifier,
+    running_container_defaults, running_containers,
 };
 use settings::{
     RemoteProject, RemoteSettingsContent, Settings as _, SettingsStore, update_settings_file,
@@ -165,6 +166,9 @@ enum ProjectPickerData {
     Wsl {
         distro_name: SharedString,
     },
+    Container {
+        name: SharedString,
+    },
 }
 
 struct ProjectPicker {
@@ -176,6 +180,226 @@ struct ProjectPicker {
 struct EditNicknameState {
     index: SshServerIndex,
     editor: Entity<Editor>,
+}
+
+struct RunningContainerPickerDelegate {
+    selected_index: usize,
+    containers: Vec<RunningContainer>,
+    matching_containers: Vec<RunningContainer>,
+    parent_modal: WeakEntity<RemoteServerProjects>,
+    use_podman: bool,
+    loading: bool,
+    inspecting: bool,
+}
+
+impl RunningContainerPickerDelegate {
+    fn new(parent_modal: WeakEntity<RemoteServerProjects>, use_podman: bool) -> Self {
+        Self {
+            selected_index: 0,
+            containers: Vec::new(),
+            matching_containers: Vec::new(),
+            parent_modal,
+            use_podman,
+            loading: true,
+            inspecting: false,
+        }
+    }
+
+    fn set_containers(&mut self, containers: Vec<RunningContainer>) {
+        self.containers = containers;
+        self.loading = false;
+    }
+}
+
+fn running_container_matches_query(container: &RunningContainer, query: &str) -> bool {
+    let query = query.to_lowercase();
+    [
+        container.names.as_str(),
+        container.image.as_str(),
+        container.id.as_str(),
+    ]
+    .into_iter()
+    .any(|field| field.to_lowercase().contains(&query))
+}
+
+impl PickerDelegate for RunningContainerPickerDelegate {
+    type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "running container picker"
+    }
+
+    fn match_count(&self) -> usize {
+        self.matching_containers.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+        self.selected_index = index;
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        "Select a Running Container".into()
+    }
+
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some(
+            if self.loading {
+                "Loading running containers…"
+            } else {
+                "No running containers found"
+            }
+            .into(),
+        )
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.matching_containers = self
+            .containers
+            .iter()
+            .filter(|container| running_container_matches_query(container, &query))
+            .cloned()
+            .collect();
+        self.selected_index = self
+            .selected_index
+            .min(self.matching_containers.len().saturating_sub(1));
+        Task::ready(())
+    }
+
+    fn confirm(&mut self, _secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if self.inspecting {
+            return;
+        }
+        let Some(container) = self.matching_containers.get(self.selected_index).cloned() else {
+            return;
+        };
+        self.inspecting = true;
+        let picker = cx.entity().downgrade();
+        let parent_modal = self.parent_modal.clone();
+        let use_podman = self.use_podman;
+        cx.spawn_in(window, async move |_, cx| match running_container_defaults(
+            &container.id,
+            use_podman,
+        )
+        .await
+        {
+            Ok(defaults) => {
+                if picker.read_with(cx, |_, _| ()).is_err() {
+                    return;
+                }
+                let initial_directory =
+                    (defaults.working_directory != "/").then_some(defaults.working_directory);
+                parent_modal
+                    .update_in(cx, |modal, window, cx| {
+                        modal.create_remote_project(
+                            None,
+                            RemoteConnectionOptions::Docker(DockerConnectionOptions {
+                                name: container.names,
+                                container_id: container.id,
+                                remote_user: defaults.remote_user,
+                                upload_binary_over_docker_exec: false,
+                                use_podman,
+                                remote_env: Default::default(),
+                            }),
+                            initial_directory,
+                            Some(use_podman),
+                            window,
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+            Err(error) => {
+                if picker
+                    .update(cx, |picker, cx| {
+                        picker.delegate.inspecting = false;
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                cx.prompt(
+                    PromptLevel::Critical,
+                    "Failed to inspect running container",
+                    Some(&error.to_string()),
+                    &["OK"],
+                )
+                .await
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.parent_modal
+            .update(cx, |modal, cx| {
+                modal.cancel(&menu::Cancel, window, cx);
+            })
+            .ok();
+    }
+
+    fn render_match(
+        &self,
+        index: usize,
+        selected: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        let container = self.matching_containers.get(index)?;
+        let short_id = container.id.chars().take(12).collect::<String>();
+        let details = [
+            container.names.as_str(),
+            container.image.as_str(),
+            container.id.as_str(),
+        ]
+        .join("\n");
+
+        Some(
+            ListItem::new(SharedString::from(format!("li-running-container-{index}")))
+                .inset(true)
+                .spacing(ui::ListItemSpacing::Sparse)
+                .toggle_state(selected)
+                .start_slot(Icon::new(IconName::Box).color(Color::Muted))
+                .child(
+                    v_flex()
+                        .gap_0p5()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .justify_between()
+                                .gap_2()
+                                .child(Label::new(container.names.clone()))
+                                .child(
+                                    Label::new(container.image.clone())
+                                        .size(ui::LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Label::new(short_id)
+                                .size(ui::LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .tooltip(Tooltip::text(details))
+                .into_any_element(),
+        )
+    }
 }
 
 struct DevContainerPickerDelegate {
@@ -408,10 +632,8 @@ impl ProjectPicker {
             RemoteConnectionOptions::Wsl(connection) => ProjectPickerData::Wsl {
                 distro_name: connection.distro_name.clone().into(),
             },
-            RemoteConnectionOptions::Docker(_) => ProjectPickerData::Ssh {
-                // Not implemented as a project picker at this time
-                connection_string: "".into(),
-                nickname: None,
+            RemoteConnectionOptions::Docker(connection) => ProjectPickerData::Container {
+                name: connection.name.clone().into(),
             },
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => ProjectPickerData::Ssh {
@@ -576,6 +798,14 @@ impl gpui::Render for ProjectPicker {
                     nickname: None,
                     is_wsl: true,
                     is_devcontainer: false,
+                }
+                .render(window, cx),
+                ProjectPickerData::Container { name } => SshConnectionHeader {
+                    connection_string: name.clone(),
+                    paths: Default::default(),
+                    nickname: None,
+                    is_wsl: false,
+                    is_devcontainer: true,
                 }
                 .render(window, cx),
             })
@@ -794,6 +1024,7 @@ enum Mode {
     ViewServerOptions(ViewServerOptionsState),
     EditNickname(EditNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
+    RunningContainerPicker(Entity<Picker<RunningContainerPickerDelegate>>),
     CreateRemoteServer(CreateRemoteServer),
     CreateRemoteDevContainer(CreateRemoteDevContainer),
     #[cfg(target_os = "windows")]
@@ -811,6 +1042,7 @@ impl Mode {
 
 enum RemoteMatch {
     AddServer,
+    AddRunningContainer,
     AddDevContainer,
     AddWsl,
     Separator,
@@ -898,6 +1130,9 @@ impl RemoteServerPickerDelegate {
         let mut matches = Vec::new();
         if self.query.trim().is_empty() {
             matches.push(RemoteMatch::AddServer);
+            if is_local {
+                matches.push(RemoteMatch::AddRunningContainer);
+            }
             if has_open_project && is_local {
                 matches.push(RemoteMatch::AddDevContainer);
             }
@@ -1152,6 +1387,14 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                     })
                     .ok();
             }
+            RemoteMatch::AddRunningContainer => {
+                let use_podman = dev_container::use_podman(cx);
+                remote_server_projects
+                    .update(cx, |this, cx| {
+                        this.init_running_container_mode(use_podman, window, cx);
+                    })
+                    .ok();
+            }
             RemoteMatch::AddDevContainer => {
                 remote_server_projects
                     .update(cx, |this, cx| {
@@ -1210,6 +1453,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                                     Some(index),
                                     connection.into(),
                                     None,
+                                    None,
                                     window,
                                     cx,
                                 );
@@ -1225,6 +1469,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                                 this.create_remote_project(
                                     Some(new_ix.into()),
                                     connection.into(),
+                                    None,
                                     None,
                                     window,
                                     cx,
@@ -1271,6 +1516,12 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddServer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect SSH Server", selected))
             }
+            RemoteMatch::AddRunningContainer => Some(self.render_action_item(
+                ix,
+                IconName::Plus,
+                "Connect Running Container",
+                selected,
+            )),
             RemoteMatch::AddDevContainer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect Dev Container", selected))
             }
@@ -1426,6 +1677,81 @@ impl RemoteServerProjects {
             workspace,
             cx,
         )
+    }
+
+    pub fn new_running_container(
+        create_new_window: bool,
+        use_podman: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new_inner(
+            Mode::default_mode(&BTreeSet::new(), cx),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        );
+        this.init_running_container_mode(use_podman, window, cx);
+        this
+    }
+
+    fn init_running_container_mode(
+        &mut self,
+        use_podman: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parent_modal = cx.weak_entity();
+        let picker = cx.new(|cx| {
+            Picker::uniform_list(
+                RunningContainerPickerDelegate::new(parent_modal, use_podman),
+                window,
+                cx,
+            )
+            .embedded()
+        });
+        self.mode = Mode::RunningContainerPicker(picker.clone());
+        picker.focus_handle(cx).focus(window, cx);
+        let picker = picker.downgrade();
+
+        cx.spawn_in(window, async move |_, cx| {
+            match running_containers(use_podman).await {
+                Ok(containers) => {
+                    picker
+                        .update_in(cx, |picker, window, cx| {
+                            picker.delegate.set_containers(containers);
+                            let query = picker.query(cx);
+                            picker.update_matches(query, window, cx);
+                            cx.notify();
+                        })
+                        .ok();
+                }
+                Err(error) => {
+                    if picker
+                        .update(cx, |picker, cx| {
+                            picker.delegate.loading = false;
+                            cx.notify();
+                        })
+                        .is_err()
+                    {
+                        return;
+                    }
+                    cx.prompt(
+                        PromptLevel::Critical,
+                        "Failed to list running containers",
+                        Some(&error.to_string()),
+                        &["OK"],
+                    )
+                    .await
+                    .ok();
+                }
+            }
+        })
+        .detach();
     }
 
     /// Creates a new RemoteServerProjects modal that opens directly in dev container creation mode.
@@ -1784,6 +2110,7 @@ impl RemoteServerProjects {
         index: Option<ServerIndex>,
         connection_options: RemoteConnectionOptions,
         initial_directory: Option<String>,
+        return_to_running_containers: Option<bool>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1827,7 +2154,24 @@ impl RemoteServerProjects {
                             let weak = cx.entity().downgrade();
                             let fs = workspace.project().read(cx).fs().clone();
                             workspace.toggle_modal(window, cx, |window, cx| {
-                                RemoteServerProjects::new(create_new_window, fs, window, weak, cx)
+                                if let Some(use_podman) = return_to_running_containers {
+                                    RemoteServerProjects::new_running_container(
+                                        create_new_window,
+                                        use_podman,
+                                        fs,
+                                        window,
+                                        weak,
+                                        cx,
+                                    )
+                                } else {
+                                    RemoteServerProjects::new(
+                                        create_new_window,
+                                        fs,
+                                        window,
+                                        weak,
+                                        cx,
+                                    )
+                                }
                             });
                         });
                     };
@@ -1891,7 +2235,7 @@ impl RemoteServerProjects {
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         match &self.mode {
             Mode::Default | Mode::ViewServerOptions(_) => {}
-            Mode::ProjectPicker(_) => {}
+            Mode::ProjectPicker(_) | Mode::RunningContainerPicker(_) => {}
             Mode::CreateRemoteServer(state) => {
                 if let Some(prompt) = state.ssh_prompt.as_ref() {
                     prompt.update(cx, |prompt, cx| {
@@ -3079,6 +3423,7 @@ impl Focusable for RemoteServerProjects {
         match &self.mode {
             Mode::Default => self.default_picker.focus_handle(cx),
             Mode::ProjectPicker(picker) => picker.focus_handle(cx),
+            Mode::RunningContainerPicker(picker) => picker.focus_handle(cx),
             _ => self.focus_handle.clone(),
         }
     }
@@ -3108,6 +3453,7 @@ impl Render for RemoteServerProjects {
                     .render_view_options(state.clone(), window, cx)
                     .into_any_element(),
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
+                Mode::RunningContainerPicker(element) => element.clone().into_any_element(),
                 Mode::CreateRemoteServer(state) => self
                     .render_create_remote_server(state, window, cx)
                     .into_any_element(),
@@ -3133,6 +3479,20 @@ mod filter_tests {
         RemoteEntry::SshConfig {
             host: SharedString::from(host),
         }
+    }
+
+    #[test]
+    fn running_container_matches_name_image_and_full_id() {
+        let container = RunningContainer {
+            id: "0123456789abcdef0123456789abcdef".to_string(),
+            image: "example/My-API:latest".to_string(),
+            names: "my-api-container".to_string(),
+        };
+
+        assert!(running_container_matches_query(&container, "api-container"));
+        assert!(running_container_matches_query(&container, "my-api:latest"));
+        assert!(running_container_matches_query(&container, "abcdef012345"));
+        assert!(!running_container_matches_query(&container, "postgres"));
     }
 
     #[test]

@@ -717,6 +717,12 @@ pub struct OpenRemote {
 #[serde(deny_unknown_fields)]
 pub struct OpenDevContainer;
 
+/// Opens a picker for connecting to a running container.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = projects)]
+#[serde(deny_unknown_fields)]
+pub struct OpenRunningContainer;
+
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
