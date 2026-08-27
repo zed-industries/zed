@@ -1379,6 +1379,19 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+fn parse_remote_urls(stdout: &str) -> HashMap<String, String> {
+    let mut urls = HashMap::default();
+    for line in stdout.lines() {
+        if let Some((line, suffix)) = line.rsplit_once(" (fetch)")
+            && (suffix.is_empty() || suffix.starts_with(" [") && suffix.ends_with(']'))
+            && let Some((name, url)) = line.split_once(char::is_whitespace)
+        {
+            urls.insert(name.to_string(), url.trim_start().to_string());
+        }
+    }
+    urls
+}
+
 impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
         self.git_dir.clone()
@@ -1735,17 +1748,11 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let mut urls = HashMap::default();
                 if let Ok(stdout) = git.run(&["remote", "-v"]).await {
-                    for line in stdout.lines() {
-                        if let Some(line) = line.strip_suffix(" (fetch)")
-                            && let Some((name, url)) = line.split_once(char::is_whitespace)
-                        {
-                            urls.insert(name.to_string(), url.trim_start().to_string());
-                        }
-                    }
+                    parse_remote_urls(&stdout)
+                } else {
+                    HashMap::default()
                 }
-                urls
             })
             .boxed()
     }
@@ -6681,6 +6688,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_remote_urls() {
+        let stdout = concat!(
+            "origin\thttps://github.com/zed-industries/zed.git (fetch) [blob:none]\n",
+            "origin\thttps://github.com/zed-industries/zed.git (push)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (fetch)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (push)\n",
+        );
+
+        let remote_urls = parse_remote_urls(stdout);
+        assert_eq!(remote_urls.len(), 2);
+        assert_eq!(
+            remote_urls.get("origin").map(String::as_str),
+            Some("https://github.com/zed-industries/zed.git")
+        );
+        assert_eq!(
+            remote_urls.get("upstream").map(String::as_str),
+            Some("/Users/user/My Projects/upstream.git")
+        );
+    }
+
     #[gpui::test]
     async fn test_remote_urls(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -6717,6 +6745,12 @@ mod tests {
         ])
         .await
         .unwrap();
+        git.run(&["config", "remote.origin.promisor", "true"])
+            .await
+            .unwrap();
+        git.run(&["config", "remote.origin.partialclonefilter", "blob:none"])
+            .await
+            .unwrap();
 
         let remote_urls = repo.remote_urls().await;
         assert_eq!(remote_urls.len(), 2);
