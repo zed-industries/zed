@@ -302,9 +302,11 @@ mod aimlapi_tests {
         );
     }
 
-    /// HEADERS.md requires the attribution pair on EVERY aimlapi.com request.
-    /// The provider reads these resolved headers from three separate call
-    /// sites, so proving they exist here proves it for all of them.
+    /// aimlapi.com expects the attribution pair on EVERY request it serves,
+    /// not just the first — a missing pair still serves the request, it just
+    /// goes out untagged, so nothing fails loudly. The provider reads these
+    /// resolved headers from three separate call sites, so proving the pair
+    /// survives settings resolution here proves it for all of them.
     #[test]
     fn attribution_pair_is_present_without_any_user_config() {
         let pairs = header_pairs(&aimlapi_headers_from(None));

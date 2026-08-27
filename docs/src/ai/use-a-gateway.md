@@ -1,18 +1,41 @@
 ---
 title: Use a Gateway - Zed
-description: Configure OpenRouter, Vercel AI Gateway, Amazon Bedrock, and other gateway or cloud model platforms in Zed.
+description: Configure AI/ML API, OpenRouter, Vercel AI Gateway, Amazon Bedrock, and other gateway or cloud model platforms in Zed.
 ---
 
 # Use a Gateway
 
-Use a gateway when you route model requests through a platform such as OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
+Use a gateway when you route model requests through a platform such as AI/ML API, OpenRouter, Vercel AI Gateway, Amazon Bedrock, or another OpenAI-compatible service.
 
 | Gateway                   | Zed AI features | External Agents | Terminal Threads | Notes                                        |
 | ------------------------- | --------------- | --------------- | ---------------- | -------------------------------------------- |
+| AI/ML API                 | Yes             | Separate config | Separate config  | Uses an aimlapi.com API key                  |
 | OpenRouter                | Yes             | Separate config | Separate config  | Uses OpenRouter API access                   |
 | Vercel AI Gateway         | Yes             | Separate config | Separate config  | Uses Vercel AI Gateway API access            |
 | Amazon Bedrock            | Yes             | Separate config | Separate config  | Uses AWS credentials or Bedrock bearer token |
 | OpenAI-compatible gateway | Yes             | Separate config | Separate config  | Configure base URL, model, and key           |
+
+## AI/ML API {#aimlapi}
+
+Use AI/ML API when you want to route Zed AI features through aimlapi.com, which serves models from many creators behind a single key.
+
+1. Create an API key from your [aimlapi.com keys page](https://aimlapi.com/app/keys).
+2. Open **Settings → AI → LLM Providers** with {#action agent::OpenSettings} and find the AI/ML API row.
+3. Enter your aimlapi.com API key.
+
+Zed also reads `AIMLAPI_API_KEY` from the local Zed process environment.
+
+You can set a custom endpoint for AI/ML API in settings:
+
+```json [settings]
+{
+  "language_models": {
+    "aimlapi": {
+      "api_url": "https://api.aimlapi.com/v1"
+    }
+  }
+}
+```
 
 ## OpenRouter {#openrouter}
 

@@ -191,7 +191,7 @@ impl AimlapiLanguageModelProvider {
     fn default_available_model() -> AvailableModel {
         AvailableModel {
             name: "openai/gpt-5.6-terra".to_string(),
-            display_name: Some("GPT-5.6 Terra Pro".to_string()),
+            display_name: Some("GPT-5.6 Terra".to_string()),
             max_tokens: 1_050_000,
             max_output_tokens: Some(128_000),
             max_completion_tokens: None,
@@ -487,9 +487,13 @@ impl LanguageModel for AimlapiLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let completions = self.stream_open_ai(request, cx);
+        let executor = cx.background_executor().clone();
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }

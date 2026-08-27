@@ -1,6 +1,6 @@
 ---
 title: AI by Company - Zed
-description: Find the right Zed setup path for OpenAI, ChatGPT, Codex, Claude, Gemini, Copilot, Cursor, OpenCode, Pi, Poolside, OpenRouter, Bedrock, local models, and other AI tools.
+description: Find the right Zed setup path for OpenAI, ChatGPT, Codex, Claude, Gemini, Copilot, Cursor, OpenCode, Pi, Poolside, AI/ML API, OpenRouter, Bedrock, local models, and other AI tools.
 ---
 
 # AI by Company
@@ -96,11 +96,12 @@ Paid DeepSeek usage is API access in Zed, not subscription sign-in.
 
 ## Gateways and Cloud Platforms {#gateways}
 
-| Provider          | Support level     | What you get                         | Account / billing  | Setup                                                 |
-| ----------------- | ----------------- | ------------------------------------ | ------------------ | ----------------------------------------------------- |
-| OpenRouter        | Configured in Zed | Gateway access to multiple providers | OpenRouter billing | [Use a Gateway](./use-a-gateway.md#openrouter)        |
-| Vercel AI Gateway | Configured in Zed | Gateway access through Vercel        | Vercel billing     | [Use a Gateway](./use-a-gateway.md#vercel-ai-gateway) |
-| Amazon Bedrock    | Configured in Zed | AWS-hosted model access              | AWS billing        | [Use a Gateway](./use-a-gateway.md#amazon-bedrock)    |
+| Provider          | Support level     | What you get                         | Account / billing   | Setup                                                 |
+| ----------------- | ----------------- | ------------------------------------ | ------------------- | ----------------------------------------------------- |
+| AI/ML API         | Configured in Zed | Gateway access to multiple providers | aimlapi.com billing | [Use a Gateway](./use-a-gateway.md#aimlapi)           |
+| OpenRouter        | Configured in Zed | Gateway access to multiple providers | OpenRouter billing  | [Use a Gateway](./use-a-gateway.md#openrouter)        |
+| Vercel AI Gateway | Configured in Zed | Gateway access through Vercel        | Vercel billing      | [Use a Gateway](./use-a-gateway.md#vercel-ai-gateway) |
+| Amazon Bedrock    | Configured in Zed | AWS-hosted model access              | AWS billing         | [Use a Gateway](./use-a-gateway.md#amazon-bedrock)    |
 
 ## Local Models {#local-models}
 

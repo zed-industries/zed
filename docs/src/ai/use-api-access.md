@@ -56,6 +56,7 @@ Zed also reads provider-specific environment variables. Non-empty environment va
 | OpenCode          | `OPENCODE_API_KEY`                                    |
 | OpenRouter        | `OPENROUTER_API_KEY`                                  |
 | Vercel AI Gateway | `VERCEL_AI_GATEWAY_API_KEY`                           |
+| AI/ML API         | `AIMLAPI_API_KEY`                                     |
 | Ollama            | `OLLAMA_API_KEY`                                      |
 | LM Studio         | `LMSTUDIO_API_KEY`                                    |
 
@@ -80,7 +81,7 @@ Configure them with `language_models.<provider>.custom_headers`:
 }
 ```
 
-`custom_headers` is supported by Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI-compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI.
+`custom_headers` is supported by AI/ML API, Amazon Bedrock, Anthropic, DeepSeek, Google AI, LM Studio, Mistral, Ollama, OpenAI, OpenAI-compatible providers, OpenCode, OpenRouter, Vercel AI Gateway, and xAI.
 
 Headers managed by Zed for each provider, such as `Authorization`, `Content-Type`, `Accept`, and provider-specific authentication headers, are ignored with a warning if you try to override them.
 
