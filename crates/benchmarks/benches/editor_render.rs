@@ -221,6 +221,7 @@ fn editor_render_with_editorconfig(cx: &mut BenchAppContext) {
                 ),
                 Some(file),
                 Capability::ReadWrite,
+                cx,
             )
         });
         cx.new(|cx| MultiBuffer::singleton(buffer, cx))

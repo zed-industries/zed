@@ -295,16 +295,22 @@ impl LanguageSettings {
         offset: Option<usize>,
         cx: &'a App,
     ) -> Cow<'a, LanguageSettings> {
-        let location = buffer.file().map(|f| SettingsLocation {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().as_ref(),
-        });
-
         let language = if let Some(offset) = offset {
             buffer.language_at(offset)
         } else {
             buffer.language()
         };
+
+        if let Some(resolved) = buffer.resolved_settings()
+            && language.map(|l| l.name()) == buffer.language().map(|l| l.name())
+        {
+            return Cow::Borrowed(resolved.as_ref());
+        }
+
+        let location = buffer.file().map(|f| SettingsLocation {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().as_ref(),
+        });
 
         let mut settings = AllLanguageSettings::get(location, cx).language(
             location,
@@ -320,6 +326,22 @@ impl LanguageSettings {
     }
 
     pub fn resolve<'a>(
+        buffer: Option<&'a Buffer>,
+        override_language: Option<&LanguageName>,
+        cx: &'a App,
+    ) -> Cow<'a, LanguageSettings> {
+        if let Some(buffer) = buffer
+            && let Some(resolved) = buffer.resolved_settings()
+            && override_language.is_none_or(|language| {
+                Some(language) == buffer.language().map(|l| l.name()).as_ref()
+            })
+        {
+            return Cow::Borrowed(resolved.as_ref());
+        }
+        Self::resolve_uncached(buffer, override_language, cx)
+    }
+
+    pub(crate) fn resolve_uncached<'a>(
         buffer: Option<&'a Buffer>,
         override_language: Option<&LanguageName>,
         cx: &'a App,
