@@ -747,10 +747,10 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub file_icons: Option<bool>,
 
-    /// Whether to show folder icons or chevrons for directories in the git panel.
+    /// What to show for directories in the git panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
 
     /// How and when the scrollbar should be displayed.
     ///
@@ -1176,10 +1176,10 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the outline panel.
+    /// What to show for directories in the outline panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the outline panel.
     ///
     /// Default: true
