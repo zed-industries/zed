@@ -102,9 +102,7 @@ use workspace::{
     WorkspaceSettings, create_and_open_local_file,
     notifications::simple_message_notification::MessageNotification, open_new,
 };
-use workspace::{
-    CloseIntent, CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace,
-};
+use workspace::{CloseProject, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenProjectTasks,
@@ -474,7 +472,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         }
 
         cx.spawn_in(window, async move |_this, cx| {
-            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+            const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_mins(5);
             loop {
                 cx.background_executor().timer(TELEMETRY_INTERVAL).await;
                 if cx
@@ -1807,74 +1805,9 @@ fn quit(_: &Quit, cx: &mut App) {
             }
         }
 
-        // If the user cancels any save prompt, then keep the app open.
-        for window in &workspace_windows {
-            let window = *window;
-            let active_and_workspaces = window
-                .update(cx, |multi_workspace, _, _cx| {
-                    (
-                        multi_workspace.workspace().clone(),
-                        multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
-                    )
-                })
-                .log_err();
-
-            let Some((originally_active, workspaces)) = active_and_workspaces else {
-                continue;
-            };
-
-            for workspace in workspaces {
-                if let Some(should_close) = window
-                    .update(cx, |multi_workspace, window, cx| {
-                        multi_workspace.activate(workspace.clone(), None, window, cx);
-                        window.activate_window();
-                        workspace.update(cx, |workspace, cx| {
-                            workspace.prepare_to_close(CloseIntent::Quit, window, cx)
-                        })
-                    })
-                    .log_err()
-                {
-                    if !should_close.await? {
-                        // Activating each workspace above to surface its save
-                        // prompts changed which workspace is active. Restore the
-                        // user's focused workspace before bailing so the window
-                        // is left as they had it.
-                        window
-                            .update(cx, |multi_workspace, window, cx| {
-                                multi_workspace.activate(
-                                    originally_active.clone(),
-                                    None,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                        return Ok(());
-                    }
-                }
-            }
-
-            // The loop above activated each workspace in turn, overwriting the
-            // persisted active workspace. Re-activate the workspace the user
-            // actually had focused so it is the one serialized (and restored on
-            // next launch) as active, rather than whichever happened to be last.
-            window
-                .update(cx, |multi_workspace, window, cx| {
-                    multi_workspace.activate(originally_active, None, window, cx);
-                })
-                .log_err();
+        if !workspace::prepare_windows_to_quit(&workspace_windows, cx).await {
+            return Ok(());
         }
-        // Flush all pending workspace serialization before quitting so that
-        // session_id/window_id are up-to-date in the database.
-        let mut flush_tasks = Vec::new();
-        for window in &workspace_windows {
-            window
-                .update(cx, |multi_workspace, window, cx| {
-                    flush_tasks.extend(multi_workspace.flush_pending_serialization(window, cx));
-                })
-                .log_err();
-        }
-        futures::future::join_all(flush_tasks).await;
 
         cx.update(|cx| cx.quit());
         anyhow::Ok(())
@@ -2971,7 +2904,7 @@ mod tests {
                         })
                     })
                     .collect::<Vec<_>>();
-                tasks.push(multi_workspace.flush_serialization());
+                tasks.push(multi_workspace.flush_serialization(cx));
                 tasks
             })
             .unwrap();
@@ -6995,6 +6928,11 @@ mod tests {
             })
             .unwrap();
 
+        window1
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+
         cx.dispatch_action(*window1, Quit);
         cx.run_until_parked();
 
@@ -7060,6 +6998,11 @@ mod tests {
                 assert_eq!(multi_workspace.workspace(), &workspace1_1);
             })
             .unwrap();
+
+        window1
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
 
         cx.dispatch_action(*window1, Quit);
         cx.run_until_parked();
@@ -7169,9 +7112,154 @@ mod tests {
 
         assert_eq!(
             cx.windows().len(),
-            2,
-            "Case 3: Windows should still exist after cancelling quit"
+            1,
+            "Case 3: The clean window should close when quit is cancelled in another window"
         );
+        assert_eq!(
+            window1.update(cx, |_, _, _| ()).is_ok(),
+            false,
+            "Case 3: The clean window should have been closed"
+        );
+        assert_eq!(
+            window2.update(cx, |_, _, _| ()).is_ok(),
+            true,
+            "Case 3: The window with the cancelled prompt should stay open"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reload_checks_all_workspaces_for_dirty_items(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    "dir1": {
+                        "a.txt": "content a"
+                    },
+                    "dir2": {
+                        "b.txt": "content b"
+                    }
+                }),
+            )
+            .await;
+
+        let project1 = Project::test(app_state.fs.clone(), [path!("/dir1").as_ref()], cx).await;
+        let window = cx.add_window({
+            let project = project1.clone();
+            |window, cx| MultiWorkspace::test_new(project, window, cx)
+        });
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let project2 = Project::test(app_state.fs.clone(), [path!("/dir2").as_ref()], cx).await;
+        let workspace1 = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let workspace2 = window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.test_add_workspace(project2.clone(), window, cx)
+            })
+            .unwrap();
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.activate(workspace2.clone(), None, window, cx);
+                multi_workspace.activate(workspace1.clone(), None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let worktree2_id = project2.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+
+        let editor2 = window
+            .update(cx, |_, window, cx| {
+                workspace2.update(cx, |workspace, cx| {
+                    workspace.open_path((worktree2_id, rel_path("b.txt")), None, true, window, cx)
+                })
+            })
+            .unwrap()
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        window
+            .update(cx, |_, window, cx| {
+                editor2.update(cx, |editor, cx| {
+                    editor.insert("dirty in non-active workspace", window, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(multi_workspace.workspace(), &workspace1);
+            })
+            .unwrap();
+
+        let mut will_restart = cx.expect_restart();
+
+        cx.dispatch_action(*window, workspace::Reload);
+        cx.run_until_parked();
+
+        window
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(
+                    multi_workspace.workspace(),
+                    &workspace2,
+                    "Non-active workspace should be activated when it has a dirty item"
+                );
+            })
+            .unwrap();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Reload should prompt to save the dirty item in the non-active workspace"
+        );
+
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        assert_eq!(
+            will_restart.try_recv(),
+            Ok(None),
+            "Cancelling the save prompt should abort the restart"
+        );
+        window
+            .read_with(cx, |multi_workspace, _| {
+                assert_eq!(
+                    multi_workspace.workspace(),
+                    &workspace1,
+                    "Cancelling reload should restore the originally focused workspace"
+                );
+            })
+            .unwrap();
+
+        cx.dispatch_action(*window, workspace::Reload);
+        cx.run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "Reload should prompt again for the dirty item"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.run_until_parked();
+
+        will_restart
+            .await
+            .expect("reload should restart the app after the dirty item is resolved");
     }
 
     #[gpui::test]
@@ -7466,14 +7554,11 @@ mod tests {
             .unwrap();
 
         // Quit. With no dirty items there are no save prompts, so the quit flow
-        // runs the prepare_to_close loop (which activates every workspace in
-        // turn to surface prompts) and then flushes serialization. cx.quit() is
+        // runs the prepare_to_close loop and then flushes serialization. cx.quit() is
         // a no-op in tests, so the window stays around for inspection.
         cx.dispatch_action(*window, Quit);
         cx.run_until_parked();
 
-        // The fix re-activates the originally-focused workspace after the loop,
-        // so the window must still be focused on dir1, not dir2.
         window
             .read_with(cx, |mw, cx| {
                 let active = mw.workspace().read(cx).root_paths(cx);
@@ -7529,6 +7614,139 @@ mod tests {
                 );
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_reload_restores_project_windows_and_tabs(cx: &mut TestAppContext) {
+        use session::Session;
+
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let first_dir = format!("reload-restore-{}", uuid::Uuid::new_v4());
+        let second_dir = format!("reload-restore-{}", uuid::Uuid::new_v4());
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/"),
+                json!({
+                    first_dir.clone(): {
+                        "a.txt": "a",
+                        "b.txt": "b"
+                    },
+                    second_dir.clone(): {
+                        "c.txt": "c",
+                        "d.txt": "d"
+                    }
+                }),
+            )
+            .await;
+        let mut first_dir = PathBuf::from(path!("/")).join(first_dir);
+        let mut second_dir = PathBuf::from(path!("/")).join(second_dir);
+        if second_dir < first_dir {
+            std::mem::swap(&mut first_dir, &mut second_dir);
+        }
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+        let first_window = open_test_project_window_with_tabs(
+            &app_state,
+            &first_dir,
+            &[rel_path("a.txt"), rel_path("b.txt")],
+            cx,
+        )
+        .await;
+        let second_window = open_test_project_window_with_tabs(
+            &app_state,
+            &second_dir,
+            &[rel_path("c.txt"), rel_path("d.txt")],
+            cx,
+        )
+        .await;
+
+        let restart = cx.expect_restart();
+        cx.update(workspace::reload);
+        let (restart_path, restart_arguments) = restart.await.expect("restart was not requested");
+        assert_eq!(restart_path, None);
+        assert!(restart_arguments.is_empty());
+
+        let database = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let locations = workspace::last_session_workspace_locations(
+            &database,
+            &session_id,
+            None,
+            app_state.fs.as_ref(),
+        )
+        .await
+        .expect("failed to read session workspaces");
+        assert_eq!(locations.len(), 2);
+
+        for window in [first_window, second_window] {
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .expect("workspace window was closed");
+        }
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        let mut restored_tabs = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .map(|window| {
+                    window
+                        .read_with(cx, |multi_workspace, cx| {
+                            let workspace = multi_workspace.workspace().read(cx);
+                            let root_path = workspace
+                                .root_paths(cx)
+                                .into_iter()
+                                .next()
+                                .expect("restored project should have a root path")
+                                .as_ref()
+                                .to_path_buf();
+                            let tab_paths = workspace
+                                .active_pane()
+                                .read(cx)
+                                .items()
+                                .map(|item| {
+                                    item.project_path(cx)
+                                        .expect("restored tab should have a project path")
+                                        .path
+                                })
+                                .collect::<Vec<_>>();
+                            (root_path, tab_paths)
+                        })
+                        .expect("restored workspace window was closed")
+                })
+                .collect::<Vec<_>>()
+        });
+        restored_tabs.sort_by(|left, right| left.0.cmp(&right.0));
+
+        assert_eq!(
+            restored_tabs,
+            vec![
+                (
+                    first_dir,
+                    vec![rel_path("a.txt").into(), rel_path("b.txt").into()]
+                ),
+                (
+                    second_dir,
+                    vec![rel_path("c.txt").into(), rel_path("d.txt").into()]
+                ),
+            ]
+        );
     }
 
     #[gpui::test]
@@ -7825,5 +8043,55 @@ mod tests {
             !active_paths.is_empty(),
             "active workspace should contain the remaining project, not be empty: {active_paths:?}"
         );
+    }
+
+    async fn open_test_project_window_with_tabs(
+        app_state: &Arc<AppState>,
+        root_path: &Path,
+        tab_paths: &[&RelPath],
+        cx: &mut TestAppContext,
+    ) -> WindowHandle<MultiWorkspace> {
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![root_path.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    workspace::OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open project workspace");
+
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .expect("workspace window was closed");
+        let worktree_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+
+        for tab_path in tab_paths {
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.open_path((worktree_id, *tab_path), None, true, window, cx)
+                    })
+                })
+                .expect("workspace window was closed")
+                .await
+                .expect("failed to open project tab");
+        }
+
+        window
     }
 }
