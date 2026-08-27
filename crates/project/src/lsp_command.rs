@@ -21,8 +21,8 @@ use language::{
     language_settings::{InlayHintKind, LanguageSettings},
     lsp_to_symbol_kind, point_from_lsp, point_to_lsp,
     proto::{
-        deserialize_anchor, deserialize_anchor_range, deserialize_version, serialize_anchor,
-        serialize_anchor_range, serialize_version,
+        deserialize_anchor, deserialize_anchor_range, deserialize_markup_kind, deserialize_version,
+        serialize_anchor, serialize_anchor_range, serialize_markup_kind, serialize_version,
     },
     range_from_lsp, range_to_lsp, symbol_kind_to_lsp,
 };
@@ -2581,7 +2581,7 @@ impl LspCommand for GetDocumentHighlights {
             buffer
                 .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))
                 .await?;
-            let kind = match proto::document_highlight::Kind::from_i32(highlight.kind) {
+            let kind = match proto::document_highlight::Kind::try_from(highlight.kind).ok() {
                 Some(proto::document_highlight::Kind::Text) => DocumentHighlightKind::TEXT,
                 Some(proto::document_highlight::Kind::Read) => DocumentHighlightKind::READ,
                 Some(proto::document_highlight::Kind::Write) => DocumentHighlightKind::WRITE,
@@ -3570,11 +3570,21 @@ impl LspCommand for GetCodeActions {
         let text_document = make_text_document_identifier(path)?;
         let snapshot = buffer.snapshot();
         let mut relevant_diagnostics = Vec::new();
-        for entry in snapshot.diagnostic_entries_in_range(self.range.clone(), false) {
+        let target_server_id = language_server.server_id();
+        for (source_server_id, entry) in
+            snapshot.diagnostic_entries_in_range_with_server_id(self.range.clone(), false)
+        {
+            let downgrade_markup =
+                source_server_id != target_server_id && entry.diagnostic.message.has_lsp_markup();
             let entry = entry.clone().map_coordinates(|range| {
                 range.start.to_point_utf16(&snapshot)..range.end.to_point_utf16(&snapshot)
             });
-            relevant_diagnostics.push(entry.to_lsp_diagnostic_stub(&text_document.uri)?);
+            let mut diagnostic = entry.to_lsp_diagnostic_stub(&text_document.uri)?;
+            if downgrade_markup {
+                diagnostic.message =
+                    lsp::DiagnosticMessage::from(entry.diagnostic.message.as_str());
+            }
+            relevant_diagnostics.push(diagnostic);
         }
 
         let only = if let Some(requested) = &self.kinds {
@@ -5107,16 +5117,29 @@ impl GetDocumentDiagnostics {
         let tags = diagnostic
             .tags
             .into_iter()
-            .filter_map(|tag| match proto::LspDiagnosticTag::from_i32(tag) {
+            .filter_map(|tag| match proto::LspDiagnosticTag::try_from(tag).ok() {
                 Some(proto::LspDiagnosticTag::Unnecessary) => Some(lsp::DiagnosticTag::UNNECESSARY),
                 Some(proto::LspDiagnosticTag::Deprecated) => Some(lsp::DiagnosticTag::DEPRECATED),
                 _ => None,
             })
             .collect::<Vec<_>>();
 
+        let message = match diagnostic
+            .markup_message_kind
+            .and_then(deserialize_markup_kind)
+        {
+            Some(kind) => lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent {
+                kind,
+                value: diagnostic.message,
+            }),
+            None => lsp::DiagnosticMessage::from(diagnostic.message),
+        };
+
         Ok(lsp::Diagnostic {
             range: language::range_to_lsp(range)?,
-            severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
+            severity: match proto::lsp_diagnostic::Severity::try_from(diagnostic.severity)
+                .ok()
+                .unwrap()
             {
                 proto::lsp_diagnostic::Severity::Error => Some(lsp::DiagnosticSeverity::ERROR),
                 proto::lsp_diagnostic::Severity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
@@ -5134,14 +5157,20 @@ impl GetDocumentDiagnostics {
                 }),
             related_information: Some(related_information),
             tags: Some(tags),
-            source: diagnostic.source.clone(),
-            message: diagnostic.message,
+            source: diagnostic.source,
+            message,
             data,
         })
     }
 
     pub fn serialize_lsp_diagnostic(diagnostic: lsp::Diagnostic) -> Result<proto::LspDiagnostic> {
         let range = language::range_from_lsp(diagnostic.range);
+        let (message, markup_message_kind) = match diagnostic.message {
+            lsp::DiagnosticMessage::String(message) => (message, None),
+            lsp::DiagnosticMessage::MarkupContent(lsp::MarkupContent { kind, value }) => {
+                (value, Some(serialize_markup_kind(&kind) as i32))
+            }
+        };
         let related_information = diagnostic
             .related_information
             .unwrap_or_default()
@@ -5205,7 +5234,8 @@ impl GetDocumentDiagnostics {
             code_description: diagnostic
                 .code_description
                 .and_then(|desc| desc.href.map(|url| url.to_string())),
-            message: diagnostic.message,
+            message,
+            markup_message_kind,
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })
     }

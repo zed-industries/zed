@@ -170,7 +170,7 @@ pub enum ReduceMotionMode {
 }
 
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Default, Clone, Serialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
@@ -396,6 +396,27 @@ impl SettingsContent {
     }
 }
 
+fallible_options::flattened_deserialize!(SettingsContent {
+    sections: { project, theme, extension, workspace, editor, remote },
+    options: {
+        call_hierarchy, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
+        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        git,
+        global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
+        journal, log, line_indicator_format, language_models, outline_panel, project_panel,
+        node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
+        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
+        instrumentation,
+    },
+    defaults: {},
+});
+
+fallible_options::flattened_deserialize!(UserSettingsContent {
+    sections: { content, release_channel_overrides, platform_overrides },
+    options: {},
+    defaults: { profiles },
+});
+
 // These impls are there to optimize builds by avoiding monomorphization downstream. Yes, they're repetitive, but using default impls
 // break the optimization, for whatever reason.
 pub trait RootUserSettings: Sized + DeserializeOwned {
@@ -471,7 +492,7 @@ pub struct SettingsProfile {
 }
 
 #[with_fallible_options]
-#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
