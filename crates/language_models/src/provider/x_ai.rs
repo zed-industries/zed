@@ -260,23 +260,33 @@ impl XAiLanguageModel {
 }
 
 fn x_ai_reasoning_efforts(model: &x_ai::Model) -> &'static [open_ai::ReasoningEffort] {
-    if model.supports_reasoning_effort() {
-        &[
+    match model {
+        x_ai::Model::Grok43 => &[
             open_ai::ReasoningEffort::None,
             open_ai::ReasoningEffort::Low,
             open_ai::ReasoningEffort::Medium,
             open_ai::ReasoningEffort::High,
-        ]
-    } else {
-        &[]
+        ],
+        x_ai::Model::Grok45 => &[
+            open_ai::ReasoningEffort::Low,
+            open_ai::ReasoningEffort::Medium,
+            open_ai::ReasoningEffort::High,
+        ],
+        x_ai::Model::Grok46 => &[
+            open_ai::ReasoningEffort::Low,
+            open_ai::ReasoningEffort::Medium,
+            open_ai::ReasoningEffort::High,
+            open_ai::ReasoningEffort::XHigh,
+        ],
+        _ => &[],
     }
 }
 
 fn default_thinking_reasoning_effort(model: &x_ai::Model) -> Option<open_ai::ReasoningEffort> {
-    if model.supports_reasoning_effort() {
-        Some(open_ai::ReasoningEffort::Low)
-    } else {
-        None
+    match model {
+        x_ai::Model::Grok43 => Some(open_ai::ReasoningEffort::Low),
+        x_ai::Model::Grok45 | x_ai::Model::Grok46 => Some(open_ai::ReasoningEffort::High),
+        _ => None,
     }
 }
 
@@ -427,9 +437,13 @@ impl LanguageModel for XAiLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let completions = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }

@@ -55,7 +55,7 @@ pub(super) struct InlineDiagnostic {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ActiveDiagnosticGroup {
     active_range: Range<Anchor>,
-    active_message: String,
+    active_message: language::DiagnosticMessage,
     group_id: usize,
     blocks: HashSet<CustomBlockId>,
 }
@@ -369,7 +369,10 @@ impl Editor {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.active_message
+                        && entry
+                            .diagnostic
+                            .message
+                            .rendered_eq(&active_diagnostics.active_message)
                 });
 
             if !is_valid {
@@ -490,11 +493,16 @@ impl Editor {
                         let message = diagnostic_entry
                             .diagnostic
                             .message
+                            .as_str()
                             .split_once('\n')
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::new(&*diagnostic_entry.diagnostic.message)
+                                diagnostic_entry
+                                    .diagnostic
+                                    .message
+                                    .as_shared_string()
+                                    .clone()
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
@@ -649,7 +657,7 @@ mod tests {
                                     lsp::Position::new(0, 15),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                message: "cannot find value `def`".to_string(),
+                                message: lsp::DiagnosticMessage::from("cannot find value `def`"),
                                 ..Default::default()
                             }],
                         },
