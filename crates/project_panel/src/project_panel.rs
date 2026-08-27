@@ -43,7 +43,7 @@ use rayon::slice::ParallelSliceMut;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{
-    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
+    DockSide, PanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
     update_settings_file,
 };
 use smallvec::SmallVec;
@@ -6231,8 +6231,8 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .spacing(match settings.entry_spacing {
-                        ProjectPanelEntrySpacing::Comfortable => ListItemSpacing::Dense,
-                        ProjectPanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
+                        PanelEntrySpacing::Comfortable => ListItemSpacing::Dense,
+                        PanelEntrySpacing::Standard => ListItemSpacing::ExtraDense,
                     })
                     .selectable(false)
                     .when(

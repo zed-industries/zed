@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     FolderIndicator, GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, IntoGpui,
-    RegisterSetting, Settings, StatusStyle,
+    PanelEntrySpacing, RegisterSetting, Settings, StatusStyle,
 };
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
@@ -19,6 +19,7 @@ pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
     pub default_width: Pixels,
+    pub entry_spacing: PanelEntrySpacing,
     pub status_style: StatusStyle,
     pub file_icons: bool,
     pub folder_indicator: FolderIndicator,
@@ -62,6 +63,7 @@ impl Settings for GitPanelSettings {
             button: git_panel.button.unwrap(),
             dock: git_panel.dock.unwrap().into(),
             default_width: git_panel.default_width.unwrap().into_gpui(),
+            entry_spacing: git_panel.entry_spacing.unwrap(),
             status_style: git_panel.status_style.unwrap(),
             file_icons: git_panel.file_icons.unwrap(),
             folder_indicator: git_panel.folder_indicator.unwrap(),

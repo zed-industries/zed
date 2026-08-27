@@ -7,7 +7,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 
 use crate::{
     CenteredPaddingSettings, CommandAliasTarget, DelayMs, DockPosition, DockSide, InactiveOpacity,
-    ShowIndentGuides, ShowScrollbar, serialize_optional_f32_with_two_decimal_places,
+    PanelEntrySpacing, ShowIndentGuides, ShowScrollbar,
+    serialize_optional_f32_with_two_decimal_places,
 };
 
 #[with_fallible_options]
@@ -773,7 +774,7 @@ pub struct ProjectPanelSettingsContent {
     /// Spacing between worktree entries in the project panel.
     ///
     /// Default: comfortable
-    pub entry_spacing: Option<ProjectPanelEntrySpacing>,
+    pub entry_spacing: Option<PanelEntrySpacing>,
     /// Whether to show file icons in the project panel.
     ///
     /// Default: true
@@ -853,29 +854,6 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
-}
-
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Default,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    MergeFrom,
-    PartialEq,
-    Eq,
-    strum::VariantArray,
-    strum::VariantNames,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectPanelEntrySpacing {
-    /// Comfortable spacing of entries.
-    #[default]
-    Comfortable,
-    /// The standard spacing of entries.
-    Standard,
 }
 
 #[derive(

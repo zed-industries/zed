@@ -75,8 +75,8 @@ use prompt_store::RULES_FILE_NAMES;
 
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
-    update_settings_file,
+    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, PanelEntrySpacing, Settings,
+    SettingsStore, StatusStyle, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::cell::Cell;
@@ -1230,6 +1230,7 @@ impl GitPanel {
             let mut was_file_icons = GitPanelSettings::get_global(cx).file_icons;
             let mut was_folder_indicator = GitPanelSettings::get_global(cx).folder_indicator;
             let mut was_diff_stats = GitPanelSettings::get_global(cx).diff_stats;
+            let mut was_entry_spacing = GitPanelSettings::get_global(cx).entry_spacing;
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let settings = GitPanelSettings::get_global(cx);
                 let sort_by = settings.sort_by;
@@ -1238,6 +1239,7 @@ impl GitPanel {
                 let file_icons = settings.file_icons;
                 let folder_indicator = settings.folder_indicator;
                 let diff_stats = settings.diff_stats;
+                let entry_spacing = settings.entry_spacing;
                 if tree_view != was_tree_view {
                     match (&mut this.view_mode, tree_view) {
                         (GitPanelViewMode::Tree(state), false) => {
@@ -1263,7 +1265,10 @@ impl GitPanel {
                 if (diff_stats != was_diff_stats) || update_entries {
                     this.update_visible_entries(window, cx);
                 }
-                if file_icons != was_file_icons || folder_indicator != was_folder_indicator {
+                if file_icons != was_file_icons
+                    || folder_indicator != was_folder_indicator
+                    || entry_spacing != was_entry_spacing
+                {
                     cx.notify();
                 }
                 was_sort_by = sort_by;
@@ -1272,6 +1277,7 @@ impl GitPanel {
                 was_file_icons = file_icons;
                 was_folder_indicator = folder_indicator;
                 was_diff_stats = diff_stats;
+                was_entry_spacing = entry_spacing;
             })
             .detach();
 
@@ -7429,7 +7435,9 @@ impl GitPanel {
                                             ));
                                         }
                                         Some(GitListEntry::EmptySection(section)) => {
-                                            items.push(this.render_empty_section(*section));
+                                            items.push(
+                                                this.render_empty_section(*section, window, cx),
+                                            );
                                         }
                                         None => {}
                                     }
@@ -7479,8 +7487,12 @@ impl GitPanel {
         Label::new(label.into()).single_line().color(color)
     }
 
-    fn list_item_height(&self) -> Rems {
-        rems(1.75)
+    fn list_item_height(entry_spacing: PanelEntrySpacing, rem_size: Pixels) -> Pixels {
+        let comfortable_height = rems(1.75).to_pixels(rem_size);
+        match entry_spacing {
+            PanelEntrySpacing::Comfortable => comfortable_height,
+            PanelEntrySpacing::Standard => comfortable_height - px(2.),
+        }
     }
 
     fn render_list_header(
@@ -7488,7 +7500,7 @@ impl GitPanel {
         ix: usize,
         header: &GitHeaderEntry,
         has_write_access: bool,
-        _window: &Window,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
@@ -7513,7 +7525,10 @@ impl GitPanel {
         h_flex()
             .id(id)
             .group(group_name)
-            .h(self.list_item_height())
+            .h(Self::list_item_height(
+                GitPanelSettings::get_global(cx).entry_spacing,
+                window.rem_size(),
+            ))
             .w_full()
             .pl_2p5()
             .pr_1()
@@ -7591,14 +7606,17 @@ impl GitPanel {
             .into_any_element()
     }
 
-    fn render_empty_section(&self, section: Section) -> AnyElement {
+    fn render_empty_section(&self, section: Section, window: &Window, cx: &App) -> AnyElement {
         let message = match section {
             Section::Staged => "No staged changes yet",
             Section::Unstaged => "No unstaged changes",
             _ => "No changes",
         };
         h_flex()
-            .h(self.list_item_height())
+            .h(Self::list_item_height(
+                GitPanelSettings::get_global(cx).entry_spacing,
+                window.rem_size(),
+            ))
             .w_full()
             .pl_2p5()
             .pr_1()
@@ -7931,7 +7949,10 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height())
+            .h(Self::list_item_height(
+                settings.entry_spacing,
+                window.rem_size(),
+            ))
             .w_full()
             .pl_2p5()
             .pr_1()
@@ -8145,7 +8166,10 @@ impl GitPanel {
 
         h_flex()
             .id(id)
-            .h(self.list_item_height())
+            .h(Self::list_item_height(
+                settings.entry_spacing,
+                window.rem_size(),
+            ))
             .min_w_0()
             .w_full()
             .pl_2p5()
@@ -9302,6 +9326,29 @@ mod tests {
             language_model::init(cx);
             editor::init(cx);
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn test_entry_spacing_changes_list_item_height(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            assert_eq!(
+                GitPanel::list_item_height(GitPanelSettings::get_global(cx).entry_spacing, px(16.)),
+                px(28.)
+            );
+
+            let result = SettingsStore::update_global(cx, |store, cx| {
+                store.set_user_settings(r#"{"git_panel":{"entry_spacing":"standard"}}"#, cx)
+            })
+            .result();
+            assert!(result.is_ok(), "failed to update settings: {result:?}");
+
+            assert_eq!(
+                GitPanel::list_item_height(GitPanelSettings::get_global(cx).entry_spacing, px(16.)),
+                px(26.)
+            );
         });
     }
 

@@ -737,6 +737,10 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: 360
     pub default_width: Option<PixelSetting>,
+    /// Spacing between entries in the git panel.
+    ///
+    /// Default: comfortable
+    pub entry_spacing: Option<PanelEntrySpacing>,
     /// How entry statuses are displayed.
     ///
     /// Default: icon
@@ -1229,6 +1233,29 @@ pub struct OutlinePanelSettingsContent {
 pub enum DockSide {
     Left,
     Right,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelEntrySpacing {
+    /// Comfortable spacing of entries.
+    #[default]
+    Comfortable,
+    /// The standard spacing of entries.
+    Standard,
 }
 
 #[derive(

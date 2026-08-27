@@ -5704,6 +5704,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "button": true,
     "dock": "left",
     "default_width": 360,
+    "entry_spacing": "comfortable",
     "status_style": "icon",
     "fallback_branch_name": "main",
     "sort_by": "path",
@@ -5722,6 +5723,7 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `button`: Whether to show the git panel button in the status bar
 - `dock`: Where to dock the git panel. Can be `left` or `right`
 - `default_width`: Default width of the git panel
+- `entry_spacing`: Spacing between entries in the git panel. Can be `comfortable` or `standard`
 - `status_style`: How to display git status. Can be `label_color` or `icon`
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
 - `sort_by`: How to sort entries in the git panel. Can be `path` or `name`

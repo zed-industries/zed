@@ -3,7 +3,7 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, FolderIndicator, IntoGpui, ProjectPanelEntrySpacing, ProjectPanelSortMode,
+    DockSide, FolderIndicator, IntoGpui, PanelEntrySpacing, ProjectPanelSortMode,
     ProjectPanelSortOrder, RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
 };
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
@@ -14,7 +14,7 @@ pub struct ProjectPanelSettings {
     pub hide_gitignore: bool,
     pub default_width: Pixels,
     pub dock: DockSide,
-    pub entry_spacing: ProjectPanelEntrySpacing,
+    pub entry_spacing: PanelEntrySpacing,
     pub file_icons: bool,
     pub folder_indicator: FolderIndicator,
     pub git_status: bool,

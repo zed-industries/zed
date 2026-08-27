@@ -1019,6 +1019,8 @@
     "dock": "right",
     // Default width of the git panel.
     "default_width": 360,
+    // Spacing between entries in the git panel. Can be 'comfortable' or 'standard'.
+    "entry_spacing": "comfortable",
     // Style of the git status indicator in the panel.
     //
     // Choices: label_color, icon
