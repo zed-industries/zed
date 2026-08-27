@@ -1672,7 +1672,9 @@ pub(crate) fn response_error_category(
         Some("api_error" | "internal_server_error" | "server_error") => {
             ProviderErrorCategory::InternalServer
         }
-        Some("overloaded_error") => ProviderErrorCategory::Overloaded,
+        Some("overloaded_error" | "server_is_overloaded" | "slow_down") => {
+            ProviderErrorCategory::Overloaded
+        }
         Some(_) | None => status
             .map(|status| ProviderErrorCategory::from_http_status(status, message))
             .unwrap_or(ProviderErrorCategory::Other),
@@ -3259,6 +3261,17 @@ mod tests {
             response_error_category(Some("invalid_prompt"), None, ""),
             ProviderErrorCategory::ContentPolicy
         );
+    }
+
+    #[test]
+    fn responses_stream_maps_overload_codes_to_overloaded() {
+        for code in ["overloaded_error", "server_is_overloaded", "slow_down"] {
+            assert_eq!(
+                response_error_category(Some(code), None, ""),
+                ProviderErrorCategory::Overloaded,
+                "{code}"
+            );
+        }
     }
 
     #[test]

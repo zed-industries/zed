@@ -1,5 +1,6 @@
 use crate::{
-    App, Bounds, ClipboardItem, Context, Entity, InputHandler, Pixels, UTF16Selection, Window,
+    App, Bounds, ClipboardItem, Context, Entity, InputHandler, Pixels, TextInputConfiguration,
+    UTF16Selection, Window,
 };
 use std::ops::Range;
 
@@ -101,6 +102,15 @@ pub trait EntityInputHandler: 'static + Sized {
     /// See [`InputHandler::accepts_text_input`] for details
     fn accepts_text_input(&self, _window: &mut Window, _cx: &mut Context<Self>) -> bool {
         true
+    }
+
+    /// See [`InputHandler::text_input_configuration`] for details
+    fn text_input_configuration(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> TextInputConfiguration {
+        TextInputConfiguration::default()
     }
 }
 
@@ -243,5 +253,200 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
     fn prefers_ime_for_printable_keys(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.view
             .update(cx, |view, cx| view.accepts_text_input(window, cx))
+    }
+
+    fn text_input_configuration(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> TextInputConfiguration {
+        self.view
+            .update(cx, |view, cx| view.text_input_configuration(window, cx))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        AnyWindowHandle, AppContext as _, FocusHandle, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, Styled as _, TestAppContext, TextInputAction, canvas, div,
+    };
+
+    #[gpui::test]
+    fn text_input_configuration_forwarded_only_on_change(cx: &mut TestAppContext) {
+        let custom = TextInputConfiguration {
+            autocorrect: true,
+            input_action: TextInputAction::Send,
+            ..Default::default()
+        };
+        let window = cx.add_window({
+            let custom = custom.clone();
+            move |_, cx| ConfigurationTestView {
+                focus_handle: cx.focus_handle(),
+                configuration: custom,
+            }
+        });
+        let view = window.root(cx).unwrap();
+        let test_window = cx.test_window(window.into());
+        let window = AnyWindowHandle::from(window);
+        let draw = |cx: &mut TestAppContext| {
+            cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+        };
+
+        // Nothing is focused, so the platform learns the default configuration.
+        draw(cx);
+        assert_eq!(
+            test_window.text_input_configurations(),
+            vec![TextInputConfiguration::default()]
+        );
+
+        // Focusing the view routes its configuration to the platform.
+        cx.update_window(window, |_, window, cx| {
+            let focus_handle = view.read(cx).focus_handle.clone();
+            window.focus(&focus_handle, cx);
+        })
+        .unwrap();
+        draw(cx);
+        assert_eq!(
+            test_window.text_input_configurations(),
+            vec![TextInputConfiguration::default(), custom.clone()]
+        );
+
+        // Redrawing without a change forwards nothing.
+        draw(cx);
+        assert_eq!(test_window.text_input_configurations().len(), 2);
+
+        // Changing the configuration forwards the new value.
+        let updated = TextInputConfiguration {
+            suggestions: true,
+            ..custom
+        };
+        view.update(cx, {
+            let updated = updated.clone();
+            |view, cx| {
+                view.configuration = updated;
+                cx.notify();
+            }
+        });
+        draw(cx);
+        assert_eq!(
+            test_window.text_input_configurations().last(),
+            Some(&updated)
+        );
+        assert_eq!(test_window.text_input_configurations().len(), 3);
+
+        // Losing focus reverts the platform to the default configuration.
+        cx.update_window(window, |_, window, cx| window.blur(cx))
+            .unwrap();
+        draw(cx);
+        assert_eq!(
+            test_window.text_input_configurations().last(),
+            Some(&TextInputConfiguration::default())
+        );
+        assert_eq!(test_window.text_input_configurations().len(), 4);
+    }
+
+    struct ConfigurationTestView {
+        focus_handle: FocusHandle,
+        configuration: TextInputConfiguration,
+    }
+
+    impl Render for ConfigurationTestView {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let view = cx.entity();
+            let focus_handle = self.focus_handle.clone();
+            div().size_full().track_focus(&self.focus_handle).child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, _, window, cx| {
+                        window.handle_input(
+                            &focus_handle,
+                            ElementInputHandler::new(bounds, view),
+                            cx,
+                        );
+                    },
+                )
+                .size_full(),
+            )
+        }
+    }
+
+    impl EntityInputHandler for ConfigurationTestView {
+        fn text_for_range(
+            &mut self,
+            _range: std::ops::Range<usize>,
+            _adjusted_range: &mut Option<std::ops::Range<usize>>,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<String> {
+            None
+        }
+
+        fn selected_text_range(
+            &mut self,
+            _ignore_disabled_input: bool,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<UTF16Selection> {
+            None
+        }
+
+        fn marked_text_range(
+            &self,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<std::ops::Range<usize>> {
+            None
+        }
+
+        fn unmark_text(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {}
+
+        fn replace_text_in_range(
+            &mut self,
+            _range: Option<std::ops::Range<usize>>,
+            _text: &str,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
+        }
+
+        fn replace_and_mark_text_in_range(
+            &mut self,
+            _range: Option<std::ops::Range<usize>>,
+            _new_text: &str,
+            _new_selected_range: Option<std::ops::Range<usize>>,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) {
+        }
+
+        fn bounds_for_range(
+            &mut self,
+            _range_utf16: std::ops::Range<usize>,
+            _element_bounds: Bounds<Pixels>,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<Bounds<Pixels>> {
+            None
+        }
+
+        fn character_index_for_point(
+            &mut self,
+            _point: crate::Point<Pixels>,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> Option<usize> {
+            None
+        }
+
+        fn text_input_configuration(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<Self>,
+        ) -> TextInputConfiguration {
+            self.configuration.clone()
+        }
     }
 }

@@ -1018,7 +1018,9 @@ impl Buffer {
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
+            rpc::proto::LineEnding::try_from(message.line_ending)
+                .ok()
+                .context("missing line_ending")?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
@@ -2097,7 +2099,7 @@ impl Buffer {
                                 .unwrap_or_else(|| {
                                     request
                                         .before_edit
-                                        .indent_size_for_line(suggestion.basis_row)
+                                        .logical_indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
                             old_suggestions
@@ -2138,7 +2140,7 @@ impl Buffer {
                                 .copied()
                                 .map(|e| e.0)
                                 .unwrap_or_else(|| {
-                                    snapshot.indent_size_for_line(suggestion.basis_row)
+                                    snapshot.logical_indent_size_for_line(suggestion.basis_row)
                                 })
                                 .with_delta(suggestion.delta, language_indent_size);
 
@@ -3600,6 +3602,83 @@ impl BufferSnapshot {
         indent_size_for_line(self, row)
     }
 
+    /// The indentation that the block comment closed on `position`'s row belongs
+    /// at, or `None` if that row is not the closing line of a multi-line block
+    /// comment.
+    ///
+    /// A closing delimiter is conventionally indented one column past its opening
+    /// delimiter, so that it lines up with the comment's prefixes:
+    ///
+    /// ```text
+    /// /**
+    ///  * doc
+    ///  */
+    /// ```
+    ///
+    /// That extra column belongs to the comment rather than to the surrounding
+    /// code, which makes the closing row's own indentation a poor basis for
+    /// indenting whatever follows it. The opening row's indentation is used
+    /// instead.
+    ///
+    /// Requires the row to hold nothing but whitespace and the closing delimiter,
+    /// and `position` to be at or past the end of that delimiter, so that
+    /// splitting the delimiter itself is left alone. Also requires the syntax node
+    /// containing the delimiter to end there, so that a line which merely looks
+    /// like a closing delimiter is not mistaken for one.
+    pub fn block_comment_closing_indent(&self, position: Point) -> Option<IndentSize> {
+        let row = position.row;
+        let indent_len = self.indent_size_for_line(row).len;
+        let delimiter_start = Point::new(row, indent_len);
+        let language = self.language_scope_at(delimiter_start)?;
+        // A few languages describe a string literal in `block_comment` rather
+        // than a comment (Python's `"""`), so either scope is accepted. Relying
+        // on the override scope keeps this out of the business of guessing at
+        // grammar node names.
+        if !matches!(language.override_name(), Some("comment" | "string")) {
+            return None;
+        }
+
+        let delimiter_len = [language.documentation_comment(), language.block_comment()]
+            .into_iter()
+            .flatten()
+            .find_map(|config| {
+                let delimiter = config.end.trim_start();
+                if delimiter.is_empty() {
+                    return None;
+                }
+                let mut chars = self.chars_at(delimiter_start);
+                if !delimiter
+                    .chars()
+                    .all(|expected| chars.next() == Some(expected))
+                {
+                    return None;
+                }
+                if !chars.take_while(|c| *c != '\n').all(char::is_whitespace) {
+                    return None;
+                }
+                Some(delimiter.len() as u32)
+            })?;
+        if position.column < indent_len + delimiter_len {
+            return None;
+        }
+
+        let delimiter_end = Point::new(row, indent_len + delimiter_len);
+        let node = self.syntax_ancestor(delimiter_start..delimiter_end)?;
+        if Point::from_ts_point(node.end_position()) != delimiter_end {
+            return None;
+        }
+        let opening_row = Point::from_ts_point(node.start_position()).row;
+        (opening_row < row).then(|| self.indent_size_for_line(opening_row))
+    }
+
+    /// Like [`Self::indent_size_for_line`], but reports the indentation a row
+    /// logically sits at, which differs from its physical indentation on the
+    /// closing line of a block comment. See [`Self::block_comment_closing_indent`].
+    fn logical_indent_size_for_line(&self, row: u32) -> IndentSize {
+        self.block_comment_closing_indent(Point::new(row, self.line_len(row)))
+            .unwrap_or_else(|| self.indent_size_for_line(row))
+    }
+
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &App) -> IndentSize {
@@ -3631,7 +3710,7 @@ impl BufferSnapshot {
                     result
                         .get(&suggestion.basis_row)
                         .copied()
-                        .unwrap_or_else(|| self.indent_size_for_line(suggestion.basis_row))
+                        .unwrap_or_else(|| self.logical_indent_size_for_line(suggestion.basis_row))
                         .with_delta(suggestion.delta, single_indent_size)
                 } else {
                     self.indent_size_for_line(row)
