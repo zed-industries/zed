@@ -1197,6 +1197,10 @@ pub struct Window {
     /// Incremented every time focus moves. Used to invalidate a
     /// pending keyboard activation state when focus changes.
     pub(crate) focus_generation: u64,
+    /// Incremented every time a frame is drawn. Used to detect that a draw
+    /// replaced `rendered_frame` while an event dispatch had temporarily
+    /// taken data out of it.
+    draw_generation: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
@@ -1885,6 +1889,7 @@ impl Window {
             focus: None,
             focus_enabled: true,
             focus_generation: 0,
+            draw_generation: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
@@ -2848,6 +2853,7 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        self.draw_generation = self.draw_generation.wrapping_add(1);
         // Drain every draw in profiler builds so a previous frame's
         // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
@@ -5210,6 +5216,7 @@ impl Window {
         }
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
+        let draw_generation = self.draw_generation;
 
         // Capture phase, events bubble from back to front. Handlers for this phase are used for
         // special purposes, such as detecting events outside of a given Bounds.
@@ -5232,7 +5239,15 @@ impl Window {
             }
         }
 
-        self.rendered_frame.mouse_listeners = mouse_listeners;
+        // A listener may draw synchronously (e.g. by dispatching a keystroke,
+        // whose dispatch draws a dirty window). Drawing replaces
+        // `rendered_frame`, which then owns its own freshly-registered
+        // listeners; writing the taken vector back would destroy those
+        // listeners and leave the frame's cached paint ranges pointing into a
+        // vector from an older frame.
+        if self.draw_generation == draw_generation {
+            self.rendered_frame.mouse_listeners = mouse_listeners;
+        }
 
         if cx.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
@@ -6931,8 +6946,8 @@ mod tests {
     use crate::{
         AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
-        InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-        MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
+        InputEvent as _, InteractiveElement as _, IntoElement, Keystroke, MouseButton,
+        MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
         StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
         WindowOptions, canvas, div, point, px, size,
     };
@@ -6943,6 +6958,85 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
         }
+    }
+
+    struct SwitchesListenersOnMouseDown {
+        b_shown: Rc<Cell<bool>>,
+        a_count: Rc<Cell<usize>>,
+        b_count: Rc<Cell<usize>>,
+    }
+
+    impl Render for SwitchesListenersOnMouseDown {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            if !self.b_shown.get() {
+                let a_count = self.a_count.clone();
+                let b_shown = self.b_shown.clone();
+                div()
+                    .id("a")
+                    .size_full()
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        a_count.set(a_count.get() + 1);
+                        b_shown.set(true);
+                        window.refresh();
+                        // Dispatching a keystroke mid-mouse-dispatch draws the
+                        // dirty window synchronously (dispatch_key_event calls
+                        // window.draw) while dispatch_mouse_event has taken
+                        // rendered_frame.mouse_listeners.
+                        window.dispatch_keystroke(Keystroke::parse("a").unwrap(), cx);
+                    })
+            } else {
+                let b_count = self.b_count.clone();
+                div()
+                    .id("b")
+                    .size_full()
+                    .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                        b_count.set(b_count.get() + 1);
+                    })
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_draw_during_mouse_dispatch_does_not_clobber_new_frame_listeners(
+        cx: &mut TestAppContext,
+    ) {
+        let a_count = Rc::new(Cell::new(0));
+        let b_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let a_count = a_count.clone();
+            let b_count = b_count.clone();
+            move |_, _| SwitchesListenersOnMouseDown {
+                b_shown: Rc::new(Cell::new(false)),
+                a_count,
+                b_count,
+            }
+        });
+        let any_window = AnyWindowHandle::from(window);
+
+        let mouse_down = |cx: &mut TestAppContext| {
+            cx.update_window(any_window, |_, window, cx| {
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(5.), px(5.)),
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            })
+            .unwrap();
+        };
+
+        mouse_down(cx);
+        assert_eq!((a_count.get(), b_count.get()), (1, 0));
+
+        // The window now renders element "b": its listener must receive the
+        // next mouse press.
+        mouse_down(cx);
+        assert_eq!((a_count.get(), b_count.get()), (1, 1));
     }
 
     struct OpensWindowOnPaint {
