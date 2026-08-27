@@ -7754,6 +7754,7 @@ impl ThreadView {
         &self,
         group: SharedString,
         is_preview: bool,
+        clamp: bool,
         command: Entity<Markdown>,
         window: &Window,
         cx: &Context<Self>,
@@ -7802,6 +7803,28 @@ impl ThreadView {
                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             });
+        // When clamped, show only the command's first line, ellipsized, so a long
+        // command occupies one row instead of wrapping over the whole card. The
+        // full text stays available via the header's expand chevron and the copy
+        // button below.
+        let command_body = if clamp {
+            Label::new(
+                command_text
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            )
+            .buffer_font(cx)
+            .size(LabelSize::Small)
+            .color(Color::Muted)
+            .truncate()
+            .into_any_element()
+        } else {
+            markdown_element.into_any_element()
+        };
+
         let copy_button_id = SharedString::from(format!("{group}-copy-command"));
         let copy_button = CopyButton::new(copy_button_id, command_text)
             .tooltip_label("Copy Command")
@@ -7813,7 +7836,7 @@ impl ThreadView {
             .p_1p5()
             .bg(header_bg)
             .when(is_preview, |this| this.pt_1().children(run_command_label))
-            .child(markdown_element)
+            .child(command_body)
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
 
@@ -7873,18 +7896,25 @@ impl ThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
-        let command_element = self.render_collapsible_command(
-            header_group.clone(),
-            false,
-            tool_call.label.clone(),
-            window,
-            cx,
-        );
-
         let is_expanded = self
             .entry_view_state
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
+
+        // `expand_terminal_card` governs the output; this governs the command in
+        // the header, which otherwise soft-wraps over several lines and crowds
+        // out the conversation.
+        let clamp_command =
+            !AgentSettings::get_global(cx).expand_terminal_command && !is_expanded;
+
+        let command_element = self.render_collapsible_command(
+            header_group.clone(),
+            false,
+            clamp_command,
+            tool_call.label.clone(),
+            window,
+            cx,
+        );
 
         let truncated_tooltip = truncated_output.then(|| {
             if let Some(output) = output {
@@ -8458,6 +8488,7 @@ impl ThreadView {
                     this.child(self.render_collapsible_command(
                         card_header_id.clone(),
                         true,
+                        false,
                         tool_call.label.clone(),
                         window,
                         cx,

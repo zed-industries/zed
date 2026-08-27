@@ -308,6 +308,12 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Whether to show the full command in terminal tool call headers. When
+    /// disabled, the command is clamped to a single line until the card is
+    /// expanded, so long commands don't dominate the thread.
+    ///
+    /// Default: true
+    pub expand_terminal_command: Option<bool>,
     /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
     /// The command is sent to the shell as if typed, so it is interpreted by your
     /// configured shell (including on Windows and remote/WSL projects).
