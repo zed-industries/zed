@@ -22,10 +22,11 @@ pub(crate) fn for_input(input: &str) -> Vec<CloneSuggestion> {
     }
 
     if let Some(repo_url) = normalize_github_url(input) {
+        let repo_url: SharedString = repo_url.into();
         return vec![CloneSuggestion {
-            title: "Clone GitHub repository".into(),
-            detail: repo_url.clone().into(),
-            repo_url: repo_url.into(),
+            title: SharedString::new_static("Clone GitHub repository"),
+            detail: repo_url.clone(),
+            repo_url,
         }];
     }
 
@@ -34,17 +35,19 @@ pub(crate) fn for_input(input: &str) -> Vec<CloneSuggestion> {
     }
 
     if is_bare_owner_repo(input) {
-        let github_url = format!("https://github.com/{}.git", input.trim_end_matches(".git"));
+        let github_url: SharedString =
+            format!("https://github.com/{}.git", input.trim_end_matches(".git")).into();
+        let entered_location = SharedString::new(input);
         return vec![
             CloneSuggestion {
-                title: "Clone GitHub repository".into(),
-                detail: github_url.clone().into(),
-                repo_url: github_url.into(),
+                title: SharedString::new_static("Clone GitHub repository"),
+                detail: github_url.clone(),
+                repo_url: github_url,
             },
             CloneSuggestion {
-                title: "Clone entered location".into(),
-                detail: input.to_owned().into(),
-                repo_url: input.to_owned().into(),
+                title: SharedString::new_static("Clone entered location"),
+                detail: entered_location.clone(),
+                repo_url: entered_location,
             },
         ];
     }
@@ -83,9 +86,11 @@ pub(crate) async fn search_github(
         .await
         .context("requesting GitHub repository suggestions")?;
     let status = response.status();
-    if !status.is_success() {
-        anyhow::bail!("GitHub repository search returned HTTP {}", status.as_u16());
-    }
+    anyhow::ensure!(
+        status.is_success(),
+        "GitHub repository search returned HTTP {}",
+        status,
+    );
 
     let mut body = Vec::new();
     response
@@ -105,10 +110,11 @@ pub(crate) async fn search_github(
 }
 
 fn entered_repository(input: &str) -> CloneSuggestion {
+    let repo_url = SharedString::new(input);
     CloneSuggestion {
-        title: "Clone entered repository".into(),
-        detail: input.to_owned().into(),
-        repo_url: input.to_owned().into(),
+        title: SharedString::new_static("Clone entered repository"),
+        detail: repo_url.clone(),
+        repo_url,
     }
 }
 
@@ -304,9 +310,9 @@ mod tests {
     #[test]
     fn deduplicates_clone_urls() {
         let suggestion = CloneSuggestion {
-            title: "zed-industries/zed".into(),
-            detail: "public".into(),
-            repo_url: "https://github.com/zed-industries/zed.git".into(),
+            title: SharedString::new_static("zed-industries/zed"),
+            detail: SharedString::new_static("public"),
+            repo_url: SharedString::new_static("https://github.com/zed-industries/zed.git"),
         };
         let mut suggestions = vec![suggestion.clone()];
         append_unique(&mut suggestions, [suggestion]);
