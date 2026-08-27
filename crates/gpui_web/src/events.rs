@@ -825,6 +825,12 @@ impl WebWindowInner {
                 });
                 if applied == Some(true) {
                     this.ime_mirror.adopt_element_state();
+                } else {
+                    // No import is coming for this move; without a forced
+                    // sync the mirror would keep deferring to it and show
+                    // the IME a selection the app never adopted.
+                    this.ime_mirror.reject_selection_import();
+                    this.schedule_ime_mirror_sync();
                 }
             },
         ))
