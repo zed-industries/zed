@@ -34,6 +34,9 @@ struct EffectLayer {
 struct LayerComposite {
     region: Bounds,
     layer: EffectLayer,
+    // Which axis a variable blur pass runs along: 0 is x, 1 is y. The
+    // composite draw does not read it.
+    blur_axis: u32,
 }
 
 @group(1) @binding(0) var<storage, read> b_blur: BlurParams;
@@ -43,8 +46,6 @@ struct LayerComposite {
 @group(2) @binding(2) var t_layer_backdrop: texture_2d<f32>;
 @group(2) @binding(3) var s_layer_smooth: sampler;
 @group(2) @binding(4) var s_layer_exact: sampler;
-@group(2) @binding(5) var t_layer_backdrop_mid: texture_2d<f32>;
-@group(2) @binding(6) var t_layer_backdrop_low: texture_2d<f32>;
 
 fn full_screen_unit_vertex(vertex_id: u32) -> vec2<f32> {
     return vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
@@ -303,97 +304,38 @@ fn vs_layer_composite(@builtin(vertex_index) vertex_id: u32) -> LayerCompositeVa
     return out;
 }
 
-// Picks the backdrop blur that a mask value asks for. The inputs hold
-// the backdrop blurred at a sixteenth, a quarter and the full radius.
-// The target radius is the mask value times the full radius, so a
-// gradient mask reads as a straight ramp of the radius. Each range of
-// the mask mixes the two levels around the target. The mix weight
-// matches the variance of the target kernel, because a mix of two
-// Gaussian blurs adds their variances by the mix weights. The width of
-// the mixed kernel then tracks the target radius across the whole
-// ramp, with no flat spans and no jumps.
-fn progressive_blur(
-    sharp: vec4<f32>,
-    low: vec4<f32>,
-    mid: vec4<f32>,
-    full: vec4<f32>,
-    amount: f32,
-) -> vec4<f32> {
-    let variance = amount * amount;
-    if (amount < 1.0 / 16.0) {
-        return mix(sharp, low, variance * 256.0);
-    }
-    if (amount < 0.25) {
-        return mix(low, mid, (variance - 1.0 / 256.0) * (256.0 / 15.0));
-    }
-    return mix(mid, full, (variance - 1.0 / 16.0) * (16.0 / 15.0));
-}
 
-// Samples through a Catmull-Rom kernel with nine bilinear reads. A blur
-// level lives in a texture up to eight times smaller than the layer, and
-// a plain bilinear read back bends at every texel of the small texture.
-// The bends show as bands across a soft gradient; a cubic kernel has no
-// bends.
-fn catmull_rom_sample(t: texture_2d<f32>, s: sampler, uv: vec2<f32>) -> vec4<f32> {
-    let size = vec2<f32>(textureDimensions(t));
-    let sample_pos = uv * size;
-    let centre = floor(sample_pos - 0.5) + 0.5;
-    let f = sample_pos - centre;
-    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-    let w3 = f * f * (-0.5 + 0.5 * f);
-    let w12 = w1 + w2;
-    let uv0 = (centre - 1.0) / size;
-    let uv12 = (centre + w2 / w12) / size;
-    let uv3 = (centre + 2.0) / size;
-    var result = vec4<f32>(0.0);
-    result += textureSampleLevel(t, s, vec2<f32>(uv0.x, uv0.y), 0.0) * w0.x * w0.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv12.x, uv0.y), 0.0) * w12.x * w0.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv3.x, uv0.y), 0.0) * w3.x * w0.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv0.x, uv12.y), 0.0) * w0.x * w12.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv12.x, uv12.y), 0.0) * w12.x * w12.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv3.x, uv12.y), 0.0) * w3.x * w12.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv0.x, uv3.y), 0.0) * w0.x * w3.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv12.x, uv3.y), 0.0) * w12.x * w3.y;
-    result += textureSampleLevel(t, s, vec2<f32>(uv3.x, uv3.y), 0.0) * w3.x * w3.y;
-    return max(result, vec4<f32>(0.0));
-}
-
-// One blur level of a mask-weighted backdrop, divided back by the blurred
-// weight that rides in its alpha channel. The divide makes the level a
-// weighted average where every source pixel counts by its own mask value,
-// so a bright row under the clear end of the mask does not glow into the
-// blurred end.
-fn masked_level(t: texture_2d<f32>, s: sampler, uv: vec2<f32>, alpha: f32) -> vec4<f32> {
-    let level = catmull_rom_sample(t, s, uv);
-    return vec4<f32>(level.rgb / max(level.a, 1e-3), alpha);
-}
-
-struct PremaskVarying {
+struct VariableBlurVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) mask_solid: vec4<f32>,
 }
 
 @vertex
-fn vs_premask(@builtin(vertex_index) vertex_id: u32) -> PremaskVarying {
+fn vs_variable_blur(@builtin(vertex_index) vertex_id: u32) -> VariableBlurVarying {
     let unit_vertex = full_screen_unit_vertex(vertex_id);
-    var out: PremaskVarying;
+    var out: VariableBlurVarying;
     out.position = vec4<f32>(unit_vertex.x * 2.0 - 1.0, 1.0 - unit_vertex.y * 2.0, 0.0, 1.0);
     out.uv = unit_vertex;
     out.mask_solid = prepare_fill_color(b_layer.layer.mask);
     return out;
 }
 
-// Multiplies the backdrop by the mask, one pixel at a time, before the
-// blur passes read it. The alpha channel carries the weight out, so the
-// composite can divide the blur back into a weighted average. The square
-// biases the average towards the pixels the mask keeps most. With a plain
-// mask weight, a bright row near the clear end still tints the blurred
-// end, because its small weight rides on a large kernel.
+// The most taps a variable blur pass takes on each side of a pixel. The
+// cap trims the tails of a sigma past 32 device pixels, and it bounds
+// the cost of one huge blur.
+const VARIABLE_BLUR_RADIUS_CAP: i32 = 96;
+
+// One pass of the variable backdrop blur, the blur a gradient mask asks
+// for. The sigma at each pixel is the mask value there times the full
+// sigma, the contract of the variable blur filter of iOS. Two passes,
+// one per axis, come close to the true variable Gaussian, because the
+// mask changes slowly against the width of the kernel. Pairs of taps
+// merge into one linear read at their weighted centre, which halves the
+// reads. A tap past the source is dropped and the weights renormalize,
+// as in the fixed blur. The source is bound at every texture slot.
 @fragment
-fn fs_premask(input: PremaskVarying) -> @location(0) vec4<f32> {
+fn fs_variable_blur(input: VariableBlurVarying) -> @location(0) vec4<f32> {
     let position = b_layer.region.origin + input.uv * b_layer.region.size;
     var mask = 0.0;
     let box_min = b_layer.layer.bounds.origin;
@@ -406,9 +348,37 @@ fn fs_premask(input: PremaskVarying) -> @location(0) vec4<f32> {
             input.mask_solid,
         ).a);
     }
-    let weight = mask * mask;
-    let under = textureSampleLevel(t_layer_under, s_layer_exact, input.uv, 0.0);
-    return vec4<f32>(under.rgb * weight, weight);
+    let sigma = mask * b_layer.layer.backdrop_blur;
+    let centre = textureSampleLevel(t_layer_content, s_layer_smooth, input.uv, 0.0);
+    if (sigma < 0.3) {
+        return centre;
+    }
+    let texel = 1.0 / vec2<f32>(textureDimensions(t_layer_content));
+    var step = vec2<f32>(texel.x, 0.0);
+    if (b_layer.blur_axis != 0u) {
+        step = vec2<f32>(0.0, texel.y);
+    }
+    let radius = min(i32(ceil(3.0 * sigma)), VARIABLE_BLUR_RADIUS_CAP);
+    var sum = centre;
+    var weight_sum = 1.0;
+    for (var i = 1; i <= radius; i += 2) {
+        let near_weight = exp(-0.5 * f32(i * i) / (sigma * sigma));
+        let far_weight = exp(-0.5 * f32((i + 1) * (i + 1)) / (sigma * sigma));
+        let pair = near_weight + far_weight;
+        let offset = (f32(i) * near_weight + f32(i + 1) * far_weight) / pair;
+        let reach = step * offset;
+        let left = input.uv - reach;
+        if (all(left >= vec2<f32>(0.0)) && all(left <= vec2<f32>(1.0))) {
+            sum += pair * textureSampleLevel(t_layer_content, s_layer_smooth, left, 0.0);
+            weight_sum += pair;
+        }
+        let right = input.uv + reach;
+        if (all(right >= vec2<f32>(0.0)) && all(right <= vec2<f32>(1.0))) {
+            sum += pair * textureSampleLevel(t_layer_content, s_layer_smooth, right, 0.0);
+            weight_sum += pair;
+        }
+    }
+    return sum / weight_sum;
 }
 
 @fragment
@@ -458,19 +428,9 @@ fn fs_layer_composite(input: LayerCompositeVarying) -> @location(0) vec4<f32> {
     if (b_layer.layer.has_backdrop != 0u) {
         var backdrop = under;
         if (b_layer.layer.backdrop_blur > 0.0) {
-            if (b_layer.layer.has_mask != 0u) {
-                // The levels hold the backdrop weighted by the mask, from
-                // the premask pass. Divide each back before the mix.
-                backdrop = progressive_blur(
-                    under,
-                    masked_level(t_layer_backdrop_low, s_layer_smooth, uv, under.a),
-                    masked_level(t_layer_backdrop_mid, s_layer_smooth, uv, under.a),
-                    masked_level(t_layer_backdrop, s_layer_smooth, uv, under.a),
-                    keep,
-                );
-            } else {
-                backdrop = textureSampleLevel(t_layer_backdrop, s_layer_smooth, uv, 0.0);
-            }
+            // With a mask, the texture holds the variable blur, already
+            // at the width the mask asks for at every pixel.
+            backdrop = textureSampleLevel(t_layer_backdrop, s_layer_smooth, uv, 0.0);
         }
         backdrop = mix(backdrop, filter_color(b_layer.layer.backdrop_matrix, backdrop), keep);
         base = mix(under, backdrop, shape);

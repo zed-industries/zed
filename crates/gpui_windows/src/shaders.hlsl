@@ -1461,14 +1461,15 @@ struct EffectLayer {
 struct LayerComposite {
     EffectLayer layer;
     Bounds region;
+    // Which axis a variable blur pass runs along: 0 is x, 1 is y. The
+    // composite draw does not read it.
+    uint blur_axis;
 };
 
 StructuredBuffer<BlurParams> blur_params: register(t1);
 StructuredBuffer<LayerComposite> layer_composites: register(t1);
 Texture2D<float4> t_layer_under: register(t2);
 Texture2D<float4> t_layer_backdrop: register(t3);
-Texture2D<float4> t_layer_backdrop_mid: register(t4);
-Texture2D<float4> t_layer_backdrop_low: register(t5);
 SamplerState s_layer_exact: register(s1);
 
 struct BlurVertexOutput {
@@ -1663,91 +1664,36 @@ LayerCompositeVertexOutput layer_composite_vertex(uint vertex_id: SV_VertexID) {
     return output;
 }
 
-// Picks the backdrop blur that a mask value asks for. The inputs hold
-// the backdrop blurred at a sixteenth, a quarter and the full radius.
-// The target radius is the mask value times the full radius, so a
-// gradient mask reads as a straight ramp of the radius. Each range of
-// the mask mixes the two levels around the target. The mix weight
-// matches the variance of the target kernel, because a mix of two
-// Gaussian blurs adds their variances by the mix weights. The width of
-// the mixed kernel then tracks the target radius across the whole
-// ramp, with no flat spans and no jumps.
-float4 progressive_blur(float4 sharp, float4 low, float4 mid, float4 full, float amount) {
-    float variance = amount * amount;
-    if (amount < 1.0 / 16.0) {
-        return lerp(sharp, low, variance * 256.0);
-    }
-    if (amount < 0.25) {
-        return lerp(low, mid, (variance - 1.0 / 256.0) * (256.0 / 15.0));
-    }
-    return lerp(mid, full, (variance - 1.0 / 16.0) * (16.0 / 15.0));
-}
-
-// Samples through a Catmull-Rom kernel with nine bilinear reads. A blur
-// level lives in a texture up to eight times smaller than the layer, and
-// a plain bilinear read back bends at every texel of the small texture.
-// The bends show as bands across a soft gradient; a cubic kernel has no
-// bends.
-float4 catmull_rom_sample(Texture2D<float4> t, SamplerState s, float2 uv) {
-    float2 size;
-    t.GetDimensions(size.x, size.y);
-    float2 sample_pos = uv * size;
-    float2 centre = floor(sample_pos - 0.5) + 0.5;
-    float2 f = sample_pos - centre;
-    float2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-    float2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    float2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-    float2 w3 = f * f * (-0.5 + 0.5 * f);
-    float2 w12 = w1 + w2;
-    float2 uv0 = (centre - 1.0) / size;
-    float2 uv12 = (centre + w2 / w12) / size;
-    float2 uv3 = (centre + 2.0) / size;
-    float4 result = float4(0.0, 0.0, 0.0, 0.0);
-    result += t.SampleLevel(s, float2(uv0.x, uv0.y), 0.0) * w0.x * w0.y;
-    result += t.SampleLevel(s, float2(uv12.x, uv0.y), 0.0) * w12.x * w0.y;
-    result += t.SampleLevel(s, float2(uv3.x, uv0.y), 0.0) * w3.x * w0.y;
-    result += t.SampleLevel(s, float2(uv0.x, uv12.y), 0.0) * w0.x * w12.y;
-    result += t.SampleLevel(s, float2(uv12.x, uv12.y), 0.0) * w12.x * w12.y;
-    result += t.SampleLevel(s, float2(uv3.x, uv12.y), 0.0) * w3.x * w12.y;
-    result += t.SampleLevel(s, float2(uv0.x, uv3.y), 0.0) * w0.x * w3.y;
-    result += t.SampleLevel(s, float2(uv12.x, uv3.y), 0.0) * w12.x * w3.y;
-    result += t.SampleLevel(s, float2(uv3.x, uv3.y), 0.0) * w3.x * w3.y;
-    return max(result, float4(0.0, 0.0, 0.0, 0.0));
-}
-
-// One blur level of a mask-weighted backdrop, divided back by the blurred
-// weight that rides in its alpha channel. The divide makes the level a
-// weighted average where every source pixel counts by its own mask value,
-// so a bright row under the clear end of the mask does not glow into the
-// blurred end.
-float4 masked_level(Texture2D<float4> t, SamplerState s, float2 uv, float alpha) {
-    float4 level = catmull_rom_sample(t, s, uv);
-    return float4(level.rgb / max(level.a, 1e-3), alpha);
-}
-
-struct PremaskVertexOutput {
+struct VariableBlurVertexOutput {
     float4 position: SV_Position;
     float2 uv: TEXCOORD0;
     nointerpolation float4 mask_solid: COLOR0;
 };
 
-PremaskVertexOutput premask_vertex(uint vertex_id: SV_VertexID) {
+VariableBlurVertexOutput variable_blur_vertex(uint vertex_id: SV_VertexID) {
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     LayerComposite composite = layer_composites[0];
-    PremaskVertexOutput output;
+    VariableBlurVertexOutput output;
     output.position = float4(unit_vertex.x * 2.0 - 1.0, 1.0 - unit_vertex.y * 2.0, 0.0, 1.0);
     output.uv = unit_vertex;
     output.mask_solid = prepare_fill_color(composite.layer.mask);
     return output;
 }
 
-// Multiplies the backdrop by the mask, one pixel at a time, before the
-// blur passes read it. The alpha channel carries the weight out, so the
-// composite can divide the blur back into a weighted average. The square
-// biases the average towards the pixels the mask keeps most. With a plain
-// mask weight, a bright row near the clear end still tints the blurred
-// end, because its small weight rides on a large kernel.
-float4 premask_fragment(PremaskVertexOutput input): SV_Target {
+// The most taps a variable blur pass takes on each side of a pixel. The
+// cap trims the tails of a sigma past 32 device pixels, and it bounds the
+// cost of one huge blur.
+static const int VARIABLE_BLUR_RADIUS_CAP = 96;
+
+// One pass of the variable backdrop blur, the blur a gradient mask asks
+// for. The sigma at each pixel is the mask value there times the full
+// sigma, the contract of the variable blur filter of iOS. Two passes,
+// one per axis, come close to the true variable Gaussian, because the
+// mask changes slowly against the width of the kernel. Pairs of taps
+// merge into one linear read at their weighted centre, which halves the
+// reads. A tap past the source is dropped and the weights renormalize,
+// as in the fixed blur.
+float4 variable_blur_fragment(VariableBlurVertexOutput input): SV_Target {
     LayerComposite composite = layer_composites[0];
     EffectLayer layer = composite.layer;
     float2 position = composite.region.origin + input.uv * composite.region.size;
@@ -1757,9 +1703,38 @@ float4 premask_fragment(PremaskVertexOutput input): SV_Target {
     float mask = inside
         ? saturate(gradient_color(layer.mask, position, layer.bounds, input.mask_solid).a)
         : 0.0;
-    float weight = mask * mask;
-    float4 under = t_layer_under.SampleLevel(s_layer_exact, input.uv, 0.0);
-    return float4(under.rgb * weight, weight);
+    float sigma = mask * layer.backdrop_blur;
+    float4 centre = t_sprite.SampleLevel(s_sprite, input.uv, 0.0);
+    if (sigma < 0.3) {
+        return centre;
+    }
+    int radius = min(int(ceil(3.0 * sigma)), VARIABLE_BLUR_RADIUS_CAP);
+    float2 size;
+    t_sprite.GetDimensions(size.x, size.y);
+    float2 step = composite.blur_axis == 0u
+        ? float2(1.0 / size.x, 0.0)
+        : float2(0.0, 1.0 / size.y);
+    float4 sum = centre;
+    float weight_sum = 1.0;
+    [loop]
+    for (int i = 1; i <= radius; i += 2) {
+        float near_weight = exp(-0.5 * float(i * i) / (sigma * sigma));
+        float far_weight = exp(-0.5 * float((i + 1) * (i + 1)) / (sigma * sigma));
+        float pair = near_weight + far_weight;
+        float offset = (float(i) * near_weight + float(i + 1) * far_weight) / pair;
+        float2 reach = step * offset;
+        float2 left = input.uv - reach;
+        if (all(left >= 0.0) && all(left <= 1.0)) {
+            sum += pair * t_sprite.SampleLevel(s_sprite, left, 0.0);
+            weight_sum += pair;
+        }
+        float2 right = input.uv + reach;
+        if (all(right >= 0.0) && all(right <= 1.0)) {
+            sum += pair * t_sprite.SampleLevel(s_sprite, right, 0.0);
+            weight_sum += pair;
+        }
+    }
+    return sum / weight_sum;
 }
 
 float4 layer_composite_fragment(LayerCompositeFragmentInput input): SV_Target {
@@ -1789,17 +1764,9 @@ float4 layer_composite_fragment(LayerCompositeFragmentInput input): SV_Target {
     if (layer.has_backdrop != 0) {
         float4 backdrop = under;
         if (layer.backdrop_blur > 0.0) {
-            if (layer.has_mask != 0) {
-                // The levels hold the backdrop weighted by the mask, from
-                // the premask pass. Divide each back before the mix.
-                backdrop = progressive_blur(under,
-                                            masked_level(t_layer_backdrop_low, s_sprite, uv, under.a),
-                                            masked_level(t_layer_backdrop_mid, s_sprite, uv, under.a),
-                                            masked_level(t_layer_backdrop, s_sprite, uv, under.a),
-                                            keep);
-            } else {
-                backdrop = t_layer_backdrop.SampleLevel(s_sprite, uv, 0.0);
-            }
+            // With a mask, the texture holds the variable blur, already at
+            // the width the mask asks for at every pixel.
+            backdrop = t_layer_backdrop.SampleLevel(s_sprite, uv, 0.0);
         }
         backdrop = lerp(backdrop, filter_color(layer.backdrop_matrix, backdrop), keep);
         base = lerp(under, backdrop, shape);

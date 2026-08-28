@@ -1759,7 +1759,7 @@ pub(crate) mod shader_resources {
         PolychromeSprite,
         EmojiRasterization,
         Blur,
-        Premask,
+        VariableBlur,
         LayerComposite,
     }
 
@@ -1842,9 +1842,9 @@ pub(crate) mod shader_resources {
                     ShaderTarget::Vertex => BLUR_VERTEX_BYTES,
                     ShaderTarget::Fragment => BLUR_FRAGMENT_BYTES,
                 },
-                ShaderModule::Premask => match target {
-                    ShaderTarget::Vertex => PREMASK_VERTEX_BYTES,
-                    ShaderTarget::Fragment => PREMASK_FRAGMENT_BYTES,
+                ShaderModule::VariableBlur => match target {
+                    ShaderTarget::Vertex => VARIABLE_BLUR_VERTEX_BYTES,
+                    ShaderTarget::Fragment => VARIABLE_BLUR_FRAGMENT_BYTES,
                 },
                 ShaderModule::LayerComposite => match target {
                     ShaderTarget::Vertex => LAYER_COMPOSITE_VERTEX_BYTES,
@@ -1938,7 +1938,7 @@ pub(crate) mod shader_resources {
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
                 ShaderModule::EmojiRasterization => "emoji_rasterization",
                 ShaderModule::Blur => "blur",
-                ShaderModule::Premask => "premask",
+                ShaderModule::VariableBlur => "variable_blur",
                 ShaderModule::LayerComposite => "layer_composite",
             }
         }

@@ -39,7 +39,7 @@ mod shader_compilation {
             "subpixel_sprite",
             "polychrome_sprite",
             "blur",
-            "premask",
+            "variable_blur",
             "layer_composite",
         ];
 

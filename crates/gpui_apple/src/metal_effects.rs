@@ -46,11 +46,8 @@ pub(crate) struct Effects {
     device: metal::Device,
     unit_vertices: metal::Buffer,
     blur_pipeline_state: metal::RenderPipelineState,
-    /// The blur again, drawing into a float texture. The mask-weighted
-    /// backdrop needs the precision: its values divide back out in the
-    /// composite, and eight bits leave steps the divide makes visible.
-    blur_float_pipeline_state: metal::RenderPipelineState,
-    premask_pipeline_state: metal::RenderPipelineState,
+    /// The blur whose width follows the mask of the layer, pixel by pixel.
+    variable_blur_pipeline_state: metal::RenderPipelineState,
     composite_pipeline_state: metal::RenderPipelineState,
     /// Textures free for the next layer, any size.
     pool: Vec<metal::Texture>,
@@ -74,21 +71,13 @@ impl Effects {
                 "blur_fragment",
                 MTLPixelFormat::BGRA8Unorm,
             ),
-            blur_float_pipeline_state: build_copy_pipeline_state(
+            variable_blur_pipeline_state: build_copy_pipeline_state(
                 device,
                 library,
-                "blur_float",
-                "blur_vertex",
-                "blur_fragment",
-                MTLPixelFormat::RGBA16Float,
-            ),
-            premask_pipeline_state: build_copy_pipeline_state(
-                device,
-                library,
-                "premask",
-                "premask_vertex",
-                "premask_fragment",
-                MTLPixelFormat::RGBA16Float,
+                "variable_blur",
+                "variable_blur_vertex",
+                "variable_blur_fragment",
+                MTLPixelFormat::BGRA8Unorm,
             ),
             composite_pipeline_state: build_copy_pipeline_state(
                 device,
@@ -209,52 +198,23 @@ impl Effects {
                 MTLPixelFormat::BGRA8Unorm,
             )
         });
-        // A mask over a blurred backdrop asks for a blur that grows with
-        // the mask. Two weaker blurs give the shader levels to mix, and
-        // the mask weighs every level's source pixels, so the blur is an
-        // average of what the mask keeps and nothing else.
-        let progressive = layer.has_mask != 0 && layer.backdrop_blur > 0.0;
-        let masked = progressive.then(|| {
-            let texture = self.take_texture(region, MTLPixelFormat::RGBA16Float);
-            self.premask_pass(frame, &under, &texture, region, &composite);
-            texture
-        });
-        let backdrop_format = if progressive {
-            MTLPixelFormat::RGBA16Float
-        } else {
-            MTLPixelFormat::BGRA8Unorm
-        };
-        let backdrop_source = masked.as_deref().unwrap_or(&under);
+        // A mask over a blurred backdrop asks for a blur whose width
+        // follows the mask, pixel by pixel. That blur reads the mask,
+        // so it runs at full size, not on the shrunk texture the fixed
+        // blur uses.
         let blurred_under = (layer.backdrop_blur > 0.0).then(|| {
-            self.blur(
-                frame,
-                backdrop_source,
-                region,
-                layer.backdrop_blur,
-                backdrop_format,
-            )
+            if layer.has_mask != 0 {
+                self.variable_blur(frame, &under, region, &composite)
+            } else {
+                self.blur(
+                    frame,
+                    &under,
+                    region,
+                    layer.backdrop_blur,
+                    MTLPixelFormat::BGRA8Unorm,
+                )
+            }
         });
-        let blurred_mid = progressive.then(|| {
-            self.blur(
-                frame,
-                backdrop_source,
-                region,
-                layer.backdrop_blur * 0.25,
-                backdrop_format,
-            )
-        });
-        let blurred_low = progressive.then(|| {
-            self.blur(
-                frame,
-                backdrop_source,
-                region,
-                layer.backdrop_blur * 0.0625,
-                backdrop_format,
-            )
-        });
-        if let Some(texture) = masked {
-            self.give_back(texture);
-        }
 
         let encoder = new_command_encoder_for_texture(
             frame.command_buffer,
@@ -291,14 +251,6 @@ impl Effects {
         encoder.set_fragment_texture(LayerInputIndex::UnderTexture as u64, Some(&under));
         let backdrop = blurred_under.as_deref().unwrap_or(&under);
         encoder.set_fragment_texture(LayerInputIndex::BackdropTexture as u64, Some(backdrop));
-        encoder.set_fragment_texture(
-            LayerInputIndex::BackdropMidTexture as u64,
-            Some(blurred_mid.as_deref().unwrap_or(backdrop)),
-        );
-        encoder.set_fragment_texture(
-            LayerInputIndex::BackdropLowTexture as u64,
-            Some(blurred_low.as_deref().unwrap_or(backdrop)),
-        );
         encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
 
         self.give_back(content);
@@ -306,10 +258,7 @@ impl Effects {
         if let Some(texture) = blurred_content {
             self.give_back(texture);
         }
-        for texture in [blurred_under, blurred_mid, blurred_low]
-            .into_iter()
-            .flatten()
-        {
+        if let Some(texture) = blurred_under {
             self.give_back(texture);
         }
         encoder
@@ -352,7 +301,6 @@ impl Effects {
                     sigma: 1.0,
                     radius: 0,
                 },
-                pixel_format,
             );
             if let Some(texture) = shrunk {
                 self.give_back(texture);
@@ -372,7 +320,6 @@ impl Effects {
                 sigma,
                 radius,
             },
-            pixel_format,
         );
         if let Some(texture) = shrunk {
             self.give_back(texture);
@@ -388,23 +335,59 @@ impl Effects {
                 sigma,
                 radius,
             },
-            pixel_format,
         );
         self.give_back(first);
         second
     }
 
-    /// Writes `under` times the mask of the layer into `target`, with the
-    /// mask value in alpha. The blur of this texture is a weighted average
-    /// of only the pixels the mask keeps.
-    fn premask_pass(
-        &self,
+    /// Blurs `source` with the Gaussian the mask of the layer asks for at
+    /// each pixel: the mask value there times the `backdrop_blur` sigma.
+    /// Two passes, one per axis, at full size, because every pixel has its
+    /// own width and a shrunk texture would lose the sharp end.
+    fn variable_blur(
+        &mut self,
         frame: &Frame,
-        under: &metal::TextureRef,
-        target: &metal::TextureRef,
+        source: &metal::TextureRef,
         region: LayerRegion,
         composite: &LayerComposite,
+    ) -> metal::Texture {
+        let size = LayerRegion::new(0, 0, region.width, region.height);
+        let first = self.take_texture(size, MTLPixelFormat::BGRA8Unorm);
+        self.variable_blur_pass(
+            frame,
+            source,
+            &first,
+            size,
+            [1.0 / size.width as f32, 0.0],
+            composite,
+        );
+        let second = self.take_texture(size, MTLPixelFormat::BGRA8Unorm);
+        self.variable_blur_pass(
+            frame,
+            &first,
+            &second,
+            size,
+            [0.0, 1.0 / size.height as f32],
+            composite,
+        );
+        self.give_back(first);
+        second
+    }
+
+    fn variable_blur_pass(
+        &self,
+        frame: &Frame,
+        source: &metal::TextureRef,
+        target: &metal::TextureRef,
+        target_region: LayerRegion,
+        step: [f32; 2],
+        composite: &LayerComposite,
     ) {
+        let params = BlurParams {
+            step,
+            sigma: composite.layer.backdrop_blur,
+            radius: VARIABLE_BLUR_RADIUS_CAP,
+        };
         let descriptor = metal::RenderPassDescriptor::new();
         let attachment = descriptor.color_attachments().object_at(0).unwrap();
         attachment.set_texture(Some(target));
@@ -414,28 +397,33 @@ impl Effects {
         encoder.set_viewport(metal::MTLViewport {
             originX: 0.0,
             originY: 0.0,
-            width: region.width as f64,
-            height: region.height as f64,
+            width: target_region.width as f64,
+            height: target_region.height as f64,
             znear: 0.0,
             zfar: 1.0,
         });
-        encoder.set_render_pipeline_state(&self.premask_pipeline_state);
+        encoder.set_render_pipeline_state(&self.variable_blur_pipeline_state);
         encoder.set_vertex_buffer(
-            LayerInputIndex::Vertices as u64,
+            BlurInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
             0,
         );
         encoder.set_vertex_bytes(
-            LayerInputIndex::Layer as u64,
+            BlurInputIndex::Layer as u64,
             mem::size_of::<LayerComposite>() as u64,
             composite as *const LayerComposite as *const _,
         );
         encoder.set_fragment_bytes(
-            LayerInputIndex::Layer as u64,
+            BlurInputIndex::Params as u64,
+            mem::size_of::<BlurParams>() as u64,
+            &params as *const BlurParams as *const _,
+        );
+        encoder.set_fragment_bytes(
+            BlurInputIndex::Layer as u64,
             mem::size_of::<LayerComposite>() as u64,
             composite as *const LayerComposite as *const _,
         );
-        encoder.set_fragment_texture(LayerInputIndex::UnderTexture as u64, Some(under));
+        encoder.set_fragment_texture(BlurInputIndex::Source as u64, Some(source));
         encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
         encoder.end_encoding();
     }
@@ -447,7 +435,6 @@ impl Effects {
         target: &metal::TextureRef,
         target_region: LayerRegion,
         params: BlurParams,
-        pixel_format: MTLPixelFormat,
     ) {
         let descriptor = metal::RenderPassDescriptor::new();
         let attachment = descriptor.color_attachments().object_at(0).unwrap();
@@ -463,11 +450,7 @@ impl Effects {
             znear: 0.0,
             zfar: 1.0,
         });
-        encoder.set_render_pipeline_state(if pixel_format == MTLPixelFormat::RGBA16Float {
-            &self.blur_float_pipeline_state
-        } else {
-            &self.blur_pipeline_state
-        });
+        encoder.set_render_pipeline_state(&self.blur_pipeline_state);
         encoder.set_vertex_buffer(
             BlurInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -580,7 +563,14 @@ pub(crate) enum BlurInputIndex {
     Vertices = 0,
     Params = 1,
     Source = 2,
+    /// The `LayerComposite`, for the variable blur, which reads the mask.
+    Layer = 3,
 }
+
+/// The most taps a variable blur pass takes on each side of a pixel. The
+/// cap trims the tails of a sigma past 32 device pixels, and it bounds
+/// the cost of one huge blur.
+pub(crate) const VARIABLE_BLUR_RADIUS_CAP: i32 = 96;
 
 /// One pass of a separable Gaussian blur.
 #[derive(Clone, Copy, Debug)]
@@ -602,8 +592,6 @@ pub(crate) enum LayerInputIndex {
     ContentTexture = 3,
     UnderTexture = 4,
     BackdropTexture = 5,
-    BackdropMidTexture = 6,
-    BackdropLowTexture = 7,
 }
 
 /// Everything the composite shader needs to paint one layer.
