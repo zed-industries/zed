@@ -2105,6 +2105,31 @@ impl GitPanel {
         self.range_selection_anchor = Some(ix);
     }
 
+    /// Toggles `ix`'s membership in `marked_entries`, seeding the mark set with
+    /// the current selection first if it's empty, so cmd/ctrl-click adds to the
+    /// existing selection rather than replacing it. Used by cmd/ctrl-click.
+    fn toggle_mark(&mut self, ix: usize) {
+        if self.marked_entries.is_empty()
+            && let Some(selected) = self.selected_entry
+        {
+            self.marked_entries.push(selected);
+        }
+
+        if let Some(position) = self.marked_entries.iter().position(|&marked| marked == ix) {
+            self.marked_entries.remove(position);
+            if self.marked_entries.is_empty() {
+                self.selected_entry = None;
+            } else if self.selected_entry == Some(ix) {
+                self.selected_entry = self.marked_entries.last().copied();
+            }
+        } else {
+            self.marked_entries.push(ix);
+            self.selected_entry = Some(ix);
+        }
+
+        self.range_selection_anchor = self.selected_entry;
+    }
+
     fn change_entries_by_path(&self) -> impl Iterator<Item = &GitStatusEntry> {
         // A grouping can project one changed file into multiple list rows.
         self.entries
@@ -8363,7 +8388,11 @@ impl GitPanel {
                         cx.notify();
                         return;
                     }
-                    this.select_single_entry(ix);
+                    if event.modifiers().secondary() {
+                        this.toggle_mark(ix);
+                    } else {
+                        this.select_single_entry(ix);
+                    }
                     cx.notify();
                     this.open_selected_entry_on_click(event.modifiers().secondary(), window, cx);
                 })
@@ -8562,7 +8591,11 @@ impl GitPanel {
                         cx.notify();
                         return;
                     }
-                    this.select_single_entry(ix);
+                    if event.modifiers().secondary() {
+                        this.toggle_mark(ix);
+                    } else {
+                        this.select_single_entry(ix);
+                    }
                     this.toggle_directory(&key, window, cx);
                 })
             })
