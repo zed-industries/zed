@@ -3,8 +3,8 @@ use std::{pin::Pin, str::FromStr as _, sync::Arc};
 use crate::responses as copilot_responses;
 use crate::{
     ChatLocation, ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, Function,
-    FunctionContent, ImageUrl, Model as CopilotChatModel, ModelVendor,
-    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
+    FunctionContent, ImageUrl, Model as CopilotChatModel, Request as CopilotChatRequest,
+    ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
 };
 use anthropic::{
     AnthropicModelMode,
@@ -22,8 +22,8 @@ use language_model::{
     LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderErrorCategory,
-    RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderErrorCategory, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use util::debug_panic;
 
@@ -105,17 +105,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                 }
             })
             .collect()
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.vendor() {
-            ModelVendor::OpenAI | ModelVendor::Anthropic => {
-                LanguageModelToolSchemaFormat::JsonSchema
-            }
-            ModelVendor::Google | ModelVendor::XAI | ModelVendor::Unknown => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
-        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
