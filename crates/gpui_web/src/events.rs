@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, Image,
-    ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, GestureTuning,
+    Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
     Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId, TouchPhase,
     point, px,
@@ -210,24 +210,21 @@ impl WebWindowInner {
 
             if pointer_type == "touch" {
                 this.state.borrow_mut().mouse_position = position;
+                if this.touch_tap_candidate.get().is_none() {
+                    this.touch_tap_candidate
+                        .set(Some((event.pointer_id(), position)));
+                }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Started,
                     position,
                     force: None,
                 }));
-
-                // Whether this touch resolves into a tap is only known at
-                // release, so this check reflects the state before the
-                // gesture; the release handler re-decides from the tap's
-                // outcome. Focusing here still matters: it keeps an ongoing
-                // IME session alive across taps within editable content, and
-                // runs within the user gesture as keyboard summoning
-                // requires.
-                if this.pointer_targets_text_input(position) {
-                    this.ime_mirror.set_read_only(false);
-                    this.ime_mirror.focus();
-                }
+                // Keyboard and IME focus intentionally do not change here:
+                // whether this touch is a tap or a pan is only known at
+                // release, and only a tap may affect them (see
+                // `touch_tap_candidate`). The release handler still runs
+                // within a user gesture, as keyboard summoning requires.
                 return;
             }
 
@@ -276,6 +273,13 @@ impl WebWindowInner {
 
             if event.pointer_type() == "touch" {
                 this.state.borrow_mut().mouse_position = position;
+                let completes_tap = match this.touch_tap_candidate.get() {
+                    Some((pointer_id, _)) if pointer_id == event.pointer_id() => {
+                        this.touch_tap_candidate.set(None);
+                        true
+                    }
+                    _ => false,
+                };
                 // A recognized tap is dispatched synchronously inside this
                 // call, so the text-input check below sees the state the tap
                 // produced.
@@ -290,11 +294,12 @@ impl WebWindowInner {
                 // layout, so the release position no longer refers to the
                 // content the user aimed at (a tap that summoned the keyboard
                 // often ends up below the shrunken layout, which would
-                // immediately dismiss it again). Let the pointerdown decision
-                // stand instead.
+                // immediately dismiss it again). Skip the sync then, and for
+                // anything that wasn't a tap: pans and flings must not move
+                // keyboard or IME focus at all.
                 let viewport_stable = this.gesture_start_visual_viewport_height.get()
                     == this.visual_viewport_height();
-                if viewport_stable {
+                if completes_tap && viewport_stable {
                     this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
                 }
                 this.schedule_ime_mirror_sync();
@@ -380,6 +385,11 @@ impl WebWindowInner {
         self.listen("pointercancel", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             if event.pointer_type() == "touch" {
+                if let Some((pointer_id, _)) = this.touch_tap_candidate.get()
+                    && pointer_id == event.pointer_id()
+                {
+                    this.touch_tap_candidate.set(None);
+                }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Cancelled,
@@ -496,6 +506,19 @@ impl WebWindowInner {
 
             if event.pointer_type() == "touch" {
                 this.state.borrow_mut().mouse_position = position;
+                // Mirror the slop rule of gpui's tap recognizer: once the
+                // touch travels beyond it, its release must not affect the
+                // keyboard. Only gpui knows what the gesture truly resolved
+                // to; this platform-side shadow exists because the keyboard
+                // decision must be made synchronously inside the browser's
+                // pointerup handler.
+                if let Some((pointer_id, start_position)) = this.touch_tap_candidate.get()
+                    && pointer_id == event.pointer_id()
+                    && (position - start_position).magnitude()
+                        > f64::from(GestureTuning::default().touch_slop)
+                {
+                    this.touch_tap_candidate.set(None);
+                }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Moved,
