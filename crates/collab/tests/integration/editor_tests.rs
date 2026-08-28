@@ -1847,7 +1847,7 @@ async fn test_collaborating_with_code_lens_resolve(
         ..lsp::ServerCapabilities::default()
     };
     client_a.language_registry().add(rust_lang());
-    client_a.language_registry().register_fake_lsp(
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             capabilities: capabilities.clone(),
@@ -1913,6 +1913,26 @@ async fn test_collaborating_with_code_lens_resolve(
         .await
         .unwrap()
         .downcast::<Editor>()
+        .unwrap();
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "untitled-code-lens".to_string(),
+                    method: "textDocument/codeLens".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [
+                            { "language": "rust", "scheme": "untitled" }
+                        ],
+                        "resolveProvider": false,
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
         .unwrap();
     cx_a.run_until_parked();
     cx_b.run_until_parked();

@@ -398,6 +398,261 @@ async fn test_semantic_tokens_refresh_when_duplicate_removal_changes_provider_or
 }
 
 #[gpui::test]
+async fn test_completion_resolve_uses_matching_dynamic_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let method = "textDocument/completion";
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    register_capability(
+        &fake_server,
+        method,
+        "file-completion",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "file" }],
+            "resolveProvider": true,
+        })),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "untitled-completion",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "untitled" }],
+            "resolveProvider": false,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    fake_server.set_request_handler::<lsp::request::Completion, _, _>(|_, _| async move {
+        Ok(Some(lsp::CompletionResponse::Array(vec![
+            lsp::CompletionItem {
+                label: "completion".to_string(),
+                data: Some(json!({ "resolve": true })),
+                ..lsp::CompletionItem::default()
+            },
+        ])))
+    });
+    let resolve_requests = Arc::new(atomic::AtomicUsize::new(0));
+    fake_server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>({
+        let resolve_requests = resolve_requests.clone();
+        move |mut item, _| {
+            resolve_requests.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                item.detail = Some("resolved".to_string());
+                Ok(item)
+            }
+        }
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let responses = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.completions(
+                &buffer,
+                PointUtf16::new(0, 0),
+                lsp::CompletionContext {
+                    trigger_kind: lsp::CompletionTriggerKind::INVOKED,
+                    trigger_character: None,
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    let completions = responses
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
+    assert_eq!(completions.len(), 1);
+    let completions = Rc::new(RefCell::new(completions.into_boxed_slice()));
+
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.resolve_completions(buffer.clone(), vec![0], completions, cx)
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resolve_requests.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the matching file registration to enable completion resolve",
+    );
+}
+
+#[gpui::test]
+async fn test_code_lens_resolve_uses_matching_dynamic_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let method = "textDocument/codeLens";
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    register_capability(
+        &fake_server,
+        method,
+        "file-code-lens",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "file" }],
+            "resolveProvider": true,
+        })),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "untitled-code-lens",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "untitled" }],
+            "resolveProvider": false,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+        Ok(Some(vec![lsp::CodeLens {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+            command: None,
+            data: Some(json!({ "resolve": true })),
+        }]))
+    });
+    let resolve_requests = Arc::new(atomic::AtomicUsize::new(0));
+    fake_server.set_request_handler::<lsp::request::CodeLensResolve, _, _>({
+        let resolve_requests = resolve_requests.clone();
+        move |mut lens, _| {
+            resolve_requests.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                lens.command = Some(lsp::Command {
+                    title: "resolved".to_string(),
+                    command: "test.resolve".to_string(),
+                    arguments: None,
+                });
+                Ok(lens)
+            }
+        }
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap()
+        .expect("expected code lens actions");
+    let (lens_id, action) = actions.into_iter().next().expect("expected one code lens");
+    let resolved = lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.resolve_code_lens(&buffer, action.server_id, lens_id, cx)
+        })
+        .await
+        .expect("expected the code lens to resolve")
+        .1;
+
+    assert_eq!(
+        resolve_requests.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the matching file registration to enable code lens resolve",
+    );
+    assert_eq!(resolved.lsp_action.title(), "resolved");
+}
+
+#[gpui::test]
+async fn test_inlay_hint_resolve_state_uses_matching_dynamic_registration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/inlayHint";
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "fn main() {}")], None, cx);
+    });
+    cx.executor().run_until_parked();
+
+    register_capability(
+        &fake_server,
+        method,
+        "file-inlay-hints",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "file" }],
+            "resolveProvider": true,
+        })),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "untitled-inlay-hints",
+        Some(json!({
+            "documentSelector": [{ "language": "rust", "scheme": "untitled" }],
+            "resolveProvider": false,
+        })),
+    )
+    .await;
+    cx.executor().run_until_parked();
+
+    fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(|_, _| async move {
+        Ok(Some(vec![lsp::InlayHint {
+            position: lsp::Position::new(0, 0),
+            label: lsp::InlayHintLabel::String("hint".to_string()),
+            kind: None,
+            text_edits: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: Some(json!({ "resolve": true })),
+        }]))
+    });
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let hint_tasks = lsp_store.update(cx, |lsp_store, cx| {
+        let range =
+            buffer.read(cx).anchor_before(0)..buffer.read(cx).anchor_after(buffer.read(cx).len());
+        lsp_store.inlay_hints(
+            InvalidationStrategy::None,
+            buffer.clone(),
+            vec![range],
+            None,
+            cx,
+        )
+    });
+    let mut hints = Vec::new();
+    for (_, hint_task) in hint_tasks {
+        for (_, server_hints) in hint_task.await.unwrap() {
+            hints.extend(server_hints.into_iter().map(|(_, hint)| hint));
+        }
+    }
+
+    assert_eq!(hints.len(), 1);
+    assert_matches!(
+        &hints[0].resolve_state,
+        ResolveState::CanResolve(id, _) if *id == server_id,
+        "expected the matching file registration to mark the hint as resolvable",
+    );
+}
+
+#[gpui::test]
 async fn test_multi_registration_inlay_hint(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let (project, fake_server) =

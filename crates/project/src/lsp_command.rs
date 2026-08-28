@@ -4342,9 +4342,18 @@ impl LspCommand for InlayHints {
         // Hence let's use a heuristic first to handle the most awkward case and look for more.
         let force_no_type_left_padding =
             lsp_adapter.name.0.as_ref() == "typescript-language-server";
+        let can_resolve = lsp_store.update(&mut cx, |lsp_store, cx| {
+            lsp_store.text_document_capability_matches_for_server(
+                &buffer,
+                server_id,
+                "textDocument/inlayHint",
+                |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
+                cx,
+            )
+        });
 
         let hints = message.unwrap_or_default().into_iter().map(|lsp_hint| {
-            let resolve_state = if InlayHints::can_resolve_inlays(&lsp_server.capabilities()) {
+            let resolve_state = if can_resolve {
                 ResolveState::CanResolve(lsp_server.server_id(), lsp_hint.data.clone())
             } else {
                 ResolveState::Resolved

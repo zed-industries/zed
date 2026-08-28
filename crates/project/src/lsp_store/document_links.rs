@@ -448,16 +448,17 @@ impl LspStore {
             data: cached_link.data.clone(),
         };
 
+        if !self.text_document_capability_matches_for_server(
+            buffer,
+            server_id,
+            "textDocument/documentLink",
+            |capabilities| can_resolve_link(capabilities.server_capabilities),
+            cx,
+        ) {
+            return Task::ready(None);
+        }
+
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.remote_text_document_capability_matches(
-                buffer,
-                server_id,
-                "textDocument/documentLink",
-                |capabilities| can_resolve_link(capabilities.server_capabilities),
-                cx,
-            ) {
-                return Task::ready(None);
-            }
             let request = proto::ResolveDocumentLink {
                 project_id,
                 buffer_id: buffer_id.into(),
@@ -472,9 +473,6 @@ impl LspStore {
             let Some(server) = self.language_server_for_id(server_id) else {
                 return Task::ready(None);
             };
-            if !can_resolve_link(&server.capabilities()) {
-                return Task::ready(None);
-            }
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();

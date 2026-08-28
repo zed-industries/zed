@@ -258,17 +258,18 @@ impl LspStore {
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
+        if !self.text_document_capability_matches_for_server(
+            &buffer,
+            server_id,
+            "textDocument/inlayHint",
+            |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
+            cx,
+        ) {
+            hint.resolve_state = ResolveState::Resolved;
+            return Task::ready(Ok(hint));
+        }
+
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.remote_text_document_capability_matches(
-                &buffer,
-                server_id,
-                "textDocument/inlayHint",
-                |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
-                cx,
-            ) {
-                hint.resolve_state = ResolveState::Resolved;
-                return Task::ready(Ok(hint));
-            }
             let request = proto::ResolveInlayHint {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -293,9 +294,6 @@ impl LspStore {
             }) else {
                 return Task::ready(Ok(hint));
             };
-            if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
-                return Task::ready(Ok(hint));
-            }
             let buffer_snapshot = buffer.read(cx).snapshot();
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
