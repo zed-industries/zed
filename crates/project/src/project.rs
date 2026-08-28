@@ -4686,13 +4686,29 @@ impl Project {
     ) -> Task<Result<ProjectTransaction>> {
         let push_to_history = true;
         let position = position.to_point_utf16(buffer.read(cx));
-        let request = PerformRename {
+        let mut request = PerformRename {
             position,
             new_name,
             push_to_history,
             language_server_id,
         };
-        self.request_lsp(buffer, request.server_to_query(), request, cx)
+        if let Some(server_id) = request.language_server_id {
+            let server_is_capable = !self.is_local()
+                || self.lsp_store.update(cx, |lsp_store, cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        lsp_store
+                            .language_server_capable_of_lsp_request(buffer, server_id, &request, cx)
+                    })
+                });
+            if !server_is_capable {
+                request.language_server_id = None;
+            }
+        }
+        let server_to_query = request
+            .language_server_id
+            .map(LanguageServerToQuery::Other)
+            .unwrap_or(LanguageServerToQuery::FirstCapable);
+        self.request_lsp(buffer, server_to_query, request, cx)
     }
 
     pub fn on_type_format<T: ToPointUtf16>(

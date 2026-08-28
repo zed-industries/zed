@@ -28,7 +28,7 @@ use crate::{
     },
     lsp_store::{
         LanguageServerState, document_selector_context_for_language, document_selector_matches,
-        dynamic_registration::RegistrationSource, missing_servers_to_query,
+        missing_servers_to_query,
     },
     project_settings::ProjectSettings,
 };
@@ -99,9 +99,8 @@ impl LspStore {
         let latest_lsp_data = self.latest_lsp_data(&buffer, cx);
         let semantic_tokens_data = latest_lsp_data.semantic_tokens.get_or_insert_default();
         let pending_refreshes = std::mem::take(&mut semantic_tokens_data.pending_refreshes);
-        let current_servers_are_authoritative = !current_servers.is_empty()
-            || empty_current_servers_are_authoritative
-            || !pending_refreshes.is_empty();
+        let current_servers_are_authoritative =
+            !current_servers.is_empty() || empty_current_servers_are_authoritative;
         let server_set_shrank = current_servers_are_authoritative
             && (semantic_tokens_data
                 .raw_tokens
@@ -545,27 +544,34 @@ impl LspStore {
             && let Some(language) = language
             && let Some(LanguageServerState::Running { adapter, .. }) =
                 local.language_servers.get(&server_id)
-            && let Some(registrations) = local.language_server_dynamic_registrations.get(&server_id)
         {
             let context = document_selector_context_for_language(language, adapter);
-            let selectors = registrations
-                .text_documents
-                .get("textDocument/semanticTokens");
-            for (source, options) in registrations.semantic_tokens.iter().rev() {
-                let matches = match source {
-                    RegistrationSource::Static => true,
-                    RegistrationSource::Dynamic(registration_id) => selectors
-                        .and_then(|selectors| selectors.get(registration_id))
-                        .is_none_or(|registration| {
-                            document_selector_matches(
-                                registration.document_selector.as_ref(),
-                                &context,
-                            )
-                        }),
-                };
-                if matches {
-                    return Some(semantic_tokens_provider_legend(options));
+            if let Some(registrations) = local
+                .language_server_dynamic_registrations
+                .get(&server_id)
+                .and_then(|registrations| {
+                    registrations
+                        .text_documents
+                        .get("textDocument/semanticTokens")
+                })
+            {
+                for registration in registrations.values().rev() {
+                    if document_selector_matches(registration.document_selector.as_ref(), &context)
+                        && let Some(provider) = registration
+                            .server_capabilities
+                            .semantic_tokens_provider
+                            .as_ref()
+                    {
+                        return Some(semantic_tokens_provider_legend(provider));
+                    }
                 }
+            }
+            if let Some(provider) = local
+                .initial_server_capabilities
+                .get(&server_id)
+                .and_then(|capabilities| capabilities.semantic_tokens_provider.as_ref())
+            {
+                return Some(semantic_tokens_provider_legend(provider));
             }
         }
 

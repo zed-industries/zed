@@ -259,11 +259,11 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
-            if !self.check_server_capable_for_proto_request(
+            if !self.remote_text_document_capability_matches(
                 &buffer,
                 server_id,
                 "textDocument/inlayHint",
-                InlayHints::can_resolve_inlays,
+                |capabilities| InlayHints::can_resolve_inlays(capabilities.server_capabilities),
                 cx,
             ) {
                 hint.resolve_state = ResolveState::Resolved;

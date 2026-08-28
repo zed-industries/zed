@@ -397,11 +397,11 @@ impl LspStore {
         let action = cached.clone();
 
         if self.upstream_client().is_some() {
-            if !self.check_server_capable_for_proto_request(
+            if !self.remote_text_document_capability_matches(
                 buffer,
                 server_id,
                 "textDocument/codeLens",
-                GetCodeLens::can_resolve_lens,
+                |capabilities| GetCodeLens::can_resolve_lens(capabilities.server_capabilities),
                 cx,
             ) {
                 return Task::ready(None).shared();

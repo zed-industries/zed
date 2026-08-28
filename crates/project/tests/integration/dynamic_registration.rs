@@ -714,6 +714,230 @@ async fn test_selector_only_registration_change_refreshes_cached_lsp_data(
 }
 
 #[gpui::test]
+async fn test_duplicate_content_registration_changes_do_not_refresh(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/codeLens";
+    let registration_options = |scheme: &str| {
+        json!({
+            "documentSelector": [{ "language": "rust", "scheme": scheme }],
+            "resolveProvider": true,
+        })
+    };
+    let expected_options = lsp::CodeLensOptions {
+        resolve_provider: Some(true),
+    };
+
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+    register_capability(
+        &fake_server,
+        method,
+        "lens-a",
+        Some(registration_options("file")),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "lens-b",
+        Some(registration_options("untitled")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![
+            format!("code_lens({server_id})"),
+            format!("code_lens({server_id})"),
+        ],
+        "expected registrations with distinct selectors to refresh",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "lens-a",
+        Some(registration_options("untitled")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).code_lens_provider,
+        Some(expected_options),
+        "expected the active code lens options to survive a duplicate ID replacement",
+    );
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("code_lens({server_id})")],
+        "expected a selector change of any registration to refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["lens-b"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).code_lens_provider,
+        Some(expected_options),
+        "expected the duplicate-content registration to keep the capability active",
+    );
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected removing a registration whose content a remaining one duplicates to not refresh",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "lens-c",
+        Some(registration_options("untitled")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected a new registration with content identical to an existing one to not refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["lens-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).code_lens_provider,
+        Some(expected_options),
+        "expected the capability to survive removing one of two identical registrations",
+    );
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[] as &[String],
+        "expected removing one of two identical registrations to not refresh",
+    );
+
+    unregister_capabilities(&fake_server, method, &["lens-c"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).code_lens_provider,
+        None,
+        "expected the code lens provider to be cleared after unregistering the last registration",
+    );
+    assert_eq!(
+        refresh_events.lock().drain(..).collect::<Vec<_>>(),
+        vec![format!("code_lens({server_id})")],
+        "expected the last unregistration to clear the capability and refresh",
+    );
+}
+
+#[gpui::test]
+async fn test_selector_aware_routing_with_duplicate_content_registrations(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/completion";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_triggers = |cx: &mut gpui::TestAppContext| {
+        buffer.read_with(cx, |buffer, _| buffer.completion_triggers().clone())
+    };
+    let registration_options = |scheme: &str, trigger: &str| {
+        json!({
+            "documentSelector": [{ "language": "rust", "scheme": scheme }],
+            "triggerCharacters": [trigger],
+        })
+    };
+    let colon_options = lsp::CompletionOptions {
+        trigger_characters: Some(vec![":".to_string()]),
+        ..lsp::CompletionOptions::default()
+    };
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-a",
+        Some(registration_options("file", ".")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the matching registration's triggers to apply to the buffer",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-b",
+        Some(registration_options("untitled", ":")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::from([".".to_string()]),
+        "expected the non-matching registration's triggers to be excluded from the buffer",
+    );
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).completion_provider,
+        Some(colon_options.clone()),
+        "expected the latest registration's options to be active",
+    );
+
+    register_capability(
+        &fake_server,
+        method,
+        "completion-a",
+        Some(registration_options("untitled", ":")),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::new(),
+        "expected re-registering with a non-matching selector to remove the triggers from the buffer",
+    );
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).completion_provider,
+        Some(colon_options.clone()),
+        "expected the active options to survive a duplicate ID replacement of an older registration",
+    );
+
+    unregister_capabilities(&fake_server, method, &["completion-b"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::new(),
+        "expected the remaining duplicate-content registration to still not match the buffer",
+    );
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).completion_provider,
+        Some(colon_options),
+        "expected the capability to survive removing one of two identical registrations",
+    );
+
+    unregister_capabilities(&fake_server, method, &["completion-a"]).await;
+    cx.executor().run_until_parked();
+    assert_eq!(
+        buffer_triggers(cx),
+        BTreeSet::new(),
+        "expected no completion triggers after unregistering the last registration",
+    );
+    assert_eq!(
+        server_capabilities(&project, server_id, cx).completion_provider,
+        None,
+        "expected the completion provider to be cleared after unregistering the last registration",
+    );
+}
+
+#[gpui::test]
 async fn test_multi_registration_completion_triggers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let (project, fake_server) =

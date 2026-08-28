@@ -9277,6 +9277,229 @@ async fn test_prepare_rename_prefers_server_with_prepare_support(cx: &mut gpui::
 }
 
 #[gpui::test]
+async fn test_perform_rename_falls_back_when_prepared_server_is_gone(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let rename_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _rename_requests = fake_server.set_request_handler::<lsp::request::Rename, _, _>({
+        let rename_request_count = rename_request_count.clone();
+        move |params, _| {
+            rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                assert_eq!(params.new_name, "TWO");
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [(
+                            lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                                "TWO".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                }))
+            }
+        }
+    });
+
+    let transaction = project
+        .update(cx, |project, cx| {
+            project.perform_rename(
+                buffer.clone(),
+                7,
+                "TWO".to_string(),
+                Some(LanguageServerId(4242)),
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .0;
+
+    assert_eq!(
+        rename_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the rename to fall back to the live rename-capable server",
+    );
+    assert_eq!(
+        transaction.len(),
+        1,
+        "expected a transaction for the renamed buffer",
+    );
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        "const TWO: usize = 1;"
+    );
+}
+
+#[gpui::test]
+async fn test_perform_rename_falls_back_when_server_unregisters_rename(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut dynamic_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "dynamic-rename-server",
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+    let mut static_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "static-rename-server",
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let dynamic_server = dynamic_servers.next().await.unwrap();
+    let static_server = static_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    dynamic_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "file-rename".to_string(),
+                    method: "textDocument/rename".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                        "prepareProvider": false,
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let dynamic_rename_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _dynamic_rename_requests = dynamic_server
+        .set_request_handler::<lsp::request::Rename, _, _>({
+            let dynamic_rename_request_count = dynamic_rename_request_count.clone();
+            move |_, _| {
+                dynamic_rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let static_rename_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _static_rename_requests =
+        static_server.set_request_handler::<lsp::request::Rename, _, _>({
+            let static_rename_request_count = static_rename_request_count.clone();
+            move |params, _| {
+                static_rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move {
+                    assert_eq!(params.new_name, "TWO");
+                    Ok(None)
+                }
+            }
+        });
+
+    dynamic_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "file-rename".to_string(),
+                    method: "textDocument/rename".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let dynamic_server_id = dynamic_server.server.server_id();
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(
+                buffer.clone(),
+                7,
+                "TWO".to_string(),
+                Some(dynamic_server_id),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        dynamic_rename_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no rename request for the server that unregistered its rename capability",
+    );
+    assert_eq!(
+        static_rename_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the rename to fall back to the rename-capable server",
+    );
+}
+
+#[gpui::test]
 async fn test_dynamic_formatting_registrations_honor_document_selectors(
     cx: &mut gpui::TestAppContext,
 ) {
@@ -9383,6 +9606,286 @@ async fn test_dynamic_formatting_registrations_honor_document_selectors(
         format_request_count.load(atomic::Ordering::SeqCst),
         1,
         "expected a formatting request once a matching registration exists",
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_open(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let  value = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _format_requests = fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
+        let format_request_count = format_request_count.clone();
+        move |_, _| {
+            format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(None) }
+        }
+    });
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "pattern-only-formatting".to_string(),
+                    method: "textDocument/formatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "pattern": "**/*.nomatch" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected a pattern-only filter to fail open and route the formatting request",
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_formatting_registration_with_empty_selector_matches_nothing(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let  value = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _format_requests = fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
+        let format_request_count = format_request_count.clone();
+        move |_, _| {
+            format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(None) }
+        }
+    });
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "empty-selector-formatting".to_string(),
+                    method: "textDocument/formatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected an empty document selector to match no buffers",
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_formatting_registration_honors_language_selector(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.formatter = Some(FormatterList::Single(
+                    Formatter::LanguageServer(settings::LanguageServerFormatterSpecifier::Current),
+                ));
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "let  value = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let format_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _format_requests = fake_server.set_request_handler::<lsp::request::Formatting, _, _>({
+        let format_request_count = format_request_count.clone();
+        move |_, _| {
+            format_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(None) }
+        }
+    });
+    let format_buffer = |cx: &mut gpui::TestAppContext| {
+        project.update(cx, |project, cx| {
+            project.format(
+                HashSet::from_iter([buffer.clone()]),
+                project::lsp_store::LspFormatTarget::Buffers,
+                false,
+                project::lsp_store::FormatTrigger::Manual,
+                cx,
+            )
+        })
+    };
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "plaintext-formatting".to_string(),
+                    method: "textDocument/formatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "plaintext" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    format_buffer(cx).await.unwrap();
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no formatting request for a registration with a different language filter",
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "rust-formatting".to_string(),
+                    method: "textDocument/formatting".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    format_buffer(cx).await.unwrap();
+    assert_eq!(
+        format_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected a formatting request once a registration with the buffer's language id exists",
     );
 }
 

@@ -1359,6 +1359,112 @@ async fn test_remote_rename_uses_server_that_prepared_it(
 }
 
 #[gpui::test]
+async fn test_remote_rename_with_stale_server_id_falls_back_to_capable_server(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rename-server",
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "rename-server",
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ "one.rs": "const ONE: usize = 1;" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (buffer_b, _handle_b) = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("one.rs")), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let rename_request_count = Arc::new(AtomicUsize::new(0));
+    let _rename_requests = fake_server.set_request_handler::<lsp::request::Rename, _, _>({
+        let rename_request_count = rename_request_count.clone();
+        move |params, _| {
+            rename_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                assert_eq!(params.new_name, "TWO");
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [(
+                            lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            vec![lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                                "TWO".to_string(),
+                            )],
+                        )]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..lsp::WorkspaceEdit::default()
+                }))
+            }
+        }
+    });
+
+    let transaction = project_b
+        .update(cx_b, |project, cx| {
+            project.perform_rename(
+                buffer_b.clone(),
+                7,
+                "TWO".to_string(),
+                Some(lsp::LanguageServerId(4242)),
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .0;
+
+    assert_eq!(
+        rename_request_count.load(atomic::Ordering::SeqCst),
+        1,
+        "expected the host to drop the stale server id and fall back to the capable server",
+    );
+    assert_eq!(transaction.len(), 1);
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.text(), "const TWO: usize = 1;");
+    });
+}
+
+#[gpui::test]
 async fn test_remote_dynamic_call_hierarchy_followups_use_prepared_server(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -6091,10 +6197,12 @@ async fn test_guest_semantic_tokens_honor_dynamic_document_selectors(
     cx_b: &mut TestAppContext,
 ) {
     run_guest_semantic_tokens_document_selector_test(
-        false,
-        true,
-        true,
-        Some("keyword"),
+        GuestSemanticTokensTestConfig {
+            include_static_capability: true,
+            include_matching_registration: true,
+            expected_token_type: Some("keyword"),
+            ..GuestSemanticTokensTestConfig::default()
+        },
         cx_a,
         cx_b,
     )
@@ -6106,8 +6214,17 @@ async fn test_guest_receives_dynamic_document_selectors_when_project_is_shared_l
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    run_guest_semantic_tokens_document_selector_test(true, true, true, Some("keyword"), cx_a, cx_b)
-        .await;
+    run_guest_semantic_tokens_document_selector_test(
+        GuestSemanticTokensTestConfig {
+            share_after_registration: true,
+            include_static_capability: true,
+            include_matching_registration: true,
+            expected_token_type: Some("keyword"),
+        },
+        cx_a,
+        cx_b,
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -6115,8 +6232,16 @@ async fn test_guest_preserves_static_capability_after_nonmatching_dynamic_regist
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    run_guest_semantic_tokens_document_selector_test(false, true, false, Some("type"), cx_a, cx_b)
-        .await;
+    run_guest_semantic_tokens_document_selector_test(
+        GuestSemanticTokensTestConfig {
+            include_static_capability: true,
+            expected_token_type: Some("type"),
+            ..GuestSemanticTokensTestConfig::default()
+        },
+        cx_a,
+        cx_b,
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -6124,211 +6249,12 @@ async fn test_guest_does_not_treat_nonmatching_dynamic_capability_as_static(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    run_guest_semantic_tokens_document_selector_test(false, false, false, None, cx_a, cx_b).await;
-}
-
-async fn run_guest_semantic_tokens_document_selector_test(
-    share_after_registration: bool,
-    include_static_capability: bool,
-    include_matching_registration: bool,
-    expected_token_type: Option<&str>,
-    cx_a: &mut TestAppContext,
-    cx_b: &mut TestAppContext,
-) {
-    let mut server = TestServer::start(cx_a.executor()).await;
-    let executor = cx_a.executor();
-    let client_a = server.create_client(cx_a, "user_a").await;
-    let client_b = server.create_client(cx_b, "user_b").await;
-    server
-        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
-        .await;
-    let active_call_a = cx_a.read(ActiveCall::global);
-
-    let static_capabilities = lsp::ServerCapabilities {
-        semantic_tokens_provider: include_static_capability.then_some(
-            lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                lsp::SemanticTokensOptions {
-                    legend: lsp::SemanticTokensLegend {
-                        token_types: vec!["type".into()],
-                        token_modifiers: Vec::new(),
-                    },
-                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
-                    ..lsp::SemanticTokensOptions::default()
-                },
-            ),
-        ),
-        ..lsp::ServerCapabilities::default()
-    };
-    client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: static_capabilities.clone(),
-            ..FakeLspAdapter::default()
-        },
-    );
-    client_b.language_registry().add(rust_lang());
-    client_b.language_registry().register_fake_lsp_adapter(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: static_capabilities,
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    client_a
-        .fs()
-        .insert_tree(path!("/a"), json!({ "main.rs": "fn main() {}" }))
-        .await;
-    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
-    active_call_a
-        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
-        .await
-        .unwrap();
-    let project_id = if share_after_registration {
-        None
-    } else {
-        Some(
-            active_call_a
-                .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-                .await
-                .unwrap(),
-        )
-    };
-
-    let (_buffer_a, _handle_a) = project_a
-        .update(cx_a, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
-        })
-        .await
-        .unwrap();
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    executor.run_until_parked();
-
-    let semantic_tokens_registration =
-        |scheme: &str, full: lsp::SemanticTokensFullOptions, token_type: &str| {
-            serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
-                text_document_registration_options: lsp::TextDocumentRegistrationOptions {
-                    document_selector: Some(vec![lsp::DocumentFilter {
-                        language: Some("rust".to_string()),
-                        scheme: Some(scheme.to_string()),
-                        pattern: None,
-                    }]),
-                },
-                semantic_tokens_options: lsp::SemanticTokensOptions {
-                    legend: lsp::SemanticTokensLegend {
-                        token_types: vec![token_type.to_owned().into()],
-                        token_modifiers: Vec::new(),
-                    },
-                    full: Some(full),
-                    ..lsp::SemanticTokensOptions::default()
-                },
-                static_registration_options: lsp::StaticRegistrationOptions::default(),
-            })
-            .ok()
-        };
-    let mut registrations = Vec::new();
-    if include_matching_registration {
-        registrations.push(lsp::Registration {
-            id: "file-semantic-tokens".to_string(),
-            method: "textDocument/semanticTokens".to_string(),
-            register_options: semantic_tokens_registration(
-                "file",
-                lsp::SemanticTokensFullOptions::Delta { delta: Some(true) },
-                "keyword",
-            ),
-        });
-    }
-    registrations.push(lsp::Registration {
-        id: "untitled-semantic-tokens".to_string(),
-        method: "textDocument/semanticTokens".to_string(),
-        register_options: semantic_tokens_registration(
-            "untitled",
-            lsp::SemanticTokensFullOptions::Bool(true),
-            "comment",
-        ),
-    });
-    fake_language_server
-        .request::<lsp::request::RegisterCapability>(
-            lsp::RegistrationParams { registrations },
-            DEFAULT_LSP_REQUEST_TIMEOUT,
-        )
-        .await
-        .into_response()
-        .unwrap();
-
-    let semantic_token_requests = Arc::new(AtomicUsize::new(0));
-    fake_language_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
-        let semantic_token_requests = semantic_token_requests.clone();
-        move |_, _| {
-            semantic_token_requests.fetch_add(1, atomic::Ordering::SeqCst);
-            async move {
-                Ok(Some(lsp::SemanticTokensResult::Tokens(
-                    lsp::SemanticTokens {
-                        data: vec![0, 3, 4, 0, 0],
-                        result_id: None,
-                    },
-                )))
-            }
-        }
-    });
-    executor.run_until_parked();
-
-    let project_id = match project_id {
-        Some(project_id) => project_id,
-        None => active_call_a
-            .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
-            .await
-            .unwrap(),
-    };
-    let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let buffer_b = project_b
-        .update(cx_b, |project, cx| {
-            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
-        })
-        .await
-        .unwrap();
-    executor.run_until_parked();
-
-    let requests_before_guest_fetch = semantic_token_requests.load(atomic::Ordering::SeqCst);
-    let lsp_store_b = project_b.read_with(cx_b, |project, _| project.lsp_store());
-    let guest_tokens = lsp_store_b
-        .update(cx_b, |lsp_store, cx| {
-            lsp_store.semantic_tokens(buffer_b.clone(), cx)
-        })
-        .await
-        .unwrap();
-
-    let expected_server_count = usize::from(expected_token_type.is_some());
-    assert_eq!(
-        semantic_token_requests.load(atomic::Ordering::SeqCst) - requests_before_guest_fetch,
-        expected_server_count,
-        "expected the guest request routing to honor the applicable providers",
-    );
-    assert_eq!(
-        guest_tokens.tokens.as_ref().map_or(0, HashMap::len),
-        expected_server_count,
-        "expected the guest token result to honor the applicable providers",
-    );
-    let Some(expected_token_type) = expected_token_type else {
-        return;
-    };
-    let server_id = guest_tokens
-        .tokens
-        .as_ref()
-        .and_then(|tokens| tokens.keys().next().copied())
-        .expect("expected semantic tokens from one server");
-    let token_type = lsp_store_b.update(cx_b, |lsp_store, cx| {
-        let language = buffer_b.read(cx).language().map(|language| language.name());
-        lsp_store
-            .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
-            .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
-    });
-    assert_eq!(
-        token_type.as_deref(),
-        Some(expected_token_type),
-        "expected the guest to decode tokens with the applicable provider's legend",
-    );
+    run_guest_semantic_tokens_document_selector_test(
+        GuestSemanticTokensTestConfig::default(),
+        cx_a,
+        cx_b,
+    )
+    .await;
 }
 
 #[gpui::test(iterations = 10)]
@@ -7005,4 +6931,219 @@ fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {
         filename: String::new(),
         boundary: false,
     }
+}
+
+#[derive(Default)]
+struct GuestSemanticTokensTestConfig {
+    share_after_registration: bool,
+    include_static_capability: bool,
+    include_matching_registration: bool,
+    expected_token_type: Option<&'static str>,
+}
+
+async fn run_guest_semantic_tokens_document_selector_test(
+    config: GuestSemanticTokensTestConfig,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let GuestSemanticTokensTestConfig {
+        share_after_registration,
+        include_static_capability,
+        include_matching_registration,
+        expected_token_type,
+    } = config;
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let executor = cx_a.executor();
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let static_capabilities = lsp::ServerCapabilities {
+        semantic_tokens_provider: include_static_capability.then_some(
+            lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(
+                lsp::SemanticTokensOptions {
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: vec!["type".into()],
+                        token_modifiers: Vec::new(),
+                    },
+                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                    ..lsp::SemanticTokensOptions::default()
+                },
+            ),
+        ),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: static_capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: static_capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(path!("/a"), json!({ "main.rs": "fn main() {}" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+    let project_id = if share_after_registration {
+        None
+    } else {
+        Some(
+            active_call_a
+                .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+                .await
+                .unwrap(),
+        )
+    };
+
+    let (_buffer_a, _handle_a) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    executor.run_until_parked();
+
+    let semantic_tokens_registration =
+        |scheme: &str, full: lsp::SemanticTokensFullOptions, token_type: &str| {
+            serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+                text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                    document_selector: Some(vec![lsp::DocumentFilter {
+                        language: Some("rust".to_string()),
+                        scheme: Some(scheme.to_string()),
+                        pattern: None,
+                    }]),
+                },
+                semantic_tokens_options: lsp::SemanticTokensOptions {
+                    legend: lsp::SemanticTokensLegend {
+                        token_types: vec![token_type.to_owned().into()],
+                        token_modifiers: Vec::new(),
+                    },
+                    full: Some(full),
+                    ..lsp::SemanticTokensOptions::default()
+                },
+                static_registration_options: lsp::StaticRegistrationOptions::default(),
+            })
+            .ok()
+        };
+    let mut registrations = Vec::new();
+    if include_matching_registration {
+        registrations.push(lsp::Registration {
+            id: "file-semantic-tokens".to_string(),
+            method: "textDocument/semanticTokens".to_string(),
+            register_options: semantic_tokens_registration(
+                "file",
+                lsp::SemanticTokensFullOptions::Delta { delta: Some(true) },
+                "keyword",
+            ),
+        });
+    }
+    registrations.push(lsp::Registration {
+        id: "untitled-semantic-tokens".to_string(),
+        method: "textDocument/semanticTokens".to_string(),
+        register_options: semantic_tokens_registration(
+            "untitled",
+            lsp::SemanticTokensFullOptions::Bool(true),
+            "comment",
+        ),
+    });
+    fake_language_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams { registrations },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+
+    let semantic_token_requests = Arc::new(AtomicUsize::new(0));
+    fake_language_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+        let semantic_token_requests = semantic_token_requests.clone();
+        move |_, _| {
+            semantic_token_requests.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                Ok(Some(lsp::SemanticTokensResult::Tokens(
+                    lsp::SemanticTokens {
+                        data: vec![0, 3, 4, 0, 0],
+                        result_id: None,
+                    },
+                )))
+            }
+        }
+    });
+    executor.run_until_parked();
+
+    let project_id = match project_id {
+        Some(project_id) => project_id,
+        None => active_call_a
+            .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+            .await
+            .unwrap(),
+    };
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let buffer_b = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let requests_before_guest_fetch = semantic_token_requests.load(atomic::Ordering::SeqCst);
+    let lsp_store_b = project_b.read_with(cx_b, |project, _| project.lsp_store());
+    let guest_tokens = lsp_store_b
+        .update(cx_b, |lsp_store, cx| {
+            lsp_store.semantic_tokens(buffer_b.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let expected_server_count = usize::from(expected_token_type.is_some());
+    assert_eq!(
+        semantic_token_requests.load(atomic::Ordering::SeqCst) - requests_before_guest_fetch,
+        expected_server_count,
+        "expected the guest request routing to honor the applicable providers",
+    );
+    assert_eq!(
+        guest_tokens.tokens.as_ref().map_or(0, HashMap::len),
+        expected_server_count,
+        "expected the guest token result to honor the applicable providers",
+    );
+    let Some(expected_token_type) = expected_token_type else {
+        return;
+    };
+    let server_id = guest_tokens
+        .tokens
+        .as_ref()
+        .and_then(|tokens| tokens.keys().next().copied())
+        .expect("expected semantic tokens from one server");
+    let token_type = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        let language = buffer_b.read(cx).language().map(|language| language.name());
+        lsp_store
+            .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
+            .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
+    });
+    assert_eq!(
+        token_type.as_deref(),
+        Some(expected_token_type),
+        "expected the guest to decode tokens with the applicable provider's legend",
+    );
 }

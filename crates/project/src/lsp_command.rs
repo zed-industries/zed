@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LanguageServerToQuery, LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
+    lsp_store::{LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -99,18 +99,8 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
         None
     }
 
-    fn server_to_query(&self) -> LanguageServerToQuery {
-        LanguageServerToQuery::FirstCapable
-    }
-
     /// Returns whether the given static or dynamic capability supports this request.
     fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool;
-
-    /// Returns whether this follow-up request can be sent to a previously selected server without
-    /// rechecking its current capabilities.
-    fn can_query_server_without_capability_check(&self, _server_id: LanguageServerId) -> bool {
-        false
-    }
 
     fn response_without_request<'a, I>(&self, _applicable_capabilities: I) -> Option<Self::Response>
     where
@@ -679,31 +669,18 @@ impl LspCommand for GetIncomingCalls {
         "Get incoming calls"
     }
 
-    fn server_to_query(&self) -> LanguageServerToQuery {
-        LanguageServerToQuery::Other(self.item.server_id)
-    }
-
-    fn can_query_server_without_capability_check(&self, server_id: LanguageServerId) -> bool {
-        server_id == self.item.server_id
-    }
-
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        capabilities
-            .server_capabilities
-            .call_hierarchy_provider
-            .as_ref()
-            .is_some_and(|capability| match capability {
-                lsp::CallHierarchyServerCapability::Simple(supported) => *supported,
-                lsp::CallHierarchyServerCapability::Options(_) => true,
-            })
+    /// Follow-up requests operate on a server-issued item, so the server's support is
+    /// already proven and no capability gate applies.
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
         &self,
         path: &Path,
         buffer: &Buffer,
-        _language_server: &Arc<LanguageServer>,
-        _cx: &App,
+        _: &Arc<LanguageServer>,
+        _: &App,
     ) -> Result<lsp::CallHierarchyIncomingCallsParams> {
         Ok(lsp::CallHierarchyIncomingCallsParams {
             item: call_hierarchy_item_to_lsp(&self.item, path, buffer)?,
@@ -834,31 +811,18 @@ impl LspCommand for GetOutgoingCalls {
         "Get outgoing calls"
     }
 
-    fn server_to_query(&self) -> LanguageServerToQuery {
-        LanguageServerToQuery::Other(self.item.server_id)
-    }
-
-    fn can_query_server_without_capability_check(&self, server_id: LanguageServerId) -> bool {
-        server_id == self.item.server_id
-    }
-
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        capabilities
-            .server_capabilities
-            .call_hierarchy_provider
-            .as_ref()
-            .is_some_and(|capability| match capability {
-                lsp::CallHierarchyServerCapability::Simple(supported) => *supported,
-                lsp::CallHierarchyServerCapability::Options(_) => true,
-            })
+    /// Follow-up requests operate on a server-issued item, so the server's support is
+    /// already proven and no capability gate applies.
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
         &self,
         path: &Path,
         buffer: &Buffer,
-        _language_server: &Arc<LanguageServer>,
-        _cx: &App,
+        _: &Arc<LanguageServer>,
+        _: &App,
     ) -> Result<lsp::CallHierarchyOutgoingCallsParams> {
         Ok(lsp::CallHierarchyOutgoingCallsParams {
             item: call_hierarchy_item_to_lsp(&self.item, path, buffer)?,
@@ -1176,12 +1140,6 @@ impl LspCommand for PerformRename {
         "Rename"
     }
 
-    fn server_to_query(&self) -> LanguageServerToQuery {
-        self.language_server_id
-            .map(LanguageServerToQuery::Other)
-            .unwrap_or(LanguageServerToQuery::FirstCapable)
-    }
-
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities<'_>) -> bool {
         capabilities
             .server_capabilities
@@ -1246,7 +1204,7 @@ impl LspCommand for PerformRename {
 
     async fn from_proto(
         message: proto::PerformRename,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Self> {
@@ -1259,12 +1217,27 @@ impl LspCommand for PerformRename {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })
             .await?;
-        Ok(Self {
+        let mut request = Self {
             position: buffer.read_with(&cx, |buffer, _| position.to_point_utf16(buffer)),
             new_name: message.new_name,
             push_to_history: false,
             language_server_id: message.language_server_id.map(LanguageServerId::from_proto),
-        })
+        };
+        if let Some(server_id) = request.language_server_id {
+            // Only a store that runs the servers can judge the id; non-local stores forward
+            // the request upstream, where the authoritative store re-validates.
+            let server_is_capable = lsp_store.update(&mut cx, |lsp_store, cx| {
+                lsp_store.as_local().is_none()
+                    || buffer.update(cx, |buffer, cx| {
+                        lsp_store
+                            .language_server_capable_of_lsp_request(buffer, server_id, &request, cx)
+                    })
+            });
+            if !server_is_capable {
+                request.language_server_id = None;
+            }
+        }
+        Ok(request)
     }
 
     fn response_to_proto(
