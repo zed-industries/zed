@@ -7,7 +7,7 @@ use std::{
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, Selection, SelectionGoal};
-use multi_buffer::{MultiBufferDimension, MultiBufferOffset, ToPoint};
+use multi_buffer::{MultiBufferDimension, MultiBufferOffset, MultiBufferRow, ToPoint};
 use util::post_inc;
 
 use crate::{
@@ -252,9 +252,12 @@ impl SelectionsCollection {
 
     pub fn all_display(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<DisplayPoint>> {
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint =
-            resolve_selections_display(disjoint_anchors.iter(), &snapshot).peekable();
-        let mut pending_opt = resolve_selections_display(self.pending_anchor(), &snapshot).next();
+        let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &snapshot)
+            .map(|(selection, _)| selection)
+            .peekable();
+        let mut pending_opt = resolve_selections_display(self.pending_anchor(), &snapshot)
+            .next()
+            .map(|(selection, _)| selection);
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -308,6 +311,7 @@ impl SelectionsCollection {
         resolve_selections_display([self.newest_anchor()], &snapshot)
             .next()
             .unwrap()
+            .0
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
@@ -1165,12 +1169,16 @@ fn resolve_selections_point<'a>(
 }
 
 /// Panics if passed selections are not in order
-/// Resolves the anchors to display positions
+/// Resolves the anchors to display positions, pairing each selection with the buffer point it
+/// was a cursor at, or `None` if it was a range. Collapsed content maps many buffer positions
+/// onto a single display position, so neither emptiness nor the cursor's position survives the
+/// trip into display coordinates.
 fn resolve_selections_display<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
-) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
+) -> impl 'a + Iterator<Item = (Selection<DisplayPoint>, Option<Point>)> {
     let selections = resolve_selections_point(selections, map).map(move |s| {
+        let cursor_at = (s.start == s.end).then_some(s.start);
         let display_start = map.point_to_display_point(s.start, Bias::Left);
         let display_end = map.point_to_display_point(
             s.end,
@@ -1186,13 +1194,16 @@ fn resolve_selections_display<'a>(
             display_start,
             display_end
         );
-        Selection {
-            id: s.id,
-            start: display_start,
-            end: display_end,
-            reversed: s.reversed,
-            goal: s.goal,
-        }
+        (
+            Selection {
+                id: s.id,
+                start: display_start,
+                end: display_end,
+                reversed: s.reversed,
+                goal: s.goal,
+            },
+            cursor_at,
+        )
     });
     coalesce_selections(selections)
 }
@@ -1231,11 +1242,15 @@ where
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_convert, selections) =
-        coalesce_selections(resolve_selections_point(selections, map)).tee();
+        coalesce_selections(resolve_selections_point(selections, map).map(|s| {
+            let cursor_at = (s.start == s.end).then_some(s.start);
+            (s, cursor_at)
+        }))
+        .tee();
     let mut converted_endpoints = map
         .buffer_snapshot()
-        .dimensions_from_points::<D>(to_convert.flat_map(|s| [s.start, s.end]));
-    selections.map(move |s| {
+        .dimensions_from_points::<D>(to_convert.flat_map(|(s, _)| [s.start, s.end]));
+    selections.map(move |(s, _)| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
         Selection {
@@ -1261,13 +1276,25 @@ where
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();
     let mut converted_endpoints =
         map.buffer_snapshot()
-            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
+            .dimensions_from_points::<D>(to_convert.flat_map(|(s, cursor_at)| {
+                // A cursor inside a collapsed buffer keeps the position it actually holds. The
+                // round trip would otherwise bias its start to the beginning of that buffer and
+                // its end to the far edge of it, so the cursor would resolve to a range
+                // covering everything the buffer hides and the next edit would replace all of
+                // it. Ranges are left alone: wrapping them around the block is this function's
+                // documented job, and it is how a selection reaching a replacement block comes
+                // to cover it.
+                if let Some(point) = cursor_at
+                    && map.is_line_in_folded_buffer(MultiBufferRow(point.row))
+                {
+                    return [point, point];
+                }
                 let start = map.display_point_to_point(s.start, Bias::Left);
                 let end = map.display_point_to_point(s.end, Bias::Right);
                 assert!(start <= end, "start: {:?}, end: {:?}", start, end);
                 [start, end]
             }));
-    selections.map(move |s| {
+    selections.map(move |(s, _)| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
         assert!(start <= end, "start: {:?}, end: {:?}", start, end);
@@ -1282,12 +1309,12 @@ where
 }
 
 fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
-    selections: impl Iterator<Item = Selection<D>>,
-) -> impl Iterator<Item = Selection<D>> {
+    selections: impl Iterator<Item = (Selection<D>, Option<Point>)>,
+) -> impl Iterator<Item = (Selection<D>, Option<Point>)> {
     let mut selections = selections.peekable();
     iter::from_fn(move || {
-        let mut selection = selections.next()?;
-        while let Some(next_selection) = selections.peek() {
+        let (mut selection, mut cursor_at) = selections.next()?;
+        while let Some((next_selection, next_cursor_at)) = selections.peek() {
             if should_merge(
                 selection.start,
                 selection.end,
@@ -1295,11 +1322,23 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
                 next_selection.end,
                 true,
             ) {
-                if selection.reversed == next_selection.reversed {
+                // `reversed` records which end a range grew from, so it says nothing about
+                // two cursors: they merge as a cursor whatever it holds. Letting a mismatch
+                // truncate them instead would drop the buffer point below and leave a cursor
+                // that resolves to everything the collapsed buffer hides.
+                let both_are_cursors = cursor_at.is_some() && next_cursor_at.is_some();
+                if both_are_cursors || selection.reversed == next_selection.reversed {
                     selection.end = cmp::max(selection.end, next_selection.end);
+                    // Cursors that merge stay one cursor. Spanning from one to the next would
+                    // hand the next edit a range covering text nobody selected - collapsed
+                    // content puts every cursor in a buffer on the same display position, so
+                    // that range could be the whole buffer.
+                    cursor_at = cursor_at.filter(|_| next_cursor_at.is_some());
                     selections.next();
                 } else {
                     selection.end = cmp::max(selection.start, next_selection.start);
+                    // Truncated to something the buffer point no longer describes.
+                    cursor_at = None;
                     break;
                 }
             } else {
@@ -1313,7 +1352,7 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
             selection.end,
             selection.reversed
         );
-        Some(selection)
+        Some((selection, cursor_at))
     })
 }
 
@@ -1480,6 +1519,71 @@ mod tests {
         );
         assert_eq!(result[0].start, Point::new(1, 1));
         assert_eq!(result[0].end, Point::new(3, 2));
+    }
+
+    /// A cursor inside a folded buffer must resolve to a cursor. A folded buffer is a
+    /// replacement block, so the display round trip biases the selection's start to the
+    /// start of the block and its end to the end of the block; without preserving
+    /// emptiness the cursor would resolve to a range covering the buffer's whole text
+    /// and the next edit would replace all of it.
+    #[gpui::test]
+    fn cursor_in_folded_buffer_resolves_to_a_cursor(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            crate::init(cx);
+        });
+
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_multi(
+                [
+                    ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                    ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+                ],
+                cx,
+            )
+        });
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+
+        let (snapshot, cursor) = display_map.update(cx, |map, cx| {
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            let excerpt = buffer_snapshot.excerpts().next().unwrap();
+            let buffer_id = excerpt.context.start.buffer_id;
+            let cursor = buffer_snapshot
+                .anchor_in_excerpt(excerpt.context.start)
+                .unwrap();
+            map.fold_buffers([buffer_id], cx);
+            (map.snapshot(cx), cursor)
+        });
+        assert!(snapshot.has_collapsed_content());
+
+        let selections = [Selection {
+            id: 0,
+            start: cursor,
+            end: cursor,
+            reversed: false,
+            goal: SelectionGoal::None,
+        }];
+        let resolved = resolve_selections_wrapping_blocks::<Point, _>(selections.iter(), &snapshot)
+            .collect::<Vec<_>>();
+
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].start, resolved[0].end,
+            "a cursor in a folded buffer must not widen to the folded region: {resolved:?}"
+        );
     }
 
     #[gpui::test(iterations = 20)]

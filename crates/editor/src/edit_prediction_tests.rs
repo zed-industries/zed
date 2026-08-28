@@ -25,9 +25,9 @@ use text::{Point, ToOffset};
 use ui::prelude::*;
 
 use crate::{
-    AcceptEditPrediction, CodeContextMenu, CompletionContext, CompletionProvider, EditPrediction,
-    EditPredictionKeybindAction, EditPredictionKeybindSurface, MenuEditPredictionsPolicy,
-    MultiBuffer, ShowCompletions,
+    AcceptEditPrediction, AcceptNextWordEditPrediction, CodeContextMenu, CompletionContext,
+    CompletionProvider, EditPrediction, EditPredictionKeybindAction, EditPredictionKeybindSurface,
+    MenuEditPredictionsPolicy, MultiBuffer, ShowCompletions,
     editor_tests::{init_test, update_test_language_settings},
     test::{
         build_editor, editor_lsp_test_context::EditorLspTestContext,
@@ -1900,4 +1900,197 @@ impl EditPredictionDelegate for FakeNonZedEditPredictionDelegate {
     ) -> Option<edit_prediction_types::EditPrediction> {
         self.completion.clone()
     }
+}
+
+/// Accepting a prediction one word at a time with the caret parked in a collapsed buffer.
+///
+/// This is the partial-accept path, and unlike a full accept it depends on the corrected
+/// selection resolution: it only recognizes the prediction as an insertion when the proposed
+/// range starts exactly at the resolved cursor offset. A caret that resolved to the collapsed
+/// buffer's whole range would not match, and the action would silently fall back to accepting
+/// the entire prediction.
+#[gpui::test]
+async fn test_accepting_partial_edit_prediction_in_folded_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        crate::Editor::new(crate::EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_prediction_provider(
+            Some(provider.clone()),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
+    });
+
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    let edit_position = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+        let position = snapshot.anchor_in_excerpt(excerpt.context.start).unwrap();
+        editor.change_selections(
+            crate::SelectionEffects::no_scroll(),
+            window,
+            cx,
+            |selections| selections.select_ranges([position..position]),
+        );
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+        excerpt.context.start
+    });
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                id: None,
+                edits: vec![(edit_position..edit_position, "one two".into())],
+                cursor_position: None,
+                edit_preview: None,
+            }))
+        })
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.update_visible_edit_prediction(window, cx);
+        assert!(
+            editor.has_active_edit_prediction(),
+            "the prediction must be active, or accepting it would be a no-op"
+        );
+        editor.accept_next_word_edit_prediction(&AcceptNextWordEditPrediction, window, cx);
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        let text = editor
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .find(|buffer| buffer.read(cx).remote_id() == buffer_ids[0])
+            .unwrap()
+            .read(cx)
+            .text();
+        assert_eq!(
+            text, "onealpha\nbeta\n",
+            "only the first word of the prediction should have been accepted"
+        );
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[0], cx),
+            "accepting part of a prediction inside a collapsed buffer must expand it"
+        );
+    });
+}
+
+/// Accepting a full edit prediction that lands in a collapsed buffer applies the edit and leaves
+/// the buffer expanded. Unlike the editing actions, this path deliberately edits the buffer
+/// without opening an editor transaction, so it does not rely on the shared expansion in
+/// `start_transaction_at`; this test pins the resulting behavior down either way.
+#[gpui::test]
+async fn test_accepting_edit_prediction_in_folded_buffer_unfolds_it(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        crate::Editor::new(crate::EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+
+    let provider = cx.new(|_| FakeEditPredictionDelegate::default());
+    cx.update_editor(|editor, window, cx| {
+        editor.set_edit_prediction_provider(
+            Some(provider.clone()),
+            EditPredictionRequestTrigger::EditorCreated,
+            window,
+            cx,
+        );
+    });
+
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    let edit_position = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+        let position = snapshot.anchor_in_excerpt(excerpt.context.start).unwrap();
+        editor.change_selections(
+            crate::SelectionEffects::no_scroll(),
+            window,
+            cx,
+            |selections| selections.select_ranges([position..position]),
+        );
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+        // The prediction provider speaks in buffer anchors, not multibuffer ones.
+        excerpt.context.start
+    });
+
+    cx.update(|_, cx| {
+        provider.update(cx, |provider, _| {
+            provider.set_edit_prediction(Some(edit_prediction_types::EditPrediction::Local {
+                id: None,
+                edits: vec![(edit_position..edit_position, "PREDICTED".into())],
+                cursor_position: None,
+                edit_preview: None,
+            }))
+        })
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.update_visible_edit_prediction(window, cx);
+        assert!(
+            editor.is_buffer_folded(buffer_ids[0], cx),
+            "the buffer must still be collapsed when the prediction is accepted"
+        );
+        assert!(
+            editor.has_active_edit_prediction(),
+            "the prediction must be active, or accepting it would be a no-op"
+        );
+        editor.accept_edit_prediction(&AcceptEditPrediction, window, cx);
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        let text = editor
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .find(|buffer| buffer.read(cx).remote_id() == buffer_ids[0])
+            .unwrap()
+            .read(cx)
+            .text();
+        assert_eq!(text, "PREDICTEDalpha\nbeta\n");
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[0], cx),
+            "accepting a prediction inside a collapsed buffer must expand it"
+        );
+    });
 }

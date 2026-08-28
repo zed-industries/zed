@@ -228,6 +228,10 @@ impl Editor {
     }
 
     pub fn select_line(&mut self, _: &SelectLine, window: &mut Window, cx: &mut Context<Self>) {
+        // A collapsed buffer hides its rows behind a single replacement row, so selecting a line
+        // inside one would leave the user with a selection they cannot see and hand the next
+        // edit a range of hidden text. Expand it first, the way clicking into one does.
+        self.unfold_buffers_with_selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(&display_map);
         let max_point = display_map.buffer_snapshot().max_point();
@@ -1247,21 +1251,10 @@ impl Editor {
             window.focus(&self.focus_handle, cx);
         }
 
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let position = display_map.clip_point(position, Bias::Left);
-        let folded_buffer_id = display_map
-            .buffer_snapshot()
-            .point_to_buffer_point(position.to_point(&display_map))
-            .map(|(buffer, _)| buffer.remote_id())
-            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
-        let (display_map, position) = if let Some(buffer_id) = folded_buffer_id {
-            self.unfold_buffer(buffer_id, cx);
-            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let position = display_map.clip_point(position, Bias::Left);
-            (display_map, position)
-        } else {
-            (display_map, position)
-        };
+        // A click landing on a collapsed buffer has to expand it before any anchor is taken:
+        // once a selection is stored inside collapsed content, unfolding later cannot undo the
+        // range it resolved to.
+        let (display_map, position) = self.unfold_buffer_at_display_point(position, cx);
         let buffer = display_map.buffer_snapshot();
 
         let start;

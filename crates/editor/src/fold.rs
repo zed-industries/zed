@@ -788,8 +788,33 @@ impl Editor {
         self.fold_creases(to_fold, true, window, cx);
     }
 
+    /// Expands the collapsed buffer that `position` points into, if there is one, and returns a
+    /// display snapshot together with `position` clipped against it. Expanding a buffer only
+    /// inserts rows at and below its collapsed row, so `position` keeps its row and now refers to
+    /// that buffer's first line.
+    pub(super) fn unfold_buffer_at_display_point(
+        &mut self,
+        position: DisplayPoint,
+        cx: &mut Context<Self>,
+    ) -> (DisplaySnapshot, DisplayPoint) {
+        let display_map = self.display_snapshot(cx);
+        let position = display_map.clip_point(position, Bias::Left);
+        let folded_buffer_id = display_map
+            .buffer_snapshot()
+            .point_to_buffer_point(position.to_point(&display_map))
+            .map(|(buffer, _)| buffer.remote_id())
+            .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
+        let Some(buffer_id) = folded_buffer_id else {
+            return (display_map, position);
+        };
+        self.unfold_buffer(buffer_id, cx);
+        let display_map = self.display_snapshot(cx);
+        let position = display_map.clip_point(position, Bias::Left);
+        (display_map, position)
+    }
+
     pub(super) fn unfold_buffers_with_selections(&mut self, cx: &mut Context<Self>) {
-        if self.buffer().read(cx).is_singleton() {
+        if !self.has_any_buffer_folded(cx) {
             return;
         }
         let snapshot = self.buffer.read(cx).snapshot(cx);

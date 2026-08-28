@@ -1167,7 +1167,6 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        self.unfold_buffers_with_selections(cx);
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |_, selection| {
@@ -1963,8 +1962,6 @@ impl Editor {
             return;
         }
 
-        self.unfold_buffers_with_selections(cx);
-
         let text: Arc<str> = text.into();
         self.transact(window, cx, |this, window, cx| {
             let old_selections = this.selections.all_adjusted(&this.display_snapshot(cx));
@@ -2224,7 +2221,13 @@ impl Editor {
             bail!("`name` or `snippet` is required")
         };
 
-        self.insert_snippet(&insertion_ranges, snippet, window, cx)
+        // The other callers of `insert_snippet` already run inside a transaction; this one
+        // needs its own so that inserting into a collapsed buffer expands it.
+        let mut result = Ok(());
+        self.transact(window, cx, |this, window, cx| {
+            result = this.insert_snippet(&insertion_ranges, snippet, window, cx);
+        });
+        result
     }
 }
 
