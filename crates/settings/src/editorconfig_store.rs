@@ -389,6 +389,9 @@ fn apply_relevant_properties(
     std_path: &Path,
     properties: &mut EditorconfigProperties,
 ) {
+    if !section.applies_to(std_path) {
+        return;
+    }
     let relevant_keys = [
         IndentStyle::key(),
         IndentSize::key(),
@@ -398,9 +401,6 @@ fn apply_relevant_properties(
         FinalNewline::key(),
         TrimTrailingWs::key(),
     ];
-    if !section.applies_to(std_path) {
-        return;
-    }
     for (key, value) in section.props().iter() {
         if relevant_keys.contains(&key) {
             properties.insert_raw_for_key(key, value.clone());

@@ -302,7 +302,7 @@ impl LanguageSettings {
         };
 
         if let Some(resolved) = buffer.resolved_settings()
-            && language.map(|l| l.name()) == buffer.language().map(|l| l.name())
+            && language == buffer.language()
         {
             return Cow::Borrowed(resolved.as_ref());
         }
