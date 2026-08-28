@@ -35,11 +35,7 @@ pub enum Anchor {
 }
 
 pub(crate) enum AnchorSeekTarget<'a> {
-    // The buffer no longer exists at its original path key in the
-    // multibuffer. Resolves to the start or the end of the region the path
-    // currently occupies, choosing the side so that resolution agrees with
-    // `ExcerptAnchor::cmp`, which orders same-path anchors from different
-    // buffers by buffer id.
+    // buffer no longer exists at its original path key in the multibuffer
     Missing {
         path_key: &'a PathKey,
         buffer_id: BufferId,
@@ -97,22 +93,6 @@ impl From<ExcerptAnchor> for Anchor {
     }
 }
 
-/// Whether a diff base anchor can be positionally compared and resolved
-/// against the diff's current base text.
-///
-/// This deliberately isn't `text::Anchor::is_valid`: validity is revoked
-/// when an edit deletes the anchored text, so filtering on it changes
-/// comparison results over time, retroactively unsorting every structure
-/// ordered by anchor comparison (the editor's fold tree, sorted selections,
-/// ...). Resolvability is monotone for a given base buffer — versions only
-/// grow and ids never change — and anchors into deleted text still resolve
-/// (to the deletion's collapse point) in an order that edits can't change.
-///
-/// The buffer id is checked first because `can_resolve` (like `is_valid`)
-/// special-cases `Anchor::MIN`/`MAX` before checking ids: without this, an
-/// anchor biased to the base text's start or end would keep resolving after
-/// the diff's base was replaced by a different buffer, while the rest of its
-/// generation went unresolvable — recreating the one-sided flip.
 pub(crate) fn diff_base_anchor_resolves_in(
     anchor: &text::Anchor,
     base_text: &BufferSnapshot,
@@ -183,23 +163,9 @@ impl ExcerptAnchor {
                     {
                         self_anchor.cmp(&other_anchor, base_text)
                     } else {
-                        // At least one anchor points into a departed base
-                        // text buffer (the diff's base was replaced
-                        // wholesale). Resolution collapses such anchors to a
-                        // boundary of the deleted hunk rows at their buffer
-                        // position, choosing the side by this same id
-                        // comparison, so the answer is immutable: it can't
-                        // flip when the base changes again or a previous
-                        // base buffer is reinstalled. Anchors into the same
-                        // departed base collapse to the same point and
-                        // compare `Equal`.
                         self_anchor.buffer_id.cmp(&other_anchor.buffer_id)
                     }
                 }
-                // An anchor with no diff base anchor lives in the buffer
-                // content on the side of the deleted hunk rows its bias
-                // implies; both the presence of the base anchor and the
-                // bias are immutable, so this answer never changes.
                 (Some(_), None) => match other.text_anchor().bias {
                     Bias::Left => Ordering::Greater,
                     Bias::Right => Ordering::Less,

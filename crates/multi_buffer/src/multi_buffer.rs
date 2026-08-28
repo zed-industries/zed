@@ -765,9 +765,6 @@ impl ExcerptBoundaryInfo {
     pub fn buffer<'a>(&self, snapshot: &'a MultiBufferSnapshot) -> &'a BufferSnapshot {
         let buffer_id = self.buffer_id();
         snapshot.buffer_for_id(buffer_id).unwrap_or_else(|| {
-            // This state has crashed in the field for months without local
-            // reproduction, so describe it thoroughly: the panic message is
-            // the only diagnostic that comes back in crash reports.
             let mut excerpt_buffer_ids = Vec::new();
             for excerpt in snapshot.excerpts.iter() {
                 let excerpt_ids = (
@@ -4954,14 +4951,6 @@ impl MultiBufferSnapshot {
                             continue;
                         }
                     } else {
-                        // A diff-base position into a *departed* base text
-                        // buffer collapses to a boundary of the deleted hunk
-                        // rows at its buffer position. `ExcerptAnchor::cmp`
-                        // orders such anchors against current base anchors by
-                        // base buffer id, so pick the boundary that agrees
-                        // with that immutable order: before these rows when
-                        // the departed base's id is lower than the current
-                        // base's, after them otherwise.
                         let departed_base_sorts_after = anchor
                             .diff_base_anchor
                             .zip(base_text)
@@ -4975,16 +4964,6 @@ impl MultiBufferSnapshot {
                                     .cmp(&hunk_info.hunk_start_anchor, excerpt_buffer)
                                     .is_gt())
                         {
-                            // The anchor belongs in the buffer content (or
-                            // after these deleted rows), not in the deleted
-                            // hunk. Also, after an edit deletes the text
-                            // between the hunk boundary and this anchor, both
-                            // resolve to the same excerpt_position—landing us
-                            // here on the DeletedHunk left behind by the
-                            // shared cursor. Use the CRDT ordering to detect
-                            // that the anchor is strictly *past* the hunk
-                            // boundary and skip to the following
-                            // BufferContent.
                             diff_transforms.next();
                             continue;
                         }
@@ -4993,19 +4972,7 @@ impl MultiBufferSnapshot {
                 _ => {
                     // On a BufferContent (or no transform). If the anchor
                     // carries a diff_base_anchor it needs a DeletedHunk, so
-                    // advance to find one. A plain anchor at the seam also
-                    // advances when the next transform is a deleted hunk for
-                    // its own buffer: whether it belongs before or after that
-                    // hunk's rows depends on how it compares with the hunk's
-                    // attachment anchor, and the DeletedHunk arm owns that
-                    // decision. Returning early here instead would make the
-                    // answer depend on which side of the seam the cursor
-                    // rested: resolving such an anchor alone parked it before
-                    // the hunk, while a shared cursor that had just resolved a
-                    // hunk-interior anchor placed it after, contradicting
-                    // anchor comparison (which orders both cases by the
-                    // buffer's CRDT order, matching what the DeletedHunk arm
-                    // computes).
+                    // advance to find one.
                     if at_transform_end
                         && (anchor.diff_base_anchor.is_some()
                             || matches!(
@@ -7580,13 +7547,6 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
             } => {
                 match Ord::cmp(*path_key, &cursor_location.path_key) {
                     Ordering::Less => Ordering::Less,
-                    // The anchor's buffer is no longer at this path, so the
-                    // anchor resolves to a boundary of the region the path
-                    // now occupies. `ExcerptAnchor::cmp` orders same-path
-                    // anchors from different buffers by buffer id, so pick
-                    // the boundary that agrees with that immutable order:
-                    // before the region when the departed buffer's id is
-                    // lower than the current occupant's, after it otherwise.
                     Ordering::Equal => match &cursor_location.max_anchor {
                         Some(max_anchor) if *buffer_id < max_anchor.buffer_id => Ordering::Less,
                         _ => Ordering::Greater,
