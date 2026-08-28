@@ -9049,15 +9049,19 @@ impl Repository {
             .then_some(&self.work_directory_abs_path)
     }
 
+    fn linked_worktree_anchor_path(&self) -> &Path {
+        self.snapshot
+            .main_worktree_abs_path()
+            .or_else(|| repo_identity_path_if_local(&self.common_dir_abs_path, self.path_style))
+            .unwrap_or(self.common_dir_abs_path.as_ref())
+    }
+
     pub fn path_for_new_linked_worktree(
         &self,
         branch_name: &str,
         worktree_directory_setting: &str,
     ) -> Result<PathBuf> {
-        let repository_anchor = self
-            .snapshot
-            .main_worktree_abs_path()
-            .unwrap_or(self.common_dir_abs_path.as_ref());
+        let repository_anchor = self.linked_worktree_anchor_path();
         let project_name = repository_anchor
             .file_name()
             .and_then(|name| name.to_str())
@@ -9363,11 +9367,7 @@ impl Repository {
 
     pub fn remove_worktree(&mut self, path: PathBuf, force: bool) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
-        let repository_anchor_path: Arc<Path> = self
-            .snapshot
-            .main_worktree_abs_path()
-            .unwrap_or(self.snapshot.common_dir_abs_path.as_ref())
-            .into();
+        let repository_anchor_path: Arc<Path> = self.linked_worktree_anchor_path().into();
         self.send_job(
             "remove_worktree",
             Some(format!("git worktree remove: {}", path.display()).into()),
@@ -10748,6 +10748,14 @@ pub fn repo_identity_path(common_dir: &Path, path_style: PathStyle) -> &Path {
     } else {
         common_dir
     }
+}
+
+/// Returns the repository identity only when `std::path` can interpret the path correctly.
+///
+/// Callers whose downstream path operations are not yet `PathStyle`-aware use this to preserve
+/// their existing behavior for foreign path styles.
+pub fn repo_identity_path_if_local(common_dir: &Path, path_style: PathStyle) -> Option<&Path> {
+    (path_style == PathStyle::local()).then(|| repo_identity_path(common_dir, path_style))
 }
 
 /// Returns true if `git_dir` is a Git submodule's git directory.
