@@ -3130,6 +3130,16 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 - `enabled`: Whether to enable automatic JSX tag closing
 
+## Language Detection
+
+- Description: Whether to automatically detect the language of an untitled buffer from its contents. Languages explicitly selected from the language selector are not changed.
+- Setting: `language_detection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Languages
 
 - Description: Configuration for specific languages.
