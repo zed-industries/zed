@@ -75,8 +75,6 @@ mod custom_highlights;
 mod fold_map;
 mod inlay_map;
 mod invisibles;
-#[cfg(test)]
-pub(crate) mod production_simulation;
 mod tab_map;
 mod wrap_map;
 
@@ -4188,19 +4186,14 @@ pub mod tests {
     /// buffer absent from the snapshot -- the state whose render-time
     /// resolution panics.
     ///
-    /// Runs with the display map's test-only invariants disabled, the way
-    /// production builds run, so a regression propagates to the stale header
-    /// rather than stopping at the first internal check; debug builds used to
-    /// fail earlier, in the layers' row accounting, mirroring how the "cannot
-    /// seek backward" crash families outnumbered the stale-header crash in
-    /// the field.
+    /// On pre-fix code this fails in the display map layers' internal
+    /// checks; in production builds, where those checks don't run, the same
+    /// corruption propagated to the stale header instead.
     #[gpui::test]
     async fn test_removing_buffer_removes_header_after_diff_base_changes(
         cx: &mut gpui::TestAppContext,
     ) {
         cx.update(|cx| init_test(cx, &|_| {}));
-        let _simulate_production =
-            crate::display_map::production_simulation::SimulateProductionGuard::new();
 
         fn excerpt_buffer(
             multibuffer: &Entity<MultiBuffer>,

@@ -984,9 +984,6 @@ impl WrapSnapshot {
     fn check_invariants(&self) {
         #[cfg(test)]
         {
-            if super::production_simulation::is_simulating_production() {
-                return;
-            }
             assert_eq!(
                 TabPoint::from(self.transforms.summary().input.lines),
                 self.tab_snapshot.max_point()

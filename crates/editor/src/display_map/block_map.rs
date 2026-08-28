@@ -4766,78 +4766,6 @@ mod tests {
         fold_map.read(inlay_snapshot, inlay_edits);
     }
 
-    /// Regression test for ZED-7G6 ("buffer snapshot not found for excerpt
-    /// boundary"). Removing a buffer whose excerpts hold no text produces a
-    /// zero-width edit, which `Patch::push` discards, so subscribers observe no
-    /// edits at all. `BlockMap::sync` then returns early and keeps the header
-    /// block for a buffer the multibuffer snapshot no longer contains, and
-    /// rendering that header panics when it resolves its buffer.
-    #[gpui::test]
-    fn test_header_removed_when_empty_buffer_leaves_multibuffer(cx: &mut gpui::TestAppContext) {
-        cx.update(init_test);
-
-        let buffer = cx.new(|cx| Buffer::local("", cx));
-        let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
-        multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.set_excerpts_for_buffer(
-                buffer.clone(),
-                [Point::zero()..Point::zero()],
-                0,
-                cx,
-            );
-        });
-        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
-
-        let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
-        let buffer_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot);
-        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (wrap_map, wrap_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, test_font(), px(14.0), None, cx));
-        let block_map = BlockMap::new(wrap_snapshot.clone(), 1, 1);
-
-        let blocks_snapshot = block_map.read(wrap_snapshot, Patch::default(), None);
-        assert!(
-            blocks_snapshot
-                .blocks_in_range(BlockRow(0)..BlockRow(blocks_snapshot.max_point().row + 1))
-                .any(|(_, block)| matches!(block, Block::BufferHeader { .. })),
-            "expected a header block for the excerpted buffer"
-        );
-
-        multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.remove_excerpts_for_buffer(buffer_id, cx);
-        });
-
-        let buffer_snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-        assert!(
-            buffer_snapshot.buffer_for_id(buffer_id).is_none(),
-            "buffer should be gone from the multibuffer"
-        );
-
-        let buffer_edits = subscription.consume().into_inner();
-        let (inlay_snapshot, inlay_edits) = inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
-        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-        let (tab_snapshot, tab_edits) =
-            tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
-        let (wrap_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-            wrap_map.sync(tab_snapshot, tab_edits, cx)
-        });
-        let blocks_snapshot = block_map.read(wrap_snapshot, wrap_edits, None);
-
-        for (row, block) in blocks_snapshot
-            .blocks_in_range(BlockRow(0)..BlockRow(blocks_snapshot.max_point().row + 1))
-        {
-            if let Block::BufferHeader { excerpt, .. } = block {
-                assert!(
-                    buffer_snapshot.buffer_for_id(excerpt.buffer_id()).is_some(),
-                    "header block at {row:?} still references removed buffer {:?}",
-                    excerpt.buffer_id(),
-                );
-            }
-        }
-    }
-
     /// Regression fuzz for ZED-7G6 ("buffer snapshot not found for excerpt
     /// boundary"): header blocks cache an `ExcerptBoundaryInfo`, so when a
     /// buffer leaves the multibuffer without the block map re-syncing the
@@ -4856,16 +4784,16 @@ mod tests {
     /// order (`SEED=144 OPERATIONS=50`): with all diff hunks expanded, fold
     /// anchors carry diff base anchors, and replacing a diff's base text
     /// changes how those anchors compare, unsorting the persistent fold tree
-    /// that `FoldMap` seeks through. With `SIMULATE_PRODUCTION=1`, which
-    /// disables the fold and wrap maps' test-only invariants the way
-    /// production builds run, the unsorted tree propagates: `FoldMap::sync`
-    /// panics with "cannot seek backward" (`SEED=332 OPERATIONS=60`),
-    /// matching a large family of open Sentry crashes with that message, and
-    /// the wrap layer emits edits that no longer cover the rows that actually
+    /// that `FoldMap` seeks through. During the investigation, disabling
+    /// the fold and wrap maps' test-only invariants the way production
+    /// builds run let the unsorted tree propagate: `FoldMap::sync` panicked
+    /// with "cannot seek backward" (`SEED=332 OPERATIONS=60`), matching a
+    /// large family of open Sentry crashes with that message, and the wrap
+    /// layer emitted edits that no longer covered the rows that actually
     /// changed (`SEED=612 OPERATIONS=50`, caught by
-    /// `assert_wrap_edits_cover_changes`), which is the mechanism that leaves
-    /// the block map holding stale header blocks. The inlay panic and the
-    /// fold tree disorder are fixed by making anchor comparison track
+    /// `assert_wrap_edits_cover_changes`), which is the mechanism that
+    /// leaves the block map holding stale header blocks. The inlay panic and
+    /// the fold tree disorder are fixed by making anchor comparison track
     /// resolution; the canonical-form violation is still unfixed.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(

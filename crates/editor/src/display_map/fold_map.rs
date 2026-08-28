@@ -413,9 +413,6 @@ impl FoldMap {
     fn check_invariants(&self) {
         #[cfg(test)]
         {
-            if super::production_simulation::is_simulating_production() {
-                return;
-            }
             assert_eq!(
                 self.snapshot.transforms.summary().input.len,
                 self.snapshot.inlay_snapshot.len().0,
