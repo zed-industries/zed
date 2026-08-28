@@ -582,10 +582,17 @@ impl LspStore {
                 .get(&server_id)
                 .and_then(|registrations| registrations.get("textDocument/semanticTokens"))
             {
+                // Token indices are only meaningful with the provider's legend, so do not
+                // guess when the guest cannot reconstruct the host's selector context.
                 for registration in registrations.values().rev() {
-                    let matches = context.as_ref().is_none_or(|context| {
-                        document_selector_matches(registration.document_selector.as_ref(), context)
-                    });
+                    let matches = match context.as_ref() {
+                        Some(context) => document_selector_matches(
+                            registration.document_selector.as_ref(),
+                            context,
+                        ),
+                        None if registration.document_selector.is_none() => true,
+                        None => return None,
+                    };
                     if matches
                         && let Some(provider) = registration
                             .server_capabilities

@@ -6210,6 +6210,25 @@ async fn test_guest_semantic_tokens_honor_dynamic_document_selectors(
 }
 
 #[gpui::test]
+async fn test_guest_does_not_guess_semantic_token_legend_without_matching_adapter(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    run_guest_semantic_tokens_document_selector_test(
+        GuestSemanticTokensTestConfig {
+            remove_guest_adapter_before_stylizing: true,
+            include_static_capability: true,
+            include_matching_registration: true,
+            expect_unstyled_tokens: true,
+            ..GuestSemanticTokensTestConfig::default()
+        },
+        cx_a,
+        cx_b,
+    )
+    .await;
+}
+
+#[gpui::test]
 async fn test_guest_receives_dynamic_document_selectors_when_project_is_shared_later(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -6220,6 +6239,7 @@ async fn test_guest_receives_dynamic_document_selectors_when_project_is_shared_l
             include_static_capability: true,
             include_matching_registration: true,
             expected_token_type: Some("keyword"),
+            ..GuestSemanticTokensTestConfig::default()
         },
         cx_a,
         cx_b,
@@ -6936,8 +6956,10 @@ fn blame_entry(sha: &str, range: Range<u32>) -> git::blame::BlameEntry {
 #[derive(Default)]
 struct GuestSemanticTokensTestConfig {
     share_after_registration: bool,
+    remove_guest_adapter_before_stylizing: bool,
     include_static_capability: bool,
     include_matching_registration: bool,
+    expect_unstyled_tokens: bool,
     expected_token_type: Option<&'static str>,
 }
 
@@ -6948,8 +6970,10 @@ async fn run_guest_semantic_tokens_document_selector_test(
 ) {
     let GuestSemanticTokensTestConfig {
         share_after_registration,
+        remove_guest_adapter_before_stylizing,
         include_static_capability,
         include_matching_registration,
+        expect_unstyled_tokens,
         expected_token_type,
     } = config;
     let mut server = TestServer::start(cx_a.executor()).await;
@@ -7116,7 +7140,8 @@ async fn run_guest_semantic_tokens_document_selector_test(
         .await
         .unwrap();
 
-    let expected_server_count = usize::from(expected_token_type.is_some());
+    let expected_server_count =
+        usize::from(expected_token_type.is_some() || expect_unstyled_tokens);
     assert_eq!(
         semantic_token_requests.load(atomic::Ordering::SeqCst) - requests_before_guest_fetch,
         expected_server_count,
@@ -7127,9 +7152,15 @@ async fn run_guest_semantic_tokens_document_selector_test(
         expected_server_count,
         "expected the guest token result to honor the applicable providers",
     );
-    let Some(expected_token_type) = expected_token_type else {
+    if expected_server_count == 0 {
         return;
-    };
+    }
+    if remove_guest_adapter_before_stylizing {
+        client_b.language_registry().remove_lsp_adapter(
+            &language::LanguageName::new("Rust"),
+            &lsp::LanguageServerName::new_static("the-fake-language-server"),
+        );
+    }
     let server_id = guest_tokens
         .tokens
         .as_ref()
@@ -7143,7 +7174,7 @@ async fn run_guest_semantic_tokens_document_selector_test(
     });
     assert_eq!(
         token_type.as_deref(),
-        Some(expected_token_type),
-        "expected the guest to decode tokens with the applicable provider's legend",
+        expected_token_type,
+        "expected the guest to decode tokens only when the applicable provider's legend is known",
     );
 }
