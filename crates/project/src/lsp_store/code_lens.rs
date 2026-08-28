@@ -71,9 +71,9 @@ impl CodeLensData {
                 self.lens.clear();
                 self.fetched_servers.clear();
                 self.resolving.clear();
+                self.update = None;
             }
         }
-        self.update = None;
     }
 }
 

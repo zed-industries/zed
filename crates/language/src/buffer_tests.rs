@@ -397,6 +397,162 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     assert_eq!(language_name(language), "Dockerfile");
 }
 
+#[gpui::test]
+async fn test_reregistering_language_during_load_yields_current_language(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let (unblock_stale_load_tx, unblock_stale_load_rx) = futures::channel::oneshot::channel::<()>();
+    let unblock_stale_load_rx = std::sync::Mutex::new(Some(unblock_stale_load_rx));
+
+    let stale_config = LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["stale".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    };
+    registry.register_language(
+        stale_config.name.clone(),
+        None,
+        stale_config.matcher.clone(),
+        false,
+        None,
+        Arc::new(move || {
+            let unblock_stale_load_rx = unblock_stale_load_rx
+                .lock()
+                .expect("the stale loader mutex should not be poisoned")
+                .take();
+            let stale_config = stale_config.clone();
+            async move {
+                if let Some(unblock_stale_load_rx) = unblock_stale_load_rx {
+                    unblock_stale_load_rx.await.ok();
+                }
+                Ok(LoadedLanguage {
+                    config: stale_config,
+                    queries: LanguageQueries::default(),
+                    context_provider: None,
+                    toolchain_provider: None,
+                    manifest_name: None,
+                })
+            }
+            .boxed()
+        }),
+    );
+
+    let pending_language = registry.language_for_name("TheLanguage");
+    cx.executor().run_until_parked();
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fresh".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+
+    unblock_stale_load_tx.send(()).unwrap();
+    let language = pending_language.await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["fresh".to_string()],
+        "a load that races with a re-registration should resolve to the re-registered language"
+    );
+}
+
+#[gpui::test]
+async fn test_reregistering_language_during_failed_load_yields_current_language(
+    cx: &mut TestAppContext,
+) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    let (unblock_stale_load_tx, unblock_stale_load_rx) = futures::channel::oneshot::channel::<()>();
+    let unblock_stale_load_rx = std::sync::Mutex::new(Some(unblock_stale_load_rx));
+
+    registry.register_language(
+        LanguageName::new_static("TheLanguage"),
+        None,
+        Arc::new(LanguageMatcher {
+            path_suffixes: vec!["stale".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        false,
+        None,
+        Arc::new(move || {
+            let unblock_stale_load_rx = unblock_stale_load_rx
+                .lock()
+                .expect("the stale loader mutex should not be poisoned")
+                .take();
+            async move {
+                if let Some(unblock_stale_load_rx) = unblock_stale_load_rx {
+                    unblock_stale_load_rx.await.ok();
+                }
+                Err(anyhow::anyhow!("simulated load failure"))
+            }
+            .boxed()
+        }),
+    );
+
+    let pending_language = registry.language_for_name("TheLanguage");
+    cx.executor().run_until_parked();
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["fresh".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+
+    unblock_stale_load_tx.send(()).unwrap();
+    let language = pending_language.await.unwrap();
+    assert_eq!(
+        language.config.matcher.path_suffixes,
+        vec!["fresh".to_string()],
+        "a failed load that races with a re-registration should resolve to the re-registered language"
+    );
+}
+
+#[gpui::test]
+async fn test_extension_grammar_cannot_shadow_native_grammar(cx: &mut TestAppContext) {
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+    registry.register_native_grammars([("rust", tree_sitter_rust::LANGUAGE)]);
+    registry.register_wasm_grammars(vec![(
+        Arc::from("rust"),
+        PathBuf::from("/extensions/bogus/grammars/rust.wasm"),
+    )]);
+
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheLanguage"),
+        grammar: Some(Arc::from("rust")),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["the".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    let language = registry.language_for_name("TheLanguage").await.unwrap();
+    assert!(
+        language.grammar().is_some(),
+        "an extension grammar must not replace a native grammar with the same name"
+    );
+
+    registry.remove_languages(&[], &[Arc::from("rust")]);
+    registry.register_test_language(LanguageConfig {
+        name: LanguageName::new_static("TheOtherLanguage"),
+        grammar: Some(Arc::from("rust")),
+        ..LanguageConfig::default()
+    });
+    let language = registry
+        .language_for_name("TheOtherLanguage")
+        .await
+        .unwrap();
+    assert!(
+        language.grammar().is_some(),
+        "removing an extension grammar must not remove the native grammar it failed to shadow"
+    );
+}
+
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Arc::from(rel_path(path)),
@@ -1474,6 +1630,246 @@ fn test_bracket_colorization_indices_remain_stable_across_row_chunks(cx: &mut Ap
     }
 }
 
+#[gpui::test]
+fn test_c_bracket_ranges_in_error_nodes(cx: &mut App) {
+    let text = indoc! {r#"
+        CLAY(CLAY_ID("MenuContainer"),
+             CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
+             CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                          .sizing = {.width = CLAY_SIZING_FIT()},
+                          .padding = {16, 16},
+                          .childGap = 16})) {
+          CLAY(CLAY_ID("StartStopButton"), CLAY_LAYOUT({.padding = {16, 8}}),
+               CLAY_RECTANGLE({.color = {140, 140, 140, 255}, .cornerRadius = 5}),
+               Clay_OnHover(HandleStartButtonInteraction, 1)) {
+            CLAY_TEXT(CLAY_STRING("Start/Stop"),
+                      CLAY_TEXT_CONFIG({.fontId = FONT_ID_BODY_16,
+                                        .fontSize = 16,
+                                        .textColor = {255, 255, 255, 255}}));
+          }
+        }
+    "#};
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+    assert_has_syntax_errors(&snapshot);
+    let matches = snapshot
+        .all_bracket_ranges(0..snapshot.len())
+        .map(BracketMatch::bracket_ranges)
+        // Quote pairs share one delimiter kind, so error recovery leaves them as queried.
+        .filter(|(open, _)| matches!(&text[open.clone()], "(" | "{"))
+        .collect::<Vec<_>>();
+
+    let (mut expected, unmatched_parens) = stack_paired_brackets(text, '(', ')');
+    let (curly_pairs, unmatched_curlies) = stack_paired_brackets(text, '{', '}');
+    expected.extend(curly_pairs);
+    assert_eq!(unmatched_parens, Vec::<Range<usize>>::new());
+    assert_eq!(unmatched_curlies, Vec::<Range<usize>>::new());
+    assert_set_eq!(matches, expected);
+}
+
+#[gpui::test]
+fn test_bracket_ranges_do_not_repair_unbalanced_error_nodes(cx: &mut App) {
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            CLAY«(»CLAY_ID("MenuContainer"),
+                 CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                              .sizing = {.width = CLAY_SIZING_FIT()},
+                              .padding = {16, 16},
+                              .childGap = 16}) {
+            }
+        "#},
+        false,
+    );
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+    assert_has_syntax_errors(&snapshot);
+    let matches = snapshot
+        .all_bracket_ranges(0..snapshot.len())
+        .map(BracketMatch::bracket_ranges)
+        // Tree-sitter pairs unmatched opens with zero-width MISSING close tokens.
+        .filter(|(open, close)| matches!(&text[open.clone()], "(" | "{") && !close.is_empty())
+        .collect::<Vec<_>>();
+
+    let (mut expected, unmatched_parens) = stack_paired_brackets(&text, '(', ')');
+    let (curly_pairs, unmatched_curlies) = stack_paired_brackets(&text, '{', '}');
+    expected.extend(curly_pairs);
+    assert_eq!(
+        unmatched_parens,
+        vec![ranges[0].clone()],
+        "the fixture should contain exactly one unbalanced opening parenthesis"
+    );
+    assert_eq!(unmatched_curlies, Vec::<Range<usize>>::new());
+    assert_set_eq!(matches, expected);
+}
+
+// This test passes without the error recovery too: it pins the retention of
+// cross-chunk pairs, which the chunk-local repair can neither see nor verify.
+#[gpui::test]
+fn test_bracket_ranges_keep_chunk_spanning_pairs_amid_errors(cx: &mut App) {
+    let mut text = String::from("void outer(void) {\n");
+    for index in 0..60 {
+        text.push_str(&format!("  int before_{index:02} = 0;\n"));
+    }
+    text.push_str(
+        r#"  CLAY(CLAY_ID("MenuContainer"),
+       CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
+       CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                    .sizing = {.width = CLAY_SIZING_FIT()},
+                    .padding = {16, 16},
+                    .childGap = 16})) {
+  }
+"#,
+    );
+    for index in 0..60 {
+        text.push_str(&format!("  int after_{index:02} = 0;\n"));
+    }
+    text.push_str("}\n");
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+    assert_has_syntax_errors(&snapshot);
+
+    let open_offset = text.find('{').unwrap();
+    let close_offset = text.rfind('}').unwrap();
+    let matches = snapshot.fetch_bracket_ranges(0..snapshot.len(), None);
+    assert!(
+        matches.len() >= 3,
+        "the fixture should span at least three row chunks, got {:?}",
+        matches.keys().collect::<Vec<_>>()
+    );
+    for (row_range, chunk_matches) in &matches {
+        let enclosing = chunk_matches
+            .iter()
+            .find(|bracket_match| bracket_match.open_range.start == open_offset)
+            .map(|bracket_match| {
+                (
+                    bracket_match.open_range.clone(),
+                    bracket_match.close_range.clone(),
+                )
+            });
+        assert_eq!(
+            enclosing,
+            Some((open_offset..open_offset + 1, close_offset..close_offset + 1)),
+            "chunk {row_range:?} should keep the function body pair that spans all chunks"
+        );
+    }
+}
+
+#[gpui::test]
+fn test_bracket_ranges_keep_pairs_straddling_a_chunk_boundary_amid_errors(cx: &mut App) {
+    let mut text = String::from("void outer(void) {\n");
+    for index in 0..56 {
+        text.push_str(&format!("  int before_{index:02} = 0;\n"));
+    }
+    let if_open_offset = text.len() + "  if (before_00) ".len();
+    text.push_str("  if (before_00) {\n");
+    text.push_str(
+        r#"    CLAY(CLAY_ID("MenuContainer"),
+         CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
+         CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                      .sizing = {.width = CLAY_SIZING_FIT()},
+                      .padding = {16, 16},
+                      .childGap = 16})) {
+    }
+"#,
+    );
+    for index in 0..55 {
+        text.push_str(&format!("    int after_{index:02} = 0;\n"));
+    }
+    let if_close_offset = text.len() + "  ".len();
+    text.push_str("  }\n}\n");
+
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx).with_language(c_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+    assert_has_syntax_errors(&snapshot);
+
+    let open_row = snapshot.offset_to_point(if_open_offset).row;
+    let close_row = snapshot.offset_to_point(if_close_offset).row;
+    let matches = snapshot.fetch_bracket_ranges(0..snapshot.len(), None);
+    assert!(
+        matches.len() >= 3,
+        "the fixture should span at least three row chunks, got {:?}",
+        matches.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        matches
+            .keys()
+            .any(|row_range| row_range.contains(&open_row) && !row_range.contains(&close_row)),
+        "the if body pair should straddle a chunk boundary, opening at row {open_row} and closing at row {close_row}"
+    );
+    for (row_range, chunk_matches) in &matches {
+        if !row_range.contains(&open_row) && !row_range.contains(&close_row) {
+            continue;
+        }
+        let straddling = chunk_matches
+            .iter()
+            .find(|bracket_match| bracket_match.open_range.start == if_open_offset)
+            .map(|bracket_match| {
+                (
+                    bracket_match.open_range.clone(),
+                    bracket_match.close_range.clone(),
+                )
+            });
+        assert_eq!(
+            straddling,
+            Some((
+                if_open_offset..if_open_offset + 1,
+                if_close_offset..if_close_offset + 1
+            )),
+            "chunk {row_range:?} should keep the if body pair straddling the chunk boundary"
+        );
+    }
+}
+
+#[gpui::test]
+async fn test_bracket_ranges_deduplicate_overlapping_patterns(cx: &mut TestAppContext) {
+    let text = indoc! {r#"
+        CLAY(CLAY_ID("MenuContainer"),
+             CLAY_RECTANGLE({.color = {43, 41, 51, 255}}),
+             CLAY_LAYOUT({.layoutDirection = CLAY_LEFT_TO_RIGHT,
+                          .sizing = {.width = CLAY_SIZING_FIT()},
+                          .padding = {16, 16},
+                          .childGap = 16})) {
+        }
+    "#};
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_brackets_query(
+            r#"
+            ("(" @open ")" @close)
+            ("(" @open ")" @close)
+            "#,
+        )
+        .unwrap(),
+    );
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    buffer
+        .read_with(cx, |buffer, _| buffer.parsing_idle())
+        .await;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    assert_has_syntax_errors(&snapshot);
+
+    let mut matches = snapshot
+        .all_bracket_ranges(0..snapshot.len())
+        .map(BracketMatch::bracket_ranges)
+        .collect::<Vec<_>>();
+    matches.sort_by_key(|(open, close)| (open.start, open.end, close.start, close.end));
+
+    let (mut expected, unmatched_parens) = stack_paired_brackets(text, '(', ')');
+    assert_eq!(unmatched_parens, Vec::<Range<usize>>::new());
+    expected.sort_by_key(|(open, close)| (open.start, open.end, close.start, close.end));
+    assert_eq!(
+        matches, expected,
+        "one match per physical pair, even when several query patterns capture it"
+    );
+}
+
 #[test]
 fn test_applicable_row_chunks() {
     let text = (0..125)
@@ -2098,6 +2494,41 @@ fn test_autoindent_multi_line_insertion(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_autoindent_edit_before_insertion(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let text = "
+            fn a() {
+                    b();
+            }
+        "
+        .unindent();
+
+        // Insert a new line above a line that is over-indented. Only the newly added line should
+        // be auto-formatted. The rest of the text should remain the same as before the operation.
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+        buffer.edit_before(
+            [(Point::new(1, 0)..Point::new(1, 0), "        c();\n")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a() {
+                    c();
+                        b();
+                }
+            "
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_block_mode(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -2398,6 +2829,42 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
             }
             "
             .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_replacing_line_content_keeps_manual_indent(cx: &mut App) {
+    init_settings(cx, |_| {});
+
+    cx.new(|cx| {
+        let (text, ranges_to_replace) = marked_text_ranges(
+            // 8 spaces here to represent the additional manual indentation
+            indoc! {r#"
+                fn main() {
+                        «println!("hello");»
+                }
+            "#},
+            false,
+        );
+
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        buffer.edit(
+            [(ranges_to_replace[0].clone(), "let x = 1;")],
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            indoc! {r#"
+                fn main() {
+                        let x = 1;
+                }
+            "#}
         );
 
         buffer
@@ -3804,13 +4271,13 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                             let range = buffer.random_byte_range(0, &mut rng);
                             let range = range.to_point_utf16(buffer);
                             let range = range.start..range.end;
-                            DiagnosticEntry {
+                            DiagnosticEntry::new(
                                 range,
-                                diagnostic: Diagnostic {
-                                    message: post_inc(&mut next_diagnostic_id).to_string(),
+                                Diagnostic {
+                                    message: post_inc(&mut next_diagnostic_id).to_string().into(),
                                     ..Default::default()
                                 },
-                            }
+                            )
                         }),
                         buffer,
                     );
@@ -4525,7 +4992,7 @@ fn erb_lang() -> Language {
 }
 
 fn color_index_for_open(
-    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch<usize>>>,
+    matches: &HashMap<Range<BufferRow>, Vec<BracketMatch>>,
     open_offset: usize,
 ) -> Option<usize> {
     matches
@@ -4568,8 +5035,47 @@ fn c_lang() -> Arc<Language> {
             Some(tree_sitter_c::LANGUAGE.into()),
         )
         .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
+        .unwrap()
+        .with_brackets_query(include_str!("../../grammars/src/c/brackets.scm"))
         .unwrap(),
     )
+}
+
+#[track_caller]
+fn assert_has_syntax_errors(snapshot: &BufferSnapshot) {
+    assert!(
+        snapshot
+            .syntax
+            .layers_for_range(0..snapshot.len(), &snapshot.text, true)
+            .any(|layer| layer.node().has_error()),
+        "the fixture should parse with syntax errors"
+    );
+}
+
+/// Pairs bracket characters anywhere in `text`, including inside string literals.
+#[track_caller]
+fn stack_paired_brackets(
+    text: &str,
+    open: char,
+    close: char,
+) -> (Vec<(Range<usize>, Range<usize>)>, Vec<Range<usize>>) {
+    let mut open_offsets = Vec::new();
+    let mut pairs = Vec::new();
+    for (offset, character) in text.char_indices() {
+        if character == open {
+            open_offsets.push(offset);
+        } else if character == close {
+            let Some(open_offset) = open_offsets.pop() else {
+                panic!("unexpected closing {close} at offset {offset}");
+            };
+            pairs.push((open_offset..open_offset + 1, offset..offset + 1));
+        }
+    }
+    let unmatched_opens = open_offsets
+        .into_iter()
+        .map(|offset| offset..offset + 1)
+        .collect::<Vec<_>>();
+    (pairs, unmatched_opens)
 }
 
 pub fn markdown_inline_lang() -> Language {

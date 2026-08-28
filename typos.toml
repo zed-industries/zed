@@ -107,6 +107,14 @@ extend-ignore-re = [
     # Mermaid CSS class name for state diagram composites
     "composit",
     # Used in truncating tests to ensure byte-length vs char like in café
-    "caf…"
+    "caf…",
+    '\[elete\]',
+    "GHIzJ",
+    # Intentionally non-matching query in project search tests
+    "NOTHINGmATCHEStHIS",
 ]
 check-filename = true
+
+[default.extend-words]
+scap = "scap"
+writeable = "writeable"

@@ -306,6 +306,13 @@ message Diagnostic {
   optional string data = 12;
   optional string code_description = 13;
   optional string markdown = 14;
+  optional MarkupKind markup_message_kind = 18;
+  optional string untrimmed_markup_message = 19;
+}
+
+enum MarkupKind {
+  PlainText = 0;
+  Markdown = 1;
 }
 
 message SearchQuery {

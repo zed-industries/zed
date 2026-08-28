@@ -1,17 +1,25 @@
+#[cfg(not(target_family = "wasm"))]
 pub mod archive;
+#[cfg(not(target_family = "wasm"))]
 pub mod command;
-pub mod disambiguate;
+#[cfg(not(target_family = "wasm"))]
 pub mod fs;
+#[cfg(not(target_family = "wasm"))]
+pub mod process;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell_builder;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell_env;
+
+pub mod disambiguate;
 pub mod markdown;
 pub mod path_list;
 pub mod paths;
-pub mod process;
 pub mod redact;
 pub mod schemars;
 pub mod serde;
-pub mod shell;
-pub mod shell_builder;
-pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -38,6 +46,7 @@ pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
+#[cfg(not(target_family = "wasm"))]
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
 };
@@ -210,28 +219,6 @@ where
     }
 }
 
-pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
-where
-    F: Fn(&T, &T) -> Ordering,
-{
-    if limit == 0 {
-        items.truncate(0);
-    }
-    if items.len() <= limit {
-        items.sort_by(compare);
-        return;
-    }
-    // When limit is near to items.len() it may be more efficient to sort the whole list and
-    // truncate, rather than always doing selection first as is done below. It's hard to analyze
-    // where the threshold for this should be since the quickselect style algorithm used by
-    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
-    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
-    // unsorted input.
-    items.select_nth_unstable_by(limit, compare);
-    items.truncate(limit);
-    items.sort_by(compare);
-}
-
 /// Prevents execution of the application with root privileges on Unix systems.
 ///
 /// This function checks if the current process is running with root privileges
@@ -310,6 +297,7 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 /// Returns a shell escaped path for the current zed executable
+#[cfg(not(target_family = "wasm"))]
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
     use anyhow::Context as _;
     use paths::PathExt;
@@ -465,6 +453,30 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                     merge_json_value_into(value, target);
                 } else {
                     target.insert(key, value);
+                }
+            }
+        }
+        (source, target) => *target = source,
+    }
+}
+
+pub fn union_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    union_json_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                if !target.contains(&value) {
+                    target.push(value);
                 }
             }
         }
@@ -1133,6 +1145,48 @@ Line 3"#
                     "args": ["--user"],
                     "deeper": { "list": [3], "other": "kept" },
                     "inserted": { "z": true },
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn test_union_json_values() {
+        use serde_json::json;
+
+        let mut target = json!({
+            "unchanged": 1,
+            "replaced_scalar": "old",
+            "unioned_array": ["shared", "first"],
+            "nested": {
+                "kept": true,
+                "plugins": [{ "name": "first-plugin" }],
+                "scalar": 2,
+            },
+        });
+        let source = json!({
+            "replaced_scalar": "new",
+            "unioned_array": ["shared", "second"],
+            "inserted": ["brand-new"],
+            "nested": {
+                "plugins": [{ "name": "second-plugin" }],
+                "scalar": 20,
+            },
+        });
+
+        union_json_value_into(source, &mut target);
+
+        assert_eq!(
+            target,
+            json!({
+                "unchanged": 1,
+                "replaced_scalar": "new",
+                "unioned_array": ["shared", "first", "second"],
+                "inserted": ["brand-new"],
+                "nested": {
+                    "kept": true,
+                    "plugins": [{ "name": "first-plugin" }, { "name": "second-plugin" }],
+                    "scalar": 20,
                 },
             })
         );

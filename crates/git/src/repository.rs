@@ -1,6 +1,8 @@
 use crate::commit::{CommitDiffObject, CommitDiffObjectKind, parse_git_diff_raw};
 use crate::stash::GitStash;
-use crate::status::{DiffTreeType, GitStatus, TreeDiff};
+use crate::status::{
+    DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
+};
 use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
@@ -528,6 +530,7 @@ pub struct CommitDetails {
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
+    pub is_shallow_boundary: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -545,14 +548,14 @@ pub enum CommitFileStatus {
 #[derive(Debug)]
 pub struct CommitFile {
     pub path: RepoPath,
-    pub old_text: Option<String>,
-    pub new_text: Option<String>,
+    pub old_content: Option<Vec<u8>>,
+    pub new_content: Option<Vec<u8>>,
     pub is_binary: bool,
 }
 
 impl CommitFile {
     pub fn status(&self) -> CommitFileStatus {
-        match (&self.old_text, &self.new_text) {
+        match (&self.old_content, &self.new_content) {
             (None, Some(_)) => CommitFileStatus::Added,
             (Some(_), None) => CommitFileStatus::Deleted,
             _ => CommitFileStatus::Modified,
@@ -574,7 +577,7 @@ pub fn is_binary_content(content: &[u8]) -> bool {
 }
 
 struct LoadedCommitObject {
-    text: String,
+    content: Vec<u8>,
     is_binary: bool,
 }
 
@@ -597,11 +600,7 @@ async fn read_commit_blob<R: smol::io::AsyncBufRead + Unpin>(
 
     let is_binary = is_binary_content(&bytes);
     Ok(LoadedCommitObject {
-        text: if is_binary {
-            String::new()
-        } else {
-            String::from_utf8_lossy(&bytes).to_string()
-        },
+        content: bytes,
         is_binary,
     })
 }
@@ -615,13 +614,39 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
     match object {
         Some(object) if object.kind == CommitDiffObjectKind::Gitlink => {
             Ok(Some(LoadedCommitObject {
-                text: format!("Subproject commit {}\n", object.oid),
+                content: format!("Subproject commit {}\n", object.oid).into_bytes(),
                 is_binary: false,
             }))
         }
         Some(_) => Ok(Some(read_commit_blob(stdout, info_line, newline).await?)),
         None => Ok(None),
     }
+}
+
+async fn read_shallow_file(shallow_file_path: &Path) -> Result<Option<String>> {
+    match smol::fs::read_to_string(shallow_file_path).await {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("reading shallow file"),
+    }
+}
+
+async fn is_shallow_boundary_commit(
+    git: &GitBinary,
+    shallow_file_path: &Path,
+    commit: &str,
+) -> Result<bool> {
+    let Some(shallow_contents) = read_shallow_file(shallow_file_path).await? else {
+        return Ok(false);
+    };
+
+    let oid = git
+        .run(&["rev-parse", "--verify", &format!("{commit}^{{commit}}")])
+        .await
+        .context("resolving commit for shallow boundary check")?;
+    Ok(shallow_contents
+        .lines()
+        .any(|line| line.trim() == oid.trim()))
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -641,18 +666,22 @@ pub enum ResetMode {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum FetchOptions {
     All,
+    Unshallow,
     Remote(Remote),
 }
 
 impl FetchOptions {
     pub fn to_proto(&self) -> Option<String> {
         match self {
-            FetchOptions::All => None,
+            FetchOptions::All | FetchOptions::Unshallow => None,
             FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
         }
     }
 
-    pub fn from_proto(remote_name: Option<String>) -> Self {
+    pub fn from_proto(remote_name: Option<String>, unshallow: bool) -> Self {
+        if unshallow {
+            return FetchOptions::Unshallow;
+        }
         match remote_name {
             Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
             None => FetchOptions::All,
@@ -662,6 +691,7 @@ impl FetchOptions {
     pub fn name(&self) -> SharedString {
         match self {
             Self::All => "Fetch all remotes".into(),
+            Self::Unshallow => "Fetch missing history".into(),
             Self::Remote(remote) => remote.name.clone(),
         }
     }
@@ -671,6 +701,7 @@ impl std::fmt::Display for FetchOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FetchOptions::All => write!(f, "--all"),
+            FetchOptions::Unshallow => write!(f, "--unshallow"),
             FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
         }
     }
@@ -752,7 +783,7 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<Vec<u8>>> {
         let future = self.load_revisions(vec![format!(":{}", path.as_unix_str())]);
         async move { future.await.ok()?.pop()? }.boxed()
     }
@@ -760,16 +791,16 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
+    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<Vec<u8>>> {
         let future = self.load_revisions(vec![format!("HEAD:{}", path.as_unix_str())]);
         async move { future.await.ok()?.pop()? }.boxed()
     }
-    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>>;
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<Vec<u8>>>;
 
     fn set_index_text(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         env: Arc<HashMap<String, String>>,
         is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>>;
@@ -787,7 +818,8 @@ pub trait GitRepository: Send + Sync {
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
+    fn load_revisions(&self, revisions: Vec<String>)
+    -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>>;
 
     fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
@@ -879,12 +911,23 @@ pub trait GitRepository: Send + Sync {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
+    fn load_commit(
+        &self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(
         &self,
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
+
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -932,6 +975,13 @@ pub trait GitRepository: Send + Sync {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_staged(
+        &self,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
@@ -1372,9 +1422,24 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
+    fn load_commit(
+        &self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>> {
         let git = self.git_binary();
+        let shallow_file_path = self.common_dir.join("shallow");
         cx.background_spawn(async move {
+            if !ignore_shallow_boundary
+                && is_shallow_boundary_commit(&git, &shallow_file_path, &commit).await?
+            {
+                return Ok(CommitDiff {
+                    files: Vec::new(),
+                    is_shallow_boundary: true,
+                });
+            }
+
             let show_output = git
                 .build_command(&[
                     "show",
@@ -1452,30 +1517,21 @@ impl GitRepository for RealGitRepository {
                         .await?;
                 let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
                     || old_object.as_ref().is_some_and(|object| object.is_binary);
-                let new_text = new_object.map(|object| {
-                    if is_binary {
-                        String::new()
-                    } else {
-                        object.text
-                    }
-                });
-                let old_text = old_object.map(|object| {
-                    if is_binary {
-                        String::new()
-                    } else {
-                        object.text
-                    }
-                });
+                let new_content = new_object.map(|object| object.content);
+                let old_content = old_object.map(|object| object.content);
 
                 files.push(CommitFile {
                     path: RepoPath(Arc::from(rel_path)),
-                    old_text,
-                    new_text,
+                    old_content,
+                    new_content,
                     is_binary,
                 })
             }
 
-            Ok(CommitDiff { files })
+            Ok(CommitDiff {
+                files,
+                is_shallow_boundary: false,
+            })
         })
         .boxed()
     }
@@ -1538,11 +1594,23 @@ impl GitRepository for RealGitRepository {
         .boxed()
     }
 
-    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<String>> {
+    fn load_blob_content(&self, oid: Oid) -> BoxFuture<'_, Result<Vec<u8>>> {
         let git_binary = self.git_binary();
         let oid_str = oid.to_string();
         self.executor
-            .spawn(async move { git_binary.run_raw(&["cat-file", "blob", &oid_str]).await })
+            .spawn(async move {
+                let mut command = git_binary.build_command(&["cat-file", "blob", &oid_str]);
+                let output = command.output().await?;
+                anyhow::ensure!(
+                    output.status.success(),
+                    GitBinaryCommandError {
+                        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                        status: output.status,
+                    }
+                );
+                Ok(output.stdout)
+            })
             .boxed()
     }
 
@@ -1591,7 +1659,7 @@ impl GitRepository for RealGitRepository {
     fn set_index_text(
         &self,
         path: RepoPath,
-        content: Option<String>,
+        content: Option<Vec<u8>>,
         env: Arc<HashMap<String, String>>,
         is_executable: bool,
     ) -> BoxFuture<'_, anyhow::Result<()>> {
@@ -1602,17 +1670,32 @@ impl GitRepository for RealGitRepository {
 
                 if let Some(content) = content {
                     let mut child = git
-                        .build_command(&["hash-object", "-w", "--stdin"])
+                        .build_command(&[
+                            "hash-object",
+                            "-w",
+                            "--stdin",
+                            "--path",
+                            path.as_unix_str(),
+                        ])
                         .envs(env.iter())
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
                         .spawn()?;
-                    let mut stdin = child.stdin.take().unwrap();
-                    stdin.write_all(content.as_bytes()).await?;
+                    let mut stdin = child.stdin.take().context("hash-object has no stdin")?;
+                    stdin.write_all(&content).await?;
                     stdin.flush().await?;
                     drop(stdin);
-                    let output = child.output().await?.stdout;
-                    let sha = str::from_utf8(&output)?.trim();
+                    let output = child.output().await?;
+                    anyhow::ensure!(
+                        output.status.success(),
+                        GitBinaryCommandError {
+                            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                            status: output.status,
+                        }
+                    );
+                    let sha = str::from_utf8(&output.stdout)?.trim();
 
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
@@ -1713,12 +1796,20 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+    fn load_revisions(
+        &self,
+        revisions: Vec<String>,
+    ) -> BoxFuture<'_, Result<Vec<Option<Vec<u8>>>>> {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
                 if revisions.is_empty() {
                     return Ok(Vec::new());
+                }
+                if let Some(revision) = revisions.iter().find(|revision| revision.contains('\n')) {
+                    anyhow::bail!(
+                        "revision spec {revision:?} contains a newline and cannot be passed to git cat-file --batch"
+                    );
                 }
 
                 let mut process = git
@@ -1759,7 +1850,7 @@ impl GitRepository for RealGitRepository {
                             stdout.read_exact(&mut newline).await?;
 
                             if object_type == "blob" {
-                                results.push(String::from_utf8(content).ok());
+                                results.push(Some(content));
                             } else {
                                 results.push(None);
                             }
@@ -1811,36 +1902,197 @@ impl GitRepository for RealGitRepository {
 
     fn diff_tree(&self, request: DiffTreeType) -> BoxFuture<'_, Result<TreeDiff>> {
         let git = self.git_binary_in_worktree();
+        let working_directory = self.working_directory.clone();
+        let merge_base_ref = match &request {
+            DiffTreeType::MergeBaseWithWorktree { base } => Some(base.clone()),
+            DiffTreeType::MergeBase { .. } | DiffTreeType::Since { .. } => None,
+        };
 
-        let mut args = vec![
-            OsString::from("diff-tree"),
-            OsString::from("-r"),
-            OsString::from("-z"),
-            OsString::from("--no-renames"),
-        ];
-        match request {
-            DiffTreeType::MergeBase { base, head } => {
-                args.push("--merge-base".into());
-                args.push(OsString::from(base.as_str()));
-                args.push(OsString::from(head.as_str()));
-            }
-            DiffTreeType::Since { base, head } => {
-                args.push(OsString::from(base.as_str()));
-                args.push(OsString::from(head.as_str()));
-            }
-        }
+        let args = match request {
+            DiffTreeType::MergeBase { base, head } => [
+                "diff-tree",
+                "-r",
+                "-z",
+                "--abbrev=64",
+                "--no-renames",
+                "--merge-base",
+                base.as_str(),
+                head.as_str(),
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            DiffTreeType::MergeBaseWithWorktree { base } => [
+                "diff",
+                "--raw",
+                "-z",
+                "--abbrev=64",
+                "--no-renames",
+                "--merge-base",
+                base.as_str(),
+            ]
+            .map(OsString::from)
+            .to_vec(),
+            DiffTreeType::Since { base, head } => [
+                "diff-tree",
+                "-r",
+                "-z",
+                "--abbrev=64",
+                "--no-renames",
+                base.as_str(),
+                head.as_str(),
+            ]
+            .map(OsString::from)
+            .to_vec(),
+        };
 
         self.executor
             .spawn(async move {
                 let git = git?;
                 let output = git.build_command(&args).output().await?;
-                if output.status.success() {
-                    let stdout = String::from_utf8_lossy(&output.stdout);
-                    stdout.parse()
-                } else {
+                if !output.status.success() {
                     let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git diff-tree failed: {stderr}");
+                }
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let mut tree_diff = stdout.parse::<TreeDiff>()?;
+                let Some(merge_base_ref) = merge_base_ref else {
+                    return Ok(tree_diff);
+                };
+                let Some(working_directory) = working_directory else {
+                    return Ok(tree_diff);
+                };
+                if !tree_diff
+                    .entries
+                    .values()
+                    .any(|status| matches!(status, TreeDiffStatus::Deleted { .. }))
+                {
+                    return Ok(tree_diff);
+                }
+
+                let status_output = git.build_command(&git_status_args(&[])).output().await?;
+                if !status_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&status_output.stderr);
                     anyhow::bail!("git status failed: {stderr}");
                 }
+                let status = String::from_utf8_lossy(&status_output.stdout).parse::<GitStatus>()?;
+                // Files the diff reports as deleted but that exist on disk
+                // (deleted from the index or from a commit, then recreated).
+                // `git diff` compares them against the index, so compare their
+                // disk contents against the merge base ourselves.
+                let recreated: Vec<(RepoPath, Oid)> = status
+                    .entries
+                    .iter()
+                    .filter(|(_, status)| {
+                        matches!(
+                            *status,
+                            FileStatus::Untracked
+                                | FileStatus::Tracked(TrackedStatus {
+                                    index_status: StatusCode::Deleted,
+                                    worktree_status: StatusCode::Added,
+                                })
+                        )
+                    })
+                    .filter_map(|(path, _)| match tree_diff.entries.get(path) {
+                        Some(TreeDiffStatus::Deleted { old }) => Some((path.clone(), *old)),
+                        _ => None,
+                    })
+                    .collect();
+                if recreated.is_empty() {
+                    return Ok(tree_diff);
+                }
+
+                let merge_base_output = git
+                    .build_command(&["merge-base", merge_base_ref.as_ref(), "HEAD"])
+                    .output()
+                    .await?;
+                if !merge_base_output.status.success() {
+                    let stderr = String::from_utf8_lossy(&merge_base_output.stderr);
+                    anyhow::bail!("git merge-base failed: {stderr}");
+                }
+                let merge_base = String::from_utf8_lossy(&merge_base_output.stdout);
+                let merge_base = merge_base.trim();
+
+                for (path, old) in recreated {
+                    let full_path = working_directory.join(path.as_std_path());
+                    let metadata = match smol::fs::symlink_metadata(&full_path).await {
+                        Ok(metadata) => metadata,
+                        Err(_) => continue,
+                    };
+                    let base_entry = git
+                        .build_command(
+                            &["ls-tree", merge_base, "--", path.as_unix_str()].map(OsString::from),
+                        )
+                        .output()
+                        .await?;
+                    if !base_entry.status.success() {
+                        continue;
+                    }
+                    let base_mode = String::from_utf8_lossy(&base_entry.stdout);
+                    let Some(base_mode) = base_mode.split_ascii_whitespace().next() else {
+                        continue;
+                    };
+                    let current_mode = if metadata.file_type().is_symlink() {
+                        "120000"
+                    } else {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt as _;
+                            if metadata.permissions().mode() & 0o111 == 0 {
+                                "100644"
+                            } else {
+                                "100755"
+                            }
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            "100644"
+                        }
+                    };
+                    if current_mode != base_mode {
+                        tree_diff
+                            .entries
+                            .insert(path.clone(), TreeDiffStatus::Modified { old });
+                        continue;
+                    }
+
+                    let hash_output = if metadata.file_type().is_symlink() {
+                        let target = smol::fs::read_link(&full_path).await?;
+                        let mut child = git
+                            .build_command(&["hash-object", "--stdin"])
+                            .stdin(Stdio::piped())
+                            .stdout(Stdio::piped())
+                            .spawn()?;
+                        let mut stdin = child.stdin.take().context("hash-object has no stdin")?;
+                        stdin
+                            .write_all(target.as_os_str().as_encoded_bytes())
+                            .await?;
+                        stdin.flush().await?;
+                        drop(stdin);
+                        child.output().await?
+                    } else {
+                        git.build_command(&[
+                            OsString::from("hash-object"),
+                            OsString::from(format!("--path={}", path.as_unix_str())),
+                            OsString::from("--"),
+                            full_path.into_os_string(),
+                        ])
+                        .output()
+                        .await?
+                    };
+                    if !hash_output.status.success() {
+                        continue;
+                    }
+                    let worktree_oid = String::from_utf8_lossy(&hash_output.stdout);
+                    if worktree_oid.trim() == old.to_string() {
+                        tree_diff.entries.remove(&path);
+                    } else {
+                        tree_diff
+                            .entries
+                            .insert(path.clone(), TreeDiffStatus::Modified { old });
+                    }
+                }
+                Ok(tree_diff)
             })
             .boxed()
     }
@@ -2209,6 +2461,21 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn blame_at_revision(
+        &self,
+        path: RepoPath,
+        revision: Oid,
+    ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
+        let git = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                crate::blame::Blame::for_path_at_revision(&git, &path, revision).await
+            })
+            .boxed()
+    }
+
     fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>> {
         let git = self.git_binary_in_worktree();
         self.executor
@@ -2327,14 +2594,20 @@ impl GitRepository for RealGitRepository {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         let git = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
                 let git = git?;
+                let mut args = vec!["stash", "push", "--quiet", "--include-untracked"];
+                if let Some(message) = message.as_deref() {
+                    args.extend_from_slice(&["--message", message]);
+                }
+                args.push("--");
                 let output = git
-                    .build_command(&["stash", "push", "--quiet", "--include-untracked", "--"])
+                    .build_command(&args)
                     .envs(env.iter())
                     .args(paths.iter().map(|p| p.as_unix_str()))
                     .output()
@@ -2343,6 +2616,33 @@ impl GitRepository for RealGitRepository {
                 anyhow::ensure!(
                     output.status.success(),
                     "Failed to stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_staged(
+        &self,
+        message: Option<String>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                // `--staged` cannot be expressed as a pathspec: a partially staged
+                // file would otherwise have its unstaged hunks stashed too.
+                let mut args = vec!["stash", "push", "--quiet", "--staged"];
+                if let Some(message) = message.as_deref() {
+                    args.extend_from_slice(&["--message", message]);
+                }
+                let output = git.build_command(&args).envs(env.iter()).output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash staged changes (requires git 2.35 or newer):\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())
@@ -3193,6 +3493,7 @@ impl GitRepository for RealGitRepository {
         commit_limit: usize,
     ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
         let git = self.git_binary();
+        let shallow_file_path = self.common_dir.join("shallow");
 
         async move {
             if paths.is_empty() {
@@ -3211,7 +3512,7 @@ impl GitRepository for RealGitRepository {
                 "--no-renames",
                 "--name-only",
                 "-z",
-                "--format=%x1e",
+                "--format=%x1e%H",
                 "--",
             ]
             .map(OsString::from)
@@ -3225,8 +3526,22 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             );
 
+            let shallow_boundary_oids = read_shallow_file(&shallow_file_path)
+                .await?
+                .map(|contents| {
+                    contents
+                        .lines()
+                        .map(|line| line.trim().to_string())
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+
             let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(parse_file_history_changed_files_output(&stdout, &paths))
+            Ok(parse_file_history_changed_files_output(
+                &stdout,
+                &paths,
+                &shallow_boundary_oids,
+            ))
         }
         .boxed()
     }
@@ -3343,12 +3658,17 @@ async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
 fn parse_file_history_changed_files_output(
     output: &str,
     queried_paths: &[RepoPath],
+    shallow_boundary_oids: &HashSet<String>,
 ) -> Vec<FileHistoryChangedFileSets> {
     let mut histories = vec![FileHistoryChangedFileSets::default(); queried_paths.len()];
 
     for record in output.split('\x1e') {
-        let changed_files = record
-            .split('\0')
+        let mut fields = record.split('\0');
+        let sha = fields.next().unwrap_or_default().trim();
+        if shallow_boundary_oids.contains(sha) {
+            continue;
+        }
+        let changed_files = fields
             .filter_map(|field| {
                 let path = field.trim_start_matches('\n');
                 if path.is_empty() {
@@ -3395,6 +3715,7 @@ fn parse_initial_graph_output<'a>(
             } else {
                 ref_names_str
                     .split(", ")
+                    .filter(|decoration| *decoration != "grafted" && *decoration != "replaced")
                     .map(|s| SharedString::from(s.to_string()))
                     .collect()
             };
@@ -4086,6 +4407,185 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_merge_base_worktree_diff_handles_recreated_index_deletion(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        fs::write(&file_path, "base\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "base"]);
+        let base_oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD:file.txt"])
+            .parse()
+            .unwrap();
+
+        fs::write(&file_path, "head\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "head"]);
+        git_command(repo_dir.path(), ["rm", "--cached", "file.txt"]);
+        fs::write(&file_path, "base\n").unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::default(),
+            }
+        );
+
+        fs::write(&file_path, "worktree\n").unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("file.txt").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_merge_base_worktree_diff_handles_committed_deletion_recreated_on_disk(
+        cx: &mut TestAppContext,
+    ) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        fs::write(&file_path, "base\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "base"]);
+        let base_oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD:file.txt"])
+            .parse()
+            .unwrap();
+
+        git_command(repo_dir.path(), ["rm", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "delete"]);
+        fs::write(&file_path, "base\n").unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::default(),
+            }
+        );
+
+        fs::write(&file_path, "worktree\n").unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("file.txt").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_merge_base_worktree_diff_handles_recreated_symlink(cx: &mut TestAppContext) {
+        use std::os::unix::fs::symlink;
+
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let file_path = repo_dir.path().join("file.txt");
+        symlink("base-target", &file_path).unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "base"]);
+        let base_oid = git_command_output(repo_dir.path(), ["rev-parse", "HEAD:file.txt"])
+            .parse()
+            .unwrap();
+
+        fs::remove_file(&file_path).unwrap();
+        symlink("head-target", &file_path).unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "head"]);
+        git_command(repo_dir.path(), ["rm", "--cached", "file.txt"]);
+        fs::remove_file(&file_path).unwrap();
+        symlink("base-target", &file_path).unwrap();
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::default(),
+            }
+        );
+
+        fs::remove_file(&file_path).unwrap();
+        fs::write(&file_path, "base-target").unwrap();
+        assert_eq!(
+            repository
+                .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                    base: "HEAD^".into(),
+                })
+                .await
+                .unwrap(),
+            TreeDiff {
+                entries: HashMap::from_iter([(
+                    RepoPath::new("file.txt").unwrap(),
+                    TreeDiffStatus::Modified { old: base_oid },
+                )]),
+            }
+        );
+    }
+
+    #[gpui::test]
     async fn test_load_commit_with_type_changed_file(cx: &mut TestAppContext) {
         disable_git_global_config();
         cx.executor().allow_parking();
@@ -4125,7 +4625,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "type change"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load type-changed commit");
         assert_eq!(commit_diff.files.len(), 1);
@@ -4135,8 +4635,11 @@ mod tests {
             .first()
             .expect("type-changed file should be present");
         assert_eq!(file.path.as_unix_str(), "file.txt");
-        assert_eq!(file.old_text.as_deref(), Some("regular contents\n"));
-        assert_eq!(file.new_text.as_deref(), Some("target"));
+        assert_eq!(
+            file.old_content.as_deref(),
+            Some(b"regular contents\n".as_slice())
+        );
+        assert_eq!(file.new_content.as_deref(), Some(b"target".as_slice()));
         assert_eq!(file.status(), CommitFileStatus::Modified);
     }
 
@@ -4175,7 +4678,7 @@ mod tests {
         .expect("failed to open repository");
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that adds a gitlink");
         assert_eq!(commit_diff.files.len(), 2);
@@ -4185,10 +4688,10 @@ mod tests {
             .find(|file| file.path.as_unix_str() == "modules/example")
             .expect("gitlink should be present alongside the regular file");
         assert_eq!(gitlink.status(), CommitFileStatus::Added);
-        assert_eq!(gitlink.old_text, None);
+        assert_eq!(gitlink.old_content, None);
         assert_eq!(
-            gitlink.new_text.as_deref(),
-            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+            gitlink.new_content.as_deref(),
+            Some(b"Subproject commit 1111111111111111111111111111111111111111\n".as_slice())
         );
         assert!(!gitlink.is_binary);
 
@@ -4205,7 +4708,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "update submodule"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that updates a gitlink");
         let [gitlink] = commit_diff.files.as_slice() else {
@@ -4213,12 +4716,12 @@ mod tests {
         };
         assert_eq!(gitlink.status(), CommitFileStatus::Modified);
         assert_eq!(
-            gitlink.old_text.as_deref(),
-            Some("Subproject commit 1111111111111111111111111111111111111111\n")
+            gitlink.old_content.as_deref(),
+            Some(b"Subproject commit 1111111111111111111111111111111111111111\n".as_slice())
         );
         assert_eq!(
-            gitlink.new_text.as_deref(),
-            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+            gitlink.new_content.as_deref(),
+            Some(b"Subproject commit 2222222222222222222222222222222222222222\n".as_slice())
         );
         assert!(!gitlink.is_binary);
 
@@ -4226,7 +4729,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "remove submodule"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that deletes a gitlink");
         let [gitlink] = commit_diff.files.as_slice() else {
@@ -4234,11 +4737,91 @@ mod tests {
         };
         assert_eq!(gitlink.status(), CommitFileStatus::Deleted);
         assert_eq!(
-            gitlink.old_text.as_deref(),
-            Some("Subproject commit 2222222222222222222222222222222222222222\n")
+            gitlink.old_content.as_deref(),
+            Some(b"Subproject commit 2222222222222222222222222222222222222222\n".as_slice())
         );
-        assert_eq!(gitlink.new_text, None);
+        assert_eq!(gitlink.new_content, None);
         assert!(!gitlink.is_binary);
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_shallow_boundary(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let source_dir = tempfile::tempdir().expect("failed to create source repository");
+        git_init_repo(source_dir.path());
+        fs::write(source_dir.path().join("a.txt"), "one\n").expect("failed to write a.txt");
+        git_command(source_dir.path(), ["add", "a.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "first"]);
+        fs::write(source_dir.path().join("a.txt"), "two\n").expect("failed to update a.txt");
+        fs::write(source_dir.path().join("b.txt"), "new\n").expect("failed to write b.txt");
+        git_command(source_dir.path(), ["add", "a.txt", "b.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "second"]);
+
+        let clone_dir = tempfile::tempdir().expect("failed to create clone directory");
+        git_command(
+            clone_dir.path(),
+            [
+                "clone".to_string(),
+                "--depth=1".to_string(),
+                format!("file://{}", source_dir.path().display()),
+                "shallow".to_string(),
+            ],
+        );
+
+        let repository = RealGitRepository::new(
+            &clone_dir.path().join("shallow").join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open shallow repository");
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load boundary commit");
+        assert!(commit_diff.is_shallow_boundary);
+        assert_eq!(commit_diff.files.len(), 0);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), true, cx.to_async())
+            .await
+            .expect("failed to load boundary commit snapshot");
+        assert!(!commit_diff.is_shallow_boundary);
+        let files = commit_diff
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_unix_str().to_owned(),
+                    file.old_content.clone(),
+                    file.status(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files,
+            vec![
+                ("a.txt".to_string(), None, CommitFileStatus::Added),
+                ("b.txt".to_string(), None, CommitFileStatus::Added),
+            ]
+        );
+
+        let source_repository = RealGitRepository::new(
+            &source_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open source repository");
+        let commit_diff = source_repository
+            .load_commit("HEAD~1".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load root commit");
+        assert!(!commit_diff.is_shallow_boundary);
+        assert_eq!(commit_diff.files.len(), 1);
     }
 
     #[gpui::test]
@@ -4569,12 +5152,13 @@ mod tests {
             RepoPath::new("src/b.rs").unwrap(),
         ];
         let output = concat!(
-            "\x1e\0\nsrc/a.rs\0src/shared.rs\0",
-            "\x1e\0\nsrc/b.rs\0src/shared.rs\0",
-            "\x1e\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
+            "\x1e1111111111111111111111111111111111111111\0\nsrc/a.rs\0src/shared.rs\0",
+            "\x1e2222222222222222222222222222222222222222\0\nsrc/b.rs\0src/shared.rs\0",
+            "\x1e3333333333333333333333333333333333333333\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
         );
 
-        let histories = parse_file_history_changed_files_output(output, &queried_paths);
+        let histories =
+            parse_file_history_changed_files_output(output, &queried_paths, &HashSet::default());
 
         assert_eq!(histories.len(), 2);
         assert_eq!(
@@ -4603,6 +5187,44 @@ mod tests {
                     RepoPath::new("src/b.rs").unwrap(),
                     RepoPath::new("src/shared.rs").unwrap(),
                 ],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_file_history_changed_files_output_skips_shallow_boundary() {
+        let queried_paths = vec![RepoPath::new("src/a.rs").unwrap()];
+        let output = concat!(
+            "\x1e1111111111111111111111111111111111111111\0\nsrc/a.rs\0src/shared.rs\0",
+            "\x1e2222222222222222222222222222222222222222\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
+        );
+        let shallow_boundary_oids =
+            HashSet::from_iter(["2222222222222222222222222222222222222222".to_string()]);
+
+        let histories =
+            parse_file_history_changed_files_output(output, &queried_paths, &shallow_boundary_oids);
+
+        assert_eq!(histories.len(), 1);
+        assert_eq!(
+            histories[0].file_sets,
+            vec![vec![
+                RepoPath::new("src/a.rs").unwrap(),
+                RepoPath::new("src/shared.rs").unwrap(),
+            ]]
+        );
+    }
+
+    #[test]
+    fn test_parse_initial_graph_output_filters_graft_decorations() {
+        let line = "0f36a166633a057bf7dd660508d237cad2606cab\x00\x00grafted, HEAD -> refs/heads/main, refs/remotes/origin/main";
+        let commits = parse_initial_graph_output([line].into_iter());
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].parents.len(), 0);
+        assert_eq!(
+            commits[0].ref_names,
+            vec![
+                SharedString::from("HEAD -> refs/heads/main"),
+                SharedString::from("refs/remotes/origin/main"),
             ]
         );
     }
@@ -5089,14 +5711,82 @@ mod tests {
         assert_eq!(
             results,
             vec![
-                Some("file1 committed contents".into()),
-                Some("file1 index contents".into()),
-                Some("file2 committed contents".into()),
-                Some("file2 committed contents".into()), // untouched in index, should match HEAD
+                Some(b"file1 committed contents".to_vec()),
+                Some(b"file1 index contents".to_vec()),
+                Some(b"file2 committed contents".to_vec()),
+                Some(b"file2 committed contents".to_vec()), // untouched in index, should match HEAD
                 None,
-                Some("space file committed contents".into()),
+                Some(b"space file committed contents".to_vec()),
                 None,
             ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_blame_at_revision(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        let repo = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+
+        let file_name = "ürlich file1";
+        fs::write(repo_dir.path().join(file_name), "line one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "First commit"]);
+        let first_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        fs::write(repo_dir.path().join(file_name), "line one\nline two\n").unwrap();
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "Second commit"]);
+        let second_sha = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        let blame_at_head = repo
+            .blame_at_revision(repo_path(file_name), second_sha.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_head
+                .entries
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.sha.to_string(),
+                        entry.range.clone(),
+                        entry.filename.clone(),
+                        entry.previous.clone(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                (first_sha.clone(), 0..1, file_name.to_owned(), None),
+                (
+                    second_sha.clone(),
+                    1..2,
+                    file_name.to_owned(),
+                    Some(format!("{first_sha} {file_name}"))
+                ),
+            ]
+        );
+
+        let blame_at_first = repo
+            .blame_at_revision(repo_path(file_name), first_sha.parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            blame_at_first
+                .entries
+                .iter()
+                .map(|entry| (entry.sha.to_string(), entry.range.clone()))
+                .collect::<Vec<_>>(),
+            vec![(first_sha.clone(), 0..1)]
         );
     }
 

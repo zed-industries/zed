@@ -346,7 +346,10 @@ impl Element for Img {
                             }
 
                             let image_size = data.render_size(frame_index);
-                            style.aspect_ratio = Some(image_size.width / image_size.height);
+
+                            if style.aspect_ratio.is_none() {
+                                style.aspect_ratio = Some(image_size.width / image_size.height);
+                            }
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
@@ -578,6 +581,17 @@ impl ImageSource {
             }
             ImageSource::Custom(_) | ImageSource::Render(_) => {}
             ImageSource::Image(data) => cx.remove_asset::<AssetLogger<ImageDecoder>>(data),
+        }
+    }
+
+    /// Check whether this image source is present in the asset system (loading
+    /// or loaded), without fetching it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_asset_cached(&self, cx: &App) -> bool {
+        match self {
+            ImageSource::Resource(resource) => cx.has_asset::<ImgResourceLoader>(resource),
+            ImageSource::Custom(_) | ImageSource::Render(_) => false,
+            ImageSource::Image(data) => cx.has_asset::<AssetLogger<ImageDecoder>>(data),
         }
     }
 }
@@ -881,6 +895,44 @@ mod tests {
                 rendered_tile_bounds.size.height.0,
             ),
             (50, 0, 100, 100),
+        );
+    }
+
+    #[gpui::test]
+    fn explicit_aspect_ratio_is_not_overridden_by_intrinsic_ratio(cx: &mut TestAppContext) {
+        let window = cx.add_empty_window();
+
+        // A portrait image in a square container
+        window.draw(point(px(0.), px(0.)), size(px(100.), px(100.)), |_, _| {
+            div()
+                .size(px(100.))
+                .overflow_hidden()
+                .child(
+                    img(ImageSource::Render(test_image_with_size(100, 200)))
+                        .size_full()
+                        .aspect_square()
+                        .object_fit(ObjectFit::Contain),
+                )
+                .into_any_element()
+        });
+
+        let (rendered_bounds, scale_factor) = window.update(|window, _| {
+            let sprite = window
+                .rendered_frame
+                .scene
+                .polychrome_sprites
+                .last()
+                .expect("contained image should paint a sprite");
+            (sprite.bounds, window.scale_factor())
+        });
+
+        // The element stays 100x100, so the image is letterboxed horizontally
+        assert_eq!(
+            rendered_bounds,
+            Bounds {
+                origin: point(px(25.).scale(scale_factor), px(0.).scale(scale_factor)),
+                size: size(px(50.).scale(scale_factor), px(100.).scale(scale_factor)),
+            }
         );
     }
 

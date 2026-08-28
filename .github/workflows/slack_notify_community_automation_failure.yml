@@ -13,12 +13,15 @@ on:
       - "Comment on potential duplicate bug/crash reports"
       - "Track duplicate bot effectiveness"
       - "Community PR Board"
+      - "Community PR Cleanup"
+      - "Maintainer Edits Nudge"
       - "PR Board Meta Fields Refresh"
       - "PR Issue Labeler"
       - "Guild Assignment Status"
       - "Guild Stale Assignments"
       - "Guild Weekly Shipped"
       - "Guild New PR Notification"
+      - "Issue Triage Queue Board"
     types: [completed]
 
 permissions:
@@ -30,7 +33,7 @@ jobs:
       github.repository == 'zed-industries/zed'
       && github.event.workflow_run.head_repository.full_name == github.repository
       && contains(fromJSON('["issues","issue_comment","pull_request","pull_request_target","schedule","workflow_dispatch"]'), github.event.workflow_run.event)
-      && github.event.workflow_run.conclusion == 'failure'
+      && contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion)
     runs-on: namespace-profile-2x4-ubuntu-2404
 
     steps:

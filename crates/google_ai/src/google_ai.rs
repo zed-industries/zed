@@ -42,6 +42,15 @@ pub async fn stream_generate_content(
                 match line {
                     Ok(line) => {
                         if let Some(line) = line.strip_prefix("data: ") {
+                            // Some proxies and gateways append `data: [DONE]` as a
+                            // stream-termination sentinel (an OpenAI convention).
+                            // Google's streaming spec does not include this sentinel,
+                            // but we tolerate it here for the same reason as the
+                            // anthropic crate: proxies that inject it would otherwise
+                            // cause a spurious JSON deserialization error.
+                            if line.trim() == "[DONE]" {
+                                return None;
+                            }
                             match serde_json::from_str(line) {
                                 Ok(response) => Some(Ok(response)),
                                 Err(error) => Some(Err(anyhow!(format!(
@@ -464,7 +473,7 @@ impl Serialize for ModelName {
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("{MODEL_NAME_PREFIX}{}", &self.model_id))
+        serializer.serialize_str(&format!("{MODEL_NAME_PREFIX}{}", self.model_id))
     }
 }
 
@@ -490,39 +499,18 @@ impl<'de> Deserialize<'de> for ModelName {
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Eq, strum::EnumIter)]
 pub enum Model {
-    #[serde(
-        rename = "gemini-2.5-flash-lite",
-        alias = "gemini-2.5-flash-lite-preview-06-17",
-        alias = "gemini-2.0-flash-lite-preview"
-    )]
-    Gemini25FlashLite,
-    #[serde(
-        rename = "gemini-2.5-flash",
-        alias = "gemini-2.0-flash-thinking-exp",
-        alias = "gemini-2.5-flash-preview-04-17",
-        alias = "gemini-2.5-flash-preview-05-20",
-        alias = "gemini-2.5-flash-preview-latest",
-        alias = "gemini-2.0-flash"
-    )]
+    #[serde(rename = "gemini-3.5-flash-lite")]
     #[default]
-    Gemini25Flash,
-    #[serde(
-        rename = "gemini-2.5-pro",
-        alias = "gemini-2.0-pro-exp",
-        alias = "gemini-2.5-pro-preview-latest",
-        alias = "gemini-2.5-pro-exp-03-25",
-        alias = "gemini-2.5-pro-preview-03-25",
-        alias = "gemini-2.5-pro-preview-05-06",
-        alias = "gemini-2.5-pro-preview-06-05"
-    )]
-    Gemini25Pro,
-    #[serde(rename = "gemini-3.1-flash-lite")]
-    Gemini31FlashLite,
+    Gemini35FlashLite,
     #[serde(rename = "gemini-3-flash-preview")]
     Gemini3Flash,
     #[serde(rename = "gemini-3.5-flash")]
     Gemini35Flash,
-    #[serde(rename = "gemini-3.1-pro-preview", alias = "gemini-3-pro-preview")]
+    #[serde(rename = "gemini-3.6-flash")]
+    Gemini36Flash,
+    #[serde(rename = "gemini-3.7-flash")]
+    Gemini37Flash,
+    #[serde(rename = "gemini-3.1-pro-preview")]
     Gemini31Pro,
     #[serde(rename = "custom")]
     Custom {
@@ -537,29 +525,27 @@ pub enum Model {
 
 impl Model {
     pub fn default_fast() -> Self {
-        Self::Gemini31FlashLite
+        Self::Gemini35FlashLite
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
-            Self::Gemini25Flash => "gemini-2.5-flash",
-            Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
+            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
+            Self::Gemini36Flash => "gemini-3.6-flash",
+            Self::Gemini37Flash => "gemini-3.7-flash",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Custom { name, .. } => name,
         }
     }
     pub fn request_id(&self) -> &str {
         match self {
-            Self::Gemini25FlashLite => "gemini-2.5-flash-lite",
-            Self::Gemini25Flash => "gemini-2.5-flash",
-            Self::Gemini25Pro => "gemini-2.5-pro",
-            Self::Gemini31FlashLite => "gemini-3.1-flash-lite",
+            Self::Gemini35FlashLite => "gemini-3.5-flash-lite",
             Self::Gemini3Flash => "gemini-3-flash-preview",
             Self::Gemini35Flash => "gemini-3.5-flash",
+            Self::Gemini36Flash => "gemini-3.6-flash",
+            Self::Gemini37Flash => "gemini-3.7-flash",
             Self::Gemini31Pro => "gemini-3.1-pro-preview",
             Self::Custom { name, .. } => name,
         }
@@ -567,12 +553,11 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Gemini25FlashLite => "Gemini 2.5 Flash-Lite",
-            Self::Gemini25Flash => "Gemini 2.5 Flash",
-            Self::Gemini25Pro => "Gemini 2.5 Pro",
-            Self::Gemini31FlashLite => "Gemini 3.1 Flash-Lite",
+            Self::Gemini35FlashLite => "Gemini 3.5 Flash-Lite",
             Self::Gemini3Flash => "Gemini 3 Flash",
             Self::Gemini35Flash => "Gemini 3.5 Flash",
+            Self::Gemini36Flash => "Gemini 3.6 Flash",
+            Self::Gemini37Flash => "Gemini 3.7 Flash",
             Self::Gemini31Pro => "Gemini 3.1 Pro",
             Self::Custom {
                 name, display_name, ..
@@ -582,12 +567,11 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gemini25FlashLite
-            | Self::Gemini25Flash
-            | Self::Gemini25Pro
-            | Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
+            | Self::Gemini36Flash
+            | Self::Gemini37Flash
             | Self::Gemini31Pro => 1_048_576,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -595,12 +579,11 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
-            Model::Gemini25FlashLite
-            | Model::Gemini25Flash
-            | Model::Gemini25Pro
-            | Model::Gemini31FlashLite
+            Model::Gemini35FlashLite
             | Model::Gemini3Flash
             | Model::Gemini35Flash
+            | Model::Gemini36Flash
+            | Model::Gemini37Flash
             | Model::Gemini31Pro => Some(65_536),
             Model::Custom { .. } => None,
         }
@@ -617,12 +600,11 @@ impl Model {
     pub fn supports_thinking(&self) -> bool {
         matches!(
             self,
-            Self::Gemini25FlashLite
-                | Self::Gemini25Flash
-                | Self::Gemini25Pro
-                | Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
                 | Self::Gemini3Flash
                 | Self::Gemini35Flash
+                | Self::Gemini36Flash
+                | Self::Gemini37Flash
                 | Self::Gemini31Pro
                 | Self::Custom {
                     mode: GoogleModelMode::Thinking { .. },
@@ -633,13 +615,16 @@ impl Model {
 
     pub fn supported_thinking_levels(&self) -> &'static [ThinkingLevel] {
         match self {
-            Self::Gemini31FlashLite | Self::Gemini3Flash | Self::Gemini35Flash => &[
+            Self::Gemini35FlashLite
+            | Self::Gemini3Flash
+            | Self::Gemini35Flash
+            | Self::Gemini36Flash => &[
                 ThinkingLevel::Minimal,
                 ThinkingLevel::Low,
                 ThinkingLevel::Medium,
                 ThinkingLevel::High,
             ],
-            Self::Gemini31Pro => &[
+            Self::Gemini37Flash | Self::Gemini31Pro => &[
                 ThinkingLevel::Low,
                 ThinkingLevel::Medium,
                 ThinkingLevel::High,
@@ -650,9 +635,11 @@ impl Model {
 
     pub fn default_thinking_level(&self) -> Option<ThinkingLevel> {
         match self {
-            Self::Gemini31FlashLite => Some(ThinkingLevel::Minimal),
+            Self::Gemini35FlashLite => Some(ThinkingLevel::Minimal),
             Self::Gemini3Flash => Some(ThinkingLevel::High),
             Self::Gemini35Flash => Some(ThinkingLevel::Medium),
+            Self::Gemini36Flash => Some(ThinkingLevel::Medium),
+            Self::Gemini37Flash => Some(ThinkingLevel::Medium),
             Self::Gemini31Pro => Some(ThinkingLevel::High),
             _ => None,
         }
@@ -660,16 +647,11 @@ impl Model {
 
     pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Self::Gemini25FlashLite | Self::Gemini25Flash | Self::Gemini25Pro => {
-                GoogleModelMode::Thinking {
-                    // By default these models are set to "auto", so we preserve that behavior
-                    // but indicate they are capable of thinking mode
-                    budget_tokens: None,
-                }
-            }
-            Self::Gemini31FlashLite
+            Self::Gemini35FlashLite
             | Self::Gemini3Flash
             | Self::Gemini35Flash
+            | Self::Gemini36Flash
+            | Self::Gemini37Flash
             | Self::Gemini31Pro => GoogleModelMode::Thinking {
                 budget_tokens: None,
             },
@@ -688,6 +670,63 @@ impl std::fmt::Display for Model {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_gemini_3_6_flash_model_metadata() {
+        let model = Model::Gemini36Flash;
+        assert_eq!(model.id(), "gemini-3.6-flash");
+        assert_eq!(model.request_id(), "gemini-3.6-flash");
+        assert_eq!(model.display_name(), "Gemini 3.6 Flash");
+
+        let serialized = serde_json::to_value(&model).unwrap();
+        assert_eq!(serialized, json!("gemini-3.6-flash"));
+        let deserialized: Model = serde_json::from_value(json!("gemini-3.6-flash")).unwrap();
+        assert_eq!(deserialized, Model::Gemini36Flash);
+    }
+
+    #[test]
+    fn test_gemini_3_5_flash_lite_model_metadata() {
+        let model = Model::Gemini35FlashLite;
+        assert_eq!(model.id(), "gemini-3.5-flash-lite");
+        assert_eq!(model.request_id(), "gemini-3.5-flash-lite");
+        assert_eq!(model.display_name(), "Gemini 3.5 Flash-Lite");
+        assert_eq!(
+            model.supported_thinking_levels(),
+            &[
+                ThinkingLevel::Minimal,
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High
+            ]
+        );
+        assert_eq!(model.default_thinking_level(), Some(ThinkingLevel::Minimal));
+
+        let serialized = serde_json::to_value(&model).unwrap();
+        assert_eq!(serialized, json!("gemini-3.5-flash-lite"));
+        let deserialized: Model = serde_json::from_value(json!("gemini-3.5-flash-lite")).unwrap();
+        assert_eq!(deserialized, Model::Gemini35FlashLite);
+    }
+
+    #[test]
+    fn test_gemini_3_7_flash_model_metadata() {
+        let model = Model::Gemini37Flash;
+        assert_eq!(model.id(), "gemini-3.7-flash");
+        assert_eq!(model.request_id(), "gemini-3.7-flash");
+        assert_eq!(model.display_name(), "Gemini 3.7 Flash");
+        assert_eq!(
+            model.supported_thinking_levels(),
+            &[
+                ThinkingLevel::Low,
+                ThinkingLevel::Medium,
+                ThinkingLevel::High
+            ]
+        );
+
+        let serialized = serde_json::to_value(&model).unwrap();
+        assert_eq!(serialized, json!("gemini-3.7-flash"));
+        let deserialized: Model = serde_json::from_value(json!("gemini-3.7-flash")).unwrap();
+        assert_eq!(deserialized, Model::Gemini37Flash);
+    }
 
     #[test]
     fn test_function_call_part_with_signature_serializes_correctly() {

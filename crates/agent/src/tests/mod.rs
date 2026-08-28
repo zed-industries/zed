@@ -29,7 +29,7 @@ use language_model::{
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    Role, StopReason, TokenUsage,
+    ProviderErrorCategory, Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -283,9 +283,9 @@ fn always_allow_tools(cx: &mut TestAppContext) {
 
 /// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
 /// variant exposed to the model as `terminal`. Tests that register
-/// `TerminalTool` directly need this because sandboxing is enabled by default
-/// for staff (and in debug builds), in which case `Thread::enabled_tools`
-/// would otherwise expose `SandboxedTerminalTool` under that name instead.
+/// `TerminalTool` directly need this because the sandboxing feature flag is
+/// enabled for all, in which case `Thread::enabled_tools` would otherwise
+/// expose `SandboxedTerminalTool` under that name instead.
 fn disable_sandboxing(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
@@ -907,9 +907,20 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             thought_signature: None,
         },
     ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_interrupted".into(),
+            name: ToolRequiringPermission::NAME.into(),
+            raw_input: "{}".into(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
     fake_model.end_last_completion_stream();
     let tool_call_auth_1 = next_tool_call_authorization(&mut events).await;
     let tool_call_auth_2 = next_tool_call_authorization(&mut events).await;
+    let interrupted_tool_call_auth = next_tool_call_authorization(&mut events).await;
 
     // Approve the first - send "allow" option_id (UI transforms "once" to "allow")
     tool_call_auth_1
@@ -926,6 +937,13 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
             acp::PermissionOptionId::new("deny"),
+            acp::PermissionOptionKind::RejectOnce,
+        ))
+        .unwrap();
+    interrupted_tool_call_auth
+        .response
+        .send(acp_thread::SelectedPermissionOutcome::new(
+            acp::PermissionOptionId::new(FOLLOW_UP_PERMISSION_DENIED_OPTION_ID),
             acp::PermissionOptionKind::RejectOnce,
         ))
         .unwrap();
@@ -949,6 +967,13 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 is_error: true,
                 content: vec!["Permission to run tool denied by user".into()],
                 output: Some("Permission to run tool denied by user".into())
+            }),
+            language_model::MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: "tool_id_interrupted".into(),
+                tool_name: ToolRequiringPermission::NAME.into(),
+                is_error: true,
+                content: vec!["Permission denied: user sent a follow-up message instead of approving the tool call.".into()],
+                output: Some("Permission denied: user sent a follow-up message instead of approving the tool call.".into())
             })
         ]
     );
@@ -3238,13 +3263,12 @@ async fn test_retry_cancelled_promptly_on_new_send(cx: &mut TestAppContext) {
     assert_eq!(model_a.completion_count(), 1);
 
     // Model returns a retryable upstream 500. The turn enters the retry delay.
-    model_a.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
-    );
+    model_a.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        language_model::LanguageModelProviderName::new("test"),
+        http_client::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error".to_string(),
+        None,
+    ));
     model_a.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -3589,9 +3613,12 @@ async fn test_prompt_too_large_marks_token_usage_exceeded(cx: &mut TestAppContex
         .unwrap();
     cx.run_until_parked();
 
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
-        tokens: None,
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt too large".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -3615,9 +3642,12 @@ async fn test_prompt_too_large_uses_reported_token_count(cx: &mut TestAppContext
         .unwrap();
     cx.run_until_parked();
 
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
-        tokens: Some(1_500_000),
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt is too long: 1500000 tokens".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -4022,11 +4052,12 @@ async fn test_title_generation_failure_allows_retry(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     fake_summary_model.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
+        LanguageModelCompletionError::from_http_status(
+            language_model::LanguageModelProviderName::new("test"),
+            gpui::http_client::StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal server error".to_string(),
+            None,
+        ),
     );
     fake_summary_model.end_last_completion_stream();
     send.collect::<Vec<_>>().await;
@@ -4409,13 +4440,18 @@ async fn test_send_retry_on_error(cx: &mut TestAppContext) {
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_text_chunk("Hey,");
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
-        provider: LanguageModelProviderName::new("Anthropic"),
-        retry_after: Some(Duration::from_secs(3)),
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("Anthropic"),
+        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        "Anthropic's API servers are overloaded right now".to_string(),
+        Some(Duration::from_secs(3)),
+    ));
     fake_model.end_last_completion_stream();
 
-    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
     cx.run_until_parked();
 
     fake_model.send_last_completion_stream_text_chunk("there!");
@@ -4484,13 +4520,18 @@ async fn test_send_retry_finishes_tool_calls_on_error(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         tool_use_1.clone(),
     ));
-    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::ServerOverloaded {
-        provider: LanguageModelProviderName::new("Anthropic"),
-        retry_after: Some(Duration::from_secs(3)),
-    });
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("Anthropic"),
+        http_client::StatusCode::SERVICE_UNAVAILABLE,
+        "Anthropic's API servers are overloaded right now".to_string(),
+        Some(Duration::from_secs(3)),
+    ));
     fake_model.end_last_completion_stream();
 
-    cx.executor().advance_clock(Duration::from_secs(3));
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            3,
+        )));
     let completion = fake_model.pending_completions().pop().unwrap();
     assert_eq!(
         completion.messages[1..],
@@ -4554,13 +4595,18 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
 
     for _ in 0..crate::thread::MAX_RETRY_ATTEMPTS + 1 {
         fake_model.send_last_completion_stream_error(
-            LanguageModelCompletionError::ServerOverloaded {
-                provider: LanguageModelProviderName::new("Anthropic"),
-                retry_after: Some(Duration::from_secs(3)),
-            },
+            LanguageModelCompletionError::from_http_status(
+                LanguageModelProviderName::new("Anthropic"),
+                http_client::StatusCode::SERVICE_UNAVAILABLE,
+                "Anthropic's API servers are overloaded right now".to_string(),
+                Some(Duration::from_secs(3)),
+            ),
         );
         fake_model.end_last_completion_stream();
-        cx.executor().advance_clock(Duration::from_secs(3));
+        cx.executor()
+            .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+                3,
+            )));
         cx.run_until_parked();
     }
 
@@ -4590,7 +4636,10 @@ async fn test_send_max_retries_exceeded(cx: &mut TestAppContext) {
         .unwrap();
     assert!(matches!(
         error,
-        LanguageModelCompletionError::ServerOverloaded { .. }
+        LanguageModelCompletionError::ProviderRejection {
+            category: ProviderErrorCategory::Overloaded,
+            ..
+        }
     ));
 }
 
@@ -4637,17 +4686,19 @@ async fn test_streaming_tool_completes_when_llm_stream_ends_without_final_input(
     // Before the fix, this would deadlock: the tool waits for more partials
     // (or cancellation), run_turn_internal waits for the tool, and the sender
     // keeping the channel open lives inside RunningTurn.
-    fake_model.send_last_completion_stream_error(
-        LanguageModelCompletionError::UpstreamProviderError {
-            message: "Internal server error".to_string(),
-            status: http_client::StatusCode::INTERNAL_SERVER_ERROR,
-            retry_after: None,
-        },
-    );
+    fake_model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        language_model::LanguageModelProviderName::new("test"),
+        http_client::StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal server error".to_string(),
+        None,
+    ));
     fake_model.end_last_completion_stream();
 
     // Advance past the retry delay so run_turn_internal retries.
-    cx.executor().advance_clock(Duration::from_secs(5));
+    cx.executor()
+        .advance_clock(crate::maximum_retry_delay_with_jitter(Duration::from_secs(
+            5,
+        )));
     cx.run_until_parked();
 
     // The retry request should contain the streaming tool's error result,
@@ -6923,9 +6974,12 @@ async fn test_subagent_error_propagation(cx: &mut TestAppContext) {
     });
 
     // The subagent's model returns a non-retryable error
-    model.send_last_completion_stream_error(LanguageModelCompletionError::PromptTooLarge {
-        tokens: None,
-    });
+    model.send_last_completion_stream_error(LanguageModelCompletionError::from_http_status(
+        LanguageModelProviderName::new("test"),
+        http_client::StatusCode::PAYLOAD_TOO_LARGE,
+        "prompt too large".to_string(),
+        None,
+    ));
 
     cx.run_until_parked();
 
@@ -7499,7 +7553,6 @@ async fn test_fetch_tool_allow_rule_skips_confirmation(cx: &mut TestAppContext) 
 /// A fetch to a host that hasn't been granted network access prompts for the
 /// shared per-host sandbox grant, even when the tool itself is allowed.
 #[gpui::test]
-#[ignore]
 async fn test_fetch_tool_prompts_for_ungranted_host(cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -7587,7 +7640,6 @@ async fn test_fetch_tool_granted_host_skips_prompt(cx: &mut TestAppContext) {
 
 /// Loopback / IP-literal hosts can't be granted individually, so without
 /// unsandboxed access a fetch to them is refused with guidance to grant it.
-#[ignore]
 #[gpui::test]
 async fn test_fetch_tool_refuses_loopback_without_unsandboxed(cx: &mut TestAppContext) {
     init_test(cx);
@@ -7677,7 +7729,6 @@ async fn test_fetch_tool_unsandboxed_lifts_restrictions(cx: &mut TestAppContext)
 /// is refused just like a direct loopback fetch. This is the redirect variant of
 /// the SSRF protection — the approved domain can't be used to bounce the request
 /// onto the local machine.
-#[ignore]
 #[gpui::test]
 async fn test_fetch_tool_refuses_redirect_to_loopback(cx: &mut TestAppContext) {
     init_test(cx);
@@ -7736,7 +7787,6 @@ async fn test_fetch_tool_refuses_redirect_to_loopback(cx: &mut TestAppContext) {
 /// A granted host that redirects to a *different*, ungranted host triggers a
 /// fresh per-host authorization prompt for the redirect target — the redirect is
 /// not silently followed to a host the user never approved.
-#[ignore]
 #[gpui::test]
 async fn test_fetch_tool_reauthorizes_redirect_to_new_host(cx: &mut TestAppContext) {
     init_test(cx);

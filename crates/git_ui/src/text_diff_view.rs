@@ -8,8 +8,8 @@ use editor::{
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, IntoElement, Render, Task, Window,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    IntoElement, Render, Task, Window,
 };
 use language::{self, Buffer, Capability, OffsetRangeExt, Point};
 use project::{Project, ProjectPath};
@@ -22,12 +22,12 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
+use ui::{Color, Icon, IconName, SharedString};
 use util::paths::PathExt;
 
 use workspace::{
     Item, ItemNavHistory, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -120,6 +120,7 @@ impl TextDiffView {
             BufferDiff::new_with_base_text_buffer(
                 &source_buffer_snapshot.text,
                 clipboard_buffer.clone(),
+                buffer_diff::DiffBaseKind::Custom,
                 cx,
             )
         });
@@ -315,16 +316,6 @@ impl Item for TextDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(params.detail.unwrap_or_default(), cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {

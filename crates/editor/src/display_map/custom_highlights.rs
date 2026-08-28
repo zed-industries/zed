@@ -185,12 +185,12 @@ fn create_highlight_endpoints(
                     }
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: *start,
-                        tag: HighlightKey::SemanticToken,
+                        tag: HighlightKey::SemanticToken(token.precedence),
                         style: Some(interner[token.style]),
                     });
                     highlight_endpoints.push(HighlightEndpoint {
                         offset: end,
-                        tag: HighlightKey::SemanticToken,
+                        tag: HighlightKey::SemanticToken(token.precedence),
                         style: None,
                     });
                 },
@@ -249,11 +249,22 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
         chunk.newlines = chunk.newlines.unbounded_shr(split_idx as u32);
         chunk.text = suffix;
         if !self.active_highlights.is_empty() {
-            prefix.highlight_style = self
-                .active_highlights
-                .values()
-                .copied()
-                .reduce(|acc, active_highlight| acc.highlight(active_highlight));
+            let mut active_highlights = self.active_highlights.iter().peekable();
+            while let Some((tag, style)) = active_highlights.next() {
+                let overridden_by_later_semantic_token =
+                    matches!(tag, HighlightKey::SemanticToken(_))
+                        && matches!(
+                            active_highlights.peek(),
+                            Some((HighlightKey::SemanticToken(_), _))
+                        );
+                if overridden_by_later_semantic_token {
+                    continue;
+                }
+                prefix.highlight_style = Some(match prefix.highlight_style {
+                    Some(active_highlight) => active_highlight.highlight(*style),
+                    None => *style,
+                });
+            }
         }
         Some(prefix)
     }

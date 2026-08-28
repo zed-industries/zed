@@ -78,18 +78,6 @@ impl FeatureFlag for RenameToolFeatureFlag {
 }
 register_feature_flag!(RenameToolFeatureFlag);
 
-pub struct ProjectPanelUndoRedoFeatureFlag;
-
-impl FeatureFlag for ProjectPanelUndoRedoFeatureFlag {
-    const NAME: &'static str = "project-panel-undo-redo";
-    type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
-}
-register_feature_flag!(ProjectPanelUndoRedoFeatureFlag);
-
 /// Controls how agent thread worktree chips are labeled in the sidebar.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, EnumFeatureFlag)]
 pub enum AgentThreadWorktreeLabel {
@@ -111,14 +99,6 @@ impl FeatureFlag for AgentThreadWorktreeLabelFlag {
 }
 register_feature_flag!(AgentThreadWorktreeLabelFlag);
 
-pub struct AutoWatchFeatureFlag;
-
-impl FeatureFlag for AutoWatchFeatureFlag {
-    const NAME: &'static str = "auto-watch-screens";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AutoWatchFeatureFlag);
-
 /// Wraps agent-run terminal commands in an OS-level sandbox where supported,
 /// and applies the shared per-host network grants to the `fetch` tool and the
 /// out-of-project write grants to the `create_directory` tool. When off,
@@ -129,6 +109,10 @@ pub struct SandboxingFeatureFlag;
 impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 
     fn enabled_for_staff() -> bool {
         false

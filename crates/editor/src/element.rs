@@ -22,8 +22,8 @@ use crate::{
         HighlightKey, HighlightedChunk, ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DocumentColorsRenderMode, Minimap, MinimapThumb, MinimapThumbBorder,
-        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
+        CurrentLineHighlight, DocumentColorsRenderMode, GitGutterWidth, Minimap, MinimapThumb,
+        MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -509,7 +509,19 @@ impl EditorElement {
         register_action(editor, window, Editor::copy_file_location);
         register_action(editor, window, Editor::toggle_git_blame);
         register_action(editor, window, Editor::toggle_git_blame_inline);
-        register_action(editor, window, Editor::open_git_blame_commit);
+        if editor.read(cx).blame().is_some() {
+            register_action(editor, window, Editor::open_git_blame_commit);
+            if editor.update(cx, |editor, cx| {
+                editor.blame_revision_target(window, cx).is_some()
+            }) {
+                register_action(editor, window, Editor::blame_revision);
+            }
+            if editor.update(cx, |editor, cx| {
+                editor.blame_previous_revision_target(window, cx).is_some()
+            }) {
+                register_action(editor, window, Editor::blame_previous_revision);
+            }
+        }
         register_action(editor, window, Editor::toggle_selected_diff_hunks);
         register_action(editor, window, Editor::toggle_staged_selected_diff_hunks);
         register_action(editor, window, Editor::stage_and_next);
@@ -843,7 +855,7 @@ impl EditorElement {
                             .eq(&Ordering::Greater))
                 {
                     let drag_cursor_layout = SelectionLayout::new(
-                        drop_cursor.clone(),
+                        *drop_cursor,
                         false,
                         editor.cursor_offset_on_selection,
                         CursorShape::Bar,
@@ -1676,6 +1688,7 @@ impl EditorElement {
                         gutter_hitbox.bounds,
                         hunk,
                         snapshot,
+                        cx,
                     );
                     *hitbox = Some(window.insert_hitbox(hunk_bounds, HitboxBehavior::BlockMouse));
                 }
@@ -2669,7 +2682,7 @@ impl EditorElement {
             .ilog10()
             + 1;
 
-        let git_gutter_width = Self::gutter_strip_width(line_height)
+        let git_gutter_width = Self::gutter_strip_width(line_height, cx)
             + gutter_dimensions
                 .git_blame_entries_width
                 .unwrap_or_default();
@@ -5228,6 +5241,7 @@ impl EditorElement {
                             layout.gutter_hitbox.bounds,
                             hunk,
                             &layout.position_map.snapshot,
+                            cx,
                         );
                         Some((
                             hunk_bounds,
@@ -5313,8 +5327,11 @@ impl EditorElement {
         });
     }
 
-    fn gutter_strip_width(line_height: Pixels) -> Pixels {
-        (0.275 * line_height).floor()
+    fn gutter_strip_width(line_height: Pixels, cx: &App) -> Pixels {
+        match EditorSettings::get_global(cx).gutter.git_gutter_width {
+            GitGutterWidth::Custom(width) => px(*width),
+            GitGutterWidth::Default => (0.275 * line_height).floor(),
+        }
     }
 
     fn diff_hunk_bounds(
@@ -5323,9 +5340,10 @@ impl EditorElement {
         gutter_bounds: Bounds<Pixels>,
         hunk: &DisplayDiffHunk,
         snapshot: &EditorSnapshot,
+        cx: &App,
     ) -> Bounds<Pixels> {
         let scroll_top = scroll_position.y * ScrollPixelOffset::from(line_height);
-        let gutter_strip_width = Self::gutter_strip_width(line_height);
+        let gutter_strip_width = Self::gutter_strip_width(line_height, cx);
 
         match hunk {
             DisplayDiffHunk::Folded { display_row, .. } => {
@@ -5351,7 +5369,10 @@ impl EditorElement {
                             .into();
                     let end_y = start_y + line_height;
 
-                    let width = (0.35 * line_height).floor();
+                    let width = match EditorSettings::get_global(cx).gutter.git_gutter_width {
+                        GitGutterWidth::Custom(width) => px(*width),
+                        GitGutterWidth::Default => (0.35 * line_height).floor(),
+                    };
                     let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
@@ -6720,7 +6741,7 @@ impl Gutter<'_> {
             AvailableSpace::Definite(self.line_height),
         );
         let indicator_size = button.layout_as_root(available_space, window, cx);
-        let git_gutter_width = EditorElement::gutter_strip_width(self.line_height)
+        let git_gutter_width = EditorElement::gutter_strip_width(self.line_height, cx)
             + self.dimensions.git_blame_entries_width.unwrap_or_default();
 
         let x = git_gutter_width + px(2.);
@@ -6890,7 +6911,7 @@ pub fn render_breadcrumb_text(
             )
             .into_any_element(),
         None => element
-            .h(rems_from_px(22.)) // Match the height and padding of the `ButtonLike` in the other arm.
+            .h(rems_from_px(22_f32)) // Match the height and padding of the `ButtonLike` in the other arm.
             .pl_1()
             .child(breadcrumbs)
             .into_any_element(),
@@ -9037,14 +9058,38 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let frozen_scroll_state = if self.editor.read(cx).scroll_range_hold.is_some() {
+                        let is_rewrapping =
+                            self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
+                        self.editor.update(cx, |editor, _| {
+                            editor.frozen_scroll_range(
+                                is_rewrapping,
+                                scrollbar_layout_information.scroll_range,
+                                editor_width,
+                                scrollbar_layout_information.editor_bounds.size,
+                            )
+                        })
+                    } else {
+                        None
+                    };
+                    let effective_scrollbar_layout_information =
+                        frozen_scroll_state.map_or(scrollbar_layout_information, |settled| {
+                            ScrollbarLayoutInformation {
+                                scroll_range: settled.range,
+                                ..scrollbar_layout_information
+                            }
+                        });
+                    let effective_editor_width =
+                        frozen_scroll_state.map_or(editor_width, |settled| settled.editor_width);
+
                     let scrollbars_layout = self.layout_scrollbars(
                         &snapshot,
-                        &scrollbar_layout_information,
+                        &effective_scrollbar_layout_information,
                         content_offset,
                         scroll_position,
                         non_visible_cursors,
                         right_margin,
-                        editor_width,
+                        effective_editor_width,
                         window,
                         cx,
                     );
@@ -9148,7 +9193,7 @@ impl Element for EditorElement {
                         );
                     }
 
-                    let git_gutter_width = Self::gutter_strip_width(line_height)
+                    let git_gutter_width = Self::gutter_strip_width(line_height, cx)
                         + gutter_dimensions
                             .git_blame_entries_width
                             .unwrap_or_default();
@@ -9268,7 +9313,7 @@ impl Element for EditorElement {
                             &snapshot,
                             minimap_width,
                             scroll_position,
-                            &scrollbar_layout_information,
+                            &effective_scrollbar_layout_information,
                             scrollbars_layout.as_ref(),
                             window,
                             cx,
@@ -9576,6 +9621,7 @@ struct ContextMenuLayout {
 }
 
 /// Holds information required for layouting the editor scrollbars.
+#[derive(Clone, Copy)]
 struct ScrollbarLayoutInformation {
     /// The bounds of the editor area (excluding the content offset).
     editor_bounds: Bounds<Pixels>,
@@ -11100,6 +11146,7 @@ mod tests {
                         summary: None,
                         previous: None,
                         filename: String::new(),
+                        boundary: false,
                     }],
                     ..Default::default()
                 },
@@ -11786,7 +11833,7 @@ mod tests {
                 );
 
                 // Blur the editor so that it displays placeholder text.
-                window.blur();
+                window.blur(cx);
             })
             .unwrap();
 

@@ -385,7 +385,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -417,7 +417,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -448,7 +448,10 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    movement::next_word_end(map, head, false),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -474,7 +477,10 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    movement::next_word_end(map, head, false),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -1062,7 +1068,7 @@ impl Editor {
 
     pub fn go_to_declaration_split(
         &mut self,
-        _: &GoToDeclaration,
+        _: &GoToDeclarationSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
@@ -2201,7 +2207,9 @@ impl Editor {
         let excerpt_buffer = cx.new(|cx| {
             let key = &mut key.1;
             let mut multibuffer = MultiBuffer::new(capability);
-            for (buffer, mut ranges_for_buffer) in locations {
+            let mut sorted_locations = locations.into_iter().collect::<Vec<_>>();
+            sorted_locations.sort_by_key(|(buffer, _)| buffer.read(cx).remote_id());
+            for (buffer, mut ranges_for_buffer) in sorted_locations {
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
                 key.push((buffer.read(cx).remote_id(), ranges_for_buffer.clone()));
                 multibuffer.set_excerpts_for_path(
@@ -2366,7 +2374,7 @@ impl Editor {
         })
     }
 
-    fn go_to_definition_of_kind(
+    pub(crate) fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
         split: bool,

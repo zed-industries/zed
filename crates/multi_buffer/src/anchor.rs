@@ -421,6 +421,14 @@ impl Anchor {
         }
     }
 
+    /// The buffer this anchor is attached to, unless it's `Min` or `Max`.
+    pub fn buffer_id(&self) -> Option<BufferId> {
+        match self {
+            Anchor::Min | Anchor::Max => None,
+            Anchor::Excerpt(excerpt_anchor) => Some(excerpt_anchor.buffer_id()),
+        }
+    }
+
     pub(crate) fn text_anchor(&self) -> Option<text::Anchor> {
         match self {
             Anchor::Min | Anchor::Max => None,
