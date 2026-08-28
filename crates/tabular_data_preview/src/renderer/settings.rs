@@ -40,9 +40,7 @@ fn toggle_entry(
     menu.item(entry)
 }
 
-pub(crate) fn settings_popover_menu(
-    view_entity: Entity<TableView>,
-) -> PopoverMenu<ContextMenu> {
+pub(crate) fn settings_popover_menu(view_entity: Entity<TableView>) -> PopoverMenu<ContextMenu> {
     PopoverMenu::new("table-settings-menu")
         .trigger_with_tooltip(
             IconButton::new("table-settings-trigger", IconName::Filter)
