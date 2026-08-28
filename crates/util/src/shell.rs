@@ -101,12 +101,8 @@ pub fn get_windows_bash() -> Option<String> {
         if !install_root.join("git-bash.exe").is_file() {
             return None;
         }
-        [
-            install_root.join("bin").join("bash.exe"),
-            install_root.join("usr").join("bin").join("bash.exe"),
-        ]
-        .into_iter()
-        .find(|path| path.is_file())
+        let bash = install_root.join("bin").join("bash.exe");
+        bash.is_file().then_some(bash)
     }
 
     fn find_bash_in_scoop() -> Option<PathBuf> {
