@@ -62,6 +62,29 @@ pub struct CompositorGpuHint {
     pub device_id: u32,
 }
 
+/// Set when [`WgpuContext::instance`] restricted the Vulkan loader, so the
+/// fallback path can undo it before creating an unrestricted instance.
+static ICD_FILTER_APPLIED: AtomicBool = AtomicBool::new(false);
+
+/// Software ICD manifest-name tokens for `VK_LOADER_DRIVERS_DISABLE`, which
+/// globs them against file names so hardware drivers stay loader-default.
+const SOFTWARE_RENDERER_HINTS: &[&str] = &[
+    "lvp",
+    "lavapipe",
+    "llvmpipe",
+    "dzn",
+    "swrast",
+    "swiftshader",
+];
+
+const DRIVER_OVERRIDE_VARS: &[&str] = &[
+    "VK_ICD_FILENAMES",
+    "VK_DRIVER_FILES",
+    "VK_ADD_DRIVER_FILES",
+    "VK_LOADER_DRIVERS_DISABLE",
+    "VK_LOADER_DRIVERS_SELECT",
+];
+
 impl WgpuContext {
     #[cfg(not(target_family = "wasm"))]
     pub fn new(
@@ -286,15 +309,79 @@ impl WgpuContext {
         ))
     }
 
+    /// Lean Linux instance: Vulkan-only with software ICDs denied, so
+    /// lavapipe/LLVM and the GL/EGL stack never get mapped. Falls back to
+    /// [`Self::instance_unrestricted`] on every failure path.
     #[cfg(not(target_family = "wasm"))]
     pub fn instance(display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>) -> wgpu::Instance {
+        #[cfg(target_os = "linux")]
+        {
+            Self::apply_software_driver_filter();
+            Self::make_instance(display, wgpu::Backends::VULKAN)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Self::instance_unrestricted(display)
+        }
+    }
+
+    /// Create an instance the way upstream did: every supported backend, with no
+    /// loader restriction. Used as the fallback when the lean instance finds no
+    /// usable adapter, and on non-Linux platforms.
+    #[cfg(not(target_family = "wasm"))]
+    pub fn instance_unrestricted(
+        display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>,
+    ) -> wgpu::Instance {
+        Self::make_instance(display, wgpu::Backends::VULKAN | wgpu::Backends::GL)
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    fn make_instance(
+        display: Box<dyn wgpu::wgt::WgpuHasDisplayHandle>,
+        backends: wgpu::Backends,
+    ) -> wgpu::Instance {
         wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::VULKAN | wgpu::Backends::GL,
+            backends,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             display: Some(display),
         })
+    }
+
+    /// The exact `VK_LOADER_DRIVERS_DISABLE` value: one `*`-anchored glob per
+    /// software token, matched against manifest file names.
+    #[cfg(target_os = "linux")]
+    fn software_driver_deny_list() -> String {
+        SOFTWARE_RENDERER_HINTS
+            .iter()
+            .map(|token| format!("*{token}*"))
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    #[cfg(target_os = "linux")]
+    fn apply_software_driver_filter() {
+        if DRIVER_OVERRIDE_VARS
+            .iter()
+            .any(|var| std::env::var_os(var).is_some())
+        {
+            return;
+        }
+        let deny_list = Self::software_driver_deny_list();
+        // SAFETY: GPU startup is on the main thread; the loader reads this
+        // during the vkCreateInstance that follows.
+        unsafe { std::env::set_var("VK_LOADER_DRIVERS_DISABLE", &deny_list) };
+        ICD_FILTER_APPLIED.store(true, Ordering::Relaxed);
+        log::debug!("Vulkan loader will skip software ICDs ({deny_list})");
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub(crate) fn restore_full_icd_selection() {
+        if ICD_FILTER_APPLIED.swap(false, Ordering::Relaxed) {
+            // SAFETY: same startup thread, immediately before the fallback instance.
+            unsafe { std::env::remove_var("VK_LOADER_DRIVERS_DISABLE") };
+        }
     }
 
     pub fn check_compatible_with_surface(&self, surface: &wgpu::Surface<'_>) -> anyhow::Result<()> {
@@ -584,7 +671,7 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_pci_id;
+    use super::{SOFTWARE_RENDERER_HINTS, WgpuContext, parse_pci_id};
 
     #[test]
     fn test_parse_device_id() {
@@ -602,5 +689,38 @@ mod tests {
             parse_pci_id(&format!("{:#x}", 0x1234)).unwrap(),
             parse_pci_id(&format!("{:#X}", 0x1234)).unwrap(),
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn software_driver_deny_list_only_matches_software_manifests() {
+        assert_eq!(
+            WgpuContext::software_driver_deny_list(),
+            "*lvp*,*lavapipe*,*llvmpipe*,*dzn*,*swrast*,*swiftshader*"
+        );
+
+        let is_denied = |name: &str| {
+            SOFTWARE_RENDERER_HINTS
+                .iter()
+                .any(|token| name.contains(token))
+        };
+
+        for name in [
+            "lvp_icd.x86_64.json",
+            "llvmpipe_icd.x86_64.json",
+            "dzn_icd.x86_64.json",
+            "vk_swiftshader_icd.json",
+        ] {
+            assert!(is_denied(name), "{name} must be denied");
+        }
+        for name in [
+            "intel_icd.x86_64.json",
+            "amd_icd.x86_64.json",
+            "radeon_icd.x86_64.json",
+            "virtio_icd.x86_64.json",
+            "nvidia_icd.json",
+        ] {
+            assert!(!is_denied(name), "{name} must stay enabled");
+        }
     }
 }
