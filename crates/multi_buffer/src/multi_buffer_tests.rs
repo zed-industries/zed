@@ -6583,3 +6583,473 @@ fn test_is_valid_anchor_past_last_excerpt_for_buffer(cx: &mut TestAppContext) {
         );
     });
 }
+
+/// The contract between anchor comparison and anchor resolution that every
+/// sorted-input consumer relies on (`summaries_for_anchors*`, forward-only
+/// cursors, and persistent trees ordered by anchor comparison such as the
+/// editor's fold tree):
+///
+/// 1. Within one snapshot, comparison tracks resolution: if `a.cmp(b)` is
+///    `Less`, `a` must not resolve after `b`, and anchors that compare
+///    `Equal` must resolve to the same offset.
+/// 2. Across structural changes (edits, diff base text changes, a path key
+///    reused for a different buffer, buffers leaving), a pair's comparison
+///    never inverts: `Less` may weaken to `Equal`, but must not become
+///    `Greater`. (Even the collapse to `Equal` is hazardous for consumers
+///    that sort ranges with end tie-breaks, but it is tolerated here so
+///    that outright inversions stay visible.)
+///
+/// Shrinking yields a minimal operation sequence for whichever violating
+/// mechanism it finds. Mechanisms found so far, each fixed and pinned by a
+/// distilled test:
+/// - stale-path anchors sorted by buffer id but resolved to the end of
+///   their path's region
+///   (`test_stale_path_anchor_comparison_tracks_resolution`);
+/// - diff base anchors' validity filter flipping comparison results when a
+///   base text edit deleted the region one anchor of a pair pointed into
+///   (`test_folds_stay_sorted_when_diff_base_text_replaced` in the
+///   editor's block_map tests);
+/// - plain anchors resolved before phantom deleted-hunk rows they compare
+///   after (`test_collapsed_plain_anchor_resolves_past_deleted_hunk_rows`).
+#[gpui::property_test(config = proptest::prelude::ProptestConfig {
+    failure_persistence: Some(Box::new(
+        proptest::test_runner::FileFailurePersistence::WithSource("proptest-regressions"),
+    )),
+    ..Default::default()
+})]
+async fn test_anchor_comparison_tracks_resolution(
+    cx: &mut TestAppContext,
+    #[strategy = proptest::collection::vec(proptest::prelude::any::<AnchorContractOp>(), 1..16)]
+    ops: Vec<AnchorContractOp>,
+) {
+    let base_text_variants = [
+        "DEL1\nDEL2\nbbb\nccc\nddd\n",
+        "DEL1\nbbb\nccc\nddd\n",
+        "DEL2\nbbb\nccc\nddd\n",
+        "bbb\nccc\nddd\n",
+    ];
+
+    let mut buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+    let mut diff_a = cx.new(|cx| {
+        BufferDiff::new_with_base_text(
+            base_text_variants[0],
+            &buffer_a.read(cx).text_snapshot(),
+            cx,
+        )
+    });
+    let buffer_b = cx.new(|cx| Buffer::local("xxx\nyyy\n", cx));
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        // Diff views expand all hunks, which materializes deleted rows from
+        // the base text and gives anchors in those rows `diff_base_anchor`s.
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        let max_point_a = buffer_a.read(cx).max_point();
+        let max_point_b = buffer_b.read(cx).max_point();
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a.clone(),
+            [Point::zero()..max_point_a],
+            0,
+            cx,
+        );
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            buffer_b.clone(),
+            [Point::zero()..max_point_b],
+            0,
+            cx,
+        );
+        multibuffer.add_diff(diff_a.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let mut anchors: Vec<Anchor> = Vec::new();
+    let mut previous_orderings: std::collections::HashMap<(usize, usize), cmp::Ordering> =
+        Default::default();
+    let mut buffer_b_present = true;
+    let mut departed_diffs: Vec<Entity<BufferDiff>> = Vec::new();
+
+    for (step, op) in ops.iter().enumerate() {
+        match op {
+            AnchorContractOp::CreateAnchor {
+                position,
+                left_bias,
+            } => {
+                let snapshot =
+                    multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+                let offset = MultiBufferOffset(snapshot.len().0 * (*position as usize) / 1000);
+                let bias = if *left_bias { Bias::Left } else { Bias::Right };
+                anchors.push(snapshot.anchor_at(offset, bias));
+            }
+            AnchorContractOp::EditBuffer { position, insert } => {
+                buffer_a.update(cx, |buffer, cx| {
+                    let offset = buffer.len() * (*position as usize) / 1000;
+                    if *insert || buffer.len() == 0 {
+                        buffer.edit([(offset..offset, "Q\n")], None, cx);
+                    } else {
+                        let end = (offset + 1).min(buffer.len());
+                        buffer.edit([(offset..end, "")], None, cx);
+                    }
+                });
+            }
+            AnchorContractOp::ChangeBaseText { variant } => {
+                let buffer_a_text_snapshot =
+                    buffer_a.read_with(cx, |buffer, _| buffer.text_snapshot());
+                diff_a
+                    .update(cx, |diff, cx| {
+                        diff.set_base_text(
+                            Some(base_text_variants[*variant].into()),
+                            buffer_a_text_snapshot,
+                            cx,
+                        )
+                    })
+                    .await;
+            }
+            AnchorContractOp::RekeyPath => {
+                buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+                diff_a = cx.new(|cx| {
+                    BufferDiff::new_with_base_text(
+                        base_text_variants[0],
+                        &buffer_a.read(cx).text_snapshot(),
+                        cx,
+                    )
+                });
+                // Departed diffs belong to the departed buffer; reinstalling
+                // them would no longer exercise base buffer swaps.
+                departed_diffs.clear();
+                multibuffer.update(cx, |multibuffer, cx| {
+                    let max_point = buffer_a.read(cx).max_point();
+                    multibuffer.set_excerpts_for_path(
+                        PathKey::sorted(0),
+                        buffer_a.clone(),
+                        [Point::zero()..max_point],
+                        0,
+                        cx,
+                    );
+                    multibuffer.add_diff(diff_a.clone(), cx);
+                });
+            }
+            AnchorContractOp::SwapDiff { reinstall, variant } => {
+                let buffer_a_text_snapshot =
+                    buffer_a.read_with(cx, |buffer, _| buffer.text_snapshot());
+                let next_diff = if *reinstall && let Some(previous_diff) = departed_diffs.pop() {
+                    // Recompute the reinstalled diff against the buffer's
+                    // current text; its base text buffer (and so the buffer
+                    // id anchors compare by) is preserved.
+                    let base_text = previous_diff
+                        .read_with(cx, |diff, cx| diff.base_text_string(cx))
+                        .map(Arc::from);
+                    previous_diff
+                        .update(cx, |diff, cx| {
+                            diff.set_base_text(base_text, buffer_a_text_snapshot, cx)
+                        })
+                        .await;
+                    previous_diff
+                } else {
+                    cx.new(|cx| {
+                        BufferDiff::new_with_base_text(
+                            base_text_variants[*variant],
+                            &buffer_a_text_snapshot,
+                            cx,
+                        )
+                    })
+                };
+                departed_diffs.push(std::mem::replace(&mut diff_a, next_diff));
+                multibuffer.update(cx, |multibuffer, cx| {
+                    multibuffer.add_diff(diff_a.clone(), cx);
+                });
+            }
+            AnchorContractOp::BiasAnchor { index, right } => {
+                if !anchors.is_empty() {
+                    let snapshot =
+                        multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+                    let k = (anchors.len() * (*index as usize) / 1001).min(anchors.len() - 1);
+                    let rebiased = if *right {
+                        anchors[k].bias_right(&snapshot)
+                    } else {
+                        anchors[k].bias_left(&snapshot)
+                    };
+                    anchors.push(rebiased);
+                }
+            }
+            AnchorContractOp::ToggleSecondBuffer => {
+                multibuffer.update(cx, |multibuffer, cx| {
+                    if buffer_b_present {
+                        multibuffer.remove_excerpts_for_buffer(buffer_b.read(cx).remote_id(), cx);
+                    } else {
+                        let max_point = buffer_b.read(cx).max_point();
+                        multibuffer.set_excerpts_for_path(
+                            PathKey::sorted(1),
+                            buffer_b.clone(),
+                            [Point::zero()..max_point],
+                            0,
+                            cx,
+                        );
+                    }
+                });
+                buffer_b_present = !buffer_b_present;
+            }
+        }
+        cx.run_until_parked();
+
+        let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+        for i in 0..anchors.len() {
+            for j in i + 1..anchors.len() {
+                let ordering = anchors[i].cmp(&anchors[j], &snapshot);
+                let offset_i = anchors[i].to_offset(&snapshot);
+                let offset_j = anchors[j].to_offset(&snapshot);
+                let resolution_consistent = match ordering {
+                    cmp::Ordering::Less => offset_i <= offset_j,
+                    cmp::Ordering::Equal => offset_i == offset_j,
+                    cmp::Ordering::Greater => offset_i >= offset_j,
+                };
+                assert!(
+                    resolution_consistent,
+                    "after step {step} ({op:?}), comparison contradicts resolution:\n\
+                     anchor {i}: {:?}\n  resolves to {offset_i:?}\n\
+                     anchor {j}: {:?}\n  resolves to {offset_j:?}\n\
+                     but compares {ordering:?}",
+                    anchors[i], anchors[j],
+                );
+
+                if let Some(previous) = previous_orderings.insert((i, j), ordering) {
+                    let inverted = matches!(
+                        (previous, ordering),
+                        (cmp::Ordering::Less, cmp::Ordering::Greater)
+                            | (cmp::Ordering::Greater, cmp::Ordering::Less)
+                    );
+                    assert!(
+                        !inverted,
+                        "after step {step} ({op:?}), comparison inverted over time:\n\
+                         anchor {i}: {:?}\n\
+                         anchor {j}: {:?}\n\
+                         compared {previous:?} before this step, {ordering:?} after",
+                        anchors[i], anchors[j],
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Distilled from `test_anchor_comparison_tracks_resolution`'s minimal
+/// shrunk counterexample (create anchor, re-key the path, create anchor).
+/// After a path key is reused for a different buffer, an anchor into the
+/// departed buffer sorts against anchors into the new buffer by buffer id,
+/// so resolution must land it on the matching side of the path's region:
+/// the start when the departed buffer's id is lower than the current
+/// occupant's, the end otherwise. When resolution instead ignored that
+/// order (it always chose the end), sorted-input consumers feeding
+/// comparison-sorted anchors to forward-only cursors walked backward in
+/// offset space — the "cannot seek backward" crash family (e.g. ZED-95K).
+#[gpui::test]
+async fn test_stale_path_anchor_comparison_tracks_resolution(cx: &mut TestAppContext) {
+    let old_buffer = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        let max_point = old_buffer.read(cx).max_point();
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            old_buffer.clone(),
+            [Point::zero()..max_point],
+            0,
+            cx,
+        );
+    });
+    let stale = multibuffer.read_with(cx, |multibuffer, cx| {
+        multibuffer
+            .snapshot(cx)
+            .anchor_at(MultiBufferOffset(0), Bias::Right)
+    });
+
+    let new_buffer = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        let max_point = new_buffer.read(cx).max_point();
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            new_buffer.clone(),
+            [Point::zero()..max_point],
+            0,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    let fresh = snapshot.anchor_at(MultiBufferOffset(0), Bias::Right);
+
+    let ordering = stale.cmp(&fresh, &snapshot);
+    let stale_offset = stale.to_offset(&snapshot);
+    let fresh_offset = fresh.to_offset(&snapshot);
+    let resolution_consistent = match ordering {
+        cmp::Ordering::Less => stale_offset <= fresh_offset,
+        cmp::Ordering::Equal => stale_offset == fresh_offset,
+        cmp::Ordering::Greater => stale_offset >= fresh_offset,
+    };
+    assert!(
+        resolution_consistent,
+        "stale anchor {stale:?} resolves to {stale_offset:?} and fresh anchor {fresh:?} \
+         resolves to {fresh_offset:?}, but they compare {ordering:?}"
+    );
+}
+
+/// Distilled from `test_anchor_comparison_tracks_resolution`'s second
+/// shrunk counterexample. An expanded deleted hunk's phantom rows occupy
+/// its attachment anchor's tie space in the buffer's CRDT order: anchor
+/// comparison places a plain buffer anchor after the hunk's rows exactly
+/// when it sorts past the attachment anchor, which can only happen once
+/// the buffer text separating them has been deleted. Resolution must
+/// place the anchor on the same side. It used to depend on which
+/// transform the walk's cursor rested on: arriving on the deleted hunk
+/// itself applied the CRDT rule, but arriving on the preceding buffer
+/// content returned early, parking the anchor before rows it compares
+/// after — so `to_offset` and a shared-cursor `summaries_for_anchors`
+/// disagreed about the same anchor, and comparison-sorted consumers fed
+/// forward-only cursors positions that moved backward.
+#[gpui::test]
+async fn test_collapsed_plain_anchor_resolves_past_deleted_hunk_rows(cx: &mut TestAppContext) {
+    let base_text = "DEL1\nDEL2\nbbb\nccc\nddd\n";
+    let buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+    let diff_a = cx.new(|cx| {
+        BufferDiff::new_with_base_text(base_text, &buffer_a.read(cx).text_snapshot(), cx)
+    });
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        let max_point_a = buffer_a.read(cx).max_point();
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a.clone(),
+            [Point::zero()..max_point_a],
+            0,
+            cx,
+        );
+        multibuffer.add_diff(diff_a.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // Delete the first "d" (insertion offset 8), then anchor before the last
+    // "d" (insertion offset 10).
+    buffer_a.update(cx, |buffer, cx| {
+        buffer.edit([(8..9, "")], None, cx);
+    });
+    cx.run_until_parked();
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\ndd\n");
+    let plain_anchor = snapshot.anchor_at(MultiBufferOffset(19), Bias::Left);
+
+    // Recompute the diff against the edited buffer: a "-ddd/+dd" hunk
+    // appears, attached at the buffer position both anchors will collapse
+    // to. Anchor one character into its phantom "ddd" row.
+    let buffer_a_text_snapshot = buffer_a.read_with(cx, |buffer, _| buffer.text_snapshot());
+    diff_a
+        .update(cx, |diff, cx| {
+            diff.set_base_text(Some(base_text.into()), buffer_a_text_snapshot, cx)
+        })
+        .await;
+    cx.run_until_parked();
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\nddd\ndd\n");
+    let hunk_anchor = snapshot.anchor_at(MultiBufferOffset(19), Bias::Right);
+
+    assert_eq!(
+        plain_anchor.cmp(&hunk_anchor, &snapshot),
+        cmp::Ordering::Greater
+    );
+    assert_eq!(plain_anchor.to_offset(&snapshot), MultiBufferOffset(23));
+    assert_eq!(hunk_anchor.to_offset(&snapshot), MultiBufferOffset(19));
+
+    // Delete the "d" separating the two anchors (insertion offset 9). Their
+    // text anchors now both collapse to the seam where the phantom row
+    // hangs, and only the CRDT order remembers which side of it each
+    // belongs on.
+    buffer_a.update(cx, |buffer, cx| {
+        buffer.edit([(8..9, "")], None, cx);
+    });
+    cx.run_until_parked();
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\nddd\nd\n");
+
+    assert_eq!(
+        plain_anchor.cmp(&hunk_anchor, &snapshot),
+        cmp::Ordering::Greater,
+        "comparison must not change: the buffer order of the anchors is immutable"
+    );
+    assert_eq!(
+        hunk_anchor.to_offset(&snapshot),
+        MultiBufferOffset(19),
+        "the hunk-interior anchor stays one character into the phantom row"
+    );
+    assert_eq!(
+        plain_anchor.to_offset(&snapshot),
+        MultiBufferOffset(22),
+        "the plain anchor sorts past the hunk's attachment anchor, so it must \
+         resolve past the phantom rows"
+    );
+    assert_eq!(
+        snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&[hunk_anchor, plain_anchor]),
+        vec![MultiBufferOffset(19), MultiBufferOffset(22)],
+        "the shared-cursor batch path must agree with individual resolution"
+    );
+}
+
+/// Operations for `test_anchor_comparison_tracks_resolution`, generated up
+/// front as plain data so proptest can shrink the failing sequence.
+#[derive(Debug, Clone, proptest_derive::Arbitrary)]
+enum AnchorContractOp {
+    /// Create an anchor at a position scaled onto the current snapshot
+    /// length, so positions stay valid regardless of preceding operations.
+    #[proptest(weight = 4)]
+    CreateAnchor {
+        #[proptest(strategy = "0u16..=1000")]
+        position: u16,
+        left_bias: bool,
+    },
+    /// Edit the path 0 buffer at a scaled position.
+    #[proptest(weight = 3)]
+    EditBuffer {
+        #[proptest(strategy = "0u16..=1000")]
+        position: u16,
+        insert: bool,
+    },
+    /// Replace the diff's base text, keeping or dropping the deleted lines
+    /// that anchors inside expanded hunks point into.
+    #[proptest(weight = 3)]
+    ChangeBaseText {
+        #[proptest(strategy = "0usize..4")]
+        variant: usize,
+    },
+    /// Reuse path 0 for a fresh buffer with a fresh diff, as split diffs do
+    /// when a file's diff base buffer is recreated.
+    #[proptest(weight = 2)]
+    RekeyPath,
+    /// Replace the diff wholesale with one whose base text lives in a
+    /// *different* buffer, or reinstall a previously departed diff.
+    /// Anchors' diff base anchors then point into a base buffer that isn't
+    /// the diff's current one.
+    #[proptest(weight = 2)]
+    SwapDiff {
+        reinstall: bool,
+        #[proptest(strategy = "0usize..4")]
+        variant: usize,
+    },
+    /// Remove or re-add the second buffer's excerpts, so the multibuffer
+    /// has structure before and after the diffed region.
+    #[proptest(weight = 2)]
+    ToggleSecondBuffer,
+    /// Re-bias an existing anchor, appending the result as a new anchor.
+    /// Callers like hover links and completions re-bias anchors that can
+    /// point into expanded deleted hunk rows.
+    #[proptest(weight = 2)]
+    BiasAnchor {
+        #[proptest(strategy = "0u16..=1000")]
+        index: u16,
+        right: bool,
+    },
+}

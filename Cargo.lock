@@ -11152,6 +11152,8 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
+ "proptest",
+ "proptest-derive",
  "rand 0.9.4",
  "rope",
  "serde",
