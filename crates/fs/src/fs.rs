@@ -2997,14 +2997,18 @@ impl Fs for FakeFs {
             _ => 0,
         };
 
-        state.moves.insert(inode, new_path.clone());
-
+        let mut moved = true;
         state.write_path(&new_path, |e| {
             match e {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
                         *e.get_mut() = moved_entry;
-                    } else if !options.ignore_if_exists {
+                    } else if options.ignore_if_exists {
+                        // `RealFs` reports success without moving anything here,
+                        // leaving the source in place. Removing it instead would
+                        // destroy a file the caller still expects to find.
+                        moved = false;
+                    } else {
                         anyhow::bail!("path already exists: {new_path:?}");
                     }
                 }
@@ -3014,6 +3018,12 @@ impl Fs for FakeFs {
             }
             Ok(())
         })?;
+
+        if !moved {
+            return Ok(());
+        }
+
+        state.moves.insert(inode, new_path.clone());
 
         state
             .write_path(&old_path, |e| {
