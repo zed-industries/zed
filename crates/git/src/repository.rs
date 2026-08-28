@@ -367,8 +367,8 @@ impl Worktree {
                 if let Some(parent_name) = self
                     .path
                     .parent()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
                 {
                     return parent_name.to_string();
                 }

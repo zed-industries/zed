@@ -11,14 +11,12 @@ use gpui::{
     Render, SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::Project;
-use project::git_store::{RepositoryEvent, repo_identity_path};
+use project::{Project, git_store::RepositoryEvent, repo_identity_path_if_local};
 use ui::{
     Button, CommonAnimationExt as _, Divider, HighlightedLabel, IconButton, KeyBinding, ListItem,
     ListItemSpacing, ListSubHeader, Tooltip, prelude::*,
 };
-use util::ResultExt as _;
-use util::paths::PathExt;
+use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ModalView, MultiWorkspace, RemovalIntent, Workspace, dock::DockPosition,
     notifications::DetachAndPromptErr,
@@ -89,9 +87,10 @@ impl WorktreePicker {
 
         let has_multiple_repositories = project_ref.repositories(cx).len() > 1;
         let repository = project_ref.active_repository(cx);
-        let repository_identity_path = repository.as_ref().map(|repository| {
+        let repository_identity_path = repository.as_ref().and_then(|repository| {
             let repository = repository.read(cx);
-            repo_identity_path(&repository.common_dir_abs_path, repository.path_style).to_path_buf()
+            repo_identity_path_if_local(&repository.common_dir_abs_path, repository.path_style)
+                .map(Path::to_path_buf)
         });
 
         let current_branch_name = repository.as_ref().and_then(|repo| {
