@@ -149,6 +149,8 @@ pub(crate) struct ContainerBuild {
     pub(crate) cache_from: Option<Vec<String>>,
 }
 
+const CONTAINER_SHELL: &str = "/bin/sh";
+
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 struct LifecycleScriptInternal {
     command: Option<String>,
@@ -163,6 +165,41 @@ impl LifecycleScriptInternal {
             command,
             args: remaining,
         }
+    }
+
+    fn command(&self) -> Option<Command> {
+        let program = self.command.as_ref()?;
+        let mut command = Command::new(program);
+        command.args(&self.args);
+        Some(command)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn host_command(&self) -> Option<Command> {
+        self.command()
+    }
+
+    #[cfg(target_os = "windows")]
+    fn host_command(&self) -> Option<Command> {
+        let Some(script) = self.shell_script() else {
+            return self.command();
+        };
+
+        let mut command =
+            Command::new(std::env::var_os("ComSpec").unwrap_or_else(|| "cmd.exe".into()));
+        command.arg("/C").raw_arg(script);
+        Some(command)
+    }
+
+    /// The script of a string-form command, which [`LifecycleScript::shell_command`] stores
+    /// as `/bin/sh -c <script>`.
+    #[cfg(target_os = "windows")]
+    fn shell_script(&self) -> Option<&str> {
+        let [flag, script] = self.args.as_slice() else {
+            return None;
+        };
+        (self.command.as_deref() == Some(CONTAINER_SHELL) && flag == "-c")
+            .then_some(script.as_str())
     }
 }
 
@@ -342,7 +379,11 @@ impl LifecycleScript {
         }
     }
     fn shell_command(script: &str) -> Vec<String> {
-        vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()]
+        vec![
+            CONTAINER_SHELL.to_string(),
+            "-c".to_string(),
+            script.to_string(),
+        ]
     }
     fn from_str(args: &str) -> Self {
         Self::from_args(Self::shell_command(args))
@@ -351,17 +392,26 @@ impl LifecycleScript {
         Self::from_map(HashMap::from([("default".to_string(), args)]))
     }
     pub fn script_commands(&self) -> HashMap<String, Command> {
+        self.commands(LifecycleScriptInternal::command)
+    }
+
+    /// [`Self::script_commands`] for `initializeCommand`, the one lifecycle command that runs
+    /// on the host rather than in the container.
+    fn host_script_commands(&self) -> HashMap<String, Command> {
+        self.commands(LifecycleScriptInternal::host_command)
+    }
+
+    fn commands(
+        &self,
+        build: fn(&LifecycleScriptInternal) -> Option<Command>,
+    ) -> HashMap<String, Command> {
         self.scripts
             .iter()
-            .filter_map(|(k, v)| {
-                if let Some(inner_command) = &v.command {
-                    let mut command = Command::new(inner_command);
-                    command.args(&v.args);
-                    Some((k.clone(), command))
-                } else {
+            .filter_map(|(name, script)| match build(script) {
+                Some(command) => Some((name.clone(), command)),
+                None => {
                     log::warn!(
-                        "Lifecycle script command {k}, value {:?} has no program to run. Skipping",
-                        v
+                        "Lifecycle script command {name}, value {script:?} has no program to run. Skipping"
                     );
                     None
                 }
@@ -374,7 +424,7 @@ impl LifecycleScript {
         command_runnder: &Arc<dyn CommandRunner>,
         working_directory: &Path,
     ) -> Result<(), DevContainerError> {
-        for (command_name, mut command) in self.script_commands() {
+        for (command_name, mut command) in self.host_script_commands() {
             log::debug!("Running script {command_name}");
 
             command.current_dir(working_directory);
@@ -1835,5 +1885,114 @@ mod test {
         } else {
             panic!("Expected post_create_command to be Some");
         }
+    }
+
+    #[test]
+    fn string_initialize_command_runs_in_the_host_shell() {
+        let json = r#"
+        {
+            "image": "nginx",
+            "initializeCommand": "echo \"hello world\""
+        }
+        "#;
+
+        let dc = deserialize_devcontainer_json(json).expect("Deserialization should succeed");
+        let commands = dc
+            .initialize_command
+            .expect("Expected initialize_command to be Some")
+            .host_script_commands();
+        let command = commands
+            .get("default")
+            .expect("String command should have a 'default' key");
+        let args: Vec<std::ffi::OsString> = command.get_args().map(|a| a.to_os_string()).collect();
+
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(
+                std::path::Path::new(command.get_program()).file_name(),
+                Some(std::ffi::OsStr::new("cmd.exe")),
+                "String-form host command must run in the host command processor"
+            );
+            assert_eq!(
+                args,
+                vec![
+                    std::ffi::OsString::from("/C"),
+                    std::ffi::OsString::from("echo \"hello world\""),
+                ]
+            );
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert_eq!(
+                command.get_program(),
+                std::ffi::OsStr::new("/bin/sh"),
+                "String-form host command must keep running in /bin/sh off Windows"
+            );
+            assert_eq!(
+                args,
+                vec![
+                    std::ffi::OsString::from("-c"),
+                    std::ffi::OsString::from("echo \"hello world\""),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn array_initialize_command_runs_directly_on_the_host() {
+        let json = r#"
+        {
+            "image": "nginx",
+            "initializeCommand": ["echo", "hello world"]
+        }
+        "#;
+
+        let dc = deserialize_devcontainer_json(json).expect("Deserialization should succeed");
+        let commands = dc
+            .initialize_command
+            .expect("Expected initialize_command to be Some")
+            .host_script_commands();
+        let command = commands
+            .get("default")
+            .expect("Array command should have a 'default' key");
+
+        assert_eq!(command.get_program(), std::ffi::OsStr::new("echo"));
+        assert_eq!(
+            command
+                .get_args()
+                .map(|a| a.to_os_string())
+                .collect::<Vec<_>>(),
+            vec![std::ffi::OsString::from("hello world")],
+            "Array-form host command must exec directly without a shell wrapper"
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn string_initialize_command_preserves_quoting_on_windows() {
+        let json = r#"
+        {
+            "image": "nginx",
+            "initializeCommand": "echo \"hello world\""
+        }
+        "#;
+
+        let dc = deserialize_devcontainer_json(json).expect("Deserialization should succeed");
+        let mut commands = dc
+            .initialize_command
+            .expect("Expected initialize_command to be Some")
+            .host_script_commands();
+        let command = commands
+            .get_mut("default")
+            .expect("String command should have a 'default' key");
+
+        let output = gpui::block_on(command.output()).expect("cmd should run initializeCommand");
+
+        assert!(output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "\"hello world\"",
+            "cmd must receive the script as written rather than a re-escaped copy"
+        );
     }
 }
