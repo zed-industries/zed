@@ -1619,7 +1619,7 @@ impl LocalLspStore {
                                 .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                                 .collect::<Vec<_>>()
                         };
-                    let settings = LanguageSettings::for_buffer(buffer, cx).into_owned();
+                    let settings = LanguageSettings::for_buffer(buffer, cx);
                     let request_timeout = ProjectSettings::get_global(cx)
                         .global_lsp_settings
                         .get_request_timeout();
@@ -5418,8 +5418,7 @@ impl LspStore {
             Some(&buffer_entity.read(cx)),
             Some(&new_language.name()),
             cx,
-        )
-        .into_owned();
+        );
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {

@@ -42,7 +42,6 @@ use settings::{SettingsStore, WorktreeId};
 use smallvec::SmallVec;
 use std::{
     any::Any,
-    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
@@ -1185,9 +1184,8 @@ impl Buffer {
     }
 
     fn compute_resolved_settings(&self, cx: &App) -> Option<Arc<LanguageSettings>> {
-        cx.try_global::<SettingsStore>().is_some().then(|| {
-            Arc::new(LanguageSettings::resolve_uncached(Some(self), None, cx).into_owned())
-        })
+        cx.try_global::<SettingsStore>()?;
+        Some(LanguageSettings::resolve_uncached(self, None, cx))
     }
 
     fn refresh_resolved_settings(&mut self, cx: &mut Context<Self>) {
@@ -4251,7 +4249,7 @@ impl BufferSnapshot {
         &'a self,
         position: D,
         cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+    ) -> Arc<LanguageSettings> {
         LanguageSettings::for_buffer_snapshot(self, Some(position.to_offset(self)), cx)
     }
 

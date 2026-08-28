@@ -1186,7 +1186,7 @@ pub struct Editor {
     on_local_selections_changed:
         Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,
     suppress_selection_callback: bool,
-    applicable_language_settings: HashMap<Option<LanguageName>, LanguageSettings>,
+    applicable_language_settings: HashMap<Option<LanguageName>, Arc<LanguageSettings>>,
     accent_data: Option<AccentData>,
     bracket_fetched_tree_sitter_chunks: HashMap<Range<text::Anchor>, HashSet<Range<BufferRow>>>,
     semantic_token_state: SemanticTokenState,
@@ -10064,7 +10064,7 @@ impl Editor {
     fn fetch_applicable_language_settings(
         &self,
         cx: &App,
-    ) -> HashMap<Option<LanguageName>, LanguageSettings> {
+    ) -> HashMap<Option<LanguageName>, Arc<LanguageSettings>> {
         if !self.mode.is_full() {
             return HashMap::default();
         }
@@ -10075,7 +10075,7 @@ impl Editor {
                 let buffer = buffer.read(cx);
                 let language = buffer.language().map(|language| language.name());
                 if let hash_map::Entry::Vacant(v) = acc.entry(language) {
-                    v.insert(LanguageSettings::for_buffer(buffer, cx).into_owned());
+                    v.insert(LanguageSettings::for_buffer(buffer, cx));
                 }
                 acc
             },
