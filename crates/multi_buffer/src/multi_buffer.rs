@@ -7544,16 +7544,14 @@ impl sum_tree::SeekTarget<'_, ExcerptSummary, ExcerptSummary> for AnchorSeekTarg
             AnchorSeekTarget::Missing {
                 path_key,
                 buffer_id,
-            } => {
-                match Ord::cmp(*path_key, &cursor_location.path_key) {
-                    Ordering::Less => Ordering::Less,
-                    Ordering::Equal => match &cursor_location.max_anchor {
-                        Some(max_anchor) if *buffer_id < max_anchor.buffer_id => Ordering::Less,
-                        _ => Ordering::Greater,
-                    },
-                    Ordering::Greater => Ordering::Greater,
-                }
-            }
+            } => match Ord::cmp(*path_key, &cursor_location.path_key) {
+                Ordering::Less => Ordering::Less,
+                Ordering::Equal => match &cursor_location.max_anchor {
+                    Some(max_anchor) if *buffer_id < max_anchor.buffer_id => Ordering::Less,
+                    _ => Ordering::Greater,
+                },
+                Ordering::Greater => Ordering::Greater,
+            },
             AnchorSeekTarget::Excerpt {
                 path_key,
                 path_key_index,

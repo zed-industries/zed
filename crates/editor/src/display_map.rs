@@ -4155,8 +4155,9 @@ pub mod tests {
         let end_row = DisplayRow(snapshot.max_point().row().0 + 1);
         for (row, block) in snapshot.blocks_in_range(DisplayRow(0)..end_row) {
             let excerpt = match block {
-                Block::BufferHeader { excerpt, .. }
-                | Block::ExcerptBoundary { excerpt, .. } => excerpt,
+                Block::BufferHeader { excerpt, .. } | Block::ExcerptBoundary { excerpt, .. } => {
+                    excerpt
+                }
                 Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
                 _ => continue,
             };

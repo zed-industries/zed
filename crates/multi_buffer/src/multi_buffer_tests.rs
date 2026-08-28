@@ -6426,9 +6426,7 @@ async fn test_anchor_comparison_tracks_resolution(
             AnchorContractOp::SwapDiff { reinstall, variant } => {
                 let buffer_a_text_snapshot =
                     buffer_a.read_with(cx, |buffer, _| buffer.text_snapshot());
-                let next_diff = if *reinstall
-                    && let Some(previous_diff) = departed_diffs.pop()
-                {
+                let next_diff = if *reinstall && let Some(previous_diff) = departed_diffs.pop() {
                     // Recompute the reinstalled diff against the buffer's
                     // current text; its base text buffer (and so the buffer
                     // id anchors compare by) is preserved.
@@ -6638,7 +6636,10 @@ async fn test_collapsed_plain_anchor_resolves_past_deleted_hunk_rows(cx: &mut Te
     assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\nddd\ndd\n");
     let hunk_anchor = snapshot.anchor_at(MultiBufferOffset(19), Bias::Right);
 
-    assert_eq!(plain_anchor.cmp(&hunk_anchor, &snapshot), cmp::Ordering::Greater);
+    assert_eq!(
+        plain_anchor.cmp(&hunk_anchor, &snapshot),
+        cmp::Ordering::Greater
+    );
     assert_eq!(plain_anchor.to_offset(&snapshot), MultiBufferOffset(23));
     assert_eq!(hunk_anchor.to_offset(&snapshot), MultiBufferOffset(19));
 
