@@ -16,10 +16,14 @@ impl Domain for ProjectPanelDb {
     // nothing expanded" (e.g. the user collapsed the worktree root). This
     // representation lets us distinguish "never saved" from "saved with no
     // expanded entries" — something a multi-row schema cannot encode.
+    //
+    // `worktree_root_path` is a BLOB so non-UTF-8 paths round-trip; as TEXT
+    // they would have to go through `to_string_lossy`, which can collide two
+    // distinct worktrees onto one key and never matches on read.
     const MIGRATIONS: &[&str] = &[sql!(
         CREATE TABLE project_panel_collapse_state(
             workspace_id INTEGER NOT NULL,
-            worktree_root_path TEXT NOT NULL,
+            worktree_root_path BLOB NOT NULL,
             expanded_paths TEXT NOT NULL,
             PRIMARY KEY (workspace_id, worktree_root_path),
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
@@ -39,7 +43,7 @@ impl ProjectPanelDb {
         &self,
         workspace_id: WorkspaceId,
     ) -> Result<HashMap<Arc<Path>, Vec<String>>> {
-        let rows: Vec<(String, String)> = self
+        let rows: Vec<(Arc<Path>, String)> = self
             .select_bound(sql! {
                 SELECT worktree_root_path, expanded_paths
                 FROM project_panel_collapse_state
@@ -49,10 +53,17 @@ impl ProjectPanelDb {
 
         let mut result: HashMap<Arc<Path>, Vec<String>> = HashMap::default();
         for (worktree_root_path, expanded_paths) in rows {
-            let paths: Vec<String> = serde_json::from_str(&expanded_paths)
-                .with_context(|| format!("decoding expanded_paths for {worktree_root_path}"))?;
-            let key: Arc<Path> = Arc::from(Path::new(&worktree_root_path));
-            result.insert(key, paths);
+            // Skip a corrupt row rather than propagating: returning an error
+            // here would discard every other worktree's saved state too.
+            match serde_json::from_str::<Vec<String>>(&expanded_paths) {
+                Ok(paths) => {
+                    result.insert(worktree_root_path, paths);
+                }
+                Err(error) => log::warn!(
+                    "ignoring malformed collapse state for worktree {}: {error}",
+                    worktree_root_path.display()
+                ),
+            }
         }
         Ok(result)
     }
@@ -71,7 +82,6 @@ impl ProjectPanelDb {
         self.write(move |conn| {
             conn.with_savepoint("project_panel_save_expanded_entries", || {
                 for (worktree_root_path, paths) in &entries {
-                    let worktree_root_str = worktree_root_path.to_string_lossy();
                     let serialized =
                         serde_json::to_string(paths).context("serializing expanded paths")?;
                     conn.exec_bound(sql!(
@@ -82,11 +92,14 @@ impl ProjectPanelDb {
                         DO UPDATE SET expanded_paths = excluded.expanded_paths;
                     ))?((
                         workspace_id,
-                        worktree_root_str.as_ref(),
+                        worktree_root_path.as_ref(),
                         serialized.as_str(),
                     ))
                     .with_context(|| {
-                        format!("saving collapse state for worktree {worktree_root_str}")
+                        format!(
+                            "saving collapse state for worktree {}",
+                            worktree_root_path.display()
+                        )
                     })?;
                 }
                 Ok(())
