@@ -539,10 +539,7 @@ pub fn panic_hook(crash_client: Arc<Client>, message: &str, location: Option<&Lo
         // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
         CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::process::abort();
-    }
+    std::process::abort();
 }
 
 #[cfg(target_os = "macos")]
