@@ -4186,6 +4186,8 @@ struct RenderedLine {
 impl RenderedLine {
     /// Painted before the glyphs so the text renders on top of the chips
     fn paint_code_chips(&self, window: &mut Window) {
+        const CHIP_CORNER_RADIUS: Pixels = px(4.);
+
         if self.code_chips.is_empty() {
             return;
         }
@@ -4217,7 +4219,7 @@ impl RenderedLine {
                     };
                     window.paint_quad(quad(
                         chip_bounds,
-                        px(4.),
+                        CHIP_CORNER_RADIUS,
                         *color,
                         Edges::default(),
                         Hsla::transparent_black(),
