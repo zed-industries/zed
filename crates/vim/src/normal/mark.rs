@@ -398,6 +398,64 @@ mod test {
         cx.shared_state().await.assert_eq("Hello, worldˇ!");
     }
 
+    /// Regression test for a crash family (ZED-APE, ZED-AR0, ZED-APW): a
+    /// mark's anchors are stored in caller order, which multi-cursor callers
+    /// do not guarantee to be sorted, but serializing marks summarized them
+    /// with an API that requires sorted input and panics with "cannot
+    /// summarize backward" otherwise. Sorting at storage time is not an
+    /// option, because paired marks like `[` and `]` correspond by index.
+    #[gpui::test]
+    async fn test_mark_serialization_with_unsorted_anchors(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let path = Path::new(path!("/unsorted.rs"));
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path, "alpha\nbeta\ngamma\n".into())
+            .await;
+        let _ = cx
+            .workspace(|workspace, window, cx| {
+                workspace.open_abs_path(
+                    path!("/unsorted.rs").into(),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await;
+        cx.run_until_parked();
+
+        let editor = cx.workspace(|workspace, _, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        let (multibuffer, anchors) = cx.update(|_, cx| {
+            editor.update(cx, |editor, cx| {
+                let multibuffer = editor.buffer().clone();
+                let snapshot = multibuffer.read(cx).snapshot(cx);
+                let anchors = vec![
+                    snapshot.anchor_before(editor::MultiBufferOffset(10)),
+                    snapshot.anchor_before(editor::MultiBufferOffset(2)),
+                ];
+                (multibuffer, anchors)
+            })
+        });
+
+        let workspace_entity_id = cx.workspace(|_, _, cx| cx.entity_id());
+        cx.update(|_, cx| {
+            crate::Vim::update_globals(cx, |globals, cx| {
+                let marks_state = globals.marks.get(&workspace_entity_id).unwrap().clone();
+                marks_state.update(cx, |marks_state, cx| {
+                    marks_state.set_mark("[".to_string(), &multibuffer, anchors, cx);
+                });
+            });
+        });
+        cx.run_until_parked();
+    }
+
     #[gpui::test]
     async fn test_global_mark_overwrite(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
