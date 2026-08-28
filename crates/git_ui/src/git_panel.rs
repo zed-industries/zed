@@ -10378,6 +10378,93 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_toggle_mark_builds_disjoint_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.rs": "a",
+                "b.rs": "b",
+                "c.rs": "c",
+            }),
+            &[
+                ("a.rs", StatusCode::Modified),
+                ("b.rs", StatusCode::Modified),
+                ("c.rs", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        let (ix_a, ix_b, ix_c) = panel.read_with(&cx, |panel, _| {
+            (
+                entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("b.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("c.rs")).unwrap(),
+            )
+        });
+
+        panel.update(&mut cx, |panel, _| {
+            panel.select_single_entry(ix_a);
+        });
+
+        // Cmd/Ctrl-clicking a second, non-adjacent row seeds the mark set with
+        // the current selection (a) before adding the clicked row (c), so the
+        // first toggle adds to the existing selection instead of replacing it.
+        panel.update(&mut cx, |panel, _| {
+            panel.toggle_mark(ix_c);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_c));
+            assert_eq!(panel.range_selection_anchor, Some(ix_c));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_c]);
+        });
+
+        // Toggling a third, disjoint row just adds it, without touching the
+        // rows already marked (which wouldn't be possible with range selection
+        // alone, since a and c aren't adjacent to b).
+        panel.update(&mut cx, |panel, _| {
+            panel.toggle_mark(ix_b);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_b));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_b, ix_c]);
+        });
+
+        // Toggling the currently-selected row (b) back off removes it from the
+        // marked set and falls back to re-selecting the last remaining mark,
+        // rather than leaving a stale selection pointing at an unmarked row.
+        panel.update(&mut cx, |panel, _| {
+            panel.toggle_mark(ix_b);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, Some(ix_c));
+            assert_eq!(panel.range_selection_anchor, Some(ix_c));
+            let mut marked = panel.marked_entries.clone();
+            marked.sort();
+            assert_eq!(marked, vec![ix_a, ix_c]);
+        });
+
+        // Toggling off every remaining mark clears the selection entirely.
+        panel.update(&mut cx, |panel, _| {
+            panel.toggle_mark(ix_c);
+        });
+        panel.update(&mut cx, |panel, _| {
+            panel.toggle_mark(ix_a);
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(panel.selected_entry, None);
+            assert_eq!(panel.range_selection_anchor, None);
+            assert!(panel.marked_entries.is_empty());
+        });
+    }
+
+    #[gpui::test]
     async fn test_checkbox_click_stages_whole_marked_set(cx: &mut TestAppContext) {
         init_test(cx);
 
