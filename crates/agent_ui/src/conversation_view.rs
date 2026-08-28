@@ -9939,7 +9939,7 @@ pub(crate) mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
-        // By default AgentConnecion sets title to None
+        // By default AgentConnection sets title to None
         let (conversation_view, cx) =
             setup_conversation_view(StubAgentServer::new(NoTitleSupportAgentConnection), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
