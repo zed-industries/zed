@@ -1,8 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::{borrow::Cow, fmt, path::Path};
 #[cfg(windows)]
-use std::path::PathBuf;
-use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
+use std::{path::PathBuf, sync::LazyLock};
 
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
