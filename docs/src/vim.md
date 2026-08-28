@@ -547,7 +547,7 @@ The Helix-style jump-to-word action shows jump labels at visible word starts. It
 {
   "context": "vim_mode == normal || vim_mode == visual",
   "bindings": {
-    "g w": "vim::HelixJumpToWord"
+    "g w": "vim::HelixJumpToWord",
     "g e": "vim::HelixJumpToWordEnd"
   }
 }
