@@ -115,6 +115,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_and_load_expanded_entries(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
         let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
         let workspace_id = workspace_db.next_id().await.unwrap();
         let db = cx.update(|cx| ProjectPanelDb::global(cx));
@@ -176,5 +177,40 @@ mod tests {
             loaded.get(&worktree_c).cloned().unwrap(),
             Vec::<String>::new()
         );
+    }
+
+    #[gpui::test]
+    async fn test_malformed_row_does_not_discard_other_worktrees(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(db::AppDatabase::test_new()));
+        let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+        let workspace_id = workspace_db.next_id().await.unwrap();
+        let db = cx.update(|cx| ProjectPanelDb::global(cx));
+
+        let good: Arc<Path> = Arc::from(Path::new("/foo/good"));
+        let mut entries: HashMap<Arc<Path>, Vec<String>> = HashMap::default();
+        entries.insert(good.clone(), vec!["src".to_string()]);
+        db.save_expanded_entries(workspace_id, entries)
+            .await
+            .unwrap();
+
+        let bad = Path::new("/foo/bad");
+        db.0.write(move |conn| {
+            conn.exec_bound(sql!(
+                INSERT INTO project_panel_collapse_state
+                    (workspace_id, worktree_root_path, expanded_paths)
+                VALUES (?1, ?2, ?3);
+            ))
+            .unwrap()((workspace_id, bad, "not json"))
+            .unwrap();
+        })
+        .await;
+
+        let loaded = db.expanded_entries(workspace_id).unwrap();
+        assert_eq!(
+            loaded.get(&good).cloned().unwrap(),
+            vec!["src".to_string()],
+            "a malformed row must not discard another worktree's saved state",
+        );
+        assert!(!loaded.contains_key(bad));
     }
 }

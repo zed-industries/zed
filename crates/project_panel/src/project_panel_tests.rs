@@ -6,7 +6,7 @@ use git::{
     Oid,
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
-use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use gpui::{Empty, Entity, Task, TestAppContext, VisualTestContext};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
@@ -11319,8 +11319,23 @@ async fn test_focus_follows_mouse_into_blank_area(cx: &mut gpui::TestAppContext)
     });
 }
 
+/// Awaits the panel's debounced collapse-state save. `run_until_parked` does
+/// not wait on the database's writer thread, so reading the saved state
+/// straight after it can race the write.
+async fn await_collapse_state_save(panel: &Entity<ProjectPanel>, cx: &mut VisualTestContext) {
+    panel
+        .update(cx, |panel, _| {
+            std::mem::replace(&mut panel._save_collapse_state_task, Task::ready(()))
+        })
+        .await;
+}
+
 pub(crate) fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        // Without a per-App database these tests share one process-wide
+        // fallback connection, where one test's `save_workspace` can cascade
+        // another's collapse-state rows away.
+        cx.set_global(db::AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
@@ -11342,6 +11357,10 @@ pub(crate) fn init_test(cx: &mut TestAppContext) {
 
 fn init_test_with_editor(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        // Without a per-App database these tests share one process-wide
+        // fallback connection, where one test's `save_workspace` can cascade
+        // another's collapse-state rows away.
+        cx.set_global(db::AppDatabase::test_new());
         let app_state = AppState::test(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
@@ -11364,6 +11383,10 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
 
 fn init_test_with_git_ui(cx: &mut TestAppContext) {
     cx.update(|cx| {
+        // Without a per-App database these tests share one process-wide
+        // fallback connection, where one test's `save_workspace` can cascade
+        // another's collapse-state rows away.
+        cx.set_global(db::AppDatabase::test_new());
         let app_state = AppState::test(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
@@ -11836,6 +11859,56 @@ async fn test_skips_persistence_when_disabled(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_workspace_flush_saves_collapse_state_inside_debounce(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/root"), json!({ "a": { "b": {} } }))
+        .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_panel(panel.clone(), window, cx);
+    });
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/a", cx);
+    cx.run_until_parked();
+
+    // Deliberately no `advance_clock`: the toggle is still inside the save
+    // debounce, so only the flush can persist it.
+    workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.flush_serialization(window, cx)
+        })
+        .await;
+
+    let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
+    let saved = panel_db.expanded_entries(workspace_id).unwrap();
+    let mut saved_paths = saved
+        .get(Path::new(path!("/root")))
+        .cloned()
+        .unwrap_or_default();
+    saved_paths.sort();
+    assert_eq!(
+        saved_paths,
+        vec!["".to_string(), "a".to_string()],
+        "closing the workspace inside the debounce window must still persist the toggle",
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
     init_test_with_editor(cx);
 
@@ -12063,6 +12136,8 @@ async fn test_collapse_state_is_not_truncated_while_worktree_is_scanning(cx: &mu
     for _ in 0..20 {
         cx.executor().tick();
     }
+
+    await_collapse_state_save(&panel, cx).await;
 
     let saved = panel_db.expanded_entries(workspace_id).unwrap();
     let mut saved_paths = saved
