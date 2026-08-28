@@ -717,7 +717,7 @@ impl LanguageRegistry {
                                     &loaded_language.config.name,
                                     &mut loaded_language.queries,
                                 )
-                                .await?;
+                                .await;
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 
@@ -843,7 +843,7 @@ impl LanguageRegistry {
         self: &Arc<Self>,
         language_name: &LanguageName,
         queries: &mut LanguageQueries,
-    ) -> Result<bool> {
+    ) -> bool {
         let mut uses_inheritance = false;
         let mut base_queries_cache = HashMap::default();
         for query_file in QueryFile::all() {
@@ -858,11 +858,11 @@ impl LanguageRegistry {
                         &mut visited,
                         &mut base_queries_cache,
                     )
-                    .await?,
+                    .await,
                 );
             }
         }
-        Ok(uses_inheritance)
+        uses_inheritance
     }
 
     fn expand_query_text<'a>(
@@ -872,10 +872,10 @@ impl LanguageRegistry {
         query_file: QueryFile,
         visited: &'a mut Vec<LanguageName>,
         base_queries_cache: &'a mut HashMap<LanguageName, LanguageQueries>,
-    ) -> BoxFuture<'a, Result<Cow<'static, str>>> {
+    ) -> BoxFuture<'a, Cow<'static, str>> {
         async move {
             if !text.contains(QUERY_INHERITS_PREFIX) {
-                return Ok(text);
+                return text;
             }
 
             let mut result = String::new();
@@ -929,12 +929,19 @@ impl LanguageRegistry {
 
                     let base_queries = match base_queries_cache.entry(base_language.name.clone()) {
                         hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                        hash_map::Entry::Vacant(entry) => {
-                            let loaded_base = (base_language.load)().await.with_context(|| {
-                                format!("loading inherited queries from {:?}", base_language.name.0)
-                            })?;
-                            entry.insert(loaded_base.queries)
-                        }
+                        // A base that fails to load is treated like an unknown base: the
+                        // derived language still loads with whatever queries it defines
+                        // itself, rather than failing to load entirely.
+                        hash_map::Entry::Vacant(entry) => match (base_language.load)().await {
+                            Ok(loaded_base) => entry.insert(loaded_base.queries),
+                            Err(error) => {
+                                log::error!(
+                                    "{language_name} query inherits from {:?}, which failed to load:\n{error:?}",
+                                    base_language.name.0
+                                );
+                                continue;
+                            }
+                        },
                     };
 
                     if let Some(base_text) = base_queries.file_mut(query_file).take() {
@@ -946,7 +953,7 @@ impl LanguageRegistry {
                                 visited,
                                 base_queries_cache,
                             )
-                            .await?
+                            .await
                         } else {
                             base_text
                         };
@@ -956,7 +963,7 @@ impl LanguageRegistry {
                     }
                 }
             }
-            Ok(Cow::Owned(result))
+            Cow::Owned(result)
         }
         .boxed()
     }

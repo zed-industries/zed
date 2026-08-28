@@ -623,6 +623,15 @@ async fn test_inherited_queries(cx: &mut TestAppContext) {
     register("MultiJSON", "; inherits: json, jsonc\n(false) @boolean");
     register("CycleA", "; inherits: cycleb\n(true) @boolean");
     register("CycleB", "; inherits: cyclea\n(false) @constant");
+    register("BrokenJSON", "; inherits: broken\n(true) @boolean");
+    languages.register_language(
+        "Broken".into(),
+        Some("json".into()),
+        Arc::new(LanguageMatcher::default()),
+        false,
+        None,
+        Arc::new(|| async { Err(anyhow::anyhow!("base failed to load")) }.boxed()),
+    );
 
     let json5 = languages.language_for_name("JSON5").await.unwrap();
     assert_eq!(highlight_captures(&json5), ["string", "number", "constant"]);
@@ -648,6 +657,11 @@ async fn test_inherited_queries(cx: &mut TestAppContext) {
     // Cyclic inheritance includes each language's own queries once.
     let cycle_a = languages.language_for_name("CycleA").await.unwrap();
     assert_eq!(highlight_captures(&cycle_a), ["constant", "boolean"]);
+
+    // A base that fails to load is treated like an unknown base, so the
+    // derived language still loads with its own queries.
+    let broken_json = languages.language_for_name("BrokenJSON").await.unwrap();
+    assert_eq!(highlight_captures(&broken_json), ["boolean"]);
 }
 
 #[gpui::test]
