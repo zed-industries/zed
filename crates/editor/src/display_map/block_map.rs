@@ -487,7 +487,7 @@ impl Block {
         }
     }
 
-    fn is_header(&self) -> bool {
+    pub(crate) fn is_header(&self) -> bool {
         match self {
             Block::Custom(_) => false,
             Block::FoldedBuffer { .. } => true,

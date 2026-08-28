@@ -273,6 +273,7 @@ pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
+    bookmarks::BookmarksTabState,
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
     hover_links::{find_url, find_url_from_range},
@@ -1130,6 +1131,8 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
+    bookmarks_tab_state: Option<Entity<BookmarksTabState>>,
+    bookmarks_tab_subscription: Option<Subscription>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -1854,6 +1857,9 @@ impl Editor {
         clone.needs_initial_data_update = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
         clone.enable_code_lens = self.enable_code_lens;
+        if let Some(bookmarks_tab_state) = self.bookmarks_tab_state.clone() {
+            clone.set_bookmarks_tab_state(bookmarks_tab_state, cx);
+        }
         clone
     }
 
@@ -2450,6 +2456,8 @@ impl Editor {
             pending_blame_hover_observation: None,
 
             bookmark_store,
+            bookmarks_tab_state: None,
+            bookmarks_tab_subscription: None,
             breakpoint_store,
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),
@@ -9227,7 +9235,26 @@ impl Editor {
                     } else {
                         end.row().0
                     };
+                    let mut header_rows = snapshot
+                        .blocks_in_range(
+                            DisplayRow(start_row)..DisplayRow(end_row.saturating_add(1)),
+                        )
+                        .filter(|(_, block)| block.is_header())
+                        .map(|(block_row, block)| {
+                            block_row.0..block_row.0.saturating_add(block.height())
+                        })
+                        .peekable();
                     for row in start_row..=end_row {
+                        while header_rows
+                            .next_if(|header_range| header_range.end <= row)
+                            .is_some()
+                        {}
+                        if header_rows
+                            .peek()
+                            .is_some_and(|header_range| header_range.contains(&row))
+                        {
+                            continue;
+                        }
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
