@@ -34,7 +34,6 @@ image.workspace = true
 log.workspace = true
 metal.workspace = true
 objc.workspace = true
-objc2.workspace = true
 objc2-foundation.workspace = true
 parking_lot.workspace = true
 
