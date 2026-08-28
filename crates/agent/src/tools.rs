@@ -249,6 +249,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn built_in_tool_schemas_are_normalized() {
+        let tools = built_in_tools().collect::<Vec<_>>();
+
+        assert_eq!(tools.len(), ALL_TOOL_NAMES.len());
+        for tool in tools {
+            let language_model::LanguageModelRequestToolInput::Function { input_schema, .. } =
+                tool.input
+            else {
+                panic!("built-in tool `{}` should use a JSON schema", tool.name);
+            };
+            assert_eq!(input_schema.get("$schema"), None, "tool `{}`", tool.name);
+            assert_eq!(input_schema.get("title"), None, "tool `{}`", tool.name);
+            assert_eq!(
+                input_schema.get("description"),
+                None,
+                "tool `{}`",
+                tool.name
+            );
+            assert!(
+                input_schema["properties"].is_object(),
+                "tool `{}` should have object properties",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
     fn fetch_and_terminal_are_forbidden_in_restricted_mode() {
         assert!(!tool_allowed_in_restricted_mode(FetchTool::NAME));
         assert!(!tool_allowed_in_restricted_mode(TerminalTool::NAME));
