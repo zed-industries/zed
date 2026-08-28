@@ -1,8 +1,11 @@
 use command_palette::humanize_action_name;
-use gpui::{Animation, AnimationExt, App, Context, KeybindingKeystroke, Render, Window};
-use settings::Settings;
+use gpui::{
+    Animation, AnimationExt, App, Context, KeybindingKeystroke, Render, Subscription, Window,
+};
+use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
 use ui::{CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keystrokes};
+use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
 use crate::FILTERED_KEYSTROKES;
@@ -14,6 +17,8 @@ const MAX_TOOLTIP_BINDINGS: usize = 10;
 pub struct PendingKeystrokesIndicator {
     pending: Option<Rc<PendingKeystrokes>>,
     pending_input_generation: u64,
+    _pending_input_subscription: Subscription,
+    _settings_subscription: Subscription,
 }
 
 struct PendingKeystrokes {
@@ -25,26 +30,53 @@ struct PendingKeystrokes {
 
 impl PendingKeystrokesIndicator {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        cx.observe_pending_input(window, |this: &mut Self, window, cx| {
-            this.update_pending(window, cx);
-            cx.notify();
-        })
-        .detach();
+        let pending_input_subscription =
+            cx.observe_pending_input(window, |this: &mut Self, window, cx| {
+                if this.update_pending(window, cx) {
+                    cx.notify();
+                }
+            });
+
+        let mut enabled = Self::enabled(cx);
+        let settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let new_enabled = Self::enabled(cx);
+                if new_enabled == enabled {
+                    return;
+                }
+
+                enabled = new_enabled;
+                if this.update_pending(window, cx) {
+                    cx.notify();
+                }
+            });
 
         Self {
             pending: None,
             pending_input_generation: 0,
+            _pending_input_subscription: pending_input_subscription,
+            _settings_subscription: settings_subscription,
         }
     }
 
-    fn update_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn enabled(cx: &App) -> bool {
+        let status_bar_settings = StatusBarSettings::get_global(cx);
+        status_bar_settings.show
+            && status_bar_settings.pending_keystrokes_indicator
+            && !VimModeSetting::is_enabled(cx)
+            && !HelixModeSetting::is_enabled(cx)
+    }
+
+    fn update_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !Self::enabled(cx) {
+            return self.clear_pending();
+        }
+
         let Some(pending_input) = window.pending_input() else {
-            self.pending = None;
-            return;
+            return self.clear_pending();
         };
         let Some(timeout) = pending_input.timeout() else {
-            self.pending = None;
-            return;
+            return self.clear_pending();
         };
         let keystrokes = pending_input.keystrokes();
 
@@ -105,12 +137,17 @@ impl PendingKeystrokesIndicator {
                 .collect(),
             timeout,
         }));
+        true
+    }
+
+    fn clear_pending(&mut self) -> bool {
+        self.pending.take().is_some()
     }
 }
 
 impl Render for PendingKeystrokesIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !StatusBarSettings::get_global(cx).pending_keystrokes_indicator {
+        if !Self::enabled(cx) {
             return div().hidden().into_any_element();
         }
         let Some(pending) = self.pending.clone() else {
@@ -274,6 +311,7 @@ mod tests {
     #[gpui::test]
     fn test_indicator_tracks_pending_input_lifecycle(cx: &mut TestAppContext) {
         cx.update(|cx| {
+            settings::init(cx);
             cx.bind_keys([
                 KeyBinding::new(
                     "ctrl-b",
@@ -330,6 +368,25 @@ mod tests {
             ]
         );
 
+        let pending_before_unrelated_settings_update = indicator
+            .read_with(cx, |indicator, _| indicator.pending.clone())
+            .expect("pending input");
+        cx.update(|_, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(r#"{"ui_font_size":15}"#, cx)
+                    .expect("valid test settings");
+            });
+        });
+        cx.run_until_parked();
+        let pending_after_unrelated_settings_update = indicator
+            .read_with(cx, |indicator, _| indicator.pending.clone())
+            .expect("pending input");
+        assert!(Rc::ptr_eq(
+            &pending_before_unrelated_settings_update,
+            &pending_after_unrelated_settings_update
+        ));
+
         cx.executor().advance_clock(first_pending.timeout / 2);
         cx.run_until_parked();
         assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_some()));
@@ -359,5 +416,137 @@ mod tests {
         assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
         assert_eq!(shorter_binding_count.get(), 0);
         assert_eq!(longer_binding_count.get(), 1);
+
+        cx.update(|_, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"status_bar":{"pending_keystrokes_indicator":false}}"#,
+                        cx,
+                    )
+                    .expect("valid test settings");
+            });
+        });
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+
+        cx.update(|_, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"status_bar":{"pending_keystrokes_indicator":true}}"#,
+                        cx,
+                    )
+                    .expect("valid test settings");
+            });
+        });
+        cx.run_until_parked();
+        let pending_after_reenabling =
+            indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
+        assert!(
+            pending_after_reenabling.is_some(),
+            "expected the current pending input after re-enabling the indicator"
+        );
+
+        cx.update(|_, cx| {
+            VimModeSetting::override_global(VimModeSetting(true), cx);
+        });
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+
+        cx.update(|_, cx| {
+            VimModeSetting::override_global(VimModeSetting(false), cx);
+        });
+        cx.run_until_parked();
+        let pending_after_disabling_vim =
+            indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
+        assert!(
+            pending_after_disabling_vim.is_some(),
+            "expected the current pending input after disabling Vim mode"
+        );
+        cx.executor()
+            .advance_clock(pending_after_disabling_vim.unwrap_or_default().timeout);
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_indicator_tracks_status_bar_and_helix_modes(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            settings::init(cx);
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"status_bar":{"experimental.show":false,"pending_keystrokes_indicator":true}}"#,
+                        cx,
+                    )
+                    .expect("valid test settings");
+            });
+            cx.bind_keys([
+                KeyBinding::new(
+                    "ctrl-b",
+                    ShorterBinding,
+                    Some("PendingKeystrokesIndicatorTest"),
+                ),
+                KeyBinding::new(
+                    "ctrl-b h",
+                    LongerBinding,
+                    Some("PendingKeystrokesIndicatorTest"),
+                ),
+            ]);
+        });
+
+        let shorter_binding_count = Rc::new(Cell::new(0));
+        let longer_binding_count = Rc::new(Cell::new(0));
+        let (test_view, cx) = cx.add_window_view(|window, cx| TestView {
+            focus_handle: cx.focus_handle(),
+            indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
+            shorter_binding_count,
+            longer_binding_count,
+        });
+        let (indicator, focus_handle) = test_view.read_with(cx, |test_view, _| {
+            (test_view.indicator.clone(), test_view.focus_handle.clone())
+        });
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+
+        cx.update(|_, cx| {
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store
+                    .set_user_settings(
+                        r#"{"status_bar":{"experimental.show":true,"pending_keystrokes_indicator":true}}"#,
+                        cx,
+                    )
+                    .expect("valid test settings");
+            });
+        });
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_some()));
+
+        cx.update(|_, cx| {
+            HelixModeSetting::override_global(HelixModeSetting(true), cx);
+        });
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+
+        cx.update(|_, cx| {
+            HelixModeSetting::override_global(HelixModeSetting(false), cx);
+        });
+        cx.run_until_parked();
+        let pending_after_disabling_helix =
+            indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
+        assert!(pending_after_disabling_helix.is_some());
+        cx.executor()
+            .advance_clock(pending_after_disabling_helix.unwrap_or_default().timeout);
+        cx.run_until_parked();
     }
 }
