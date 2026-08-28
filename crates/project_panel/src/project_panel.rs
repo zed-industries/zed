@@ -724,10 +724,8 @@ impl ProjectPanel {
                 window,
                 |this, project, event, window, cx| match event {
                     project::Event::ActiveEntryChanged(Some(entry_id)) => {
-                        let settings = ProjectPanelSettings::get_global(cx);
-                        if settings.auto_reveal_entries {
-                            let skip_ignored = !settings.auto_reveal_ignored_entries;
-                            this.reveal_entry(project.clone(), *entry_id, skip_ignored, window, cx)
+                        if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
+                            this.reveal_entry(project.clone(), *entry_id, true, window, cx)
                                 .ok();
                         }
                     }

@@ -792,8 +792,7 @@ pub struct ProjectPanelSettingsContent {
     pub indent_size: Option<crate::PixelSetting>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
-    /// By default, gitignored entries are not auto revealed; set
-    /// `auto_reveal_ignored_entries` to override that.
+    /// Gitignored entries are never auto revealed.
     ///
     /// Default: true
     pub auto_reveal_entries: Option<bool>,
@@ -859,12 +858,6 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub restore_collapse_state: Option<bool>,
-    /// Whether `auto_reveal_entries` should also unfold ignored ancestors
-    /// (for example gitignored directories) when revealing an active entry.
-    /// Has no effect when `auto_reveal_entries` is false.
-    ///
-    /// Default: false
-    pub auto_reveal_ignored_entries: Option<bool>,
 }
 
 #[derive(
