@@ -162,6 +162,8 @@ messages!(
     (LanguageServerLog, Foreground),
     (LanguageServerPromptRequest, Foreground),
     (LanguageServerPromptResponse, Foreground),
+    (LanguageServerShowDocumentRequest, Foreground),
+    (LanguageServerShowDocumentResponse, Foreground),
     (LeaveChannelBuffer, Background),
     (LeaveChannelChat, Foreground),
     (LeaveProject, Foreground),
@@ -572,6 +574,10 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
+    (
+        LanguageServerShowDocumentRequest,
+        LanguageServerShowDocumentResponse
+    ),
     (GitGetBranches, GitBranchesResponse),
     (UpdateGitBranch, Ack),
     (ListToolchains, ListToolchainsResponse),
@@ -803,6 +809,7 @@ entity_messages!(
     GetFilePermalink,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
+    LanguageServerShowDocumentRequest,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,

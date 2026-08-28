@@ -4392,6 +4392,118 @@ async fn test_remote_apply_code_action_skips_unadvertised_command(
 }
 
 #[gpui::test]
+async fn test_remote_lsp_show_document(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }",
+                    "other.rs": "fn two() -> usize { 2 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..LanguageMatcher::default()
+            })
+            .into(),
+            ..LanguageConfig::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..FakeLspAdapter::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities::default(),
+            None,
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let fake_lsp = fake_lsp.next().await.unwrap();
+
+    let shown_uri = lsp::Uri::from_file_path(path!("/code/project1/src/other.rs")).unwrap();
+    let shown_selection = lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6));
+    let handled_requests = Arc::new(AtomicUsize::new(0));
+    cx.update({
+        let project = project.clone();
+        let shown_uri = shown_uri.clone();
+        let handled_requests = handled_requests.clone();
+        move |cx| {
+            cx.subscribe(&project, move |_, event, cx| {
+                if let project::Event::LanguageServerShowDocument(request) = event {
+                    assert_eq!(request.uri, shown_uri);
+                    assert_eq!(request.selection, Some(shown_selection));
+                    assert_eq!((request.external, request.take_focus), (false, true));
+                    handled_requests.fetch_add(1, Ordering::Release);
+                    let request = request.clone();
+                    cx.background_spawn(async move {
+                        request.respond(true).await;
+                    })
+                    .detach();
+                }
+            })
+            .detach();
+        }
+    });
+
+    let response = fake_lsp
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: shown_uri,
+                external: None,
+                take_focus: Some(true),
+                selection: Some(shown_selection),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    assert_eq!(handled_requests.load(Ordering::Acquire), 1);
+}
+
+#[gpui::test]
 async fn test_remote_restore_unstaged_hunk_clears_diff(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

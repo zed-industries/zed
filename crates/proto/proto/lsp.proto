@@ -957,6 +957,19 @@ message LanguageServerPromptResponse {
   optional uint64 action_response = 1;
 }
 
+message LanguageServerShowDocumentRequest {
+  uint64 project_id = 1;
+  string uri = 2;
+  bool external = 3;
+  bool take_focus = 4;
+  optional PointUtf16 selection_start = 5;
+  optional PointUtf16 selection_end = 6;
+}
+
+message LanguageServerShowDocumentResponse {
+  bool success = 1;
+}
+
 message GetDocumentColor {
   uint64 project_id = 1;
   uint64 buffer_id = 2;

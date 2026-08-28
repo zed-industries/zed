@@ -26,8 +26,11 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
-    project_settings::ProjectSettings, search::SearchQuery,
+    File, Project, ProjectItem as _, ProjectPath,
+    git_store::GitStore,
+    lsp_store::{FormatTrigger, LanguageServerShowDocumentRequest},
+    project_settings::ProjectSettings,
+    search::SearchQuery,
 };
 use rope::TextSummary;
 use rpc::proto::{self, update_view};
@@ -46,7 +49,8 @@ use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, debug_panic, paths::PathExt, rel_path::RelPath};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
-    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, OpenOptions, OpenVisible, ToolbarItemLocation, ViewId,
+    Workspace, WorkspaceId,
     invalid_item_view::InvalidItemView,
     item::{FollowableItem, Item, ItemBufferKind, ItemEvent, ProjectItem, SaveOptions},
     searchable::{
@@ -2502,6 +2506,94 @@ fn compute_modified_ranges(
         merged.push(expanded);
     }
     merged
+}
+
+pub(crate) fn register_lsp_show_document_handler(
+    workspace: &mut Workspace,
+    window: Option<&mut Window>,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(window) = window else {
+        return;
+    };
+    let project = workspace.project().clone();
+    cx.subscribe_in(&project, window, |workspace, _, event, window, cx| {
+        if let project::Event::LanguageServerShowDocument(request) = event {
+            handle_lsp_show_document(workspace, request, window, cx);
+        }
+    })
+    .detach();
+}
+
+fn handle_lsp_show_document(
+    workspace: &mut Workspace,
+    request: &LanguageServerShowDocumentRequest,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let request = request.clone();
+    if request.external {
+        cx.open_url(request.uri.as_str());
+        cx.background_spawn(async move {
+            request.respond(true).await;
+        })
+        .detach();
+        return;
+    }
+    let Ok(abs_path) = request.uri.to_file_path() else {
+        log::error!(
+            "language server requested to show document with unsupported uri {}",
+            request.uri.as_str()
+        );
+        cx.background_spawn(async move {
+            request.respond(false).await;
+        })
+        .detach();
+        return;
+    };
+    let open_task = workspace.open_abs_path(
+        abs_path,
+        OpenOptions {
+            visible: Some(OpenVisible::None),
+            focus: Some(request.take_focus),
+            ..OpenOptions::default()
+        },
+        window,
+        cx,
+    );
+    cx.spawn_in(window, async move |_, cx| {
+        let success = match open_task.await {
+            Ok(item) => match item.downcast::<Editor>() {
+                Some(editor) => editor
+                    .update_in(cx, |editor, window, cx| {
+                        if let Some(selection) = request.selection {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let range = language::range_from_lsp(selection);
+                            let start = snapshot.point_utf16_to_offset(
+                                snapshot.clip_point_utf16(range.start, Bias::Left),
+                            );
+                            let end = snapshot.point_utf16_to_offset(
+                                snapshot.clip_point_utf16(range.end, Bias::Left),
+                            );
+                            editor.change_selections(
+                                SelectionEffects::scroll(Autoscroll::center()),
+                                window,
+                                cx,
+                                |selections| selections.select_ranges([start..end]),
+                            );
+                        }
+                    })
+                    .is_ok(),
+                None => true,
+            },
+            Err(error) => {
+                log::error!("failed to show document for a language server: {error:#}");
+                false
+            }
+        };
+        request.respond(success).await;
+    })
+    .detach();
 }
 
 #[cfg(test)]

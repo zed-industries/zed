@@ -1235,6 +1235,34 @@ impl LocalLspStore {
                 }
             })
             .detach();
+
+        language_server
+            .on_request::<lsp::request::ShowDocument, _, _>({
+                let this = lsp_store.clone();
+                move |params, cx| {
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        let (tx, rx) = async_channel::bounded(1);
+                        let request = LanguageServerShowDocumentRequest {
+                            uri: params.uri,
+                            external: params.external.unwrap_or(false),
+                            take_focus: params.take_focus.unwrap_or(false),
+                            selection: params.selection,
+                            response_channel: tx,
+                        };
+                        let did_update = this
+                            .update(&mut cx, |_, cx| {
+                                cx.emit(LspStoreEvent::LanguageServerShowDocument(request));
+                            })
+                            .is_ok();
+                        let success = did_update && rx.recv().await.unwrap_or(false);
+                        Ok(lsp::ShowDocumentResult { success })
+                    }
+                }
+            })
+            .detach();
+
         language_server
             .on_notification::<lsp::notification::ShowMessage, _>({
                 let this = lsp_store.clone();
@@ -4514,6 +4542,7 @@ pub enum LspStoreEvent {
         new_language: Option<Arc<Language>>,
     },
     Notification(String),
+    LanguageServerShowDocument(LanguageServerShowDocumentRequest),
     RefreshInlayHints {
         server_id: LanguageServerId,
     },
@@ -14968,6 +14997,30 @@ impl LanguageServerPromptRequest {
 impl PartialEq for LanguageServerPromptRequest {
     fn eq(&self, other: &Self) -> bool {
         self.message == other.message && self.actions == other.actions
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LanguageServerShowDocumentRequest {
+    pub uri: lsp::Uri,
+    pub external: bool,
+    pub take_focus: bool,
+    pub selection: Option<lsp::Range>,
+    pub(crate) response_channel: async_channel::Sender<bool>,
+}
+
+impl LanguageServerShowDocumentRequest {
+    pub async fn respond(self, success: bool) -> Option<()> {
+        self.response_channel.send(success).await.ok()
+    }
+}
+
+impl PartialEq for LanguageServerShowDocumentRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.uri == other.uri
+            && self.external == other.external
+            && self.take_focus == other.take_focus
+            && self.selection == other.selection
     }
 }
 

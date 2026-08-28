@@ -501,6 +501,38 @@ impl HeadlessProject {
                 })
                 .detach();
             }
+            LspStoreEvent::LanguageServerShowDocument(show_document_request) => {
+                let request = self
+                    .session
+                    .request(proto::LanguageServerShowDocumentRequest {
+                        project_id: REMOTE_SERVER_PROJECT_ID,
+                        uri: show_document_request.uri.as_str().to_owned(),
+                        external: show_document_request.external,
+                        take_focus: show_document_request.take_focus,
+                        selection_start: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.start.line,
+                                column: selection.start.character,
+                            }
+                        }),
+                        selection_end: show_document_request.selection.map(|selection| {
+                            proto::PointUtf16 {
+                                row: selection.end.line,
+                                column: selection.end.character,
+                            }
+                        }),
+                    });
+                let show_document_request = show_document_request.clone();
+                cx.background_spawn(async move {
+                    let success = request
+                        .await
+                        .map(|response| response.success)
+                        .unwrap_or(false);
+                    show_document_request.respond(success).await;
+                    anyhow::Ok(())
+                })
+                .detach();
+            }
             _ => {}
         }
     }

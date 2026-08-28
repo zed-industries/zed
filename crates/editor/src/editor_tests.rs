@@ -45927,3 +45927,164 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
         );
     });
 }
+
+#[gpui::test]
+async fn test_lsp_show_document(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let target_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("target.rs");
+    let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+    fs.as_fake()
+        .insert_file(&target_path, b"fn target() {}".to_vec())
+        .await;
+
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: lsp::Uri::from_file_path(&target_path).unwrap(),
+                external: None,
+                take_focus: Some(true),
+                selection: Some(lsp::Range::new(
+                    lsp::Position::new(0, 3),
+                    lsp::Position::new(0, 9),
+                )),
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        let editor = workspace
+            .active_item_as::<Editor>(cx)
+            .expect("an editor should be opened for the shown document");
+        editor.update(cx, |editor, cx| {
+            let path = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("a singleton buffer should be opened")
+                .read(cx)
+                .file()
+                .expect("the opened buffer should have a file")
+                .path()
+                .clone();
+            assert_eq!(path.as_ref(), rel_path("dir/target.rs"));
+            assert_eq!(
+                editor
+                    .selections
+                    .ranges::<Point>(&editor.display_snapshot(cx)),
+                vec![Point::new(0, 3)..Point::new(0, 9)]
+            );
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document_external(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let initial_item_id = cx
+        .update_workspace(|workspace, _, cx| workspace.active_item(cx).map(|item| item.item_id()));
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: "https://zed.dev/docs".parse::<lsp::Uri>().unwrap(),
+                external: Some(true),
+                take_focus: None,
+                selection: None,
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    assert_eq!(cx.opened_url(), Some("https://zed.dev/docs".to_string()));
+    cx.run_until_parked();
+    cx.update_workspace(|workspace, _, cx| {
+        assert_eq!(
+            workspace.active_item(cx).map(|item| item.item_id()),
+            initial_item_id,
+            "external documents should not open any workspace items"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document_without_take_focus(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let target_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("target.rs");
+    let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+    fs.as_fake()
+        .insert_file(&target_path, b"fn target() {}".to_vec())
+        .await;
+
+    let initial_editor = cx.editor.clone();
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: lsp::Uri::from_file_path(&target_path).unwrap(),
+                external: None,
+                take_focus: None,
+                selection: None,
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: true });
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        let opened_editor = workspace
+            .active_item_as::<Editor>(cx)
+            .expect("an editor should be opened for the shown document");
+        assert_ne!(
+            opened_editor.entity_id(),
+            initial_editor.entity_id(),
+            "the shown document should become the active item"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_lsp_show_document_unsupported_uri(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+    let response = cx
+        .lsp
+        .server
+        .request::<lsp::request::ShowDocument>(
+            lsp::ShowDocumentParams {
+                uri: "untitled:some-document".parse::<lsp::Uri>().unwrap(),
+                external: None,
+                take_focus: None,
+                selection: None,
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .expect("show document request should not error");
+    assert_eq!(response, lsp::ShowDocumentResult { success: false });
+}
