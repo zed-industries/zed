@@ -6299,7 +6299,9 @@ fn test_is_valid_anchor_past_last_excerpt_for_buffer(cx: &mut TestAppContext) {
 /// - diff base anchors' validity filter flipping comparison results when a
 ///   base text edit deleted the region one anchor of a pair pointed into
 ///   (`test_folds_stay_sorted_when_diff_base_text_replaced` in the
-///   editor's block_map tests).
+///   editor's block_map tests);
+/// - plain anchors resolved before phantom deleted-hunk rows they compare
+///   after (`test_collapsed_plain_anchor_resolves_past_deleted_hunk_rows`).
 #[gpui::property_test(config = proptest::prelude::ProptestConfig {
     failure_persistence: Some(Box::new(
         proptest::test_runner::FileFailurePersistence::WithSource("proptest-regressions"),
@@ -6571,6 +6573,106 @@ async fn test_stale_path_anchor_comparison_tracks_resolution(cx: &mut TestAppCon
         resolution_consistent,
         "stale anchor {stale:?} resolves to {stale_offset:?} and fresh anchor {fresh:?} \
          resolves to {fresh_offset:?}, but they compare {ordering:?}"
+    );
+}
+
+/// Distilled from `test_anchor_comparison_tracks_resolution`'s second
+/// shrunk counterexample. An expanded deleted hunk's phantom rows occupy
+/// its attachment anchor's tie space in the buffer's CRDT order: anchor
+/// comparison places a plain buffer anchor after the hunk's rows exactly
+/// when it sorts past the attachment anchor, which can only happen once
+/// the buffer text separating them has been deleted. Resolution must
+/// place the anchor on the same side. It used to depend on which
+/// transform the walk's cursor rested on: arriving on the deleted hunk
+/// itself applied the CRDT rule, but arriving on the preceding buffer
+/// content returned early, parking the anchor before rows it compares
+/// after — so `to_offset` and a shared-cursor `summaries_for_anchors`
+/// disagreed about the same anchor, and comparison-sorted consumers fed
+/// forward-only cursors positions that moved backward.
+#[gpui::test]
+async fn test_collapsed_plain_anchor_resolves_past_deleted_hunk_rows(cx: &mut TestAppContext) {
+    let base_text = "DEL1\nDEL2\nbbb\nccc\nddd\n";
+    let buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+    let diff_a = cx.new(|cx| {
+        BufferDiff::new_with_base_text(base_text, &buffer_a.read(cx).text_snapshot(), cx)
+    });
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
+        multibuffer.set_all_diff_hunks_expanded(cx);
+        multibuffer
+    });
+    multibuffer.update(cx, |multibuffer, cx| {
+        let max_point_a = buffer_a.read(cx).max_point();
+        multibuffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            buffer_a.clone(),
+            [Point::zero()..max_point_a],
+            0,
+            cx,
+        );
+        multibuffer.add_diff(diff_a.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // Delete the first "d" (insertion offset 8), then anchor before the last
+    // "d" (insertion offset 10).
+    buffer_a.update(cx, |buffer, cx| {
+        buffer.edit([(8..9, "")], None, cx);
+    });
+    cx.run_until_parked();
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\ndd\n");
+    let plain_anchor = snapshot.anchor_at(MultiBufferOffset(19), Bias::Left);
+
+    // Recompute the diff against the edited buffer: a "-ddd/+dd" hunk
+    // appears, attached at the buffer position both anchors will collapse
+    // to. Anchor one character into its phantom "ddd" row.
+    let buffer_a_text_snapshot = buffer_a.read_with(cx, |buffer, _| buffer.text_snapshot());
+    diff_a
+        .update(cx, |diff, cx| {
+            diff.set_base_text(Some(base_text.into()), buffer_a_text_snapshot, cx)
+        })
+        .await;
+    cx.run_until_parked();
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\nddd\ndd\n");
+    let hunk_anchor = snapshot.anchor_at(MultiBufferOffset(19), Bias::Right);
+
+    assert_eq!(plain_anchor.cmp(&hunk_anchor, &snapshot), cmp::Ordering::Greater);
+    assert_eq!(plain_anchor.to_offset(&snapshot), MultiBufferOffset(23));
+    assert_eq!(hunk_anchor.to_offset(&snapshot), MultiBufferOffset(19));
+
+    // Delete the "d" separating the two anchors (insertion offset 9). Their
+    // text anchors now both collapse to the seam where the phantom row
+    // hangs, and only the CRDT order remembers which side of it each
+    // belongs on.
+    buffer_a.update(cx, |buffer, cx| {
+        buffer.edit([(8..9, "")], None, cx);
+    });
+    cx.run_until_parked();
+    let snapshot = multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+    assert_eq!(snapshot.text(), "DEL1\nDEL2\nbbb\nccc\nddd\nd\n");
+
+    assert_eq!(
+        plain_anchor.cmp(&hunk_anchor, &snapshot),
+        cmp::Ordering::Greater,
+        "comparison must not change: the buffer order of the anchors is immutable"
+    );
+    assert_eq!(
+        hunk_anchor.to_offset(&snapshot),
+        MultiBufferOffset(19),
+        "the hunk-interior anchor stays one character into the phantom row"
+    );
+    assert_eq!(
+        plain_anchor.to_offset(&snapshot),
+        MultiBufferOffset(22),
+        "the plain anchor sorts past the hunk's attachment anchor, so it must \
+         resolve past the phantom rows"
+    );
+    assert_eq!(
+        snapshot.summaries_for_anchors::<MultiBufferOffset, _>(&[hunk_anchor, plain_anchor]),
+        vec![MultiBufferOffset(19), MultiBufferOffset(22)],
+        "the shared-cursor batch path must agree with individual resolution"
     );
 }
 

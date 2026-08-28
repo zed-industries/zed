@@ -4993,8 +4993,27 @@ impl MultiBufferSnapshot {
                 _ => {
                     // On a BufferContent (or no transform). If the anchor
                     // carries a diff_base_anchor it needs a DeletedHunk, so
-                    // advance to find one.
-                    if at_transform_end && anchor.diff_base_anchor.is_some() {
+                    // advance to find one. A plain anchor at the seam also
+                    // advances when the next transform is a deleted hunk for
+                    // its own buffer: whether it belongs before or after that
+                    // hunk's rows depends on how it compares with the hunk's
+                    // attachment anchor, and the DeletedHunk arm owns that
+                    // decision. Returning early here instead would make the
+                    // answer depend on which side of the seam the cursor
+                    // rested: resolving such an anchor alone parked it before
+                    // the hunk, while a shared cursor that had just resolved a
+                    // hunk-interior anchor placed it after, contradicting
+                    // anchor comparison (which orders both cases by the
+                    // buffer's CRDT order, matching what the DeletedHunk arm
+                    // computes).
+                    if at_transform_end
+                        && (anchor.diff_base_anchor.is_some()
+                            || matches!(
+                                diff_transforms.next_item(),
+                                Some(DiffTransform::DeletedHunk { buffer_id, .. })
+                                    if *buffer_id == anchor.text_anchor.buffer_id
+                            ))
+                    {
                         diff_transforms.next();
                         continue;
                     }
