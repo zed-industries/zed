@@ -180,9 +180,16 @@ impl GitRepository for FakeGitRepository {
     fn load_commit(
         &self,
         _commit: String,
+        _ignore_shallow_boundary: bool,
         _cx: AsyncApp,
     ) -> BoxFuture<'_, Result<git::repository::CommitDiff>> {
-        async { Ok(git::repository::CommitDiff { files: Vec::new() }) }.boxed()
+        async {
+            Ok(git::repository::CommitDiff {
+                files: Vec::new(),
+                is_shallow_boundary: false,
+            })
+        }
+        .boxed()
     }
 
     fn set_index_text(
@@ -1064,6 +1071,14 @@ impl GitRepository for FakeGitRepository {
     fn stash_paths(
         &self,
         _paths: Vec<RepoPath>,
+        _message: Option<String>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
+    fn stash_staged(
+        &self,
         _message: Option<String>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {

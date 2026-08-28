@@ -530,6 +530,7 @@ pub struct CommitDetails {
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
+    pub is_shallow_boundary: bool,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -622,6 +623,32 @@ async fn load_commit_object<R: smol::io::AsyncBufRead + Unpin>(
     }
 }
 
+async fn read_shallow_file(shallow_file_path: &Path) -> Result<Option<String>> {
+    match smol::fs::read_to_string(shallow_file_path).await {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).context("reading shallow file"),
+    }
+}
+
+async fn is_shallow_boundary_commit(
+    git: &GitBinary,
+    shallow_file_path: &Path,
+    commit: &str,
+) -> Result<bool> {
+    let Some(shallow_contents) = read_shallow_file(shallow_file_path).await? else {
+        return Ok(false);
+    };
+
+    let oid = git
+        .run(&["rev-parse", "--verify", &format!("{commit}^{{commit}}")])
+        .await
+        .context("resolving commit for shallow boundary check")?;
+    Ok(shallow_contents
+        .lines()
+        .any(|line| line.trim() == oid.trim()))
+}
+
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
     pub name: SharedString,
@@ -639,18 +666,22 @@ pub enum ResetMode {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum FetchOptions {
     All,
+    Unshallow,
     Remote(Remote),
 }
 
 impl FetchOptions {
     pub fn to_proto(&self) -> Option<String> {
         match self {
-            FetchOptions::All => None,
+            FetchOptions::All | FetchOptions::Unshallow => None,
             FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
         }
     }
 
-    pub fn from_proto(remote_name: Option<String>) -> Self {
+    pub fn from_proto(remote_name: Option<String>, unshallow: bool) -> Self {
+        if unshallow {
+            return FetchOptions::Unshallow;
+        }
         match remote_name {
             Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
             None => FetchOptions::All,
@@ -660,6 +691,7 @@ impl FetchOptions {
     pub fn name(&self) -> SharedString {
         match self {
             Self::All => "Fetch all remotes".into(),
+            Self::Unshallow => "Fetch missing history".into(),
             Self::Remote(remote) => remote.name.clone(),
         }
     }
@@ -669,6 +701,7 @@ impl std::fmt::Display for FetchOptions {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FetchOptions::All => write!(f, "--all"),
+            FetchOptions::Unshallow => write!(f, "--unshallow"),
             FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
         }
     }
@@ -878,7 +911,12 @@ pub trait GitRepository: Send + Sync {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
+    fn load_commit(
+        &self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(
         &self,
         path: RepoPath,
@@ -937,6 +975,12 @@ pub trait GitRepository: Send + Sync {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
+        message: Option<String>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_staged(
+        &self,
         message: Option<String>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
@@ -1335,6 +1379,19 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+fn parse_remote_urls(stdout: &str) -> HashMap<String, String> {
+    let mut urls = HashMap::default();
+    for line in stdout.lines() {
+        if let Some((line, suffix)) = line.rsplit_once(" (fetch)")
+            && (suffix.is_empty() || suffix.starts_with(" [") && suffix.ends_with(']'))
+            && let Some((name, url)) = line.split_once(char::is_whitespace)
+        {
+            urls.insert(name.to_string(), url.trim_start().to_string());
+        }
+    }
+    urls
+}
+
 impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
         self.git_dir.clone()
@@ -1378,9 +1435,24 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>> {
+    fn load_commit(
+        &self,
+        commit: String,
+        ignore_shallow_boundary: bool,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>> {
         let git = self.git_binary();
+        let shallow_file_path = self.common_dir.join("shallow");
         cx.background_spawn(async move {
+            if !ignore_shallow_boundary
+                && is_shallow_boundary_commit(&git, &shallow_file_path, &commit).await?
+            {
+                return Ok(CommitDiff {
+                    files: Vec::new(),
+                    is_shallow_boundary: true,
+                });
+            }
+
             let show_output = git
                 .build_command(&[
                     "show",
@@ -1469,7 +1541,10 @@ impl GitRepository for RealGitRepository {
                 })
             }
 
-            Ok(CommitDiff { files })
+            Ok(CommitDiff {
+                files,
+                is_shallow_boundary: false,
+            })
         })
         .boxed()
     }
@@ -1673,17 +1748,11 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let mut urls = HashMap::default();
                 if let Ok(stdout) = git.run(&["remote", "-v"]).await {
-                    for line in stdout.lines() {
-                        if let Some(line) = line.strip_suffix(" (fetch)")
-                            && let Some((name, url)) = line.split_once(char::is_whitespace)
-                        {
-                            urls.insert(name.to_string(), url.trim_start().to_string());
-                        }
-                    }
+                    parse_remote_urls(&stdout)
+                } else {
+                    HashMap::default()
                 }
-                urls
             })
             .boxed()
     }
@@ -2561,6 +2630,33 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn stash_staged(
+        &self,
+        message: Option<String>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git = self.git_binary_in_worktree();
+        self.executor
+            .spawn(async move {
+                let git = git?;
+                // `--staged` cannot be expressed as a pathspec: a partially staged
+                // file would otherwise have its unstaged hunks stashed too.
+                let mut args = vec!["stash", "push", "--quiet", "--staged"];
+                if let Some(message) = message.as_deref() {
+                    args.extend_from_slice(&["--message", message]);
+                }
+                let output = git.build_command(&args).envs(env.iter()).output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash staged changes (requires git 2.35 or newer):\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
     fn stash_pop(
         &self,
         index: Option<usize>,
@@ -3404,6 +3500,7 @@ impl GitRepository for RealGitRepository {
         commit_limit: usize,
     ) -> BoxFuture<'_, Result<Vec<FileHistoryChangedFileSets>>> {
         let git = self.git_binary();
+        let shallow_file_path = self.common_dir.join("shallow");
 
         async move {
             if paths.is_empty() {
@@ -3422,7 +3519,7 @@ impl GitRepository for RealGitRepository {
                 "--no-renames",
                 "--name-only",
                 "-z",
-                "--format=%x1e",
+                "--format=%x1e%H",
                 "--",
             ]
             .map(OsString::from)
@@ -3436,8 +3533,22 @@ impl GitRepository for RealGitRepository {
                 String::from_utf8_lossy(&output.stderr)
             );
 
+            let shallow_boundary_oids = read_shallow_file(&shallow_file_path)
+                .await?
+                .map(|contents| {
+                    contents
+                        .lines()
+                        .map(|line| line.trim().to_string())
+                        .collect::<HashSet<_>>()
+                })
+                .unwrap_or_default();
+
             let stdout = String::from_utf8_lossy(&output.stdout);
-            Ok(parse_file_history_changed_files_output(&stdout, &paths))
+            Ok(parse_file_history_changed_files_output(
+                &stdout,
+                &paths,
+                &shallow_boundary_oids,
+            ))
         }
         .boxed()
     }
@@ -3554,12 +3665,17 @@ async fn read_single_commit_response<R: smol::io::AsyncBufRead + Unpin>(
 fn parse_file_history_changed_files_output(
     output: &str,
     queried_paths: &[RepoPath],
+    shallow_boundary_oids: &HashSet<String>,
 ) -> Vec<FileHistoryChangedFileSets> {
     let mut histories = vec![FileHistoryChangedFileSets::default(); queried_paths.len()];
 
     for record in output.split('\x1e') {
-        let changed_files = record
-            .split('\0')
+        let mut fields = record.split('\0');
+        let sha = fields.next().unwrap_or_default().trim();
+        if shallow_boundary_oids.contains(sha) {
+            continue;
+        }
+        let changed_files = fields
             .filter_map(|field| {
                 let path = field.trim_start_matches('\n');
                 if path.is_empty() {
@@ -3606,6 +3722,7 @@ fn parse_initial_graph_output<'a>(
             } else {
                 ref_names_str
                     .split(", ")
+                    .filter(|decoration| *decoration != "grafted" && *decoration != "replaced")
                     .map(|s| SharedString::from(s.to_string()))
                     .collect()
             };
@@ -4515,7 +4632,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "type change"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load type-changed commit");
         assert_eq!(commit_diff.files.len(), 1);
@@ -4568,7 +4685,7 @@ mod tests {
         .expect("failed to open repository");
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that adds a gitlink");
         assert_eq!(commit_diff.files.len(), 2);
@@ -4598,7 +4715,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "update submodule"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that updates a gitlink");
         let [gitlink] = commit_diff.files.as_slice() else {
@@ -4619,7 +4736,7 @@ mod tests {
         git_command(repo_dir.path(), ["commit", "-m", "remove submodule"]);
 
         let commit_diff = repository
-            .load_commit("HEAD".to_string(), cx.to_async())
+            .load_commit("HEAD".to_string(), false, cx.to_async())
             .await
             .expect("failed to load commit that deletes a gitlink");
         let [gitlink] = commit_diff.files.as_slice() else {
@@ -4632,6 +4749,86 @@ mod tests {
         );
         assert_eq!(gitlink.new_content, None);
         assert!(!gitlink.is_binary);
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_shallow_boundary(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let source_dir = tempfile::tempdir().expect("failed to create source repository");
+        git_init_repo(source_dir.path());
+        fs::write(source_dir.path().join("a.txt"), "one\n").expect("failed to write a.txt");
+        git_command(source_dir.path(), ["add", "a.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "first"]);
+        fs::write(source_dir.path().join("a.txt"), "two\n").expect("failed to update a.txt");
+        fs::write(source_dir.path().join("b.txt"), "new\n").expect("failed to write b.txt");
+        git_command(source_dir.path(), ["add", "a.txt", "b.txt"]);
+        git_command(source_dir.path(), ["commit", "-m", "second"]);
+
+        let clone_dir = tempfile::tempdir().expect("failed to create clone directory");
+        git_command(
+            clone_dir.path(),
+            [
+                "clone".to_string(),
+                "--depth=1".to_string(),
+                format!("file://{}", source_dir.path().display()),
+                "shallow".to_string(),
+            ],
+        );
+
+        let repository = RealGitRepository::new(
+            &clone_dir.path().join("shallow").join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open shallow repository");
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load boundary commit");
+        assert!(commit_diff.is_shallow_boundary);
+        assert_eq!(commit_diff.files.len(), 0);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), true, cx.to_async())
+            .await
+            .expect("failed to load boundary commit snapshot");
+        assert!(!commit_diff.is_shallow_boundary);
+        let files = commit_diff
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_unix_str().to_owned(),
+                    file.old_content.clone(),
+                    file.status(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files,
+            vec![
+                ("a.txt".to_string(), None, CommitFileStatus::Added),
+                ("b.txt".to_string(), None, CommitFileStatus::Added),
+            ]
+        );
+
+        let source_repository = RealGitRepository::new(
+            &source_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open source repository");
+        let commit_diff = source_repository
+            .load_commit("HEAD~1".to_string(), false, cx.to_async())
+            .await
+            .expect("failed to load root commit");
+        assert!(!commit_diff.is_shallow_boundary);
+        assert_eq!(commit_diff.files.len(), 1);
     }
 
     #[gpui::test]
@@ -4962,12 +5159,13 @@ mod tests {
             RepoPath::new("src/b.rs").unwrap(),
         ];
         let output = concat!(
-            "\x1e\0\nsrc/a.rs\0src/shared.rs\0",
-            "\x1e\0\nsrc/b.rs\0src/shared.rs\0",
-            "\x1e\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
+            "\x1e1111111111111111111111111111111111111111\0\nsrc/a.rs\0src/shared.rs\0",
+            "\x1e2222222222222222222222222222222222222222\0\nsrc/b.rs\0src/shared.rs\0",
+            "\x1e3333333333333333333333333333333333333333\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
         );
 
-        let histories = parse_file_history_changed_files_output(output, &queried_paths);
+        let histories =
+            parse_file_history_changed_files_output(output, &queried_paths, &HashSet::default());
 
         assert_eq!(histories.len(), 2);
         assert_eq!(
@@ -4996,6 +5194,44 @@ mod tests {
                     RepoPath::new("src/b.rs").unwrap(),
                     RepoPath::new("src/shared.rs").unwrap(),
                 ],
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_file_history_changed_files_output_skips_shallow_boundary() {
+        let queried_paths = vec![RepoPath::new("src/a.rs").unwrap()];
+        let output = concat!(
+            "\x1e1111111111111111111111111111111111111111\0\nsrc/a.rs\0src/shared.rs\0",
+            "\x1e2222222222222222222222222222222222222222\0\nsrc/a.rs\0src/b.rs\0src/shared.rs\0",
+        );
+        let shallow_boundary_oids =
+            HashSet::from_iter(["2222222222222222222222222222222222222222".to_string()]);
+
+        let histories =
+            parse_file_history_changed_files_output(output, &queried_paths, &shallow_boundary_oids);
+
+        assert_eq!(histories.len(), 1);
+        assert_eq!(
+            histories[0].file_sets,
+            vec![vec![
+                RepoPath::new("src/a.rs").unwrap(),
+                RepoPath::new("src/shared.rs").unwrap(),
+            ]]
+        );
+    }
+
+    #[test]
+    fn test_parse_initial_graph_output_filters_graft_decorations() {
+        let line = "0f36a166633a057bf7dd660508d237cad2606cab\x00\x00grafted, HEAD -> refs/heads/main, refs/remotes/origin/main";
+        let commits = parse_initial_graph_output([line].into_iter());
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].parents.len(), 0);
+        assert_eq!(
+            commits[0].ref_names,
+            vec![
+                SharedString::from("HEAD -> refs/heads/main"),
+                SharedString::from("refs/remotes/origin/main"),
             ]
         );
     }
@@ -6452,6 +6688,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_remote_urls() {
+        let stdout = concat!(
+            "origin\thttps://github.com/zed-industries/zed.git (fetch) [blob:none]\n",
+            "origin\thttps://github.com/zed-industries/zed.git (push)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (fetch)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (push)\n",
+            "a\t/x (fetch) dir (fetch)\n",
+            "a\t/x (fetch) dir (push)\n",
+            "archive\t/tmp/remote [archive].git (fetch)\n",
+            "archive\t/tmp/remote [archive].git (push)\n",
+        );
+
+        let remote_urls = parse_remote_urls(stdout);
+        assert_eq!(remote_urls.len(), 4);
+        assert_eq!(
+            remote_urls.get("origin").map(String::as_str),
+            Some("https://github.com/zed-industries/zed.git")
+        );
+        assert_eq!(
+            remote_urls.get("upstream").map(String::as_str),
+            Some("/Users/user/My Projects/upstream.git")
+        );
+        assert_eq!(
+            remote_urls.get("a").map(String::as_str),
+            Some("/x (fetch) dir")
+        );
+        assert_eq!(
+            remote_urls.get("archive").map(String::as_str),
+            Some("/tmp/remote [archive].git")
+        );
+    }
+
     #[gpui::test]
     async fn test_remote_urls(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -6488,6 +6757,12 @@ mod tests {
         ])
         .await
         .unwrap();
+        git.run(&["config", "remote.origin.promisor", "true"])
+            .await
+            .unwrap();
+        git.run(&["config", "remote.origin.partialclonefilter", "blob:none"])
+            .await
+            .unwrap();
 
         let remote_urls = repo.remote_urls().await;
         assert_eq!(remote_urls.len(), 2);

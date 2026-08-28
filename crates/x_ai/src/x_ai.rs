@@ -10,6 +10,10 @@ pub enum Model {
     #[default]
     #[serde(rename = "grok-4.3", alias = "grok-4.3-latest")]
     Grok43,
+    #[serde(rename = "grok-4.5", alias = "grok-4.5-latest")]
+    Grok45,
+    #[serde(rename = "grok-4.6", alias = "grok-4.6-latest")]
+    Grok46,
     #[serde(rename = "grok-4.20-0309-reasoning")]
     Grok420Reasoning,
     #[serde(rename = "grok-4.20-0309-non-reasoning")]
@@ -36,6 +40,8 @@ impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "grok-4.3" => Ok(Self::Grok43),
+            "grok-4.5" => Ok(Self::Grok45),
+            "grok-4.6" => Ok(Self::Grok46),
             "grok-4.20-0309-reasoning" => Ok(Self::Grok420Reasoning),
             "grok-4.20-0309-non-reasoning" => Ok(Self::Grok420NonReasoning),
             _ => anyhow::bail!("invalid model id '{id}'"),
@@ -45,6 +51,8 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::Grok43 => "grok-4.3",
+            Self::Grok45 => "grok-4.5",
+            Self::Grok46 => "grok-4.6",
             Self::Grok420Reasoning => "grok-4.20-0309-reasoning",
             Self::Grok420NonReasoning => "grok-4.20-0309-non-reasoning",
             Self::Custom { name, .. } => name,
@@ -54,6 +62,8 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::Grok43 => "Grok 4.3",
+            Self::Grok45 => "Grok 4.5",
+            Self::Grok46 => "Grok 4.6",
             Self::Grok420Reasoning => "Grok 4.20 Reasoning",
             Self::Grok420NonReasoning => "Grok 4.20 (Non-Reasoning)",
             Self::Custom {
@@ -65,6 +75,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Grok43 => 1_000_000,
+            Self::Grok45 | Self::Grok46 => 500_000,
             Self::Grok420Reasoning | Self::Grok420NonReasoning => 2_000_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -73,6 +84,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => Some(64_000),
+            Self::Grok45 | Self::Grok46 => None,
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
@@ -81,7 +93,11 @@ impl Model {
 
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
+            Self::Grok43
+            | Self::Grok45
+            | Self::Grok46
+            | Self::Grok420Reasoning
+            | Self::Grok420NonReasoning => true,
             Self::Custom {
                 parallel_tool_calls: Some(support),
                 ..
@@ -92,7 +108,11 @@ impl Model {
 
     pub fn requires_json_schema_subset(&self) -> bool {
         match self {
-            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
+            Self::Grok43
+            | Self::Grok45
+            | Self::Grok46
+            | Self::Grok420Reasoning
+            | Self::Grok420NonReasoning => true,
             Self::Custom { .. } => false,
         }
     }
@@ -103,7 +123,11 @@ impl Model {
 
     pub fn supports_tool(&self) -> bool {
         match self {
-            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
+            Self::Grok43
+            | Self::Grok45
+            | Self::Grok46
+            | Self::Grok420Reasoning
+            | Self::Grok420NonReasoning => true,
             Self::Custom {
                 supports_tools: Some(support),
                 ..
@@ -114,7 +138,11 @@ impl Model {
 
     pub fn supports_images(&self) -> bool {
         match self {
-            Self::Grok43 | Self::Grok420Reasoning | Self::Grok420NonReasoning => true,
+            Self::Grok43
+            | Self::Grok45
+            | Self::Grok46
+            | Self::Grok420Reasoning
+            | Self::Grok420NonReasoning => true,
             Self::Custom {
                 supports_images: Some(support),
                 ..
@@ -125,7 +153,7 @@ impl Model {
 
     pub fn supports_reasoning_effort(&self) -> bool {
         match self {
-            Self::Grok43 => true,
+            Self::Grok43 | Self::Grok45 | Self::Grok46 => true,
             Self::Grok420Reasoning | Self::Grok420NonReasoning | Self::Custom { .. } => false,
         }
     }

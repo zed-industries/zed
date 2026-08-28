@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
+    os::windows::ffi::{OsStrExt as _, OsStringExt as _},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::{
@@ -11,7 +12,7 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
-use gpui_util::{ResultExt, get_windows_system_shell, new_std_command};
+use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -78,7 +79,7 @@ pub(crate) struct WindowsPlatformState {
 #[derive(Default)]
 struct PlatformCallbacks {
     open_urls: Cell<Option<Box<dyn FnMut(Vec<String>)>>>,
-    quit: Cell<Option<Box<dyn FnMut()>>>,
+    quit: Cell<Option<Box<dyn FnMut() -> bool>>>,
     reopen: Cell<Option<Box<dyn FnMut()>>>,
     app_menu_action: Cell<Option<Box<dyn FnMut(&dyn Action)>>>,
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
@@ -371,6 +372,39 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     (result.0 == 0).then_some(())
 }
 
+fn encode_restart_arguments(arguments: &[OsString]) -> OsString {
+    // `Start-Process` accepts a single native command line, so quote each argument according to
+    // the Windows argv parsing rules before passing the complete string through the environment.
+    let mut encoded = Vec::new();
+
+    for (index, argument) in arguments.iter().enumerate() {
+        if index > 0 {
+            encoded.push(b' ' as u16);
+        }
+        encoded.push(b'"' as u16);
+
+        let mut backslash_count = 0;
+        for code_unit in argument.encode_wide() {
+            if code_unit == b'\\' as u16 {
+                backslash_count += 1;
+            } else {
+                if code_unit == b'"' as u16 {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2 + 1));
+                } else {
+                    encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count));
+                }
+                backslash_count = 0;
+                encoded.push(code_unit);
+            }
+        }
+
+        encoded.extend(std::iter::repeat_n(b'\\' as u16, backslash_count * 2));
+        encoded.push(b'"' as u16);
+    }
+
+    OsString::from_wide(&encoded)
+}
+
 impl Platform for WindowsPlatform {
     fn background_executor(&self) -> BackgroundExecutor {
         self.background_executor.clone()
@@ -426,8 +460,12 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        self.inner
-            .with_callback(|callbacks| &callbacks.quit, |callback| callback());
+        self.inner.with_callback(
+            |callbacks| &callbacks.quit,
+            |callback| {
+                callback();
+            },
+        );
     }
 
     fn quit(&self) {
@@ -436,44 +474,58 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, binary_path: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>, arguments: Vec<OsString>) {
         let pid = std::process::id();
         let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
-        let script = format!(
-            r#"
-            $pidToWaitFor = {}
-            $exePath = "{}"
+        let script = r#"
+            $pidToWaitFor = $env:ZED_RESTART_PID
+            $exePath = $env:ZED_RESTART_EXECUTABLE
+            $argumentList = $env:ZED_RESTART_ARGUMENTS
 
-            while ($true) {{
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_PID", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_EXECUTABLE", $null)
+            [Environment]::SetEnvironmentVariable("ZED_RESTART_ARGUMENTS", $null)
+
+            while ($true) {
                 $process = Get-Process -Id $pidToWaitFor -ErrorAction SilentlyContinue
-                if (-not $process) {{
-                    Start-Process -FilePath $exePath
+                if (-not $process) {
+                    if ([string]::IsNullOrEmpty($argumentList)) {
+                        Start-Process -FilePath $exePath
+                    } else {
+                        Start-Process -FilePath $exePath -ArgumentList $argumentList
+                    }
                     break
-                }}
+                }
                 Start-Sleep -Seconds 0.1
-            }}
-            "#,
-            pid,
-            app_path.display(),
-        );
+            }
+            "#;
 
         // Defer spawning to the foreground executor so it runs after the
         // current `AppCell` borrow is released. On Windows, `Command::spawn()`
         // can pump the Win32 message loop (via `CreateProcessW`), which
         // re-enters message handling possibly resulting in another mutable
         // borrow of the `AppCell` ending up with a double borrow panic
+        let Some(powershell) = get_powershell() else {
+            log::error!("failed to restart: PowerShell is unavailable");
+            return;
+        };
         self.foreground_executor
             .spawn(async move {
+                let mut command = new_std_command(powershell);
+                let arguments = encode_restart_arguments(&arguments);
+                command
+                    .arg("-command")
+                    .arg(script)
+                    .env("ZED_RESTART_PID", pid.to_string())
+                    .env("ZED_RESTART_EXECUTABLE", app_path)
+                    .env("ZED_RESTART_ARGUMENTS", arguments);
                 #[allow(
                     clippy::disallowed_methods,
                     reason = "We are restarting ourselves, using std command thus is fine"
                 )]
-                let restart_process = new_std_command(get_windows_system_shell())
-                    .arg("-command")
-                    .arg(script)
-                    .spawn();
+                let restart_process = command.spawn();
 
                 match restart_process {
                     Ok(_) => unsafe { PostQuitMessage(0) },
@@ -623,7 +675,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.state.callbacks.quit.set(Some(callback));
     }
 
@@ -953,7 +1005,8 @@ impl WindowsPlatformInner {
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
-            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_GPU_DEVICE_LOST
+            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
@@ -978,8 +1031,27 @@ impl WindowsPlatformInner {
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
+    }
+
+    fn handle_end_session(&self) -> Option<isize> {
+        let mut shutdown_completed = false;
+        self.with_callback(
+            |callbacks| &callbacks.quit,
+            |callback| shutdown_completed = callback(),
+        );
+        log::logger().flush();
+        if shutdown_completed {
+            std::process::exit(0);
+        }
+
+        // Shutdown couldn't run synchronously, since the AppCell is already borrowed.
+        // Windows may terminate the application as soon as we return from this handler, but if we post a WM_QUIT message now,
+        // we may get to gracefully shut down the app before we're terminated by the OS.
+        unsafe { PostQuitMessage(0) };
+        Some(0)
     }
 
     fn close_one_window(&self, target_window: HWND) -> bool {
@@ -1493,8 +1565,28 @@ unsafe extern "system" fn window_procedure(
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::{OsStr, OsString};
+
     use crate::{read_from_clipboard, write_to_clipboard};
     use gpui::ClipboardItem;
+
+    use super::encode_restart_arguments;
+
+    #[test]
+    fn test_encode_restart_arguments() {
+        assert_eq!(encode_restart_arguments(&[]), OsStr::new(""));
+        assert_eq!(
+            encode_restart_arguments(&[
+                OsString::from("--user-data-dir"),
+                OsString::from(r"C:\Zed Data"),
+            ]),
+            OsStr::new(r#""--user-data-dir" "C:\Zed Data""#)
+        );
+        assert_eq!(
+            encode_restart_arguments(&[OsString::from(r"C:\")]),
+            OsStr::new(r#""C:\\""#)
+        );
+    }
 
     #[test]
     fn test_clipboard() {

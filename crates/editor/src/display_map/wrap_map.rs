@@ -2,7 +2,7 @@ use super::{
     Highlights,
     dimensions::RowDelta,
     fold_map::{Chunk, FoldRows},
-    invisibles::{is_invisible, replacement},
+    invisibles::{is_invisible, is_standalone_grapheme, replacement},
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 
@@ -23,7 +23,6 @@ use std::{
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::Patch;
-use unicode_segmentation::GraphemeCursor;
 
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<WrapRow>;
@@ -142,15 +141,6 @@ impl LineFragmentBuilder {
     }
 }
 
-fn is_standalone_grapheme(text: &str, start: usize, end: usize) -> bool {
-    let mut cursor = GraphemeCursor::new(start, text.len(), true);
-    if cursor.is_boundary(text, 0) != Ok(true) {
-        return false;
-    }
-    cursor.set_cursor(end);
-    cursor.is_boundary(text, 0) == Ok(true)
-}
-
 pub struct WrapChunks<'a> {
     input_chunks: tab_map::TabChunks<'a>,
     input_chunk: Chunk<'a>,
@@ -213,9 +203,8 @@ impl WrapMap {
         (handle, snapshot)
     }
 
-    #[cfg(test)]
     pub fn is_rewrapping(&self) -> bool {
-        self.background_task.is_some()
+        self.background_task.is_some() || (self.wrap_width.is_some() && self.snapshot.interpolated)
     }
 
     #[ztracing::instrument(skip_all)]
@@ -235,6 +224,13 @@ impl WrapMap {
             self.snapshot.interpolated = false;
         }
 
+        debug_assert!(
+            self.background_task.is_some()
+                || self.wrap_width.is_none()
+                || !self.snapshot.interpolated,
+            "an interpolated snapshot must always have a background task rewrapping it, \
+             otherwise is_rewrapping never settles and frozen scrollbar ranges leak"
+        );
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
@@ -378,7 +374,7 @@ impl WrapMap {
         if let Some(wrap_width) = self.wrap_width
             && self.background_task.is_none()
         {
-            let mut pending_edits = self.pending_edits.clone();
+            let pending_edits = self.pending_edits.clone();
             let mut snapshot = self.snapshot.clone();
             let text_system = cx.text_system().clone();
             let (font, font_size) = self.font_with_size.clone();
@@ -386,20 +382,24 @@ impl WrapMap {
                 LineFragmentBuilder::new(text_system.clone(), &font, font_size);
             let mut line_wrapper = text_system.line_wrapper(font, font_size);
 
-            if pending_edits.len() == 1
-                && let Some((_, tab_edits)) = pending_edits.back()
-                && let [edit] = &**tab_edits
-                && ((edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
-                    < WRAP_YIELD_ROW_INTERVAL
-                && let Some((tab_snapshot, tab_edits)) = pending_edits.pop_back()
-            {
-                let wrap_edits = gpui::block_on(snapshot.update(
-                    tab_snapshot,
-                    &tab_edits,
-                    wrap_width,
-                    &mut line_wrapper,
-                    &mut fragment_builder,
-                ));
+            let update_passes = pending_edits.len();
+            let total_new_rows = pending_edits
+                .iter()
+                .flat_map(|(_, tab_edits)| tab_edits.iter())
+                .map(|edit| (edit.new.end.row().saturating_sub(edit.new.start.row()) + 1) as usize)
+                .sum::<usize>();
+            if update_passes + total_new_rows < WRAP_YIELD_ROW_INTERVAL {
+                let mut wrap_edits = Patch::default();
+                for (tab_snapshot, tab_edits) in pending_edits {
+                    let edits = gpui::block_on(snapshot.update(
+                        tab_snapshot,
+                        &tab_edits,
+                        wrap_width,
+                        &mut line_wrapper,
+                        &mut fragment_builder,
+                    ));
+                    wrap_edits = wrap_edits.compose(&edits);
+                }
                 self.snapshot = snapshot;
                 self.edits_since_sync = self.edits_since_sync.compose(&wrap_edits);
             } else {

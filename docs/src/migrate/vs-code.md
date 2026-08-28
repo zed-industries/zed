@@ -156,14 +156,14 @@ The following VS Code settings are automatically imported when you use **Import 
 
 **Other**
 
-| VS Code Setting            | Zed Setting                                              |
-| -------------------------- | -------------------------------------------------------- |
-| `http.proxy`               | `proxy`                                                  |
-| `npm.packageManager`       | `node.npm_path`                                          |
-| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`             |
-| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_icons` |
-| `chat.agent.enabled`       | `agent.enabled`                                          |
-| `mcp`                      | `context_servers`                                        |
+| VS Code Setting            | Zed Setting                                                  |
+| -------------------------- | ------------------------------------------------------------ |
+| `http.proxy`               | `proxy`                                                      |
+| `npm.packageManager`       | `node.npm_path`                                              |
+| `telemetry.telemetryLevel` | `telemetry.metrics`, `telemetry.diagnostics`                 |
+| `outline.icons`            | `outline_panel.file_icons`, `outline_panel.folder_indicator` |
+| `chat.agent.enabled`       | `agent.enabled`                                              |
+| `mcp`                      | `context_servers`                                            |
 
 Zed doesn’t import extensions or keybindings, but this import gets core editor behavior close to your VS Code setup. If you skip that step during setup, you can still import settings manually later via the command palette:
 

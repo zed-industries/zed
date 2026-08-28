@@ -68,6 +68,9 @@ pub struct MarkdownPreviewView {
     pending_update_task: Option<Task<Result<()>>>,
     hovered_url: Option<SharedString>,
     mode: MarkdownPreviewMode,
+    /// Search results depend on the parsed markdown, which lags behind the source while a
+    /// background parse is in flight. Tracked so matches can be invalidated once it lands.
+    markdown_parse_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -309,8 +312,13 @@ impl MarkdownPreviewView {
                 workspace: workspace.clone(),
                 _markdown_subscription: cx.observe(
                     &markdown,
-                    |this: &mut Self, _: Entity<Markdown>, cx| {
+                    |this: &mut Self, markdown: Entity<Markdown>, cx| {
                         this.sync_active_root_block(cx);
+                        let is_parsing = markdown.read(cx).is_parsing();
+                        if this.markdown_parse_pending && !is_parsing {
+                            cx.emit(SearchEvent::MatchesInvalidated);
+                        }
+                        this.markdown_parse_pending = is_parsing;
                     },
                 ),
                 markdown,
@@ -321,6 +329,7 @@ impl MarkdownPreviewView {
                 pending_update_task: None,
                 hovered_url: None,
                 mode,
+                markdown_parse_pending: false,
             };
 
             this.set_editor(active_editor, window, cx);
@@ -587,6 +596,7 @@ impl MarkdownPreviewView {
                     view.markdown.update(cx, |markdown, cx| {
                         markdown.reset(contents, cx);
                     });
+                    view.markdown_parse_pending = view.markdown.read(cx).is_parsing();
                     view.sync_preview_to_source_index(selection_start, should_reveal_selection, cx);
                     cx.emit(SearchEvent::MatchesInvalidated);
                 }
@@ -1869,8 +1879,12 @@ impl SearchableItem for MarkdownPreviewView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Vec<Self::Match>> {
-        let source = self.markdown.read(cx).source().to_string();
-        cx.background_spawn(async move { query.search_str(&source) })
+        let markdown = self.markdown.read(cx);
+        let source = markdown.source().to_string();
+        let non_rendered_ranges = markdown.non_rendered_source_ranges();
+        cx.background_spawn(async move {
+            filter_non_rendered_matches(query.search_str(&source), &non_rendered_ranges)
+        })
     }
 
     fn active_match_index(
@@ -1904,6 +1918,25 @@ impl SearchableItem for MarkdownPreviewView {
                 .or(Some(matches.len().saturating_sub(1))),
         }
     }
+}
+
+/// `non_rendered_ranges` must be sorted by start and disjoint, as returned by
+/// [`Markdown::non_rendered_source_ranges`]. Matches may arrive in any order.
+fn filter_non_rendered_matches(
+    matches: Vec<Range<usize>>,
+    non_rendered_ranges: &[Range<usize>],
+) -> Vec<Range<usize>> {
+    matches
+        .into_iter()
+        .filter(|match_range| {
+            let candidate =
+                non_rendered_ranges.partition_point(|range| range.end <= match_range.start);
+
+            !non_rendered_ranges
+                .get(candidate)
+                .is_some_and(|range| range.start < match_range.end)
+        })
+        .collect()
 }
 
 impl SerializableItem for MarkdownPreviewView {
@@ -1967,7 +2000,6 @@ impl SerializableItem for MarkdownPreviewView {
         workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let workspace_id = workspace.database_id()?;
@@ -2079,7 +2111,28 @@ mod tests {
         AppState, ItemId, MultiWorkspace, SaveIntent, Workspace, WorkspaceId, open_paths,
     };
 
-    use super::{MarkdownPreviewView, open_preview_url};
+    use super::{MarkdownPreviewView, filter_non_rendered_matches, open_preview_url};
+
+    #[test]
+    fn filters_matches_in_non_rendered_link_source() {
+        let matches = vec![1..9, 30..37, 58..65];
+        let non_rendered_ranges = vec![0..1, 9..38];
+
+        assert_eq!(
+            filter_non_rendered_matches(matches, &non_rendered_ranges),
+            vec![1..9, 58..65]
+        );
+    }
+
+    #[test]
+    fn filters_matches_regardless_of_match_order() {
+        let non_rendered_ranges = vec![0..1, 9..38];
+
+        assert_eq!(
+            filter_non_rendered_matches(vec![58..65, 1..9, 30..37], &non_rendered_ranges),
+            vec![58..65, 1..9]
+        );
+    }
 
     #[gpui::test]
     fn resolves_workspace_absolute_preview_image_path_and_rejects_missing(cx: &mut App) {
@@ -3067,12 +3120,12 @@ mod tests {
         }
 
         let serialize_task = multi_workspace
-            .update(cx, |multi_workspace, window, cx| {
+            .update(cx, |multi_workspace, _window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     preview
                         .update(cx, |preview, cx| {
-                            preview.serialize(workspace, cx.entity_id().as_u64(), false, window, cx)
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, cx)
                         })
                         .unwrap()
                 })
@@ -3215,12 +3268,12 @@ mod tests {
         wait_for_preview_serialization(cx).await;
 
         let serialize_task = multi_workspace
-            .update(cx, |multi_workspace, window, cx| {
+            .update(cx, |multi_workspace, _window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     preview
                         .update(cx, |preview, cx| {
-                            preview.serialize(workspace, cx.entity_id().as_u64(), false, window, cx)
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, cx)
                         })
                         .unwrap()
                 })

@@ -26,7 +26,7 @@ use gpui::{
 use indoc::indoc;
 use language::{
     BracketPair, BracketPairConfig,
-    Capability::ReadWrite,
+    Capability::{Read, ReadOnly, ReadWrite},
     ContextLocation, ContextProvider, DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings,
     LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName, LanguageQueries,
     LanguageToolchainStore, Override, PLAIN_TEXT, Point,
@@ -44,7 +44,7 @@ use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs, Project, ProjectPath,
-    bookmark_store::SerializedBookmark,
+    bookmark_store::{BookmarkStore, BookmarkStoreEvent, SerializedBookmark},
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
     project_settings::LspSettings,
     trusted_worktrees::{PathTrust, TrustedWorktrees},
@@ -73,7 +73,7 @@ use util::{
 };
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MultiWorkspace, NavigationEntry, OpenOptions,
-    ToolbarItemLocation, ViewId,
+    Pane, SplitDirection, ToolbarItemLocation, ViewId, Workspace,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
     register_project_item,
 };
@@ -2165,6 +2165,124 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_level_chain_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let text = "
+            fn foo(
+                a: i32,
+            ) {
+                if true {
+                    let b = a;
+                } else {
+                    let b = a;
+                }
+            }
+        "
+        .unindent();
+        let buffer = cx.new(|cx| Buffer::local(&text, cx).with_language(rust_lang(), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(⋯) {⋯}
+            "
+                .unindent(),
+            );
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                fn foo(
+                    a: i32,
+                ) {
+                    if true {⋯} else {⋯}
+                }
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_single_row_crease(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaaaaa\n@file.txt and more\ncccccc\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 9));
+
+            editor.insert_creases(Some(Crease::simple(range, FoldPlaceholder::test())), cx);
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+
+            assert_eq!(
+                editor.display_text(cx),
+                "
+                aaaaaa
+                ⋯ and more
+                cccccc
+            "
+                .unindent(),
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+fn test_fold_at_level_with_crease_on_boundary_row(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd eee\nfff\n", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let outer =
+                snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 7));
+            let inner =
+                snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 3));
+
+            editor.insert_creases(
+                [
+                    Crease::simple(outer, FoldPlaceholder::test()),
+                    Crease::simple(inner, FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+
+            editor.fold_at_level(&FoldAtLevel(1), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\n⋯\nfff\n");
+
+            editor.unfold_all(&UnfoldAll, window, cx);
+            editor.fold_at_level(&FoldAtLevel(2), window, cx);
+            assert_eq!(editor.display_text(cx), "aaa\nbbb\nccc\nddd eee\nfff\n");
+        })
+        .unwrap();
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3628,6 +3746,156 @@ async fn test_autoscroll_relative(cx: &mut TestAppContext) {
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 0.0)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_long_selection_tracks_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let window = cx.window;
+    // Narrow viewport so a long line can't possibly fit on screen at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let long_line = "x".repeat(250);
+    cx.set_state(&format!("ˇ{long_line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Simulate shift+end: extend the selection from column 0 to the end
+    // of the long line. Before the fix, this selection's span was wider
+    // than the viewport, which caused autoscroll_horizontally to bail
+    // out entirely and leave scroll_position.x at 0.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 0)..Point::new(0, 250)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 250.,
+            "head must not be scrolled past, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 249.,
+            "head column must be at the right edge, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_padded_span_boundary_still_scrolls(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Long line so scroll_width stays large and never clamps target_right,
+    // isolating the case below. Viewport is tuned so a 5-char selection's
+    // raw glyph span fits, but its padded span (+ gutter margin + em_advance,
+    // the same padding the final scroll guard uses) does not.
+    cx.simulate_window_resize(window, size(px(146.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    cx.update_editor(|editor, window, cx| {
+        assert_eq!(
+            editor.snapshot(window, cx).scroll_position(),
+            gpui::Point::new(0., 0.0)
+        );
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Its raw glyph span fits the viewport, but the padded
+    // span does not, so the fix must still scroll to reveal it.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x <= 105.,
+            "selection head must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection head must be visible, visible columns end at {right_edge}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_autoscroll_horizontally_fitting_selection_reveals_full_span(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let window = cx.window;
+
+    // Viewport wide enough to fit a short selection's full span at once.
+    cx.simulate_window_resize(window, size(px(200.), px(300.)));
+
+    let line = "x".repeat(300);
+    cx.set_state(&format!("ˇ{line}"));
+
+    // Scroll right first so the whole line is out of view.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 300)..Point::new(0, 300)]);
+        });
+    });
+    cx.run_until_parked();
+
+    let scrolled_right_x = cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        assert!(
+            scroll_x > 200.,
+            "should be scrolled far right, scroll_x = {scroll_x}"
+        );
+        scroll_x
+    });
+
+    // Select a short span in the middle of the line (e.g. simulating a
+    // search match). Since it fits within the viewport, both edges of
+    // the selection should end up visible, not just the head.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
+            selections.select_ranges([Point::new(0, 100)..Point::new(0, 105)]);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        let scroll_x = editor.snapshot(window, cx).scroll_position().x;
+        let visible_columns = editor.visible_column_count().unwrap();
+        let right_edge = scroll_x + visible_columns;
+        assert!(
+            scroll_x < scrolled_right_x,
+            "must scroll left towards the selection, scroll_x = {scroll_x}"
+        );
+        assert!(
+            scroll_x <= 100.5,
+            "selection start must be visible, scroll_x = {scroll_x}"
+        );
+        assert!(
+            right_edge > 105.,
+            "selection end must be visible, visible columns end at {right_edge}"
         );
     });
 }
@@ -5443,8 +5711,12 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
          *
          */
-         ˇ
+        ˇ
     "});
+
+        cx.set_state("fn test() {\n    /**\n     *\n     */ˇ\n}");
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state("fn test() {\n    /**\n     *\n     */\n    ˇ\n}");
 
         // Ensure that inline comment followed by code
         // doesn't add comment prefix on newline
@@ -5469,7 +5741,7 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
          *
          */
-         ˇtext
+        ˇtext
     "});
 
         // Ensure if not comment block it doesn't
@@ -5496,6 +5768,71 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         /**
         ˇ
     "});
+}
+
+#[gpui::test]
+async fn test_newline_closing_comment_indent_across_languages(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let go_language = languages::language("go", tree_sitter_go::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(go_language), cx));
+    cx.set_state("func test() {\n\t/**\n\t * doc\n\t */ˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\t/**\n\t * doc\n\t */\n\tˇ\n}");
+
+    let typescript_language = languages::language(
+        "typescript",
+        tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(typescript_language), cx));
+    cx.set_state("function test() {\n    /**\n     * doc\n     */ˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("function test() {\n    /**\n     * doc\n     */\n    ˇ\n}");
+
+    let python_language = languages::language("python", tree_sitter_python::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(python_language), cx));
+    cx.set_state("def test():\n    \"\"\"doc\n    \"\"\"ˇ\n");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("def test():\n    \"\"\"doc\n    \"\"\"\n    ˇ\n");
+}
+
+#[gpui::test]
+async fn test_newline_after_closing_delimiter_lookalike_in_string(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // A line inside a string literal that happens to look like a block comment's
+    // closing delimiter does not close anything, so it keeps its own indentation.
+    cx.set_state("func test() {\n\tvar s = `\n*/ˇ\n`\n}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\tvar s = `\n*/\nˇ\n`\n}");
+}
+
+#[gpui::test]
+async fn test_newline_twice_inside_block(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    cx.set_state("func test() {ˇ}");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n    ˇ\n}");
+    // The blank line the cursor sits on holds nothing but auto-indent
+    // whitespace, but the line that replaces it still belongs inside the block.
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.assert_editor_state("func test() {\n\n    ˇ\n}");
 }
 
 #[gpui::test]
@@ -5821,6 +6158,24 @@ async fn test_tab_in_leading_whitespace_auto_indents_lines(cx: &mut TestAppConte
             ˇ)
         );
     "});
+}
+
+#[gpui::test]
+async fn test_tab_after_closing_comment_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // The suggested indent is taken from the line the comment opened on, so that
+    // it agrees with what pressing enter after the closing delimiter produces.
+    cx.set_state("func test() {\n\t/**\n\t * doc\n\t */\nˇ\n}");
+    cx.update_editor(|e, window, cx| e.tab(&Tab, window, cx));
+    cx.assert_editor_state("func test() {\n\t/**\n\t * doc\n\t */\n\tˇ\n}");
 }
 
 #[gpui::test]
@@ -10694,6 +11049,81 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_paste_after_closing_documentation_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        "func find() {\n\treturn 1\n}\n".into(),
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+    cx.set_state("package test\n\n/**\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/**\n * test\n */\nfunc find() {\n\treturn 1\n}\nˇ");
+
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        " func find() {\n \treturn 1\n }".into(),
+    ));
+    cx.set_state("package test\n\n/**\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.newline(&Newline, window, cx));
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/**\n * test\n */\nfunc find() {\n\treturn 1\n}ˇ");
+}
+
+#[gpui::test]
+async fn test_paste_shifts_block_by_first_line_delta(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    cx.write_to_clipboard(ClipboardItem::new_string(
+        " func find() {\n \treturn 1\n }".into(),
+    ));
+    cx.set_state("package test\n\nˇ");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\nfunc find() {\n\treturn 1\n}ˇ");
+
+    // The block moves by however far its first line moved, so a first line that
+    // is indented deeper than the lines below it stays deeper.
+    cx.write_to_clipboard(ClipboardItem::new_string("        foo()\n    bar()".into()));
+    cx.set_state("func test() {\nˇ\n}");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("func test() {\n    foo()\nbar()ˇ\n}");
+}
+
+#[gpui::test]
+async fn test_paste_after_closing_comment_delimiter(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("go", tree_sitter_go::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    // The closing delimiter's line is not part of the paste, so it keeps its own
+    // indentation even though that indentation differs from the opening line's.
+    cx.write_to_clipboard(ClipboardItem::new_string("x := 1\ny := 2".into()));
+    cx.set_state("package test\n\n/*\n * test\n */ˇ");
+    cx.update_editor(|editor, window, cx| editor.paste(&Paste, window, cx));
+    cx.assert_editor_state("package test\n\n/*\n * test\n */x := 1\n y := 2ˇ");
+}
+
+#[gpui::test]
 async fn test_paste_multiline_from_other_app_into_matching_cursors(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13504,6 +13934,56 @@ async fn test_autoindent_syntax_aware_applies_syntax_indent(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+async fn test_ime_composition_keeps_manual_indent(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware)
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: false,
+                        surround: false,
+                        newline: false,
+                    }],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(r#"(_ "{" "}" @end) @indent"#)
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state("fn foo() {ˇ\n}");
+    cx.condition(|editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+        // A manual indent here
+        editor.tab(&Tab, window, cx);
+    });
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        \n}");
+
+    cx.update_editor(|editor, window, cx| {
+        editor.replace_and_mark_text_in_range(None, "n", None, window, cx);
+        editor.replace_and_mark_text_in_range(None, "nn", None, window, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert_eq!(cx.buffer_text(), "fn foo() {\n        nn\n}");
+}
+
+#[gpui::test]
 async fn test_autoindent_disabled_with_nested_language(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.auto_indent = Some(settings::AutoIndentMode::SyntaxAware);
@@ -15382,6 +15862,344 @@ async fn test_snippet_with_multi_word_prefix(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_read_only_buffer_is_not_formatted_or_saved(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), b"one\ntwo\nthree\n".to_vec())
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let format_request_count = Arc::new(AtomicUsize::new(0));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let format_request_count = format_request_count.clone();
+                move |fake_server| {
+                    let format_request_count = format_request_count.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |_, _| {
+                            let format_request_count = format_request_count.clone();
+                            async move {
+                                format_request_count.fetch_add(1, atomic::Ordering::Release);
+                                Ok(Some(vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 3),
+                                        lsp::Position::new(1, 0),
+                                    ),
+                                    ", ".to_string(),
+                                )]))
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    fake_servers.next().await.unwrap();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(format_request_count.load(atomic::Ordering::Acquire), 0);
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_read_only_buffer_can_be_saved_as(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let worktree_id = project.update(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    let save_as = editor.update_in(cx, |editor, window, cx| {
+        editor.save_as(
+            project.clone(),
+            ProjectPath {
+                worktree_id,
+                path: rel_path("copy.rs").into(),
+            },
+            window,
+            cx,
+        )
+    });
+    save_as.await.unwrap();
+
+    assert_eq!(
+        fs.load(path!("/dir/copy.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/dir/file.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_format_and_save_skip_read_only_buffers_in_multi_buffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "one\ntwo\nthree\n",
+            "other.rs": "one\ntwo\nthree\n",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let formatted_uris = Arc::new(Mutex::new(Vec::new()));
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new({
+                let formatted_uris = formatted_uris.clone();
+                move |fake_server| {
+                    let formatted_uris = formatted_uris.clone();
+                    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+                        move |params, _| {
+                            let formatted_uris = formatted_uris.clone();
+                            async move {
+                                formatted_uris.lock().push(params.text_document.uri.clone());
+                                Ok(Some(vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 3),
+                                        lsp::Position::new(1, 0),
+                                    ),
+                                    ", ".to_string(),
+                                )]))
+                            }
+                        },
+                    );
+                }
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let writable_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let read_only_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/other.rs"), cx)
+        })
+        .await
+        .unwrap();
+    read_only_buffer.update(cx, |buffer, cx| buffer.set_capability(Read, cx));
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            writable_buffer.clone(),
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            read_only_buffer.clone(),
+            [Point::new(0, 0)..Point::new(3, 0)],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multi_buffer, window, cx)
+    });
+
+    fake_servers.next().await.unwrap();
+
+    let format = editor
+        .update_in(cx, |editor, window, cx| editor.format(&Format, window, cx))
+        .unwrap();
+    format.await.unwrap();
+
+    assert_eq!(
+        *formatted_uris.lock(),
+        vec![lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()]
+    );
+    writable_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one, two\nthree\n");
+    });
+    read_only_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "one\ntwo\nthree\n");
+    });
+
+    read_only_buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "dirty ")], None, cx);
+    });
+    assert_eq!(
+        read_only_buffer.read_with(cx, |buffer, _| buffer.is_dirty()),
+        true
+    );
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        fs.load(path!("/a/main.rs").as_ref()).await.unwrap(),
+        "one, two\nthree\n"
+    );
+    assert_eq!(
+        fs.load(path!("/a/other.rs").as_ref()).await.unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[gpui::test]
+async fn test_save_actions_are_hidden_for_read_only_files(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), b"one\ntwo\nthree\n".to_vec())
+        .await;
+    let project = Project::test(fs, [path!("/file.rs").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::new(
+            EditorMode::full(),
+            multi_buffer,
+            Some(project.clone()),
+            window,
+            cx,
+        )
+    });
+    window
+        .update(cx, |multi_workspace, window, cx| {
+            multi_workspace.workspace().update(cx, |workspace, cx| {
+                workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            })
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fn save_actions_visible(cx: &mut VisualTestContext) -> (bool, bool, bool, bool) {
+        let actions = cx.update(|window, cx| window.available_actions(cx));
+        let visible = |name: &str| actions.iter().any(|action| action.name() == name);
+        (
+            visible("workspace::Save"),
+            visible("workspace::FormatAndSave"),
+            visible("workspace::SaveWithoutFormat"),
+            visible("workspace::SaveAs"),
+        )
+    }
+
+    assert_eq!(save_actions_visible(cx), (true, true, true, true));
+
+    buffer.update(cx, |buffer, cx| buffer.set_capability(ReadOnly, cx));
+    cx.run_until_parked();
+    assert_eq!(save_actions_visible(cx), (false, false, false, true));
+
+    buffer.update(cx, |buffer, cx| buffer.set_capability(ReadWrite, cx));
+    cx.run_until_parked();
+    assert_eq!(save_actions_visible(cx), (true, true, true, true));
+}
+
+#[gpui::test]
 async fn test_document_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -16168,160 +16986,6 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     );
 }
 
-async fn setup_range_format_test_with_capabilities(
-    cx: &mut TestAppContext,
-    capabilities: lsp::ServerCapabilities,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_file(path!("/file.rs"), Default::default()).await;
-
-    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities,
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-    });
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    (project, editor, cx, fake_server)
-}
-
-async fn setup_range_format_test(
-    cx: &mut TestAppContext,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    setup_range_format_test_with_capabilities(
-        cx,
-        lsp::ServerCapabilities {
-            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-            ..lsp::ServerCapabilities::default()
-        },
-    )
-    .await
-}
-
-/// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
-/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
-/// `head_content` sets the HEAD base, `index_content` sets the staged base.
-/// The buffer starts empty; the caller must `editor.set_text(...)` to set the
-/// working-tree content (the diff recomputes from buffer changes).
-async fn setup_range_format_test_with_git<'a>(
-    cx: &'a mut TestAppContext,
-    head_content: &str,
-    index_content: &str,
-) -> (
-    Entity<Project>,
-    Entity<Editor>,
-    &'a mut gpui::VisualTestContext,
-    lsp::FakeLanguageServer,
-) {
-    init_test(cx, |_| {});
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/project"),
-        json!({
-            ".git": {},
-            "file.rs": "",
-        }),
-    )
-    .await;
-
-    fs.set_head_for_repo(
-        std::path::Path::new(path!("/project/.git")),
-        &[("file.rs", head_content.to_string())],
-        "deadbeef",
-    );
-    fs.set_index_for_repo(
-        std::path::Path::new(path!("/project/.git")),
-        &[("file.rs", index_content.to_string())],
-    );
-
-    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp(
-        "Rust",
-        FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-                document_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..lsp::ServerCapabilities::default()
-            },
-            ..FakeLspAdapter::default()
-        },
-    );
-
-    let buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/project/file.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    // Open the unstaged diff so GitStore tracks this buffer. Without this,
-    // `get_unstaged_diff` returns None and compute_format_target cannot
-    // produce range-based FormatTarget.
-    project
-        .update(cx, |project, cx| {
-            project.open_unstaged_diff(buffer.clone(), cx)
-        })
-        .await
-        .unwrap();
-
-    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
-    });
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-    });
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    (project, editor, cx, fake_server)
-}
-
-fn refresh_editor_actions(cx: &mut VisualTestContext) {
-    cx.executor().run_until_parked();
-    cx.update(|window, cx| {
-        let _ = window.draw(cx);
-    });
-}
-
 #[gpui::test]
 async fn test_format_selections_action_available_when_range_formatting_is_supported(
     cx: &mut TestAppContext,
@@ -16839,6 +17503,129 @@ async fn test_modifications_format_multiple_hunks(cx: &mut TestAppContext) {
         "line0\nLINE1!\nline2\nline3\nLINE4!\nline5\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_modifications_format_overlapping_range_responses(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![vec![lsp_line_edit(0, 6, "fmt0\nfmt1\nfmt2\nfmt3\nfmt4\nfmt5\n")]],
+        "fmt0\nfmt1\nfmt2\nfmt3\nfmt4\nfmt5\n",
+        "a response covering the second hunk must suppress its request and must not duplicate the formatted block",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_divergent_overlapping_responses(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(1, 3, "one\ntwo\n")],
+            vec![lsp_line_edit(2, 5, "TWO\nthree\nfour\n")],
+        ],
+        "line0\none\ntwo\nline3\nLINE4\nline5\n",
+        "the first edit must win and the divergent overlapping edit must be dropped without corrupting the buffer",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_partially_overlapping_response_dropped_atomically(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(1, 2, "one\n")],
+            vec![
+                lsp_line_edit(4, 5, "four\n"),
+                lsp_line_edit(1, 2, "ONE\n"),
+            ],
+        ],
+        "line0\none\nline2\nline3\nLINE4\nline5\n",
+        "a response with any divergent overlapping edit must be dropped whole, including its non-overlapping edits",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_overlapping_edits_within_one_response(cx: &mut TestAppContext) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nline4\nline5\n",
+        vec![vec![
+            lsp_line_edit(1, 2, "one\n"),
+            lsp_line_edit(1, 2, "uno\n"),
+        ]],
+        "line0\none\nline2\nline3\nline4\nline5\n",
+        "the later overlapping edit within one response must be dropped",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_same_position_inserts_within_one_response(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\n",
+        "line0\nLINE1\nline2\n",
+        vec![vec![
+            lsp_line_edit(1, 1, "alpha\n"),
+            lsp_line_edit(1, 1, "beta\n"),
+        ]],
+        "line0\nalpha\nbeta\nLINE1\nline2\n",
+        "multiple inserts at one position within one response are valid per the LSP spec and must all apply in array order",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_divergent_same_position_inserts_across_responses(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![lsp_line_edit(4, 4, "alpha\n")],
+            vec![lsp_line_edit(4, 4, "beta\n")],
+        ],
+        "line0\nLINE1\nline2\nline3\nalpha\nLINE4\nline5\n",
+        "a later response inserting different text at the same position diverges and must be dropped",
+    )
+    .await;
+}
+
+#[gpui::test]
+async fn test_modifications_format_insert_touching_kept_edit_across_responses(
+    cx: &mut TestAppContext,
+) {
+    assert_range_format_merge(
+        cx,
+        "line0\nline1\nline2\nline3\nline4\nline5\n",
+        "line0\nLINE1\nline2\nline3\nLINE4\nline5\n",
+        vec![
+            vec![
+                lsp_line_edit(1, 2, "one\n"),
+                lsp_line_edit(4, 4, "alpha\n"),
+            ],
+            vec![lsp_line_edit(4, 5, "alpha\nfour\n")],
+        ],
+        "line0\none\nline2\nline3\nalpha\nLINE4\nline5\n",
+        "an edit touching a kept insert at its boundary can duplicate the inserted text and must be dropped as divergent",
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -33054,6 +33841,120 @@ async fn test_active_bookmarks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clearing_bookmark_store_notifies_editor(cx: &mut TestAppContext) {
+    let mut ctx = BookmarkTestContext::new("Line 0\nLine 1\nLine 2\nLine 3", cx).await;
+
+    ctx.toggle_bookmarks_at_rows(&[1, 3]);
+
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.contains(&DisplayRow(1)));
+    assert!(active.contains(&DisplayRow(3)));
+
+    let editor = ctx.editor.clone();
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = ctx.cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    // `workspace::ClearBookmarks` mutates only the store, so the editor's gutter
+    // repaint relies entirely on its observation of the bookmark store.
+    ctx.project.update(&mut ctx.cx, |project, cx| {
+        project.bookmark_store().update(cx, |bookmark_store, cx| {
+            bookmark_store.clear_bookmarks(cx);
+        });
+    });
+    ctx.cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "clearing the bookmark store should notify the editor so its gutter repaints"
+    );
+    let active = ctx
+        .editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+        });
+    assert!(active.is_empty());
+}
+
+#[gpui::test]
+async fn test_clear_bookmarks_action_repaints_workspace_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({ "main.rs": "Line 0\nLine 1\nLine 2\nLine 3" }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let workspace = window
+        .read_with(&mut cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+
+    let worktree_id = workspace.update_in(&mut cx, |workspace, _, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(&mut cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx.run_until_parked();
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(1, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.contains(&DisplayRow(1)));
+
+    // Drain the effects still pending from the toggle above, so that the only
+    // thing that can notify the editor below is the action dispatch.
+    cx.run_until_parked();
+
+    let editor_notified = Rc::new(RefCell::new(false));
+    let _subscription = cx.update(|_, cx| {
+        cx.observe(&editor, {
+            let editor_notified = editor_notified.clone();
+            move |_, _| *editor_notified.borrow_mut() = true
+        })
+    });
+
+    cx.dispatch_action(workspace::ClearBookmarks);
+    cx.run_until_parked();
+
+    assert!(
+        *editor_notified.borrow(),
+        "workspace::ClearBookmarks should notify the editor so its gutter repaints"
+    );
+    let active = editor.update_in(&mut cx, |editor, window, cx| {
+        editor.active_bookmarks(DisplayRow(0)..DisplayRow(4), window, cx)
+    });
+    assert!(active.is_empty());
+}
+
+#[gpui::test]
 async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -33422,6 +34323,707 @@ async fn test_empty_rename_is_no_op(cx: &mut TestAppContext) {
         assert!(cx.editor(|editor, _, _| editor.pending_rename().is_none()));
         assert_eq!(cx.buffer_text(), "let abc = 1;");
     }
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_auto_refresh(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+            "other.rs": "other0\nother1\nother2\nother3\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "bookmarks editor should have 1 excerpt after first bookmark"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "bookmarks editor should auto-refresh to 2 excerpts after second bookmark"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "bookmarks editor should auto-refresh back to 1 excerpt after removing a bookmark"
+    );
+    assert_eq!(
+        cursor_line_text(&bookmarks_editor, &mut cx),
+        "line0",
+        "refreshing must keep the surviving excerpt intact, preserving selections in it"
+    );
+
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 1, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        bookmarked_paths(&bookmarks_editor, &mut cx),
+        vec!["main.rs", "other.rs"],
+        "bookmarks editor should hold one path per bookmarked file"
+    );
+
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        bookmarked_paths(&bookmarks_editor, &mut cx),
+        vec!["other.rs"],
+        "unbookmarking a file's last line should drop its path from the bookmarks editor"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_selects_first_bookmark_despite_concurrent_change(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 5, &mut cx);
+    cx.run_until_parked();
+
+    open_bookmarks_tab(&workspace, &mut cx);
+
+    toggle_bookmark_on_row(&editor, 9, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = find_bookmarks_editor(&workspace, &mut cx)
+        .expect("bookmarks editor should exist after view_bookmarks");
+    assert_eq!(
+        cursor_line_text(&bookmarks_editor, &mut cx),
+        "line5",
+        "a bookmark change racing the tab creation must not lose the initial selection"
+    );
+}
+
+#[gpui::test]
+async fn test_view_bookmarks_without_resolvable_bookmarks_opens_no_tab(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, _editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+            "other.rs": "other0\n",
+            "third.rs": "third0\n",
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![(bookmark_path(path!("/a/third.rs")), vec![99])],
+        &mut cx,
+    )
+    .await;
+
+    let worktree_id = project.update(&mut cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have at least one worktree")
+            .read(cx)
+            .id()
+    });
+    let other_buffer = project
+        .update(&mut cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("other.rs")), cx)
+        })
+        .await
+        .expect("other.rs buffer should open");
+    let probe_anchor = other_buffer.update(&mut cx, |buffer, _| {
+        buffer.text_snapshot().anchor_before(Point::new(0, 0))
+    });
+    bookmark_store.update(&mut cx, |store, cx| {
+        assert_eq!(
+            store
+                .find_bookmark(&other_buffer, probe_anchor, cx)
+                .map(|bookmark| bookmark.label.clone()),
+            None,
+            "a probe on a bookmark-less file should find nothing"
+        );
+    });
+
+    open_bookmarks_tab(&workspace, &mut cx);
+    cx.run_until_parked();
+
+    assert_eq!(
+        find_bookmarks_editor(&workspace, &mut cx),
+        None,
+        "a store whose bookmarks all fail to resolve must not open an empty tab, even after a find_bookmark probe"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_survives_split(cx: &mut TestAppContext) {
+    let (workspace, pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    let split_editor = bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
+        cx.new(|cx| editor.clone(window, cx))
+    });
+    assert!(
+        split_editor.read_with(&cx, |editor, _| editor.bookmarks_tab_state.is_some()),
+        "split clone should share the bookmarks tab state"
+    );
+    assert!(
+        split_editor.read_with(&cx, |editor, cx| editor
+            .highlighted_rows::<crate::bookmarks::BookmarkRowHighlights>(cx)
+            .next()
+            .is_some()),
+        "split clone should carry over the bookmark line highlights"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    close_bookmarks_editor(&pane, bookmarks_editor, &mut cx);
+    assert_eq!(
+        excerpt_count(&split_editor, &mut cx),
+        2,
+        "split should refresh itself when the original tab closes with a refresh in flight"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        excerpt_count(&split_editor, &mut cx),
+        1,
+        "split clone's subscription should keep refreshing after the original tab closes"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmark_resolution_drop_emits_store_event(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have at least one worktree")
+            .read(cx)
+            .id()
+    });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
+        .await
+        .expect("main.rs buffer should open");
+
+    let bookmark_store = project.read_with(cx, |project, _| project.bookmark_store());
+    let abs_path = cx
+        .update(|cx| BookmarkStore::abs_path_from_buffer(&buffer, cx))
+        .expect("buffer should have an absolute path");
+
+    bookmark_store
+        .update(cx, |store, cx| {
+            store.load_serialized_bookmarks(
+                BTreeMap::from([(abs_path, serialized_rows(&[0, 99]))]),
+                cx,
+            )
+        })
+        .await
+        .expect("loading serialized bookmarks should succeed");
+
+    let events = Rc::new(RefCell::new(Vec::<BookmarkStoreEvent>::new()));
+    let _subscription = cx.update({
+        let events = events.clone();
+        |cx| {
+            cx.subscribe(&bookmark_store, move |_, event: &BookmarkStoreEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+        }
+    });
+
+    let (buffer_id, snapshot) =
+        buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.text_snapshot()));
+    let resolved_count = bookmark_store.update(cx, |store, cx| {
+        store
+            .bookmarks_for_buffer(
+                buffer.clone(),
+                text::Anchor::min_max_range_for_buffer(buffer_id),
+                &snapshot,
+                cx,
+            )
+            .len()
+    });
+    assert_eq!(
+        resolved_count, 1,
+        "only the in-range bookmark should survive resolution"
+    );
+    assert_eq!(
+        *events.borrow(),
+        vec![BookmarkStoreEvent::BookmarksChanged],
+        "dropping the out-of-range bookmark during resolution should emit BookmarksChanged"
+    );
+
+    let resolved_count = bookmark_store.update(cx, |store, cx| {
+        store
+            .bookmarks_for_buffer(
+                buffer.clone(),
+                text::Anchor::min_max_range_for_buffer(buffer_id),
+                &snapshot,
+                cx,
+            )
+            .len()
+    });
+    assert_eq!(
+        resolved_count, 1,
+        "an already-resolved entry should keep its bookmark"
+    );
+    assert_eq!(
+        *events.borrow(),
+        vec![BookmarkStoreEvent::BookmarksChanged],
+        "resolution of an already-loaded entry should not emit again"
+    );
+
+    bookmark_store.update(cx, |store, cx| {
+        store.edit_bookmark(
+            &buffer,
+            snapshot.anchor_before(Point::new(0, 0)),
+            "renamed".to_string(),
+            cx,
+        )
+    });
+    assert_eq!(
+        *events.borrow(),
+        vec![
+            BookmarkStoreEvent::BookmarksChanged,
+            BookmarkStoreEvent::LabelChanged
+        ],
+        "editing a bookmark's label should emit LabelChanged rather than a set change"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_highlights_bookmark_on_trailing_empty_line(cx: &mut TestAppContext) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![last_display_row(&bookmarks_editor, &mut cx)],
+        "a bookmark on the trailing empty line should still highlight its row"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_keeps_unopenable_paths(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+            "unopenable.rs": {},
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    let unopenable_path = bookmark_path(path!("/a/unopenable.rs"));
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![
+            (bookmark_path(path!("/a/main.rs")), vec![0]),
+            (Arc::clone(&unopenable_path), vec![0]),
+        ],
+        &mut cx,
+    )
+    .await;
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "only the openable file should produce an excerpt"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&unopenable_path)],
+        "the unopenable path should be recorded to avoid retrying it on every refresh"
+    );
+
+    toggle_bookmark_on_row(&editor, 7, &mut cx);
+    cx.run_until_parked();
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "refreshes should keep working while an unopenable path is recorded"
+    );
+
+    let serialized = bookmark_store.read_with(&cx, |store, cx| store.all_serialized_bookmarks(cx));
+    assert_eq!(
+        serialized.get(&unopenable_path).map(|rows| rows.len()),
+        Some(1),
+        "an unopenable path must keep its serialized bookmark instead of losing it"
+    );
+}
+
+#[gpui::test]
+async fn test_view_bookmarks_activates_most_recent_tab(cx: &mut TestAppContext) {
+    let (workspace, pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    let split_editor = bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
+        cx.new(|cx| editor.clone(window, cx))
+    });
+    let second_pane = workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.split_pane(pane.clone(), SplitDirection::Right, window, cx)
+    });
+    second_pane.update_in(&mut cx, |pane, window, cx| {
+        pane.add_item(Box::new(split_editor.clone()), true, true, None, window, cx);
+    });
+    cx.run_until_parked();
+
+    open_bookmarks_tab(&workspace, &mut cx);
+    cx.run_until_parked();
+
+    let active_editor = workspace.update(&mut cx, |workspace, cx| {
+        workspace.active_item_as::<Editor>(cx)
+    });
+    assert_eq!(
+        active_editor,
+        Some(split_editor),
+        "view_bookmarks should activate the most recently used bookmarks tab"
+    );
+    let bookmark_editor_count = workspace.update(&mut cx, |workspace, cx| {
+        workspace
+            .items_of_type::<Editor>(cx)
+            .filter(|editor| editor.read(cx).bookmarks_tab_state.is_some())
+            .count()
+    });
+    assert_eq!(
+        bookmark_editor_count, 2,
+        "activating an existing tab must not create another one"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_highlight_does_not_grow_past_last_row(cx: &mut TestAppContext) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+
+    editor.update_in(&mut cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(2, 5)..Point::new(2, 5)])
+        });
+        editor.insert("\nline3", window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![display_row_for(
+            &bookmarks_editor,
+            Point::new(2, 0),
+            &mut cx
+        )],
+        "appending lines after a last-row bookmark must not stretch its highlight over the new rows"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_trailing_line_highlight_does_not_grow_on_edit(cx: &mut TestAppContext) {
+    let (workspace, _pane, _project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+
+    bookmarks_editor.update_in(&mut cx, |editor, window, cx| {
+        let max_point = editor.buffer.read(cx).snapshot(cx).max_point();
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([max_point..max_point])
+        });
+        editor.insert("new0\nnew1", window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![last_display_row(&bookmarks_editor, &mut cx)],
+        "typing at a trailing-line bookmark must move its single-row highlight, not stretch it"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_last_line_highlight_does_not_cover_next_file_header(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\nline2",
+            "other.rs": "other0\nother1\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![
+            display_row_for(&bookmarks_editor, Point::new(2, 0), &mut cx),
+            display_row_for(&bookmarks_editor, Point::new(3, 0), &mut cx),
+        ],
+        "a bookmark on a file's last line must not highlight the next file's header rows"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_trailing_line_highlight_does_not_cover_next_file_header(
+    cx: &mut TestAppContext,
+) {
+    let (workspace, _pane, project, editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+            "other.rs": "other0\n",
+        }),
+    )
+    .await;
+
+    toggle_bookmark_on_row(&editor, 2, &mut cx);
+    let other_editor = open_bookmarks_test_editor(&workspace, &project, "other.rs", &mut cx).await;
+    toggle_bookmark_on_row(&other_editor, 0, &mut cx);
+    cx.run_until_parked();
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        highlighted_display_rows_of(&bookmarks_editor, &mut cx),
+        vec![
+            display_row_for(&bookmarks_editor, Point::new(2, 0), &mut cx),
+            display_row_for(&bookmarks_editor, Point::new(3, 0), &mut cx),
+        ],
+        "a bookmark on a trailing empty line must not highlight the next file's header rows"
+    );
+}
+
+#[gpui::test]
+async fn test_worktree_add_retries_only_contained_failed_paths(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, _editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    let elsewhere_path = bookmark_path(path!("/elsewhere/file.rs"));
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![
+            (bookmark_path(path!("/a/main.rs")), vec![0]),
+            (Arc::clone(&elsewhere_path), vec![0]),
+        ],
+        &mut cx,
+    )
+    .await;
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "the path outside all worktrees should not produce an excerpt yet"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&elsewhere_path)],
+        "the path outside all worktrees should be recorded as failed to open"
+    );
+
+    let events = Rc::new(RefCell::new(Vec::<BookmarkStoreEvent>::new()));
+    let _subscription = cx.update({
+        let events = events.clone();
+        |_window, cx| {
+            cx.subscribe(&bookmark_store, move |_, event: &BookmarkStoreEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+        }
+    });
+
+    let fs = project.read_with(&cx, |project, _| project.fs().clone());
+    fs.as_fake()
+        .insert_tree(path!("/unrelated"), json!({ "other.rs": "other0\n" }))
+        .await;
+    project
+        .update(&mut cx, |project, cx| {
+            project.create_worktree(path!("/unrelated"), true, cx)
+        })
+        .await
+        .expect("creating the unrelated worktree should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        *events.borrow(),
+        Vec::<BookmarkStoreEvent>::new(),
+        "a worktree containing no failed paths must not trigger a retry"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&elsewhere_path)],
+        "an unrelated worktree must not clear the failed path cache"
+    );
+
+    fs.as_fake()
+        .insert_tree(path!("/elsewhere"), json!({ "file.rs": "else0\n" }))
+        .await;
+    project
+        .update(&mut cx, |project, cx| {
+            project.create_worktree(path!("/elsewhere"), true, cx)
+        })
+        .await
+        .expect("creating the containing worktree should succeed");
+    cx.run_until_parked();
+
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        Vec::new(),
+        "adding a worktree containing a failed path must retry it"
+    );
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "the bookmarks tab should refresh and show the failed path's bookmark"
+    );
+}
+
+#[gpui::test]
+async fn test_bookmarks_tab_retries_failed_path_when_file_appears(cx: &mut TestAppContext) {
+    let (workspace, _pane, project, _editor, mut cx) = init_bookmarks_tab_test(
+        cx,
+        json!({
+            "main.rs": "line0\nline1\n",
+            "late.rs": {},
+        }),
+    )
+    .await;
+
+    let bookmark_store = cx.update(|_window, cx| project.read(cx).bookmark_store());
+    let late_path = bookmark_path(path!("/a/late.rs"));
+    load_test_bookmarks(
+        &bookmark_store,
+        vec![
+            (bookmark_path(path!("/a/main.rs")), vec![0]),
+            (Arc::clone(&late_path), vec![0]),
+        ],
+        &mut cx,
+    )
+    .await;
+
+    let bookmarks_editor = open_and_find_bookmarks_tab(&workspace, &mut cx);
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        1,
+        "the missing file should not produce an excerpt yet"
+    );
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        vec![Arc::clone(&late_path)],
+        "the missing path should be recorded as failed to open"
+    );
+
+    let fs = project.read_with(&cx, |project, _| project.fs().clone());
+    fs.remove_dir(
+        std::path::Path::new(path!("/a/late.rs")),
+        fs::RemoveOptions {
+            recursive: true,
+            ignore_if_not_exists: false,
+        },
+    )
+    .await
+    .expect("removing the placeholder directory should succeed");
+    fs.as_fake()
+        .insert_file(path!("/a/late.rs"), "late0\n".as_bytes().to_vec())
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        failed_paths(&bookmark_store, &mut cx),
+        Vec::new(),
+        "a failed path must be retried once its file appears on disk"
+    );
+    assert_eq!(
+        excerpt_count(&bookmarks_editor, &mut cx),
+        2,
+        "the bookmarks tab should refresh and show the late file's bookmark"
+    );
 }
 
 #[gpui::test]
@@ -34421,6 +36023,7 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
                 summary: None,
                 previous: None,
                 filename: String::new(),
+                boundary: false,
             },
             gpui::point(gpui::px(0.), gpui::px(0.)),
             false,
@@ -36716,7 +38319,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     use std::sync::atomic::AtomicU32;
     use std::time::Duration;
 
-    const BASE_TIMEOUT_SECS: u64 = 1;
+    const BASE_TIMEOUT: Duration = Duration::from_secs(1);
 
     let request_count = Arc::new(AtomicU32::new(0));
     let closure_request_count = request_count.clone();
@@ -36731,7 +38334,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, &|settings: &mut SettingsContent| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
-                    request_timeout: Some(BASE_TIMEOUT_SECS),
+                    request_timeout: Some(BASE_TIMEOUT.as_secs()),
                     max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
@@ -36766,9 +38369,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
                     move |params, cx| {
                         let request_count = request_count.clone();
                         async move {
-                            cx.background_executor()
-                                .timer(Duration::from_secs(BASE_TIMEOUT_SECS * 2))
-                                .await;
+                            cx.background_executor().timer(BASE_TIMEOUT * 2).await;
                             let count = request_count.fetch_add(1, atomic::Ordering::Release) + 1;
                             assert_eq!(
                                 params.text_document.uri,
@@ -36804,7 +38405,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
 
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -36821,7 +38422,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         .into_response()
         .unwrap();
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -36836,7 +38437,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.global_lsp_settings = Some(GlobalLspSettingsContent {
-                    request_timeout: Some(BASE_TIMEOUT_SECS * 4),
+                    request_timeout: Some(BASE_TIMEOUT.as_secs() * 4),
                     max_buffer_line_length: None,
                     button: Some(true),
                     notifications: None,
@@ -36851,7 +38452,7 @@ async fn test_inlay_hints_request_timeout(cx: &mut TestAppContext) {
         .into_response()
         .unwrap();
     cx.executor()
-        .advance_clock(Duration::from_secs(BASE_TIMEOUT_SECS * 4) + Duration::from_millis(100));
+        .advance_clock(BASE_TIMEOUT * 4 + Duration::from_millis(100));
     cx.executor().run_until_parked();
     editor
         .update(cx, |editor, _window, cx| {
@@ -43303,4 +44904,599 @@ async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
     cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
     cx.dispatch_action(SelectInsideDelimiters);
     cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
+}
+
+#[gpui::test]
+async fn test_in_preview_key_context(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings: &mut SettingsContent| {
+                settings.preview_tabs.get_or_insert_default().enabled = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        serde_json::json!({
+            "test.txt": "hello",
+        }),
+    )
+    .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+    let worktree_id = workspace.update(cx, |workspace, cx| {
+        workspace.project().update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        })
+    });
+
+    let editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(
+                (worktree_id, rel_path("test.txt")),
+                None,
+                true,
+                true,
+                true,
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await
+        .downcast::<Editor>()
+        .unwrap();
+
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.read_with(cx, |pane, _| {
+        assert!(pane.is_active_preview_item(editor.entity_id()));
+    });
+
+    cx.focus(&editor);
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            editor.key_context(window, cx).contains("in_preview"),
+            "Expected 'in_preview' context when the editor is the pane's preview item"
+        );
+    });
+
+    pane.update(cx, |pane, _cx| {
+        pane.unpreview_item_if_preview(editor.entity_id());
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(
+            !editor.key_context(window, cx).contains("in_preview"),
+            "Expected no 'in_preview' context after the tab is unpreviewed"
+        );
+    });
+}
+
+async fn setup_range_format_test_with_capabilities(
+    cx: &mut TestAppContext,
+    capabilities: lsp::ServerCapabilities,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), Default::default()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+async fn setup_range_format_test(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    setup_range_format_test_with_capabilities(
+        cx,
+        lsp::ServerCapabilities {
+            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await
+}
+
+/// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
+/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
+/// `head_content` sets the HEAD base, `index_content` sets the staged base.
+/// The buffer starts empty; the caller must `editor.set_text(...)` to set the
+/// working-tree content (the diff recomputes from buffer changes).
+async fn setup_range_format_test_with_git<'a>(
+    cx: &'a mut TestAppContext,
+    head_content: &str,
+    index_content: &str,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &'a mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "",
+        }),
+    )
+    .await;
+
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", head_content.to_string())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", index_content.to_string())],
+    );
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    // Open the unstaged diff so GitStore tracks this buffer. Without this,
+    // `get_unstaged_diff` returns None and compute_format_target cannot
+    // produce range-based FormatTarget.
+    project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+fn refresh_editor_actions(cx: &mut VisualTestContext) {
+    cx.executor().run_until_parked();
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+}
+
+fn lsp_line_edit(start_line: u32, end_line: u32, text: &str) -> lsp::TextEdit {
+    lsp::TextEdit::new(
+        lsp::Range::new(
+            lsp::Position::new(start_line, 0),
+            lsp::Position::new(end_line, 0),
+        ),
+        text.to_string(),
+    )
+}
+
+async fn assert_range_format_merge(
+    cx: &mut TestAppContext,
+    head_content: &str,
+    buffer_text: &str,
+    responses: Vec<Vec<lsp::TextEdit>>,
+    expected_text: &str,
+    description: &str,
+) {
+    let expected_requests = responses.len();
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, head_content).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(buffer_text, window, cx);
+    });
+    cx.run_until_parked();
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let responses = Arc::new(responses);
+    let mut responded_rx =
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>({
+            let request_count = request_count.clone();
+            move |params, _| {
+                let count = request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                let responses = responses.clone();
+                async move {
+                    assert_eq!(
+                        params.text_document.uri,
+                        lsp::Uri::from_file_path(path!("/project/file.rs")).unwrap()
+                    );
+                    match responses.get(count) {
+                        Some(edits) => Ok(Some(edits.clone())),
+                        None => panic!("unexpected range formatting request #{}", count + 1),
+                    }
+                }
+            }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    for _ in 0..expected_requests {
+        responded_rx.next().await;
+    }
+    save.await;
+
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        expected_requests,
+        "{description}"
+    );
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        expected_text,
+        "{description}"
+    );
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+async fn init_bookmarks_tab_test(
+    cx: &mut TestAppContext,
+    files: serde_json::Value,
+) -> (
+    Entity<Workspace>,
+    Entity<Pane>,
+    Entity<Project>,
+    Entity<Editor>,
+    VisualTestContext,
+) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/a"), files).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+        .expect("window should still be open");
+    let mut cx = VisualTestContext::from_window(*window, cx);
+    let editor = open_bookmarks_test_editor(&workspace, &project, "main.rs", &mut cx).await;
+    let pane = workspace.update(&mut cx, |workspace, _| workspace.active_pane().clone());
+    (workspace, pane, project, editor, cx)
+}
+
+async fn open_bookmarks_test_editor(
+    workspace: &Entity<Workspace>,
+    project: &Entity<Project>,
+    path: &str,
+    cx: &mut VisualTestContext,
+) -> Entity<Editor> {
+    let worktree_id = project.update(cx, |project, cx| {
+        project
+            .worktrees(cx)
+            .next()
+            .expect("project should have at least one worktree")
+            .read(cx)
+            .id()
+    });
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path(path)), cx)
+        })
+        .await
+        .expect("buffer should open");
+    let editor = workspace.update_in(cx, |_workspace, window, cx| {
+        let multibuffer = MultiBuffer::build_from_buffer(buffer, cx);
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::full(),
+                multibuffer,
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+    let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+    editor
+}
+
+fn open_bookmarks_tab(workspace: &Entity<Workspace>, cx: &mut VisualTestContext) {
+    workspace.update_in(cx, |workspace, window, cx| {
+        Editor::view_bookmarks(workspace, &actions::ViewBookmarks, window, cx);
+    });
+}
+
+fn toggle_bookmark_on_row(editor: &Entity<Editor>, row: u32, cx: &mut VisualTestContext) {
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(row, 0)..Point::new(row, 0)])
+        });
+        editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
+    });
+}
+
+fn find_bookmarks_editor(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Option<Entity<Editor>> {
+    workspace.update(cx, |workspace, cx| {
+        workspace
+            .items_of_type::<Editor>(cx)
+            .find(|editor| editor.read(cx).bookmarks_tab_state.is_some())
+    })
+}
+
+fn excerpt_count(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> usize {
+    editor.update(cx, |editor, cx| {
+        editor.buffer.read(cx).snapshot(cx).excerpts().count()
+    })
+}
+
+fn bookmarked_paths(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> Vec<String> {
+    editor.update(cx, |editor, cx| {
+        let mut paths = editor
+            .buffer
+            .read(cx)
+            .snapshot(cx)
+            .buffers_with_paths()
+            .map(|(_, path_key)| path_key.path.as_unix_str().to_string())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    })
+}
+
+fn cursor_line_text(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
+    editor.update(cx, |editor, cx| {
+        let snapshot = editor.buffer.read(cx).snapshot(cx);
+        let head = editor
+            .selections
+            .newest::<Point>(&editor.display_snapshot(cx))
+            .head();
+        snapshot
+            .text_for_range(Point::new(head.row, 0)..Point::new(head.row + 1, 0))
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    })
+}
+
+fn close_bookmarks_editor(
+    pane: &Entity<Pane>,
+    bookmarks_editor: Entity<Editor>,
+    cx: &mut VisualTestContext,
+) {
+    let weak_bookmarks_editor = bookmarks_editor.downgrade();
+    pane.update_in(cx, |pane, window, cx| {
+        pane.remove_item(weak_bookmarks_editor.entity_id(), false, false, window, cx);
+    });
+    drop(bookmarks_editor);
+    cx.executor()
+        .advance_clock(workspace::SERIALIZATION_THROTTLE_TIME);
+    cx.run_until_parked();
+    cx.update(|_window, _cx| {});
+    weak_bookmarks_editor.assert_released();
+}
+
+fn open_and_find_bookmarks_tab(
+    workspace: &Entity<Workspace>,
+    cx: &mut VisualTestContext,
+) -> Entity<Editor> {
+    open_bookmarks_tab(workspace, cx);
+    cx.run_until_parked();
+    find_bookmarks_editor(workspace, cx)
+        .expect("bookmarks editor should exist after view_bookmarks")
+}
+
+fn bookmark_path(path: &str) -> Arc<std::path::Path> {
+    Arc::from(std::path::Path::new(path))
+}
+
+fn serialized_rows(rows: &[u32]) -> Vec<SerializedBookmark> {
+    rows.iter()
+        .map(|&row| SerializedBookmark {
+            row,
+            label: String::new(),
+        })
+        .collect()
+}
+
+async fn load_test_bookmarks(
+    bookmark_store: &Entity<BookmarkStore>,
+    entries: Vec<(Arc<std::path::Path>, Vec<u32>)>,
+    cx: &mut VisualTestContext,
+) {
+    let entries = entries
+        .into_iter()
+        .map(|(path, rows)| (path, serialized_rows(&rows)))
+        .collect::<BTreeMap<_, _>>();
+    bookmark_store
+        .update(cx, |store, cx| store.load_serialized_bookmarks(entries, cx))
+        .await
+        .expect("loading serialized bookmarks should succeed");
+}
+
+fn failed_paths(
+    bookmark_store: &Entity<BookmarkStore>,
+    cx: &mut VisualTestContext,
+) -> Vec<Arc<std::path::Path>> {
+    bookmark_store.read_with(cx, |store, _| {
+        let mut paths = store
+            .paths_failed_to_open()
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    })
+}
+
+fn highlighted_display_rows_of(
+    editor: &Entity<Editor>,
+    cx: &mut VisualTestContext,
+) -> Vec<DisplayRow> {
+    editor.update_in(cx, |editor, window, cx| {
+        editor
+            .highlighted_display_rows(window, cx)
+            .into_keys()
+            .collect()
+    })
+}
+
+fn display_row_for(
+    editor: &Entity<Editor>,
+    point: Point,
+    cx: &mut VisualTestContext,
+) -> DisplayRow {
+    editor.update(cx, |editor, cx| {
+        editor
+            .display_snapshot(cx)
+            .point_to_display_point(point, text::Bias::Left)
+            .row()
+    })
+}
+
+fn last_display_row(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> DisplayRow {
+    let last_point = editor.update(cx, |editor, cx| {
+        editor.buffer.read(cx).snapshot(cx).max_point()
+    });
+    display_row_for(editor, last_point, cx)
+}
+#[gpui::test]
+async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, _, _| {
+        let bounds = size(px(1800.), px(900.));
+        let settled = |width: f32, height: f32, editor_width: f32, bounds: Size<Pixels>| {
+            Some(SettledScrollRange {
+                range: size(px(width), px(height)),
+                editor_width: px(editor_width),
+                editor_bounds_size: bounds,
+            })
+        };
+        editor.hold_scrollbar_range(true);
+        assert_eq!(
+            editor.frozen_scroll_range(false, size(px(1780.), px(100.)), px(1786.), bounds),
+            settled(1780., 100., 1786., bounds),
+            "a hold that engages before any settled frame must freeze on the first \
+             state it sees instead of falling through to the live churning range"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(9000.), px(400.)), px(1776.), bounds),
+            settled(1780., 100., 1786., bounds),
+            "an unwrapped interpolation spike and a gutter-driven viewport change \
+             mid-churn must not leak into the held state; comparing a settled width \
+             against a viewport from another gutter regime blinks the scrollbar"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
+            settled(1780., 100., 1786., bounds),
+            "while held, the settled pair stays even when the live state shrinks"
+        );
+        let resized_bounds = size(px(1300.), px(900.));
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(1300.), px(160.)), px(1276.), resized_bounds),
+            settled(1300., 160., 1276., resized_bounds),
+            "a window resize invalidates the frozen state even mid-churn, otherwise the \
+             scrollbar thumbs stay sized for the old window until the search settles"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(9000.), px(400.)), px(1276.), resized_bounds),
+            settled(1300., 160., 1276., resized_bounds),
+            "after re-freezing on the resize, churn at the same bounds stays frozen again"
+        );
+        editor.hold_scrollbar_range(false);
+        assert_eq!(
+            editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
+            None,
+            "once released and not rewrapping, the live state settles"
+        );
+        assert_eq!(
+            editor.frozen_scroll_range(true, size(px(9000.), px(400.)), px(1786.), bounds),
+            settled(1770., 160., 1776., bounds),
+            "a rewrap after release keeps the last settled pair frozen"
+        );
+    });
 }
