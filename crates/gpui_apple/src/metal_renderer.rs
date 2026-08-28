@@ -11,7 +11,7 @@ use gpui::{
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
-use objc2_foundation::{NSSize, NSUInteger};
+use objc2_foundation::NSSize;
 
 use core_foundation::base::TCFType;
 use core_video::{
@@ -1515,13 +1515,13 @@ impl InstanceBufferWriter {
                 }
                 buffer.metal_buffer.did_modify_range(NSRange {
                     location: 0,
-                    length: *written as NSUInteger,
+                    length: *written as u64,
                 });
             }
             if offset > 0 {
                 current.metal_buffer.did_modify_range(NSRange {
                     location: 0,
-                    length: offset as NSUInteger,
+                    length: offset as u64,
                 });
             }
         }
