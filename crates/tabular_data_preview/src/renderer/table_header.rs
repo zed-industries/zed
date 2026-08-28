@@ -600,11 +600,7 @@ impl TableView {
             .into_any_element()
     }
 
-    fn create_sort_button(
-        &self,
-        cx: &mut Context<'_, TableView>,
-        col_idx: AnyColumn,
-    ) -> Button {
+    fn create_sort_button(&self, cx: &mut Context<'_, TableView>, col_idx: AnyColumn) -> Button {
         Button::new(
             ElementId::NamedInteger("sort-button".into(), col_idx.get() as u64),
             match self.engine.applied_sorting {

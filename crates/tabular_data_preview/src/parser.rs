@@ -67,7 +67,8 @@ impl TabularDataPreviewPane {
         cx: &mut Context<Self>,
     ) {
         let editor = self.active_editor_state.editor.clone();
-        self.table.update(cx, |table, cx| table.set_loading(true, cx));
+        self.table
+            .update(cx, |table, cx| table.set_loading(true, cx));
         self.parsing_task = Some(self.parse_in_background(wait_for_debounce, editor, cx));
     }
 
