@@ -1,6 +1,11 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
+use std::{
+    borrow::Cow,
+    fmt,
+    path::{Path, PathBuf},
+    sync::LazyLock,
+};
 
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -92,25 +97,28 @@ pub fn get_default_system_shell_preferring_bash() -> String {
 }
 
 pub fn get_windows_bash() -> Option<String> {
-    use std::path::PathBuf;
-
-    fn find_bash_in_scoop() -> Option<PathBuf> {
-        let bash_exe =
-            PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop\\shims\\bash.exe");
-        bash_exe.exists().then_some(bash_exe)
-    }
-
     fn find_bash_in_git() -> Option<PathBuf> {
-        // /path/to/git/cmd/git.exe/../../bin/bash.exe
         let git = which::which("git").ok()?;
-        let git_bash = git.parent()?.parent()?.join("bin").join("bash.exe");
-        git_bash.exists().then_some(git_bash)
+        // Git for Windows runs shell aliases inside its own MSYS environment,
+        // so the installation can identify its Bash without exposing its layout.
+        let output = gpui_util::new_std_command(git)
+            .args([
+                "-c",
+                "alias.zed-find-bash=!test -x /usr/bin/bash && cygpath -w /usr/bin/bash",
+                "zed-find-bash",
+            ])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let output = String::from_utf8(output.stdout).ok()?;
+        let bash = PathBuf::from(output.trim_end_matches(['\r', '\n']));
+        bash.is_file().then_some(bash)
     }
 
     static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        let bash = find_bash_in_scoop()
-            .or_else(|| find_bash_in_git())
-            .map(|p| p.to_string_lossy().into_owned());
+        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
         if let Some(ref path) = bash {
             log::info!("Found bash at {}", path);
         }
