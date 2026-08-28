@@ -19711,6 +19711,7 @@ dependencies = [
  "walkdir",
  "which",
  "windows 0.61.3",
+ "windows-registry 0.6.1",
 ]
 
 [[package]]

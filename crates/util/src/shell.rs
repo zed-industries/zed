@@ -1,11 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::Cow,
-    fmt,
-    path::{Path, PathBuf},
-    sync::LazyLock,
-};
+#[cfg(windows)]
+use std::path::PathBuf;
+use std::{borrow::Cow, fmt, path::Path, sync::LazyLock};
 
 /// Shell configuration to open the terminal with.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -89,13 +86,18 @@ pub fn get_default_system_shell() -> String {
 
 /// Get the default system shell, preferring bash on Windows.
 pub fn get_default_system_shell_preferring_bash() -> String {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         get_windows_bash().unwrap_or_else(|| get_windows_system_shell())
-    } else {
+    }
+
+    #[cfg(not(windows))]
+    {
         "/bin/sh".to_string()
     }
 }
 
+#[cfg(windows)]
 pub fn get_windows_bash() -> Option<String> {
     fn find_bash_in_installation(install_root: &Path) -> Option<PathBuf> {
         if !install_root.join("git-bash.exe").is_file() {
@@ -103,6 +105,28 @@ pub fn get_windows_bash() -> Option<String> {
         }
         let bash = install_root.join("bin").join("bash.exe");
         bash.is_file().then_some(bash)
+    }
+
+    fn find_bash_in_registry() -> Option<PathBuf> {
+        for root in [
+            windows_registry::CURRENT_USER,
+            windows_registry::LOCAL_MACHINE,
+        ] {
+            for subkey in [
+                r"Software\GitForWindows",
+                r"Software\WOW6432Node\GitForWindows",
+            ] {
+                let install_root = root
+                    .open(subkey)
+                    .ok()
+                    .and_then(|key| key.get_string("InstallPath").ok())
+                    .map(PathBuf::from);
+                if let Some(bash) = install_root.and_then(|path| find_bash_in_installation(&path)) {
+                    return Some(bash);
+                }
+            }
+        }
+        None
     }
 
     fn find_bash_in_git() -> Option<PathBuf> {
@@ -119,7 +143,9 @@ pub fn get_windows_bash() -> Option<String> {
     }
 
     static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
+        let bash = find_bash_in_registry()
+            .or_else(find_bash_in_git)
+            .map(|p| p.to_string_lossy().into_owned());
         if let Some(ref path) = bash {
             log::info!("Found bash at {}", path);
         }
