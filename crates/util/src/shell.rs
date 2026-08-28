@@ -106,11 +106,15 @@ pub fn get_windows_bash() -> Option<String> {
     }
 
     fn find_bash_in_scoop() -> Option<PathBuf> {
-        let scoop = std::env::var_os("SCOOP")
+        let install_root = std::env::var_os("GIT_INSTALL_ROOT")
             .map(PathBuf::from)
-            .or_else(|| Some(PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop")))?;
-        let bash = scoop.join("shims").join("bash.exe");
-        bash.is_file().then_some(bash)
+            .or_else(|| {
+                let scoop = std::env::var_os("SCOOP").map(PathBuf::from).or_else(|| {
+                    Some(PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop"))
+                })?;
+                Some(scoop.join("apps").join("git").join("current"))
+            })?;
+        find_bash_in_installation(&install_root)
     }
 
     fn find_bash_in_git() -> Option<PathBuf> {
