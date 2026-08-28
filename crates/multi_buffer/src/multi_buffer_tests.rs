@@ -6453,6 +6453,19 @@ async fn test_anchor_comparison_tracks_resolution(
                     multibuffer.add_diff(diff_a.clone(), cx);
                 });
             }
+            AnchorContractOp::BiasAnchor { index, right } => {
+                if !anchors.is_empty() {
+                    let snapshot =
+                        multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
+                    let k = (anchors.len() * (*index as usize) / 1001).min(anchors.len() - 1);
+                    let rebiased = if *right {
+                        anchors[k].bias_right(&snapshot)
+                    } else {
+                        anchors[k].bias_left(&snapshot)
+                    };
+                    anchors.push(rebiased);
+                }
+            }
             AnchorContractOp::ToggleSecondBuffer => {
                 multibuffer.update(cx, |multibuffer, cx| {
                     if buffer_b_present {
@@ -6721,4 +6734,13 @@ enum AnchorContractOp {
     /// has structure before and after the diffed region.
     #[proptest(weight = 2)]
     ToggleSecondBuffer,
+    /// Re-bias an existing anchor, appending the result as a new anchor.
+    /// Callers like hover links and completions re-bias anchors that can
+    /// point into expanded deleted hunk rows.
+    #[proptest(weight = 2)]
+    BiasAnchor {
+        #[proptest(strategy = "0u16..=1000")]
+        index: u16,
+        right: bool,
+    },
 }
