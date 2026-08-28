@@ -39,7 +39,9 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use notifications::status_toast::StatusToast;
-use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
+use project::{
+    AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, git_store::repo_identity_path,
+};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
@@ -627,11 +629,10 @@ fn workspace_menu_worktree_labels(
 
             if let Some(snapshot) = repository_snapshot {
                 let worktree_name = if snapshot.is_linked_worktree() {
-                    snapshot
-                        .main_worktree_abs_path()
-                        .and_then(|main_worktree_path| {
-                            project::linked_worktree_short_name(main_worktree_path, root_path)
-                        })
+                    let name_anchor_path = snapshot.main_worktree_abs_path().unwrap_or_else(|| {
+                        repo_identity_path(&snapshot.common_dir_abs_path, snapshot.path_style)
+                    });
+                    project::linked_worktree_short_name(name_anchor_path, root_path)
                         .unwrap_or_else(|| folder_name.clone())
                 } else {
                     "main".into()
