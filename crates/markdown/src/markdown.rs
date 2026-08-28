@@ -1135,9 +1135,10 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn select_all(&mut self, text: &RenderedText, _: &mut Window, _: &mut Context<Self>) {
+    fn select_all(&mut self, text: &RenderedText, _: &mut Window, cx: &mut Context<Self>) {
         self.selection.mode = SelectMode::All;
         self.selection.set_head(0, text);
+        cx.notify();
     }
 
     fn capture_for_context_menu(
@@ -5932,6 +5933,17 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
+        let notification_count = Arc::new(AtomicUsize::new(0));
+        let _subscription = cx.update({
+            let markdown = markdown.clone();
+            let notification_count = notification_count.clone();
+            move |cx| {
+                cx.observe(&markdown, move |_, _| {
+                    notification_count.fetch_add(1, Ordering::SeqCst);
+                })
+            }
+        });
+
         window
             .update(cx, |_, window, cx| {
                 window.dispatch_action(Box::new(crate::SelectAll), cx);
@@ -5939,6 +5951,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
 
+        assert_eq!(notification_count.load(Ordering::SeqCst), 1);
         markdown
     }
 
