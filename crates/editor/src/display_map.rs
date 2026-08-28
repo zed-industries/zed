@@ -89,6 +89,7 @@ pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
+use invisibles::is_standalone_grapheme;
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
@@ -1370,7 +1371,6 @@ impl DisplayMap {
         }
     }
 
-    #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
@@ -1420,24 +1420,25 @@ impl<'a> HighlightedChunk<'a> {
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {
-        let mut chunks = self.text.graphemes(true).peekable();
         let mut text = self.text;
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
         let is_inlay = self.is_inlay;
         iter::from_fn(move || {
-            let mut prefix_len = 0;
-            while let Some(&chunk) = chunks.peek() {
-                let mut chars = chunk.chars();
-                let Some(ch) = chars.next() else { break };
-                if chunk.len() != ch.len_utf8() || !is_invisible(ch) {
-                    prefix_len += chunk.len();
-                    chunks.next();
+            if text.is_empty() {
+                return None;
+            }
+            for (offset, ch) in text.char_indices() {
+                if !is_invisible(ch) {
                     continue;
                 }
-                if prefix_len > 0 {
-                    let (prefix, suffix) = text.split_at(prefix_len);
+                let ch_end = offset + ch.len_utf8();
+                if !is_standalone_grapheme(text, offset, ch_end) {
+                    continue;
+                }
+                if offset > 0 {
+                    let (prefix, suffix) = text.split_at(offset);
                     text = suffix;
                     return Some(HighlightedChunk {
                         text: prefix,
@@ -1447,70 +1448,44 @@ impl<'a> HighlightedChunk<'a> {
                         replacement: renderer.clone(),
                     });
                 }
-                chunks.next();
-                let (prefix, suffix) = text.split_at(chunk.len());
+                let (invisible_text, suffix) = text.split_at(ch_end);
                 text = suffix;
-                if let Some(replacement) = replacement(ch) {
-                    let invisible_highlight = HighlightStyle {
-                        background_color: Some(editor_style.status.hint_background),
-                        underline: Some(UnderlineStyle {
-                            color: Some(editor_style.status.hint),
-                            thickness: px(1.),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    };
-                    let invisible_style = if let Some(style) = style {
-                        style.highlight(invisible_highlight)
-                    } else {
-                        invisible_highlight
-                    };
-                    return Some(HighlightedChunk {
-                        text: prefix,
-                        style: Some(invisible_style),
-                        is_tab: false,
-                        is_inlay,
-                        replacement: Some(ChunkReplacement::Str(replacement.into())),
-                    });
+                let invisible_highlight = HighlightStyle {
+                    background_color: Some(editor_style.status.hint_background),
+                    underline: Some(UnderlineStyle {
+                        color: Some(editor_style.status.hint),
+                        thickness: px(1.),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                };
+                let invisible_style = if let Some(style) = style {
+                    style.highlight(invisible_highlight)
                 } else {
-                    let invisible_highlight = HighlightStyle {
-                        background_color: Some(editor_style.status.hint_background),
-                        underline: Some(UnderlineStyle {
-                            color: Some(editor_style.status.hint),
-                            thickness: px(1.),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    };
-                    let invisible_style = if let Some(style) = style {
-                        style.highlight(invisible_highlight)
-                    } else {
-                        invisible_highlight
-                    };
-
-                    return Some(HighlightedChunk {
-                        text: prefix,
-                        style: Some(invisible_style),
-                        is_tab: false,
-                        is_inlay,
-                        replacement: renderer.clone(),
-                    });
-                }
-            }
-
-            if !text.is_empty() {
-                let remainder = text;
-                text = "";
-                Some(HighlightedChunk {
-                    text: remainder,
-                    style,
-                    is_tab,
+                    invisible_highlight
+                };
+                return Some(HighlightedChunk {
+                    text: invisible_text,
+                    style: Some(invisible_style),
+                    is_tab: false,
                     is_inlay,
-                    replacement: renderer.clone(),
-                })
-            } else {
-                None
+                    replacement: match replacement(ch) {
+                        Some(replacement) => {
+                            Some(ChunkReplacement::Str(SharedString::from(replacement)))
+                        }
+                        None => renderer.clone(),
+                    },
+                });
             }
+            let remainder = text;
+            text = "";
+            Some(HighlightedChunk {
+                text: remainder,
+                style,
+                is_tab,
+                is_inlay,
+                replacement: renderer.clone(),
+            })
         })
     }
 }
@@ -2110,7 +2085,7 @@ impl DisplaySnapshot {
             });
         chars.collect::<String>().graphemes(true).next().map(|s| {
             if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
-                replacement(invisible).unwrap_or(s).to_owned().into()
+                replacement(invisible).map_or_else(|| s.to_owned().into(), SharedString::from)
             } else if s == "\n" {
                 " ".into()
             } else {
@@ -3494,15 +3469,15 @@ pub mod tests {
             buffer.update_diagnostics(
                 LanguageServerId(0),
                 DiagnosticSet::new(
-                    [DiagnosticEntry {
-                        range: PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
-                        diagnostic: Diagnostic {
+                    [DiagnosticEntry::new(
+                        PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
+                        Diagnostic {
                             severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "hi".into(),
                             ..Default::default()
                         },
-                    }],
+                    )],
                     buffer,
                 ),
                 cx,
