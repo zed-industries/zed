@@ -6290,13 +6290,16 @@ fn test_is_valid_anchor_past_last_excerpt_for_buffer(cx: &mut TestAppContext) {
 ///    that sort ranges with end tie-breaks, but it is tolerated here so
 ///    that outright inversions stay visible.)
 ///
-/// Property 1 is violated today by diff base anchors: their validity filter
-/// changes comparison results when the base text changes, so this test
-/// stays red until that mechanism is fixed. Shrinking yields a minimal
-/// operation sequence for whichever violating mechanism it finds; its first
-/// find (stale-path anchors sorting by buffer id while resolving to the end
-/// of their path's region) is fixed and pinned by
-/// `test_stale_path_anchor_comparison_tracks_resolution`.
+/// Shrinking yields a minimal operation sequence for whichever violating
+/// mechanism it finds. Mechanisms found so far, each fixed and pinned by a
+/// distilled test:
+/// - stale-path anchors sorted by buffer id but resolved to the end of
+///   their path's region
+///   (`test_stale_path_anchor_comparison_tracks_resolution`);
+/// - diff base anchors' validity filter flipping comparison results when a
+///   base text edit deleted the region one anchor of a pair pointed into
+///   (`test_folds_stay_sorted_when_diff_base_text_replaced` in the
+///   editor's block_map tests).
 #[gpui::property_test(config = proptest::prelude::ProptestConfig {
     failure_persistence: Some(Box::new(
         proptest::test_runner::FileFailurePersistence::WithSource("proptest-regressions"),
@@ -6356,6 +6359,7 @@ async fn test_anchor_comparison_tracks_resolution(
     let mut previous_orderings: std::collections::HashMap<(usize, usize), cmp::Ordering> =
         Default::default();
     let mut buffer_b_present = true;
+    let mut departed_diffs: Vec<Entity<BufferDiff>> = Vec::new();
 
     for (step, op) in ops.iter().enumerate() {
         match op {
@@ -6402,6 +6406,9 @@ async fn test_anchor_comparison_tracks_resolution(
                         cx,
                     )
                 });
+                // Departed diffs belong to the departed buffer; reinstalling
+                // them would no longer exercise base buffer swaps.
+                departed_diffs.clear();
                 multibuffer.update(cx, |multibuffer, cx| {
                     let max_point = buffer_a.read(cx).max_point();
                     multibuffer.set_excerpts_for_path(
@@ -6411,6 +6418,38 @@ async fn test_anchor_comparison_tracks_resolution(
                         0,
                         cx,
                     );
+                    multibuffer.add_diff(diff_a.clone(), cx);
+                });
+            }
+            AnchorContractOp::SwapDiff { reinstall, variant } => {
+                let buffer_a_text_snapshot =
+                    buffer_a.read_with(cx, |buffer, _| buffer.text_snapshot());
+                let next_diff = if *reinstall
+                    && let Some(previous_diff) = departed_diffs.pop()
+                {
+                    // Recompute the reinstalled diff against the buffer's
+                    // current text; its base text buffer (and so the buffer
+                    // id anchors compare by) is preserved.
+                    let base_text = previous_diff
+                        .read_with(cx, |diff, cx| diff.base_text_string(cx))
+                        .map(Arc::from);
+                    previous_diff
+                        .update(cx, |diff, cx| {
+                            diff.set_base_text(base_text, buffer_a_text_snapshot, cx)
+                        })
+                        .await;
+                    previous_diff
+                } else {
+                    cx.new(|cx| {
+                        BufferDiff::new_with_base_text(
+                            base_text_variants[*variant],
+                            &buffer_a_text_snapshot,
+                            cx,
+                        )
+                    })
+                };
+                departed_diffs.push(std::mem::replace(&mut diff_a, next_diff));
+                multibuffer.update(cx, |multibuffer, cx| {
                     multibuffer.add_diff(diff_a.clone(), cx);
                 });
             }
@@ -6565,6 +6604,16 @@ enum AnchorContractOp {
     /// when a file's diff base buffer is recreated.
     #[proptest(weight = 2)]
     RekeyPath,
+    /// Replace the diff wholesale with one whose base text lives in a
+    /// *different* buffer, or reinstall a previously departed diff.
+    /// Anchors' diff base anchors then point into a base buffer that isn't
+    /// the diff's current one.
+    #[proptest(weight = 2)]
+    SwapDiff {
+        reinstall: bool,
+        #[proptest(strategy = "0usize..4")]
+        variant: usize,
+    },
     /// Remove or re-add the second buffer's excerpts, so the multibuffer
     /// has structure before and after the diffed region.
     #[proptest(weight = 2)]

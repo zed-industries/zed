@@ -8,7 +8,7 @@ use self::transaction::History;
 
 pub use anchor::{Anchor, AnchorRangeExt};
 
-use anchor::{AnchorSeekTarget, ExcerptAnchor};
+use anchor::{AnchorSeekTarget, ExcerptAnchor, diff_base_anchor_resolves_in};
 use anyhow::{Result, anyhow};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffChanged, DiffHunkSecondaryStatus,
@@ -4931,10 +4931,10 @@ impl MultiBufferSnapshot {
                     hunk_info,
                     ..
                 }) => {
+                    let base_text = self.diff_state(*buffer_id).map(|diff| diff.base_text());
                     if let Some(diff_base_anchor) = anchor.diff_base_anchor
-                        && let Some(base_text) =
-                            self.diff_state(*buffer_id).map(|diff| diff.base_text())
-                        && diff_base_anchor.is_valid(&base_text)
+                        && let Some(base_text) = base_text
+                        && diff_base_anchor_resolves_in(&diff_base_anchor, base_text)
                     {
                         // The anchor carries a diff-base position — resolve it
                         // to a location inside the deleted hunk.
@@ -4953,23 +4953,41 @@ impl MultiBufferSnapshot {
                             diff_transforms.next();
                             continue;
                         }
-                    } else if at_transform_end
-                        && anchor
-                            .text_anchor()
-                            .cmp(&hunk_info.hunk_start_anchor, excerpt_buffer)
-                            .is_gt()
-                    {
-                        // The anchor has no (valid) diff-base position, so it
-                        // belongs in the buffer content, not in the deleted
-                        // hunk. However, after an edit deletes the text between
-                        // the hunk boundary and this anchor, both resolve to
-                        // the same excerpt_position—landing us here on the
-                        // DeletedHunk left behind by the shared cursor. Use the
-                        // CRDT ordering to detect that the anchor is strictly
-                        // *past* the hunk boundary and skip to the following
-                        // BufferContent.
-                        diff_transforms.next();
-                        continue;
+                    } else {
+                        // A diff-base position into a *departed* base text
+                        // buffer collapses to a boundary of the deleted hunk
+                        // rows at its buffer position. `ExcerptAnchor::cmp`
+                        // orders such anchors against current base anchors by
+                        // base buffer id, so pick the boundary that agrees
+                        // with that immutable order: before these rows when
+                        // the departed base's id is lower than the current
+                        // base's, after them otherwise.
+                        let departed_base_sorts_after = anchor
+                            .diff_base_anchor
+                            .zip(base_text)
+                            .is_some_and(|(diff_base_anchor, base_text)| {
+                                diff_base_anchor.buffer_id > base_text.remote_id()
+                            });
+                        if at_transform_end
+                            && (departed_base_sorts_after
+                                || anchor
+                                    .text_anchor()
+                                    .cmp(&hunk_info.hunk_start_anchor, excerpt_buffer)
+                                    .is_gt())
+                        {
+                            // The anchor belongs in the buffer content (or
+                            // after these deleted rows), not in the deleted
+                            // hunk. Also, after an edit deletes the text
+                            // between the hunk boundary and this anchor, both
+                            // resolve to the same excerpt_position—landing us
+                            // here on the DeletedHunk left behind by the
+                            // shared cursor. Use the CRDT ordering to detect
+                            // that the anchor is strictly *past* the hunk
+                            // boundary and skip to the following
+                            // BufferContent.
+                            diff_transforms.next();
+                            continue;
+                        }
                     }
                 }
                 _ => {

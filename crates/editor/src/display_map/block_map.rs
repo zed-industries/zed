@@ -4859,19 +4859,19 @@ mod tests {
     ///
     /// Folds inside an expanded deleted hunk anchor at the same buffer
     /// position and are ordered only by their `diff_base_anchor`s into the
-    /// diff's base text. When the base text changes and deletes the region
-    /// one anchor points into, that anchor becomes invalid, and comparing a
-    /// valid base anchor against an invalid one falls back to the text
-    /// anchor's bias. The comparator's answer is consistent with where the
-    /// anchors resolve *now*, but opposite to the answer it gave when the
-    /// folds were inserted, so the persistent tree is unsorted without
-    /// having been touched. Sync then walks it with forward-only cursors,
-    /// emitting edits that misdescribe the change, and the block map keeps
-    /// stale headers for rows that did change.
+    /// diff's base text. When anchor comparison filtered those on
+    /// *validity*, a base text change that deleted the region one anchor
+    /// pointed into made comparison fall back to the text anchor's bias —
+    /// opposite to the answer it gave when the folds were inserted — so the
+    /// persistent tree was unsorted without having been touched. Sync then
+    /// walked it with forward-only cursors, emitting edits that misdescribed
+    /// the change, and the block map kept stale headers for rows that did
+    /// change.
     ///
-    /// This test fails until anchor comparison is made stable across diff
-    /// base changes, or anchor-sorted structures are re-sorted or
-    /// re-anchored when the base text changes.
+    /// Fixed by filtering diff base anchors on *resolvability* against the
+    /// current base buffer instead (monotone: buffer ids never change and
+    /// versions only grow), so anchors into deleted base text keep comparing
+    /// positionally through their tombstones and the answer never flips.
     #[gpui::test]
     async fn test_folds_stay_sorted_when_diff_base_text_replaced(cx: &mut gpui::TestAppContext) {
         cx.update(init_test);
@@ -4914,17 +4914,17 @@ mod tests {
             (Point::new(0, 1)..Point::new(1, 0), FoldPlaceholder::test()),
             (Point::new(1, 1)..Point::new(2, 2), FoldPlaceholder::test()),
         ]);
-        drop(writer);
         assert_eq!(
             fold_snapshot.fold_count(),
             2,
             "both folds should anchor inside the expanded deleted hunk"
         );
 
-        // Keep "DEL1" (the first fold's base anchors stay valid) but delete
-        // "DEL2" (the second fold's start anchor becomes invalid). Comparing
-        // a valid base anchor against an invalidated one falls back to the
-        // text anchor's bias, which reverses the two folds' relative order.
+        // Keep "DEL1" (the first fold's base anchors stay visible) but
+        // delete "DEL2" (the second fold's start anchor becomes a tombstone).
+        // The folds' relative order must survive this: comparison that
+        // filtered out the tombstoned anchor fell back to the text anchor's
+        // bias and reversed it.
         let new_base_text = "DEL1\nbbb\nccc\nddd\n";
         diff.update(cx, |diff, cx| {
             diff.set_base_text(Some(new_base_text.into()), buffer_text_snapshot.clone(), cx)
@@ -5026,12 +5026,14 @@ mod tests {
     /// that's no longer in the multibuffer. Resolving that header during
     /// render is ZED-7G6's exact panic.
     ///
-    /// Debug builds fail earlier and louder, at `BlockMap::sync`'s
+    /// Debug builds failed earlier and louder, at `BlockMap::sync`'s
     /// row-accounting debug assertion, mirroring how production's "cannot
-    /// seek backward" crash families outnumber the rarer stale-header crash.
-    /// Run with `--profile release-fast` (debug assertions off, as
-    /// production runs) to reach the stale header itself. This test fails
-    /// either way, until the fold tree ordering root cause is fixed.
+    /// seek backward" crash families outnumber the rarer stale-header crash;
+    /// under `--profile release-fast` (debug assertions off, as production
+    /// runs) it reached the stale header itself. Kept as the end-to-end
+    /// regression test for the whole chain now that the fold tree ordering
+    /// root cause (diff base anchor comparison filtering on validity) is
+    /// fixed.
     #[gpui::test]
     async fn test_removing_buffer_removes_header_after_diff_base_changes(
         cx: &mut gpui::TestAppContext,
@@ -5173,8 +5175,9 @@ mod tests {
     /// the wrap layer emits edits that no longer cover the rows that actually
     /// changed (`SEED=612 OPERATIONS=50`, caught by
     /// `assert_wrap_edits_cover_changes`), which is the mechanism that leaves
-    /// the block map holding stale header blocks. All three finds are
-    /// unfixed.
+    /// the block map holding stale header blocks. The inlay panic and the
+    /// fold tree disorder are fixed by making anchor comparison track
+    /// resolution; the canonical-form violation is still unfixed.
     #[gpui::test(iterations = 20)]
     async fn test_random_excerpt_removal_with_diffs(
         cx: &mut gpui::TestAppContext,
@@ -6268,7 +6271,7 @@ mod tests {
             let subscription = multibuffer.update(cx, |multibuffer, _| multibuffer.subscribe());
             let buffer_snapshot =
                 multibuffer.read_with(cx, |multibuffer, cx| multibuffer.snapshot(cx));
-            let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+            let (inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
             let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot.clone());
             let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
             let (wrap_map, wrap_snapshot) =
@@ -6283,7 +6286,6 @@ mod tests {
                 (Point::new(0, 1)..Point::new(1, 0), FoldPlaceholder::test()),
                 (Point::new(1, 1)..Point::new(2, 2), FoldPlaceholder::test()),
             ]);
-            drop(writer);
             assert_eq!(fold_snapshot.fold_count(), 2);
             let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
             let (wrap_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
@@ -6291,7 +6293,7 @@ mod tests {
             });
             block_map.read(wrap_snapshot, wrap_edits, None);
 
-            let mut this = Self {
+            let this = Self {
                 buffer_a,
                 buffer_b,
                 diff_a,

@@ -97,6 +97,29 @@ impl From<ExcerptAnchor> for Anchor {
     }
 }
 
+/// Whether a diff base anchor can be positionally compared and resolved
+/// against the diff's current base text.
+///
+/// This deliberately isn't `text::Anchor::is_valid`: validity is revoked
+/// when an edit deletes the anchored text, so filtering on it changes
+/// comparison results over time, retroactively unsorting every structure
+/// ordered by anchor comparison (the editor's fold tree, sorted selections,
+/// ...). Resolvability is monotone for a given base buffer — versions only
+/// grow and ids never change — and anchors into deleted text still resolve
+/// (to the deletion's collapse point) in an order that edits can't change.
+///
+/// The buffer id is checked first because `can_resolve` (like `is_valid`)
+/// special-cases `Anchor::MIN`/`MAX` before checking ids: without this, an
+/// anchor biased to the base text's start or end would keep resolving after
+/// the diff's base was replaced by a different buffer, while the rest of its
+/// generation went unresolvable — recreating the one-sided flip.
+pub(crate) fn diff_base_anchor_resolves_in(
+    anchor: &text::Anchor,
+    base_text: &BufferSnapshot,
+) -> bool {
+    anchor.buffer_id == base_text.remote_id() && base_text.can_resolve(anchor)
+}
+
 impl ExcerptAnchor {
     pub(crate) fn buffer_id(&self) -> BufferId {
         self.text_anchor.buffer_id
@@ -153,10 +176,30 @@ impl ExcerptAnchor {
             && let Some(base_text) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
                 .map(|diff| diff.base_text())
         {
-            let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
-            let other_anchor = other.diff_base_anchor.filter(|a| a.is_valid(base_text));
-            return match (self_anchor, other_anchor) {
-                (Some(a), Some(b)) => a.cmp(&b, base_text),
+            return match (self.diff_base_anchor, other.diff_base_anchor) {
+                (Some(self_anchor), Some(other_anchor)) => {
+                    if diff_base_anchor_resolves_in(&self_anchor, base_text)
+                        && diff_base_anchor_resolves_in(&other_anchor, base_text)
+                    {
+                        self_anchor.cmp(&other_anchor, base_text)
+                    } else {
+                        // At least one anchor points into a departed base
+                        // text buffer (the diff's base was replaced
+                        // wholesale). Resolution collapses such anchors to a
+                        // boundary of the deleted hunk rows at their buffer
+                        // position, choosing the side by this same id
+                        // comparison, so the answer is immutable: it can't
+                        // flip when the base changes again or a previous
+                        // base buffer is reinstalled. Anchors into the same
+                        // departed base collapse to the same point and
+                        // compare `Equal`.
+                        self_anchor.buffer_id.cmp(&other_anchor.buffer_id)
+                    }
+                }
+                // An anchor with no diff base anchor lives in the buffer
+                // content on the side of the deleted hunk rows its bias
+                // implies; both the presence of the base anchor and the
+                // bias are immutable, so this answer never changes.
                 (Some(_), None) => match other.text_anchor().bias {
                     Bias::Left => Ordering::Greater,
                     Bias::Right => Ordering::Less,
@@ -183,7 +226,7 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor.is_valid(&diff.base_text())
+                && diff_base_anchor_resolves_in(&diff_base_anchor, diff.base_text())
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
             } else {
@@ -205,7 +248,7 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor.is_valid(&diff.base_text())
+                && diff_base_anchor_resolves_in(&diff_base_anchor, diff.base_text())
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
             } else {
