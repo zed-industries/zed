@@ -18,11 +18,11 @@ use crate::{
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -1156,6 +1156,10 @@ pub struct Window {
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    /// The [`TextInputConfiguration`] most recently forwarded to the platform
+    /// window, so that only actual changes are forwarded (reconfiguring a live
+    /// input session can restart the IME connection).
+    last_text_input_configuration: Option<TextInputConfiguration>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
@@ -1848,6 +1852,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
+            last_text_input_configuration: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -2054,24 +2059,15 @@ impl Window {
 
         self.focus = Some(handle.id);
         self.focus_generation = self.focus_generation.wrapping_add(1);
-        self.clear_pending_keystrokes();
-
-        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
-        // current effect cycle, and only for this window.
-        let window_handle = self.handle;
-        cx.defer(move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    window.pending_input_changed(cx);
-                })
-                .ok();
-        });
+        self.clear_pending_keystrokes(cx);
 
         self.refresh();
     }
 
     /// Remove focus from all elements within this context's window.
-    pub fn blur(&mut self) {
+    pub fn blur(&mut self, cx: &mut App) {
+        self.clear_pending_keystrokes(cx);
+
         if !self.focus_enabled {
             return;
         }
@@ -2084,8 +2080,8 @@ impl Window {
     }
 
     /// Blur the window and don't allow anything in it to be focused again.
-    pub fn disable_focus(&mut self) {
-        self.blur();
+    pub fn disable_focus(&mut self, cx: &mut App) {
+        self.blur(cx);
         self.focus_enabled = false;
     }
 
@@ -2916,6 +2912,7 @@ impl Window {
         {
             self.platform_window.set_input_handler(input_handler);
         }
+        self.apply_text_input_configuration(cx);
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
@@ -3035,7 +3032,7 @@ impl Window {
     /// Benchmarks drive drawing synchronously rather than through a platform
     /// frame-request loop, so they call this after each measured update to
     /// submit the frame like production presentation would.
-    #[cfg(any(feature = "bench", all(test, feature = "profiler")))]
+    #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
     pub fn present_if_needed(&mut self) {
         if self.needs_present.get() {
             self.present();
@@ -4840,6 +4837,26 @@ impl Window {
         }
     }
 
+    /// Forwards the focused input handler's [`TextInputConfiguration`] to the
+    /// platform window when it differs from the last forwarded value. With no
+    /// input handler the default configuration applies, so a field's
+    /// preferences don't outlive its focus.
+    fn apply_text_input_configuration(&mut self, cx: &mut App) {
+        let configuration = match self.platform_window.take_input_handler() {
+            Some(mut input_handler) => {
+                let configuration = input_handler.text_input_configuration(self, cx);
+                self.platform_window.set_input_handler(input_handler);
+                configuration
+            }
+            None => TextInputConfiguration::default(),
+        };
+        if self.last_text_input_configuration.as_ref() != Some(&configuration) {
+            self.platform_window
+                .set_text_input_configuration(configuration.clone());
+            self.last_text_input_configuration = Some(configuration);
+        }
+    }
+
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -5432,6 +5449,19 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    fn defer_pending_input_changed(&self, cx: &mut App) {
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+    }
+
     fn dispatch_key_down_up_event(
         &mut self,
         event: &dyn Any,
@@ -5496,8 +5526,15 @@ impl Window {
         self.active_pending_input().is_some()
     }
 
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.pending_input.take();
+    #[cfg(test)]
+    pub(crate) fn pending_input_is_none(&self) -> bool {
+        self.pending_input.is_none()
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self, cx: &mut App) {
+        if self.pending_input.take().is_some() {
+            self.defer_pending_input_changed(cx);
+        }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -6155,7 +6192,7 @@ impl Window {
                 }
             }
             accesskit::Action::Blur => {
-                self.blur();
+                self.blur(cx);
             }
             _ => {
                 log::debug!(
@@ -6422,6 +6459,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             any_handle: AnyWindowHandle {
                 id,
                 state_type: TypeId::of::<V>(),
+                root_entity_type_name: std::any::type_name::<V>(),
             },
             state_type: PhantomData,
         }
@@ -6544,12 +6582,18 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+    root_entity_type_name: &'static str,
 }
 
 impl AnyWindowHandle {
     /// Get the ID of this window.
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    /// Returns the name of the window's declared root entity type.
+    pub fn root_entity_type_name(&self) -> &'static str {
+        self.root_entity_type_name
     }
 
     /// Attempt to convert this handle to a window handle with a specific root view type.
