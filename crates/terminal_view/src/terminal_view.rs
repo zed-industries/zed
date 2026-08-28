@@ -428,6 +428,11 @@ impl TerminalView {
         }
     }
 
+    pub(crate) fn mark_needs_serialize(&mut self, cx: &mut Context<Self>) {
+        self.needs_serialize = true;
+        cx.emit(ItemEvent::UpdateTab);
+    }
+
     pub fn is_renaming(&self) -> bool {
         self.rename_editor.is_some()
     }
@@ -1526,6 +1531,7 @@ impl Item for TerminalView {
                     .relative()
                     .child(
                         Label::new(title)
+                            .single_line()
                             .color(params.text_color())
                             .when(self.is_renaming(), |this| this.alpha(0.)),
                     )
@@ -1860,7 +1866,6 @@ impl SerializableItem for TerminalView {
         _workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<anyhow::Result<()>>> {
         let terminal = self.terminal().read(cx);

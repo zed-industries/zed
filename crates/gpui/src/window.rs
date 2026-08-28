@@ -18,11 +18,11 @@ use crate::{
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
 use anyhow::{Context as _, Result, anyhow};
@@ -117,6 +117,8 @@ impl DispatchPhase {
 }
 
 struct WindowInvalidatorInner {
+    #[cfg(feature = "profiler")]
+    pub window_id: WindowId,
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
@@ -128,8 +130,9 @@ struct WindowInvalidatorInner {
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
 /// frame profiler. Tracks when the current frame first became dirty and how
-/// many invalidations were coalesced into it. Only populated when the profiler
-/// is compiled in and `profiler::trace_enabled()` is set.
+/// many invalidations were coalesced into it, whenever the profiler is
+/// compiled in. Retention of the resulting per-frame records is what
+/// `profiler::trace_enabled()` controls, not this measurement.
 #[cfg(feature = "profiler")]
 #[derive(Default)]
 struct FrameDirtyAccumulator {
@@ -143,9 +146,11 @@ pub(crate) struct WindowInvalidator {
 }
 
 impl WindowInvalidator {
-    pub fn new() -> Self {
+    pub fn new(#[allow(unused_variables)] window_id: WindowId) -> Self {
         WindowInvalidator {
             inner: Rc::new(RefCell::new(WindowInvalidatorInner {
+                #[cfg(feature = "profiler")]
+                window_id,
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
@@ -163,11 +168,17 @@ impl WindowInvalidator {
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             #[cfg(feature = "profiler")]
-            Self::record_frame_dirty(&mut inner);
+            let dirty_at = Self::record_frame_dirty(&mut inner);
             let became_dirty = !inner.dirty;
             inner.dirty = true;
             let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+            #[cfg(feature = "profiler")]
+            let window_id = inner.window_id;
             drop(inner);
+            #[cfg(feature = "profiler")]
+            if became_dirty {
+                profiler::journal::record_frame_pending(window_id, dirty_at);
+            }
             cx.push_effect(Effect::Notify { emitter: entity });
             if let Some(waker) = waker {
                 waker();
@@ -188,11 +199,17 @@ impl WindowInvalidator {
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
-            #[cfg(feature = "profiler")]
-            Self::record_frame_dirty(&mut inner);
         }
+        #[cfg(feature = "profiler")]
+        let dirty_at = dirty.then(|| Self::record_frame_dirty(&mut inner));
         let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+        #[cfg(feature = "profiler")]
+        let window_id = inner.window_id;
         drop(inner);
+        #[cfg(feature = "profiler")]
+        if became_dirty && let Some(dirty_at) = dirty_at {
+            profiler::journal::record_frame_pending(window_id, dirty_at);
+        }
         if let Some(waker) = waker {
             waker();
         }
@@ -227,11 +244,10 @@ impl WindowInvalidator {
     }
 
     #[cfg(feature = "profiler")]
-    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
-        if profiler::trace_enabled() {
-            inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
-            inner.frame_dirty.invalidations += 1;
-        }
+    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) -> Instant {
+        let dirty_at = *inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+        inner.frame_dirty.invalidations += 1;
+        dirty_at
     }
 
     #[cfg(feature = "profiler")]
@@ -1140,13 +1156,17 @@ pub struct Window {
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    /// The [`TextInputConfiguration`] most recently forwarded to the platform
+    /// window, so that only actual changes are forwarded (reconfiguring a live
+    /// input session can restart the IME connection).
+    last_text_input_configuration: Option<TextInputConfiguration>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
-    next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -1402,7 +1422,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let invalidator = WindowInvalidator::new();
+        let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
@@ -1523,6 +1543,8 @@ impl Window {
             let input_rate_tracker = input_rate_tracker.clone();
             let mut deferred_force_render = false;
             move |request_frame_options| {
+                #[cfg(feature = "profiler")]
+                let _foreground_turn = profiler::journal::foreground_turn();
                 // This must be checked before anything else: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
                 // (e.g. via a nested message pump in the Windows window
@@ -1576,12 +1598,11 @@ impl Window {
                     {
                         // Don't lose a pending forced render to throttling.
                         deferred_force_render |= force_render;
-                        // Must still complete the frame on platforms that require it.
-                        // On Wayland, `surface.frame()` was already called to request the
-                        // next frame callback, so we must call `surface.commit()` (via
-                        // `complete_frame`) or the compositor won't send another callback.
+                        // Deferred by throttling: ask demand-driven platforms to retry.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .update(&mut cx, |_, window, _| {
+                                window.platform_window.schedule_frame();
+                            })
                             .log_err();
                         // The demand that entered this branch (a deferred forced
                         // render or pending next-frame callbacks) is still
@@ -1634,7 +1655,11 @@ impl Window {
 
                 handle
                     .update(&mut cx, |_, window, _| {
-                        window.complete_frame();
+                        if window.invalidator.is_dirty()
+                            || !window.next_frame_callbacks.borrow().is_empty()
+                        {
+                            window.platform_window.schedule_frame();
+                        }
                     })
                     .log_err();
 
@@ -1827,6 +1852,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
+            last_text_input_configuration: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -2033,24 +2059,15 @@ impl Window {
 
         self.focus = Some(handle.id);
         self.focus_generation = self.focus_generation.wrapping_add(1);
-        self.clear_pending_keystrokes();
-
-        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
-        // current effect cycle, and only for this window.
-        let window_handle = self.handle;
-        cx.defer(move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    window.pending_input_changed(cx);
-                })
-                .ok();
-        });
+        self.clear_pending_keystrokes(cx);
 
         self.refresh();
     }
 
     /// Remove focus from all elements within this context's window.
-    pub fn blur(&mut self) {
+    pub fn blur(&mut self, cx: &mut App) {
+        self.clear_pending_keystrokes(cx);
+
         if !self.focus_enabled {
             return;
         }
@@ -2063,8 +2080,8 @@ impl Window {
     }
 
     /// Blur the window and don't allow anything in it to be focused again.
-    pub fn disable_focus(&mut self) {
-        self.blur();
+    pub fn disable_focus(&mut self, cx: &mut App) {
+        self.blur(cx);
         self.focus_enabled = false;
     }
 
@@ -2333,6 +2350,7 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        self.platform_window.schedule_frame();
         // Next-frame callbacks create frame demand without dirtying the
         // window, so the platform's frame source must be woken explicitly.
         self.invalidator.wake_platform();
@@ -2826,16 +2844,12 @@ impl Window {
         self.capslock
     }
 
-    fn complete_frame(&self) {
-        self.platform_window.completed_frame();
-    }
-
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        // Drain every draw in profiler builds so a stale first-invalidation
-        // timestamp can't leak across enable/disable of runtime tracing.
+        // Drain every draw in profiler builds so a previous frame's
+        // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
         #[cfg(feature = "profiler")]
@@ -2898,6 +2912,7 @@ impl Window {
         {
             self.platform_window.set_input_handler(input_handler);
         }
+        self.apply_text_input_configuration(cx);
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
@@ -2996,9 +3011,15 @@ impl Window {
 
     #[profiling::function]
     fn present(&mut self) {
+        #[cfg(feature = "profiler")]
+        let _foreground_turn = profiler::journal::foreground_turn();
+        #[cfg(feature = "profiler")]
+        let present_start = Instant::now();
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
+            present_start,
+            Instant::now(),
             self.active.get(),
             !self.next_frame_callbacks.borrow().is_empty(),
         );
@@ -3011,7 +3032,7 @@ impl Window {
     /// Benchmarks drive drawing synchronously rather than through a platform
     /// frame-request loop, so they call this after each measured update to
     /// submit the frame like production presentation would.
-    #[cfg(feature = "bench")]
+    #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
     pub fn present_if_needed(&mut self) {
         if self.needs_present.get() {
             self.present();
@@ -4816,6 +4837,26 @@ impl Window {
         }
     }
 
+    /// Forwards the focused input handler's [`TextInputConfiguration`] to the
+    /// platform window when it differs from the last forwarded value. With no
+    /// input handler the default configuration applies, so a field's
+    /// preferences don't outlive its focus.
+    fn apply_text_input_configuration(&mut self, cx: &mut App) {
+        let configuration = match self.platform_window.take_input_handler() {
+            Some(mut input_handler) => {
+                let configuration = input_handler.text_input_configuration(self, cx);
+                self.platform_window.set_input_handler(input_handler);
+                configuration
+            }
+            None => TextInputConfiguration::default(),
+        };
+        if self.last_text_input_configuration.as_ref() != Some(&configuration) {
+            self.platform_window
+                .set_text_input_configuration(configuration.clone());
+            self.last_text_input_configuration = Some(configuration);
+        }
+    }
+
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -4984,7 +5025,7 @@ impl Window {
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
-        self.window_profiler.begin_input();
+        self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation
@@ -5408,6 +5449,19 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    fn defer_pending_input_changed(&self, cx: &mut App) {
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+    }
+
     fn dispatch_key_down_up_event(
         &mut self,
         event: &dyn Any,
@@ -5472,8 +5526,15 @@ impl Window {
         self.active_pending_input().is_some()
     }
 
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.pending_input.take();
+    #[cfg(test)]
+    pub(crate) fn pending_input_is_none(&self) -> bool {
+        self.pending_input.is_none()
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self, cx: &mut App) {
+        if self.pending_input.take().is_some() {
+            self.defer_pending_input_changed(cx);
+        }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -6131,7 +6192,7 @@ impl Window {
                 }
             }
             accesskit::Action::Blur => {
-                self.blur();
+                self.blur(cx);
             }
             _ => {
                 log::debug!(
@@ -6398,6 +6459,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             any_handle: AnyWindowHandle {
                 id,
                 state_type: TypeId::of::<V>(),
+                root_entity_type_name: std::any::type_name::<V>(),
             },
             state_type: PhantomData,
         }
@@ -6520,12 +6582,18 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+    root_entity_type_name: &'static str,
 }
 
 impl AnyWindowHandle {
     /// Get the ID of this window.
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    /// Returns the name of the window's declared root entity type.
+    pub fn root_entity_type_name(&self) -> &'static str {
+        self.root_entity_type_name
     }
 
     /// Attempt to convert this handle to a window handle with a specific root view type.
@@ -7063,6 +7131,80 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(observed_appearance.get(), Some(WindowAppearance::Dark));
+    }
+
+    #[gpui::test]
+    fn queued_frame_callback_wakes_a_parked_render_loop(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, _| {
+            window.active.set(true);
+            window.on_next_frame(|_, _| {});
+        })
+        .unwrap();
+        assert!(
+            test_window.frame_scheduled(),
+            "queuing work on a parked window must wake the render loop"
+        );
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(
+            test_window.frame_scheduled(),
+            "presenting the frame must await one compositor callback"
+        );
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!test_window.frame_scheduled());
+    }
+
+    #[gpui::test]
+    fn pending_presentation_wakes_a_parked_render_loop(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        assert!(
+            test_window.frame_scheduled(),
+            "a rendered scene awaiting presentation must wake the render loop"
+        );
+    }
+
+    #[gpui::test]
+    fn callback_queued_during_a_frame_requests_a_follow_up(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update_window(window.into(), |_, window, _| {
+            // Inactive windows are frame-rate throttled, which would defer the
+            // ticks this test drives manually.
+            window.active.set(true);
+            let callback_ran = callback_ran.clone();
+            window.on_next_frame(move |window, _| {
+                window.on_next_frame(move |_, _| callback_ran.set(true));
+            });
+        })
+        .unwrap();
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!callback_ran.get());
+        assert!(
+            test_window.frame_scheduled(),
+            "a callback queued mid-frame must schedule a follow-up before the loop parks"
+        );
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(callback_ran.get());
     }
 
     struct RootView {

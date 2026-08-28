@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -348,16 +348,6 @@ impl Item for StagedDiff {
         Some("Staged Changes".into())
     }
 
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(0, _cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
-    }
-
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Staged Changes".into()
     }
@@ -524,7 +514,6 @@ impl SerializableItem for StagedDiff {
         _: &mut Workspace,
         _: workspace::ItemId,
         _: bool,
-        _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         Some(Task::ready(Ok(())))

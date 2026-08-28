@@ -28,6 +28,8 @@ pub struct PlatformScheduler {
     dispatcher: Arc<dyn PlatformDispatcher>,
     clock: Arc<PlatformClock>,
     next_session_id: AtomicU16,
+    #[cfg(feature = "profiler")]
+    foreground_runnables: crate::profiler::journal::ForegroundRunnableCounter,
 }
 
 impl PlatformScheduler {
@@ -36,6 +38,8 @@ impl PlatformScheduler {
             dispatcher: dispatcher.clone(),
             clock: Arc::new(PlatformClock { dispatcher }),
             next_session_id: AtomicU16::new(0),
+            #[cfg(feature = "profiler")]
+            foreground_runnables: crate::profiler::journal::foreground_runnable_counter(),
         }
     }
 
@@ -51,6 +55,13 @@ impl PlatformScheduler {
 
     fn next_session_id(&self) -> SessionId {
         SessionId::new(self.next_session_id.fetch_add(1, Ordering::SeqCst))
+    }
+
+    #[cfg(feature = "profiler")]
+    pub(crate) fn foreground_runnable_counter(
+        &self,
+    ) -> crate::profiler::journal::ForegroundRunnableCounter {
+        self.foreground_runnables.clone()
     }
 }
 
@@ -105,6 +116,8 @@ impl Scheduler for PlatformScheduler {
     }
 
     fn schedule_local(&self, _session_id: SessionId, runnable: Runnable<RunnableMeta>) {
+        #[cfg(feature = "profiler")]
+        self.foreground_runnables.queued();
         self.dispatcher
             .dispatch_on_main_thread(runnable, Priority::default());
     }

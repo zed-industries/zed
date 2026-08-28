@@ -24,6 +24,8 @@ pub struct BackgroundExecutor {
 pub struct ForegroundExecutor {
     inner: scheduler::LocalExecutor,
     dispatcher: Arc<dyn PlatformDispatcher>,
+    #[cfg(feature = "profiler")]
+    foreground_runnables: Option<crate::profiler::journal::ForegroundRunnableCounter>,
     not_send: PhantomData<Rc<()>>,
 }
 
@@ -305,15 +307,18 @@ impl ForegroundExecutor {
                 return Self {
                     inner,
                     dispatcher,
+                    #[cfg(feature = "profiler")]
+                    foreground_runnables: Some(platform_scheduler.foreground_runnable_counter()),
                     not_send: PhantomData,
                 };
             };
 
         #[cfg(not(any(test, feature = "test-support")))]
-        let inner = {
-            let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
-            platform_scheduler.foreground_executor()
-        };
+        let platform_scheduler = Arc::new(PlatformScheduler::new(dispatcher.clone()));
+        #[cfg(not(any(test, feature = "test-support")))]
+        let inner = platform_scheduler.foreground_executor();
+        #[cfg(all(not(any(test, feature = "test-support")), feature = "profiler"))]
+        let foreground_runnables = Some(platform_scheduler.foreground_runnable_counter());
 
         #[cfg(any(test, feature = "test-support"))]
         let inner = {
@@ -325,9 +330,16 @@ impl ForegroundExecutor {
             })
         };
 
+        #[cfg(all(any(test, feature = "test-support"), feature = "profiler"))]
+        // The deterministic test scheduler does not invoke GPUI's task profiler
+        // hooks, so an increment here would have no matching decrement.
+        let foreground_runnables = None;
+
         Self {
             inner,
             dispatcher,
+            #[cfg(feature = "profiler")]
+            foreground_runnables,
             not_send: PhantomData,
         }
     }
@@ -374,8 +386,14 @@ impl ForegroundExecutor {
         R: 'static,
     {
         let dispatcher = self.dispatcher.clone();
+        #[cfg(feature = "profiler")]
+        let foreground_runnables = self.foreground_runnables.clone();
         self.inner
             .spawn_with_dispatch(future.boxed_local(), move |runnable| {
+                #[cfg(feature = "profiler")]
+                if let Some(foreground_runnables) = &foreground_runnables {
+                    foreground_runnables.queued();
+                }
                 dispatcher.dispatch_on_main_thread_when_idle(runnable, timeout);
             })
     }

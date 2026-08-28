@@ -1,6 +1,7 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use itertools::Itertools;
+use scheduler::Instant;
 
 #[cfg(feature = "profiler")]
 use crate::action::Action;
@@ -95,6 +96,12 @@ impl ActionStatistics {
             return;
         };
 
+        let timing = ActionTiming {
+            name: action,
+            start: started,
+            end: now,
+        };
+
         let runtime = now.duration_since(started);
         if runtime >= self.runtime_to_beat {
             std::hint::cold_path(); // most actions are not the worst, optimize for that
@@ -105,18 +112,10 @@ impl ActionStatistics {
                     .iter_mut()
                     .min_by_key(|action| runtime >= action.runtime())
             {
-                *to_replace = ActionTiming {
-                    name: action,
-                    start: started,
-                    end: now,
-                };
+                *to_replace = timing;
             } else {
                 self.longest_runtimes
-                    .push(ActionTiming {
-                        name: action,
-                        start: started,
-                        end: now,
-                    })
+                    .push(timing)
                     .expect("just checked it is not full");
             };
 
@@ -184,11 +183,15 @@ static ACTION_STATISTICS: spin::Mutex<ActionStatistics> =
 
 #[doc(hidden)]
 #[cfg(feature = "profiler")]
-pub(crate) fn update_running_action(action: &(dyn Action + 'static), cx: &mut crate::App) {
+pub(crate) fn update_running_action(
+    action: &(dyn Action + 'static),
+    cx: &mut crate::App,
+) -> &'static str {
     let now = Instant::now();
     let action = action.type_id();
     let action = cx.actions.try_resolve_action(&action).unwrap_or("un-named");
     ACTION_STATISTICS.lock().update_running_action(action, now);
+    action
 }
 
 #[doc(hidden)]
