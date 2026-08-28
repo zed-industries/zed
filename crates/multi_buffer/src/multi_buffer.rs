@@ -8,7 +8,7 @@ use self::transaction::History;
 
 pub use anchor::{Anchor, AnchorRangeExt};
 
-use anchor::{AnchorSeekTarget, ExcerptAnchor, diff_base_anchor_resolves_in};
+use anchor::{AnchorSeekTarget, ExcerptAnchor};
 use anyhow::{Result, anyhow};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, BufferDiffSnapshot, DiffChanged, DiffHunkSecondaryStatus,
@@ -4931,7 +4931,7 @@ impl MultiBufferSnapshot {
                     let base_text = self.diff_state(*buffer_id).map(|diff| diff.base_text());
                     if let Some(diff_base_anchor) = anchor.diff_base_anchor
                         && let Some(base_text) = base_text
-                        && diff_base_anchor_resolves_in(&diff_base_anchor, base_text)
+                        && base_text.can_resolve(&diff_base_anchor)
                     {
                         // The anchor carries a diff-base position — resolve it
                         // to a location inside the deleted hunk.

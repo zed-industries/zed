@@ -93,13 +93,6 @@ impl From<ExcerptAnchor> for Anchor {
     }
 }
 
-pub(crate) fn diff_base_anchor_resolves_in(
-    anchor: &text::Anchor,
-    base_text: &BufferSnapshot,
-) -> bool {
-    anchor.buffer_id == base_text.remote_id() && base_text.can_resolve(anchor)
-}
-
 impl ExcerptAnchor {
     pub(crate) fn buffer_id(&self) -> BufferId {
         self.text_anchor.buffer_id
@@ -158,9 +151,7 @@ impl ExcerptAnchor {
         {
             return match (self.diff_base_anchor, other.diff_base_anchor) {
                 (Some(self_anchor), Some(other_anchor)) => {
-                    if diff_base_anchor_resolves_in(&self_anchor, base_text)
-                        && diff_base_anchor_resolves_in(&other_anchor, base_text)
-                    {
+                    if base_text.can_resolve(&self_anchor) && base_text.can_resolve(&other_anchor) {
                         self_anchor.cmp(&other_anchor, base_text)
                     } else {
                         self_anchor.buffer_id.cmp(&other_anchor.buffer_id)
@@ -192,7 +183,7 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor_resolves_in(&diff_base_anchor, diff.base_text())
+                && diff.base_text().can_resolve(&diff_base_anchor)
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
             } else {
@@ -214,7 +205,7 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor_resolves_in(&diff_base_anchor, diff.base_text())
+                && diff.base_text().can_resolve(&diff_base_anchor)
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
             } else {
