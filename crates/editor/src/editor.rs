@@ -10757,11 +10757,18 @@ impl Editor {
     fn handle_focus_out(
         &mut self,
         event: FocusOutEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if event.blurred != self.focus_handle {
             self.last_focused_descendant = Some(event.blurred);
+        } else {
+            // The editor itself lost focus (not just a descendant like a context menu).
+            // Clear any active IME composition: if the marked text were left behind, a
+            // stale marked range would keep `is_composing` true in the platform window
+            // and the next composition would render at the old offset (e.g. after
+            // switching between input boxes mid-composition).
+            self.unmark_text(window, cx);
         }
         self.selection_drag_state = SelectionDragState::None;
         self.refresh_inlay_hints(InlayHintRefreshReason::ModifiersChanged(false), cx);
@@ -10786,6 +10793,7 @@ impl Editor {
         {
             self.hide_context_menu(window, cx);
         }
+        self.unmark_text(window, cx);
         self.take_active_edit_prediction(true, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();

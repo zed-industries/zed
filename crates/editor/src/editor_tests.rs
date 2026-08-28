@@ -534,6 +534,57 @@ fn test_ime_composition(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_ime_composition_cleared_when_editor_loses_focus(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let buffer = cx.new(|cx| {
+        let mut buffer = language::Buffer::local("abcde", cx);
+        buffer.set_group_interval(Duration::ZERO);
+        buffer
+    });
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let mut editor = build_editor(buffer, window, cx);
+
+        // Start an IME composition.
+        editor.replace_and_mark_text_in_range(Some(0..1), "à", None, window, cx);
+        editor
+    });
+
+    // Focus the editor and paint so the focus path is established. The window
+    // must be active for focus events to carry real focus paths; the
+    // active-status callback runs asynchronously, so park the executor first.
+    // Drawing must happen outside of the editor's update: painting renders the
+    // root view, which would re-lease the editor entity while it is leased.
+    editor.update_in(cx, |editor, window, cx| {
+        assert!(editor.marked_text_ranges(cx).is_some());
+        window.activate_window();
+        window.focus(&editor.focus_handle(cx), cx);
+        window.refresh();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+
+    // Move focus elsewhere. The composition must be cleared: if the stale
+    // marked range were left behind, the platform would keep routing keys
+    // to it and later compositions would render at the old offset (e.g.
+    // after switching between input boxes mid-composition).
+    let other_focus = cx.update(|_, cx| cx.focus_handle());
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&other_focus, cx);
+        window.refresh();
+    });
+    cx.update(|window, cx| {
+        let _ = window.draw(cx);
+    });
+
+    assert_eq!(cx.read(|cx| editor.read(cx).marked_text_ranges(cx)), None);
+}
+
+#[gpui::test]
 fn test_selection_with_mouse(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
