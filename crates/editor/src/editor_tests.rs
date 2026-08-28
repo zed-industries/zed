@@ -40293,7 +40293,7 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), 0.0)
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -40382,7 +40382,7 @@ async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppConte
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), 0.0)
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -40445,7 +40445,7 @@ async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut T
         });
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
-            EditorElement::sticky_headers(&editor, &editor.snapshot(window, cx))
+            EditorElement::sticky_headers(&editor, &editor.snapshot(window, cx), 0.0)
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -40528,7 +40528,7 @@ async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), 0.0)
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -40584,7 +40584,7 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
-            EditorElement::sticky_headers(&e, &e.snapshot(window, cx))
+            EditorElement::sticky_headers(&e, &e.snapshot(window, cx), 0.0)
                 .into_iter()
                 .map(
                     |StickyHeader {
@@ -40611,6 +40611,104 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
     assert_eq!(sticky_headers(4.0), vec![(struct_foo, 0.0)]);
     assert_eq!(sticky_headers(4.5), vec![(struct_foo, -0.5)]);
     assert_eq!(sticky_headers(5.0), vec![]);
+}
+
+#[gpui::test]
+async fn test_sticky_headers_in_multibuffer(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let text = indoc! {"
+        fn foo() {
+            let a = 1;
+            let b = 2;
+            let c = 3;
+            let d = 4;
+        }
+        fn bar() {
+            let x = 1;
+            let y = 2;
+            let z = 3;
+        }
+    "};
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [(text, vec![Point::row_range(0..4), Point::row_range(8..10)])],
+            cx,
+        );
+        let buffer_id = multi_buffer
+            .read(cx)
+            .snapshot(cx)
+            .all_buffer_ids()
+            .next()
+            .unwrap();
+        let buffer = multi_buffer.read(cx).buffer(buffer_id).unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(rust_lang()), cx);
+        });
+
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    cx.run_until_parked();
+
+    let multibuffer_row = |cx: &mut EditorTestContext, needle: &str| {
+        let text = cx.update_editor(|e, _, cx| e.buffer().read(cx).snapshot(cx).text());
+        text.lines().position(|line| line.contains(needle)).unwrap() as u32
+    };
+    let display_row = |cx: &mut EditorTestContext, point: Point| {
+        cx.update_editor(|e, window, cx| {
+            e.snapshot(window, cx)
+                .display_snapshot
+                .point_to_display_point(point, text::Bias::Left)
+                .row()
+                .as_f64()
+        })
+    };
+    let mut sticky_headers =
+        |cx: &mut EditorTestContext, scroll_top: ScrollOffset, top_offset_rows: ScrollOffset| {
+            cx.update_editor(|e, window, cx| {
+                e.scroll(
+                    gpui::Point {
+                        x: 0.,
+                        y: scroll_top,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+            cx.update_editor(|e, window, cx| {
+                EditorElement::sticky_headers(&e, &e.snapshot(window, cx), top_offset_rows)
+                    .into_iter()
+                    .map(
+                        |StickyHeader {
+                             start_point,
+                             offset,
+                             ..
+                         }| { (start_point, offset) },
+                    )
+                    .collect::<Vec<_>>()
+            })
+        };
+
+    let fn_foo = Point::new(multibuffer_row(&mut cx, "fn foo"), 0);
+    let let_a = Point::new(multibuffer_row(&mut cx, "let a"), 0);
+    let inside_foo = display_row(&mut cx, let_a);
+
+    assert_eq!(
+        sticky_headers(&mut cx, inside_foo, 0.0),
+        vec![(fn_foo, 0.0)]
+    );
+
+    assert_eq!(
+        sticky_headers(&mut cx, inside_foo, 2.0),
+        vec![(fn_foo, 2.0)]
+    );
+
+    let let_y = Point::new(multibuffer_row(&mut cx, "let y"), 0);
+    let inside_bar = display_row(&mut cx, let_y);
+    assert_eq!(sticky_headers(&mut cx, inside_bar, 0.0), vec![]);
 }
 
 #[gpui::test]
@@ -40658,7 +40756,7 @@ async fn test_autoscroll_keeps_cursor_visible_below_sticky_headers(cx: &mut Test
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.snapshot(window, cx);
             let scroll_top = snapshot.scroll_position().y;
-            let sticky_header_count = EditorElement::sticky_headers(editor, &snapshot).len();
+            let sticky_header_count = EditorElement::sticky_headers(editor, &snapshot, 0.0).len();
             let cursor_row = editor
                 .selections
                 .newest_display(&snapshot.display_snapshot)
