@@ -11983,7 +11983,7 @@ async fn test_restores_saved_collapse_state_inside_gitignored_dir(cx: &mut TestA
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::default());
             });
         });
     });
