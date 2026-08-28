@@ -7885,13 +7885,9 @@ impl GitPanel {
         else {
             return;
         };
-        let entries = self
-            .view_mode
-            .tree_state()
-            .and_then(|state| state.directory_descendants.get(&entry.key))
-            .cloned()
-            .unwrap_or_default();
-
+        let Some(entries) = self.directory_descendants(ix) else {
+            return;
+        };
         let stage_status = if let Some(repo) = &self.active_repository {
             self.stage_status_for_directory(&entry, repo.read(cx))
         } else {
