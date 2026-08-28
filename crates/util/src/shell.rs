@@ -97,10 +97,12 @@ pub fn get_default_system_shell_preferring_bash() -> String {
 }
 
 pub fn get_windows_bash() -> Option<String> {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "Git Bash discovery runs once per process and asks Git for its relocated MSYS path"
+    )]
     fn find_bash_in_git() -> Option<PathBuf> {
         let git = which::which("git").ok()?;
-        // Git for Windows runs shell aliases inside its own MSYS environment,
-        // so the installation can identify its Bash without exposing its layout.
         let output = gpui_util::new_std_command(git)
             .args([
                 "-c",
