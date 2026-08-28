@@ -12,8 +12,7 @@ use crate::FILTERED_KEYSTROKES;
 
 const MAX_TOOLTIP_BINDINGS: usize = 10;
 
-/// A status bar item shown while pending keystrokes both match a key binding and are a prefix of
-/// longer bindings, counting down until the shorter binding is applied.
+/// A status bar item shown while timed pending input can complete a multi-stroke key binding.
 pub struct PendingKeystrokesIndicator {
     pending: Option<Rc<PendingKeystrokes>>,
     pending_input_generation: u64,
@@ -25,7 +24,9 @@ struct PendingKeystrokes {
     keystrokes: Rc<[KeybindingKeystroke]>,
     pending_input_generation: u64,
     bindings: Vec<(Rc<[KeybindingKeystroke]>, SharedString)>,
-    timeout: Duration,
+    timeout_duration: Duration,
+    remaining_duration: Duration,
+    timeout_paused: bool,
 }
 
 impl PendingKeystrokesIndicator {
@@ -69,14 +70,14 @@ impl PendingKeystrokesIndicator {
 
     fn update_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !Self::enabled(cx) {
-            return self.clear_pending();
+            return self.clear_pending(window, cx);
         }
 
         let Some(pending_input) = window.pending_input() else {
-            return self.clear_pending();
+            return self.clear_pending(window, cx);
         };
         let Some(timeout) = pending_input.timeout() else {
-            return self.clear_pending();
+            return self.clear_pending(window, cx);
         };
         let keystrokes = pending_input.keystrokes();
 
@@ -135,23 +136,41 @@ impl PendingKeystrokesIndicator {
                 .into_iter()
                 .map(|(_, keystrokes, action)| (Rc::from(keystrokes), action))
                 .collect(),
-            timeout,
+            timeout_duration: timeout.duration(),
+            remaining_duration: timeout.remaining(cx),
+            timeout_paused: timeout.is_paused(),
         }));
         true
     }
 
-    fn clear_pending(&mut self) -> bool {
+    fn clear_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
         self.pending.take().is_some()
+    }
+
+    fn pending(&self) -> Option<&Rc<PendingKeystrokes>> {
+        self.pending.as_ref()
+    }
+
+    fn set_hovered(&mut self, hovered: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending.is_none() {
+            return;
+        }
+
+        window.set_pending_input_timeout_paused(&cx.entity(), hovered, cx);
     }
 }
 
 impl Render for PendingKeystrokesIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if !Self::enabled(cx) {
+        let Some(pending) = self.pending().cloned() else {
             return div().hidden().into_any_element();
-        }
-        let Some(pending) = self.pending.clone() else {
-            return div().hidden().into_any_element();
+        };
+        let remaining_fraction = if pending.timeout_duration.is_zero() {
+            0.0
+        } else {
+            (pending.remaining_duration.as_secs_f32() / pending.timeout_duration.as_secs_f32())
+                .clamp(0.0, 1.0)
         };
 
         h_flex()
@@ -164,18 +183,25 @@ impl Render for PendingKeystrokesIndicator {
                     .color(Color::Muted)
                     .into_any_element()
             } else {
-                CircularProgress::new(1.0, 1.0, px(13.), cx)
+                let progress = CircularProgress::new(remaining_fraction, 1.0, px(13.), cx)
                     .stroke_width(px(2.))
-                    .progress_color(cx.theme().colors().text_muted)
-                    .with_animation(
-                        (
-                            "pending-keystrokes-countdown",
-                            pending.pending_input_generation,
-                        ),
-                        Animation::new(pending.timeout).with_max_fps(30.0),
-                        |progress, delta| progress.value(1.0 - delta),
-                    )
-                    .into_any_element()
+                    .progress_color(cx.theme().colors().text_muted);
+                if pending.timeout_paused || pending.remaining_duration.is_zero() {
+                    progress.into_any_element()
+                } else {
+                    progress
+                        .with_animation(
+                            (
+                                "pending-keystrokes-countdown",
+                                pending.pending_input_generation,
+                            ),
+                            Animation::new(pending.remaining_duration).with_max_fps(30.0),
+                            move |progress, delta| {
+                                progress.value(remaining_fraction * (1.0 - delta))
+                            },
+                        )
+                        .into_any_element()
+                }
             })
             .child(
                 KeyBinding::from_keystrokes(pending.keystrokes.clone(), false)
@@ -215,6 +241,9 @@ impl Render for PendingKeystrokesIndicator {
                     .into_any_element()
             }))
             .tooltip_show_delay(Duration::ZERO)
+            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
+                this.set_hovered(*hovered, window, cx);
+            }))
             .into_any_element()
     }
 }
@@ -242,7 +271,9 @@ impl StatusItemView for PendingKeystrokesIndicator {
 mod tests {
     use std::cell::Cell;
 
-    use gpui::{Action as _, Entity, FocusHandle, KeyBinding, TestAppContext, actions};
+    use gpui::{
+        Action as _, Entity, FocusHandle, KeyBinding, TestAppContext, VisualTestContext, actions,
+    };
 
     use super::*;
 
@@ -253,7 +284,6 @@ mod tests {
 
     struct TestView {
         focus_handle: FocusHandle,
-        indicator: Entity<PendingKeystrokesIndicator>,
         shorter_binding_count: Rc<Cell<usize>>,
         longer_binding_count: Rc<Cell<usize>>,
     }
@@ -263,11 +293,13 @@ mod tests {
         keystrokes: Vec<String>,
         generation: u64,
         bindings: Vec<(Vec<String>, String)>,
-        timeout: Duration,
+        timeout_duration: Duration,
+        remaining_duration: Duration,
+        timeout_paused: bool,
     }
 
     fn pending_snapshot(indicator: &PendingKeystrokesIndicator) -> Option<PendingSnapshot> {
-        indicator.pending.as_ref().map(|pending| PendingSnapshot {
+        indicator.pending().map(|pending| PendingSnapshot {
             keystrokes: pending
                 .keystrokes
                 .iter()
@@ -287,8 +319,22 @@ mod tests {
                     )
                 })
                 .collect(),
-            timeout: pending.timeout,
+            timeout_duration: pending.timeout_duration,
+            remaining_duration: pending.remaining_duration,
+            timeout_paused: pending.timeout_paused,
         })
+    }
+
+    fn set_indicator_hovered(
+        indicator: &Entity<PendingKeystrokesIndicator>,
+        hovered: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        cx.update(|window, cx| {
+            indicator.update(cx, |indicator, cx| {
+                indicator.set_hovered(hovered, window, cx);
+            });
+        });
     }
 
     impl Render for TestView {
@@ -333,15 +379,14 @@ mod tests {
 
         let shorter_binding_count = Rc::new(Cell::new(0));
         let longer_binding_count = Rc::new(Cell::new(0));
-        let (test_view, cx) = cx.add_window_view(|window, cx| TestView {
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
             focus_handle: cx.focus_handle(),
-            indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
             shorter_binding_count: shorter_binding_count.clone(),
             longer_binding_count: longer_binding_count.clone(),
         });
-        let (indicator, focus_handle) = test_view.read_with(cx, |test_view, _| {
-            (test_view.indicator.clone(), test_view.focus_handle.clone())
-        });
+        let indicator =
+            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
+        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
             window.activate_window();
@@ -369,7 +414,7 @@ mod tests {
         );
 
         let pending_before_unrelated_settings_update = indicator
-            .read_with(cx, |indicator, _| indicator.pending.clone())
+            .read_with(cx, |indicator, _| indicator.pending().cloned())
             .expect("pending input");
         cx.update(|_, cx| {
             cx.update_global::<settings::SettingsStore, _>(|store, cx| {
@@ -380,16 +425,34 @@ mod tests {
         });
         cx.run_until_parked();
         let pending_after_unrelated_settings_update = indicator
-            .read_with(cx, |indicator, _| indicator.pending.clone())
+            .read_with(cx, |indicator, _| indicator.pending().cloned())
             .expect("pending input");
         assert!(Rc::ptr_eq(
             &pending_before_unrelated_settings_update,
             &pending_after_unrelated_settings_update
         ));
 
-        cx.executor().advance_clock(first_pending.timeout / 2);
+        cx.executor()
+            .advance_clock(first_pending.timeout_duration / 2);
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_some()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
+
+        set_indicator_hovered(&indicator, true, cx);
+        cx.run_until_parked();
+        let hovered_pending = indicator
+            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+            .unwrap_or_default();
+        assert!(hovered_pending.timeout_paused);
+        assert_eq!(
+            hovered_pending.remaining_duration,
+            first_pending.timeout_duration / 2
+        );
+
+        cx.executor()
+            .advance_clock(first_pending.timeout_duration * 2);
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
+        assert_eq!(shorter_binding_count.get(), 0);
 
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
@@ -402,6 +465,11 @@ mod tests {
         let second_pending = second_pending.unwrap_or_default();
         assert_eq!(second_pending.keystrokes, vec!["ctrl-b", "h"]);
         assert!(second_pending.generation > first_pending.generation);
+        assert!(second_pending.timeout_paused);
+        assert_eq!(
+            second_pending.remaining_duration,
+            second_pending.timeout_duration
+        );
         assert_eq!(
             second_pending.bindings,
             vec![(
@@ -410,37 +478,65 @@ mod tests {
             )]
         );
 
-        cx.executor().advance_clock(second_pending.timeout);
+        cx.executor()
+            .advance_clock(second_pending.timeout_duration * 2);
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
+        assert_eq!(longer_binding_count.get(), 0);
+
+        set_indicator_hovered(&indicator, false, cx);
+        cx.run_until_parked();
+        let resumed_pending = indicator
+            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+            .unwrap_or_default();
+        assert!(!resumed_pending.timeout_paused);
+        assert_eq!(
+            resumed_pending.remaining_duration,
+            resumed_pending.timeout_duration
+        );
+
+        cx.executor()
+            .advance_clock(resumed_pending.remaining_duration);
         cx.run_until_parked();
 
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
         assert_eq!(shorter_binding_count.get(), 0);
         assert_eq!(longer_binding_count.get(), 1);
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+        set_indicator_hovered(&indicator, true, cx);
+        cx.run_until_parked();
 
         cx.update(|_, cx| {
             cx.update_global::<settings::SettingsStore, _>(|store, cx| {
                 store
-                    .set_user_settings(
-                        r#"{"status_bar":{"pending_keystrokes_indicator":false}}"#,
-                        cx,
-                    )
+                    .set_user_settings(r#"{"status_bar":{"experimental.show":false}}"#, cx)
                     .expect("valid test settings");
             });
         });
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+        let remaining_after_disabling = cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+            timeout.remaining(cx)
+        });
+        cx.executor().advance_clock(remaining_after_disabling);
+        cx.run_until_parked();
+        assert_eq!(shorter_binding_count.get(), 1);
 
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
 
         cx.update(|_, cx| {
             cx.update_global::<settings::SettingsStore, _>(|store, cx| {
                 store
-                    .set_user_settings(
-                        r#"{"status_bar":{"pending_keystrokes_indicator":true}}"#,
-                        cx,
-                    )
+                    .set_user_settings(r#"{"status_bar":{"experimental.show":true}}"#, cx)
                     .expect("valid test settings");
             });
         });
@@ -456,7 +552,7 @@ mod tests {
             VimModeSetting::override_global(VimModeSetting(true), cx);
         });
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
 
         cx.update(|_, cx| {
             VimModeSetting::override_global(VimModeSetting(false), cx);
@@ -468,9 +564,34 @@ mod tests {
             pending_after_disabling_vim.is_some(),
             "expected the current pending input after disabling Vim mode"
         );
-        cx.executor()
-            .advance_clock(pending_after_disabling_vim.unwrap_or_default().timeout);
+        set_indicator_hovered(&indicator, true, cx);
         cx.run_until_parked();
+        let remaining_before_release = cx.update(|window, cx| {
+            window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .map(|timeout| timeout.remaining(cx))
+                .expect("pending input timeout")
+        });
+
+        let weak_indicator = indicator.downgrade();
+        drop(indicator);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        weak_indicator.assert_released();
+
+        let remaining_after_release = cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+            timeout.remaining(cx)
+        });
+        assert_eq!(remaining_after_release, remaining_before_release);
+        cx.executor().advance_clock(remaining_after_release);
+        cx.run_until_parked();
+        assert_eq!(shorter_binding_count.get(), 2);
     }
 
     #[gpui::test]
@@ -501,15 +622,14 @@ mod tests {
 
         let shorter_binding_count = Rc::new(Cell::new(0));
         let longer_binding_count = Rc::new(Cell::new(0));
-        let (test_view, cx) = cx.add_window_view(|window, cx| TestView {
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
             focus_handle: cx.focus_handle(),
-            indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
             shorter_binding_count,
             longer_binding_count,
         });
-        let (indicator, focus_handle) = test_view.read_with(cx, |test_view, _| {
-            (test_view.indicator.clone(), test_view.focus_handle.clone())
-        });
+        let indicator =
+            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
+        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
             window.activate_window();
@@ -517,7 +637,7 @@ mod tests {
 
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
 
         cx.update(|_, cx| {
             cx.update_global::<settings::SettingsStore, _>(|store, cx| {
@@ -530,13 +650,13 @@ mod tests {
             });
         });
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_some()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
 
         cx.update(|_, cx| {
             HelixModeSetting::override_global(HelixModeSetting(true), cx);
         });
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
 
         cx.update(|_, cx| {
             HelixModeSetting::override_global(HelixModeSetting(false), cx);
@@ -545,8 +665,59 @@ mod tests {
         let pending_after_disabling_helix =
             indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
         assert!(pending_after_disabling_helix.is_some());
-        cx.executor()
-            .advance_clock(pending_after_disabling_helix.unwrap_or_default().timeout);
+        cx.executor().advance_clock(
+            pending_after_disabling_helix
+                .unwrap_or_default()
+                .timeout_duration,
+        );
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn test_indicator_ignores_pending_input_without_timeout(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            settings::init(cx);
+            cx.bind_keys([KeyBinding::new(
+                "ctrl-b h",
+                LongerBinding,
+                Some("PendingKeystrokesIndicatorTest"),
+            )]);
+        });
+
+        let shorter_binding_count = Rc::new(Cell::new(0));
+        let longer_binding_count = Rc::new(Cell::new(0));
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+            focus_handle: cx.focus_handle(),
+            shorter_binding_count,
+            longer_binding_count,
+        });
+        let indicator =
+            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
+        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        let notification_count = Rc::new(Cell::new(0));
+        let _notification_subscription = cx.update({
+            let indicator = indicator.clone();
+            let notification_count = notification_count.clone();
+            move |_, cx| {
+                cx.observe(&indicator, move |_, _| {
+                    notification_count.set(notification_count.get() + 1);
+                })
+            }
+        });
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+
+        cx.update(|window, _| {
+            let pending_input = window.pending_input().expect("pending input");
+            assert!(pending_input.timeout().is_none());
+        });
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+        assert_eq!(notification_count.get(), 0);
     }
 }

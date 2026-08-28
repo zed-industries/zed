@@ -650,6 +650,8 @@ mod tests {
         )
     }
 
+    struct PendingInputTimeoutPauseOwner;
+
     #[test]
     fn test_keybinding_for_action_bounds() {
         let tree = test_dispatch_tree(vec![KeyBinding::new(
@@ -1067,18 +1069,23 @@ mod tests {
         struct TestView {
             focus_handle: FocusHandle,
             action_count: Rc<Cell<usize>>,
+            secondary_action_count: Rc<Cell<usize>>,
         }
 
         impl Render for TestView {
             fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
                 use crate::{InteractiveElement as _, Styled as _};
                 let action_count = self.action_count.clone();
+                let secondary_action_count = self.secondary_action_count.clone();
                 crate::div()
                     .key_context("Terminal")
                     .track_focus(&self.focus_handle)
                     .size_full()
                     .on_action(move |_: &TestAction, _, _| {
                         action_count.set(action_count.get() + 1);
+                    })
+                    .on_action(move |_: &SecondaryTestAction, _, _| {
+                        secondary_action_count.set(secondary_action_count.get() + 1);
                     })
             }
         }
@@ -1087,19 +1094,21 @@ mod tests {
             cx.bind_keys([
                 KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
                 KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h j", TestAction, Some("Terminal")),
             ]);
         });
 
         let action_count = Rc::new(Cell::new(0));
+        let secondary_action_count = Rc::new(Cell::new(0));
         let (view, cx) = cx.add_window_view(|_, cx| TestView {
             focus_handle: cx.focus_handle(),
             action_count: action_count.clone(),
+            secondary_action_count: secondary_action_count.clone(),
         });
         cx.update(|window, cx| {
             window.focus(&view.read(cx).focus_handle.clone(), cx);
             window.activate_window();
         });
-
         cx.simulate_modifiers_change(crate::Modifiers::control());
         cx.simulate_keystrokes("ctrl-b");
         cx.simulate_modifiers_change(crate::Modifiers::default());
@@ -1113,14 +1122,48 @@ mod tests {
             assert_eq!(
                 window
                     .pending_input()
-                    .and_then(|pending_input| pending_input.timeout()),
+                    .and_then(|pending_input| pending_input.timeout())
+                    .map(|timeout| timeout.duration()),
                 Some(crate::PENDING_INPUT_TIMEOUT)
             );
         });
         assert_eq!(action_count.get(), 0);
 
         // Emulate a countdown indicator re-rendering the window while waiting for the timeout.
-        for _ in 0..10 {
+        for _ in 0..7 {
+            cx.executor()
+                .advance_clock(crate::PENDING_INPUT_TIMEOUT / 10);
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        let other_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            assert!(!window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            assert!(!window.set_pending_input_timeout_paused(&other_owner, false, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT * 3 / 10);
+        });
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 2);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        for _ in 0..3 {
             cx.executor()
                 .advance_clock(crate::PENDING_INPUT_TIMEOUT / 10);
             cx.update(|window, _| window.refresh());
@@ -1129,6 +1172,77 @@ mod tests {
 
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+
+        cx.simulate_modifiers_change(crate::Modifiers::control());
+        cx.simulate_keystrokes("ctrl-b");
+        cx.simulate_modifiers_change(crate::Modifiers::default());
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT / 2);
+        cx.run_until_parked();
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT / 2);
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 2);
+            assert!(timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT);
+        });
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 2);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+
+        cx.update(|window, cx| {
+            let focus_handle = view.read(cx).focus_handle.clone();
+            window.focus(&focus_handle, cx);
+        });
+        cx.simulate_modifiers_change(crate::Modifiers::control());
+        cx.simulate_keystrokes("ctrl-b");
+        cx.simulate_modifiers_change(crate::Modifiers::default());
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+            window.focus(&cx.focus_handle(), cx);
+            assert!(!window.has_pending_keystrokes());
+        });
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(window.pending_input_is_none()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
     }
 
     #[crate::test]
