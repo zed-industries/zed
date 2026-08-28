@@ -171,6 +171,7 @@ impl Render for PendingKeystrokesIndicator {
                     })
                     .into_any_element()
             }))
+            .tooltip_show_delay(Duration::ZERO)
             .into_any_element()
     }
 }
