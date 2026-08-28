@@ -211,7 +211,10 @@ const MOMENTUM_STOP_VELOCITY: f32 = 10.;
 
 /// Upper bound on the time a single momentum tick may integrate, so a stalled
 /// frame loop (backgrounded window, long pause) resumes without a huge jump.
-const MOMENTUM_MAX_TICK: Duration = Duration::from_millis(50);
+/// Must stay well above a plausible worst-case frame interval: clamping a
+/// normal slow frame would advance the fling slower than real time, making
+/// momentum crawl on exactly the devices that already render slowly.
+const MOMENTUM_MAX_TICK: Duration = Duration::from_millis(250);
 
 /// How far back the release-velocity estimate looks. Samples older than this
 /// reflect an earlier part of the gesture, not the speed at release.
