@@ -5263,6 +5263,85 @@ async fn test_workspace_diagnostics_refresh_during_open_request_pulls_again(
 }
 
 #[gpui::test]
+async fn test_workspace_diagnostics_refreshes_coalesce(cx: &mut gpui::TestAppContext) {
+    let workspace_requests = Arc::new(atomic::AtomicUsize::new(0));
+    let (first_response_tx, first_response_rx) = oneshot::channel::<()>();
+    let first_response_rx = Arc::new(Mutex::new(Some(first_response_rx)));
+    let (project, mut fake_servers) = diagnostics_pull_project(
+        cx,
+        json!({ "a.rs": "one two three" }),
+        DiagnosticsPullServer {
+            identifier: "test-ws-coalesce",
+            inter_file_dependencies: true,
+            workspace_diagnostics: true,
+            initializer: Some(Box::new({
+                let workspace_requests = workspace_requests.clone();
+                let first_response_rx = first_response_rx.clone();
+                move |fake_server| {
+                    fake_server
+                        .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>({
+                            let workspace_requests = workspace_requests.clone();
+                            let first_response_rx = first_response_rx.clone();
+                            move |_, _| {
+                                workspace_requests.fetch_add(1, atomic::Ordering::Release);
+                                let first_response_rx = first_response_rx.lock().take();
+                                async move {
+                                    if let Some(first_response_rx) = first_response_rx {
+                                        first_response_rx.await.ok();
+                                    }
+                                    Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                                        lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                                    ))
+                                }
+                            }
+                        });
+                }
+            })),
+        },
+    )
+    .await;
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server = fake_servers.next().await.unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+    assert_eq!(workspace_requests.load(atomic::Ordering::Acquire), 1);
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let pull_tasks = (0..5)
+        .map(|_| {
+            lsp_store.update(cx, |lsp_store, cx| {
+                lsp_store.pull_workspace_diagnostics_once(cx)
+            })
+        })
+        .collect::<Vec<_>>();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+
+    first_response_tx.send(()).unwrap();
+    cx.executor().advance_clock(Duration::from_secs(1));
+    cx.executor().run_until_parked();
+    for pull_task in pull_tasks {
+        let refreshed = pull_task.await;
+        assert!(
+            refreshed,
+            "every coalesced waiter must be resolved by the follow-up pull"
+        );
+    }
+    assert_eq!(
+        workspace_requests.load(atomic::Ordering::Acquire),
+        2,
+        "refreshes issued while a pull is in flight must coalesce into one follow-up pull"
+    );
+}
+
+#[gpui::test]
 async fn test_workspace_diagnostics_refresh_during_failed_request_pulls_again(
     cx: &mut gpui::TestAppContext,
 ) {

@@ -64,7 +64,7 @@ use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
     channel::oneshot,
-    future::{Shared, join_all, pending},
+    future::{Shared, join_all},
     select, select_biased,
     stream::FuturesUnordered,
 };
@@ -177,7 +177,7 @@ const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5
 pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100);
 const WORKSPACE_DIAGNOSTICS_TOKEN_START: &str = "id:";
 const WORKSPACE_DIAGNOSTICS_REPULL_DELAY: Duration = Duration::from_secs(2);
-const CROSS_BUFFER_DIAGNOSTICS_PULL_DELAY: Duration = Duration::from_millis(500);
+const CROSS_BUFFER_DIAGNOSTICS_PULL_DELAY: Duration = Duration::from_millis(100);
 const DOCUMENT_DIAGNOSTICS_RETRIGGER_LIMIT: usize = 3;
 const DOCUMENT_DIAGNOSTICS_RETRIGGER_DELAY: Duration = Duration::from_millis(100);
 const SERVER_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10);
@@ -5868,9 +5868,11 @@ impl LspStore {
                     request.display_name(),
                     language_server.name()
                 );
-                let message = format!("{context}: {err}");
-                if should_log_lsp_response_error(&err) && should_log_lsp_request_failure(&message) {
-                    log::warn!("{message}");
+                if should_log_lsp_response_error(&err) {
+                    let message = format!("{context}: {err}");
+                    if should_log_lsp_request_failure(&message) {
+                        log::warn!("{message}");
+                    }
                 }
                 err.context(context)
             })?;
@@ -8429,10 +8431,9 @@ impl LspStore {
                 match diagnostics_task.await {
                     Ok(Some(diagnostics)) => break diagnostics,
                     Ok(None) => return Ok(()),
-                    Err(error) if lsp_pull_cancelled_with_retrigger(&error) => {
-                        if retriggers_left == 0 {
-                            return Ok(());
-                        }
+                    Err(error)
+                        if retriggers_left > 0 && lsp_pull_cancelled_with_retrigger(&error) =>
+                    {
                         retriggers_left -= 1;
                         cx.background_executor()
                             .timer(DOCUMENT_DIAGNOSTICS_RETRIGGER_DELAY)
@@ -13577,14 +13578,16 @@ impl LspStore {
         registration_id: &Option<String>,
         token: Option<String>,
     ) {
-        if let Some(LanguageServerState::Running {
-            workspace_diagnostics_refresh_tasks,
-            ..
-        }) = self
+        if let Some(workspace_diagnostics) = self
             .as_local_mut()
             .and_then(|local| local.language_servers.get_mut(&server_id))
-            && let Some(workspace_diagnostics) =
-                workspace_diagnostics_refresh_tasks.get_mut(registration_id)
+            .and_then(|state| match state {
+                LanguageServerState::Running {
+                    workspace_diagnostics_refresh_tasks,
+                    ..
+                } => workspace_diagnostics_refresh_tasks.get_mut(registration_id),
+                _ => None,
+            })
         {
             workspace_diagnostics.current_request_token = token;
         }
@@ -14372,7 +14375,7 @@ fn lsp_workspace_diagnostics_refresh(
                 let mut refresh_requested = false;
                 let mut request = pin!(
                     server
-                        .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
+                        .request::<lsp::WorkspaceDiagnosticRequest>(
                             lsp::WorkspaceDiagnosticParams {
                                 previous_result_ids,
                                 identifier: identifier.clone(),
@@ -14381,7 +14384,7 @@ fn lsp_workspace_diagnostics_refresh(
                                     partial_result_token: Some(lsp::ProgressToken::String(token)),
                                 },
                             },
-                            pending::<String>(),
+                            Duration::MAX,
                         )
                         .fuse()
                 );
@@ -14390,8 +14393,19 @@ fn lsp_workspace_diagnostics_refresh(
                     loop {
                         let mut progress = pin!(progress_rx.recv().fuse());
                         let mut refresh = pin!(refresh_rx.recv().fuse());
-                        select! {
+                        select_biased! {
                             response = request => break 'response response,
+                            new_progress = progress => match new_progress {
+                                Some(()) => continue 'response,
+                                None => return,
+                            },
+                            new_refresh = refresh => match new_refresh {
+                                Some(completion_tx) => {
+                                    refresh_requested = true;
+                                    queued_completion_txs.extend(completion_tx);
+                                }
+                                None => return,
+                            },
                             _ = inactivity_timer => {
                                 // Release everyone waiting on this refresh (e.g. the agent's
                                 // diagnostics tool), including waiters that queued up while the
@@ -14405,17 +14419,6 @@ fn lsp_workspace_diagnostics_refresh(
                                 }
                                 continue 'response;
                             }
-                            new_progress = progress => match new_progress {
-                                Some(()) => continue 'response,
-                                None => return,
-                            },
-                            new_refresh = refresh => match new_refresh {
-                                Some(completion_tx) => {
-                                    refresh_requested = true;
-                                    queued_completion_txs.extend(completion_tx);
-                                }
-                                None => return,
-                            },
                         }
                     }
                 };
@@ -14460,6 +14463,7 @@ fn lsp_workspace_diagnostics_refresh(
                             if refresh_requested {
                                 continue 'request;
                             }
+                            debug_assert!(queued_completion_txs.is_empty());
                             break 'request;
                         }
                     }
@@ -14493,12 +14497,12 @@ fn lsp_workspace_diagnostics_refresh(
                         .fuse()
                 );
                 let mut refresh = pin!(refresh_rx.recv().fuse());
-                select! {
-                    _ = repull_timer => {}
+                select_biased! {
                     new_refresh = refresh => match new_refresh {
                         Some(completion_tx) => completion_txs.extend(completion_tx),
                         None => return,
                     },
+                    _ = repull_timer => {}
                 }
                 continue 'request;
             }

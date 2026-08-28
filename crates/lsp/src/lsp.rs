@@ -1512,29 +1512,6 @@ impl LanguageServer {
         )
     }
 
-    /// Send a RPC request to the language server with a custom timer.
-    /// Once the attached future becomes ready, the request will time out with the provided output message.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
-    pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
-        &self,
-        params: T::Params,
-        timer: U,
-    ) -> impl LspRequestFuture<T::Result> + use<T, U>
-    where
-        T::Result: 'static + Send,
-    {
-        Self::request_internal_with_timer::<T, U>(
-            &self.next_id,
-            &self.response_handlers,
-            &self.outbound_tx,
-            &self.notification_tx,
-            &self.executor,
-            timer,
-            params,
-        )
-    }
-
     fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
