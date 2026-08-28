@@ -4,7 +4,8 @@ use gpui::{
     Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, Image,
     ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
+    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId, TouchPhase,
+    point, px,
 };
 use wasm_bindgen::prelude::*;
 
@@ -123,6 +124,7 @@ impl WebWindowInner {
         let mut handles = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
+            self.register_pointer_cancel(),
             self.register_touch_end(),
             self.register_pointer_move(),
             self.register_pointer_leave(),
@@ -206,6 +208,29 @@ impl WebWindowInner {
             // stuck. The capture is released implicitly on pointerup.
             this.canvas.set_pointer_capture(event.pointer_id()).ok();
 
+            if pointer_type == "touch" {
+                this.state.borrow_mut().mouse_position = position;
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Started,
+                    position,
+                    force: None,
+                }));
+
+                // Whether this touch resolves into a tap is only known at
+                // release, so this check reflects the state before the
+                // gesture; the release handler re-decides from the tap's
+                // outcome. Focusing here still matters: it keeps an ongoing
+                // IME session alive across taps within editable content, and
+                // runs within the user gesture as keyboard summoning
+                // requires.
+                if this.pointer_targets_text_input(position) {
+                    this.ime_mirror.set_read_only(false);
+                    this.ime_mirror.focus();
+                }
+                return;
+            }
+
             let button = dom_mouse_button_to_gpui(event.button());
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
             let time = js_sys::Date::now();
@@ -227,16 +252,7 @@ impl WebWindowInner {
                 first_mouse: false,
             }));
 
-            // Decide focus after dispatching the MouseDown so text-input
-            // acceptance reflects the selection produced by this tap rather
-            // than the previous one. This still runs within the user
-            // gesture, so focusing here is allowed to show the keyboard.
-            if pointer_type != "touch" || this.pointer_targets_text_input(position) {
-                if pointer_type == "touch" {
-                    this.ime_mirror.set_read_only(false);
-                }
-                this.ime_mirror.focus();
-            }
+            this.ime_mirror.focus();
         })
     }
 
@@ -256,8 +272,36 @@ impl WebWindowInner {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
 
-            let button = dom_mouse_button_to_gpui(event.button());
             let position = pointer_position_in_element(&event);
+
+            if event.pointer_type() == "touch" {
+                this.state.borrow_mut().mouse_position = position;
+                // A recognized tap is dispatched synchronously inside this
+                // call, so the text-input check below sees the state the tap
+                // produced.
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Ended,
+                    position,
+                    force: None,
+                }));
+
+                // A keyboard opening or closing mid-gesture reflows the
+                // layout, so the release position no longer refers to the
+                // content the user aimed at (a tap that summoned the keyboard
+                // often ends up below the shrunken layout, which would
+                // immediately dismiss it again). Let the pointerdown decision
+                // stand instead.
+                let viewport_stable = this.gesture_start_visual_viewport_height.get()
+                    == this.visual_viewport_height();
+                if viewport_stable {
+                    this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                }
+                this.schedule_ime_mirror_sync();
+                return;
+            }
+
+            let button = dom_mouse_button_to_gpui(event.button());
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
 
             this.pressed_button.set(None);
@@ -276,16 +320,6 @@ impl WebWindowInner {
                 click_count,
             }));
 
-            // A keyboard opening or closing mid-gesture reflows the layout,
-            // so the release position no longer refers to the content the
-            // user aimed at (a tap that summoned the keyboard often ends up
-            // below the shrunken layout, which would immediately dismiss it
-            // again). Let the pointerdown decision stand instead.
-            let viewport_stable =
-                this.gesture_start_visual_viewport_height.get() == this.visual_viewport_height();
-            if event.pointer_type() == "touch" && viewport_stable {
-                this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
-            }
             this.schedule_ime_mirror_sync();
         })
     }
@@ -336,6 +370,26 @@ impl WebWindowInner {
         };
         self.visual_viewport_probe.set((width, max_height));
         height >= max_height * 0.85
+    }
+
+    /// The browser or OS took over the pointer (native scrolling, a system
+    /// gesture, the pointer being removed): no pointerup will follow, so the
+    /// gesture must unwind rather than complete.
+    fn register_pointer_cancel(self: &Rc<Self>) -> EventListenerHandle {
+        let this = Rc::clone(self);
+        self.listen("pointercancel", move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            if event.pointer_type() == "touch" {
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Cancelled,
+                    position: pointer_position_in_element(&event),
+                    force: None,
+                }));
+            } else {
+                this.pressed_button.set(None);
+            }
+        })
     }
 
     /// Cancels touch default handling separately because iOS does not consistently
@@ -439,6 +493,18 @@ impl WebWindowInner {
             event.prevent_default();
 
             let position = pointer_position_in_element(&event);
+
+            if event.pointer_type() == "touch" {
+                this.state.borrow_mut().mouse_position = position;
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Moved,
+                    position,
+                    force: None,
+                }));
+                return;
+            }
+
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
             let current_pressed = this.pressed_button.get();
 
