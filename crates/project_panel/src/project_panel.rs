@@ -80,7 +80,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotifyResultExt, NotifyTaskExt},
     open_file_permalink,
 };
-use worktree::{CreatedEntry, PathChange};
+use worktree::CreatedEntry;
 use zed_actions::{
     project_panel::{Toggle, ToggleFocus},
     workspace::OpenWithSystem,
@@ -93,6 +93,7 @@ use crate::{
 
 const PROJECT_PANEL_KEY: &str = "ProjectPanel";
 const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
+const COLLAPSE_STATE_SAVE_DEBOUNCE: Duration = Duration::from_millis(100);
 
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
@@ -174,21 +175,18 @@ pub struct ProjectPanel {
     update_visible_entries_task: UpdateVisibleEntriesTask,
     undo_manager: UndoManager,
     state: State,
-    /// Entry-ID snapshot from the most recent scheduled save. Used as a
-    /// cheap first-level guard against running the path-building slow path
-    /// for events that don't touch expansion state (git status updates,
-    /// settings changes, worktree order changes).
-    last_scheduled_expanded_dir_ids: Option<HashMap<WorktreeId, Vec<ProjectEntryId>>>,
-    /// Path payload from the most recent scheduled save. Used as the
-    /// second-level guard so a `WorktreeUpdatedEntries` event that doesn't
-    /// actually change persisted paths (e.g. file content modified) doesn't
-    /// trigger a redundant DB write.
-    last_scheduled_expanded_paths: Option<collections::HashMap<Arc<Path>, Vec<String>>>,
-    /// Set when a `WorktreeUpdatedEntries` event fires, so we know to force
-    /// the slow path on the next scheduled save in case a rename changed a
-    /// persisted path without changing any entry id. Cleared on each
-    /// scheduled save.
-    worktree_entries_changed_since_last_save: bool,
+    /// Payload of the last write that actually landed in the database, used
+    /// to skip redundant writes. Only updated once a write succeeds, so a
+    /// failed write is retried rather than mistaken for persisted state.
+    last_persisted_collapse_state: Option<collections::HashMap<Arc<Path>, Vec<String>>>,
+    /// Workspace database id, refreshed whenever a save is scheduled.
+    /// `Panel::flush_persistence` runs while the workspace entity is already
+    /// checked out for update, so it cannot read the id for itself.
+    collapse_state_workspace_id: Option<workspace::WorkspaceId>,
+    /// Set when the saved state could not be read back at construction.
+    /// Suppresses every save, so an unreadable database is never overwritten
+    /// with the empty state we fell back to.
+    collapse_state_load_failed: bool,
     _save_collapse_state_task: Task<()>,
     /// Scans requested on behalf of a saved expanded path, keyed by the
     /// directory being loaded. Keeping the tasks here both keeps them running
@@ -775,32 +773,9 @@ impl ProjectPanel {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
-                    project::Event::WorktreeUpdatedEntries(_, changes) => {
-                        // A rename keeps `ProjectEntryId` stable while changing
-                        // the entry's path, which the cheap entry-id guard in
-                        // `schedule_save_collapse_state` cannot detect.
-                        // `worktree::build_diff` represents renames as
-                        // Removed+Added, so only flag a potential path change
-                        // when the change set contains a path-structure change
-                        // (Added/Removed/AddedOrUpdated/Loaded) and not pure
-                        // metadata updates.
-                        let has_path_change = changes.is_empty()
-                            || changes.iter().any(|(_, _, change)| {
-                                matches!(
-                                    change,
-                                    PathChange::Added
-                                        | PathChange::Removed
-                                        | PathChange::AddedOrUpdated
-                                        | PathChange::Loaded
-                                )
-                            });
-                        if has_path_change {
-                            this.worktree_entries_changed_since_last_save = true;
-                        }
-                        this.update_visible_entries(None, false, false, window, cx);
-                        cx.notify();
-                    }
-                    project::Event::WorktreeAdded(_) | project::Event::WorktreeOrderChanged => {
+                    project::Event::WorktreeUpdatedEntries(..)
+                    | project::Event::WorktreeAdded(_)
+                    | project::Event::WorktreeOrderChanged => {
                         this.update_visible_entries(None, false, false, window, cx);
                         cx.notify();
                     }
@@ -861,12 +836,6 @@ impl ProjectPanel {
             })
             .detach();
 
-            // Flush any pending debounced save before the app exits so the
-            // most recent collapse state isn't lost when the user quits Zed
-            // within the debounce window.
-            cx.on_app_quit(|this, cx| this.flush_collapse_state(cx))
-                .detach();
-
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
             cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
@@ -901,14 +870,18 @@ impl ProjectPanel {
 
             let restore_collapse_state =
                 ProjectPanelSettings::get_global(cx).restore_collapse_state;
-            let pending_expanded_paths =
+            let (pending_expanded_paths, collapse_state_load_failed) =
                 if restore_collapse_state && let Some(workspace_id) = workspace.database_id() {
                     let db = persistence::ProjectPanelDb::global(cx);
-                    db.expanded_entries(workspace_id)
-                        .log_err()
-                        .unwrap_or_default()
+                    match db.expanded_entries(workspace_id) {
+                        Ok(entries) => (entries, false),
+                        Err(error) => {
+                            log::error!("failed to load project panel collapse state: {error:#}");
+                            (Default::default(), true)
+                        }
+                    }
                 } else {
-                    Default::default()
+                    (Default::default(), false)
                 };
 
             let mut this = Self {
@@ -953,9 +926,9 @@ impl ProjectPanel {
                     project.read(cx).is_via_collab(),
                     &cx,
                 ),
-                last_scheduled_expanded_dir_ids: None,
-                last_scheduled_expanded_paths: None,
-                worktree_entries_changed_since_last_save: false,
+                last_persisted_collapse_state: None,
+                collapse_state_workspace_id: None,
+                collapse_state_load_failed,
                 _save_collapse_state_task: Task::ready(()),
                 pending_dir_loads: HashMap::default(),
             };
@@ -4912,72 +4885,64 @@ impl ProjectPanel {
         workspace::WorkspaceId,
         collections::HashMap<Arc<Path>, Vec<String>>,
     )> {
-        if !ProjectPanelSettings::get_global(cx).restore_collapse_state {
+        if !ProjectPanelSettings::get_global(cx).restore_collapse_state
+            || self.collapse_state_load_failed
+        {
             return None;
         }
-        let workspace_id = self.workspace.upgrade()?.read(cx).database_id()?;
+        let workspace_id = self.collapse_state_workspace_id?;
         let entries = self.current_expanded_paths(cx)?;
         Some((workspace_id, entries))
     }
 
-    /// Debounced save of the expanded directory state to the database.
-    /// No-ops when persistence is disabled, the workspace has no
-    /// `database_id` yet, or the persisted payload hasn't changed since the
-    /// last scheduled save.
-    ///
-    /// Uses a two-tier guard so unrelated `update_visible_entries` passes
-    /// (git status updates, settings changes, worktree order changes) don't
-    /// pay the cost of rebuilding the path payload:
-    ///
-    /// 1. Cheap entry-id comparison against the last scheduled snapshot. If
-    ///    unchanged and no `WorktreeUpdatedEntries` event has fired since
-    ///    last save, return without rebuilding paths.
-    /// 2. Otherwise build the path payload and compare it (this catches
-    ///    renames, where entry ids stay the same but paths change).
+    /// Debounced save of the expanded directory state to the database. The
+    /// payload is built after the debounce elapses, so a burst of toggles
+    /// builds it once.
     fn schedule_save_collapse_state(&mut self, cx: &mut Context<Self>) {
-        let ids_unchanged =
-            self.last_scheduled_expanded_dir_ids.as_ref() == Some(&self.state.expanded_dir_ids);
-        if ids_unchanged && !self.worktree_entries_changed_since_last_save {
-            return;
-        }
-        let Some((workspace_id, entries)) = self.collapse_state_save_payload(cx) else {
-            return;
-        };
-
-        // Update the cheap-guard caches even when the path payload turns out
-        // to be unchanged, so we don't redo this work on the next call.
-        self.last_scheduled_expanded_dir_ids = Some(self.state.expanded_dir_ids.clone());
-        self.worktree_entries_changed_since_last_save = false;
-
-        if self.last_scheduled_expanded_paths.as_ref() == Some(&entries) {
-            return;
-        }
-        self.last_scheduled_expanded_paths = Some(entries.clone());
-
-        let db = persistence::ProjectPanelDb::global(cx);
-        let executor = cx.background_executor().clone();
-        self._save_collapse_state_task = cx.background_executor().spawn(async move {
-            executor.timer(Duration::from_millis(100)).await;
-            db.save_expanded_entries(workspace_id, entries)
-                .await
-                .log_err();
+        self.collapse_state_workspace_id = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).database_id());
+        self._save_collapse_state_task = cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(COLLAPSE_STATE_SAVE_DEBOUNCE)
+                .await;
+            let Ok(write) = this.update(cx, |this, cx| this.write_collapse_state(cx)) else {
+                return;
+            };
+            write.await;
         });
     }
 
     /// Cancels any pending debounced save and immediately writes the current
-    /// collapse state to the database. The returned task resolves once the
-    /// write completes; the app quit handler awaits this so the most recent
-    /// state is not lost when the process exits during the debounce window.
-    fn flush_collapse_state(&mut self, cx: &App) -> Task<()> {
+    /// collapse state. The returned task resolves once the write completes;
+    /// `Panel::flush_persistence` awaits it so state isn't lost when the
+    /// workspace closes or the app quits inside the debounce window.
+    fn flush_collapse_state(&mut self, cx: &mut Context<Self>) -> Task<()> {
         self._save_collapse_state_task = Task::ready(());
+        self.write_collapse_state(cx)
+    }
+
+    fn write_collapse_state(&mut self, cx: &mut Context<Self>) -> Task<()> {
         let Some((workspace_id, entries)) = self.collapse_state_save_payload(cx) else {
             return Task::ready(());
         };
+        if self.last_persisted_collapse_state.as_ref() == Some(&entries) {
+            return Task::ready(());
+        }
         let db = persistence::ProjectPanelDb::global(cx);
-        cx.background_spawn(async move {
-            db.save_expanded_entries(workspace_id, entries)
+        cx.spawn(async move |this, cx| {
+            let written = db
+                .save_expanded_entries(workspace_id, entries.clone())
                 .await
-                .log_err();
+                .log_err()
+                .is_some();
+            if written {
+                this.update(cx, |this, _| {
+                    this.last_persisted_collapse_state = Some(entries);
+                })
+                .ok();
+            }
         })
     }
 
@@ -8111,6 +8076,10 @@ impl Panel for ProjectPanel {
         Some(workspace::HideStatusItem::new(|settings| {
             settings.project_panel.get_or_insert_default().button = Some(false);
         }))
+    }
+
+    fn flush_persistence(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
+        self.flush_collapse_state(cx)
     }
 }
 
