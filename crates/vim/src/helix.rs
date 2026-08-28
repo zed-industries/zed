@@ -1230,11 +1230,7 @@ impl Vim {
             let buffer_snapshot = display_snapshot.buffer_snapshot();
             let visible_range = Self::visible_jump_range(editor, &snapshot, display_snapshot, cx);
             let start_offset = buffer_snapshot.point_to_offset(visible_range.start);
-            let end_offset = if visible_range.end.row == buffer_snapshot.max_point().row {
-                buffer_snapshot.len()
-            } else {
-                buffer_snapshot.point_to_offset(visible_range.end)
-            };
+            let end_offset = buffer_snapshot.point_to_offset(visible_range.end);
 
             let selections = editor.selections.all::<Point>(&display_snapshot);
             let skip_data = Self::selection_skip_offsets(
