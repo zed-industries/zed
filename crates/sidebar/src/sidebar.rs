@@ -606,20 +606,24 @@ fn workspace_menu_worktree_labels(
     let root_paths = workspace.read(cx).root_paths(cx);
     let show_folder_name = root_paths.len() > 1;
     let project = workspace.read(cx).project().clone();
-    let repository_snapshots: Vec<_> = project
-        .read(cx)
-        .repositories(cx)
-        .values()
-        .map(|repo| repo.read(cx).snapshot())
-        .collect();
+    let (path_style, repository_snapshots) = {
+        let project = project.read(cx);
+        let path_style = project.path_style(cx);
+        let repository_snapshots = project
+            .repositories(cx)
+            .values()
+            .map(|repo| repo.read(cx).snapshot())
+            .collect::<Vec<_>>();
+        (path_style, repository_snapshots)
+    };
 
     root_paths
         .into_iter()
         .map(|root_path| {
             let root_path = root_path.as_ref();
-            let folder_name = root_path
-                .file_name()
-                .map(|name| SharedString::from(name.to_string_lossy().to_string()))
+            let folder_name = path_style
+                .file_name(root_path)
+                .map(SharedString::from)
                 .unwrap_or_default();
             let repository_snapshot = repository_snapshots
                 .iter()
@@ -630,7 +634,11 @@ fn workspace_menu_worktree_labels(
                     snapshot
                         .main_worktree_abs_path()
                         .and_then(|main_worktree_path| {
-                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                            project::linked_worktree_short_name(
+                                main_worktree_path,
+                                root_path,
+                                snapshot.path_style,
+                            )
                         })
                         .unwrap_or_else(|| folder_name.clone())
                 } else {
