@@ -23,9 +23,9 @@ use language_model::{
     CompactionResult, DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter,
-    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -678,22 +678,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
     fn telemetry_id(&self) -> String {
         format!("zed.dev/{}", self.model.id)
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic
-            | cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::OpenAi => {
-                LanguageModelToolSchemaFormat::JsonSchema
-            }
-            cloud_llm_client::LanguageModelProvider::Google => {
-                LanguageModelToolSchemaFormat::JsonSchemaUnmodified
-            }
-            cloud_llm_client::LanguageModelProvider::XAi => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
-        }
     }
 
     fn max_token_count(&self) -> u64 {

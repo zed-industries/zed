@@ -8,7 +8,7 @@ use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, AuthenticateError, EnvVar, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    LanguageModelCompletionEvent, LanguageModelToolChoice,
 };
 use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
@@ -326,10 +326,6 @@ impl LanguageModel for GoogleLanguageModel {
             | LanguageModelToolChoice::Any
             | LanguageModelToolChoice::None => true,
         }
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaUnmodified
     }
 
     fn telemetry_id(&self) -> String {

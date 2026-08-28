@@ -10,8 +10,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter,
-    ReasoningEffort, SubPageProviderSettings, env_var,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, ReasoningEffort,
+    SubPageProviderSettings, env_var,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
 pub use settings::OpenCodeApiProtocol;
@@ -601,13 +601,6 @@ impl LanguageModel for OpenCodeLanguageModel {
                 // Google models don't support None tool choice
                 self.model.protocol(self.subscription) != ApiProtocol::Google
             }
-        }
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.protocol(self.subscription) {
-            ApiProtocol::Google => LanguageModelToolSchemaFormat::JsonSchemaUnmodified,
-            _ => LanguageModelToolSchemaFormat::JsonSchema,
         }
     }
 

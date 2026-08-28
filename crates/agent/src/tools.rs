@@ -34,7 +34,7 @@ use feature_flags::{
     CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
 };
 use gpui::App;
-use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
+use language_model::LanguageModelRequestTool;
 use serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
@@ -162,10 +162,12 @@ macro_rules! tools {
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
+                let mut input_schema = T::input_schema().to_value();
+                language_model::tool_schema::normalize_tool_schema(&mut input_schema);
                 LanguageModelRequestTool::function(
                     T::NAME.to_string(),
                     T::description().to_string(),
-                    T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    input_schema,
                     T::supports_input_streaming(),
                 )
             }
