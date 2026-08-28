@@ -121,7 +121,12 @@ impl Render for PendingKeystrokesIndicator {
             .id("pending-keystrokes-indicator")
             .gap_1()
             .px_1()
-            .child(
+            .child(if cx.reduce_motion() {
+                Icon::new(IconName::CountdownTimer)
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted)
+                    .into_any_element()
+            } else {
                 CircularProgress::new(1.0, 1.0, px(13.), cx)
                     .stroke_width(px(2.))
                     .progress_color(cx.theme().colors().text_muted)
@@ -132,8 +137,9 @@ impl Render for PendingKeystrokesIndicator {
                         ),
                         Animation::new(pending.timeout).with_max_fps(30.0),
                         |progress, delta| progress.value(1.0 - delta),
-                    ),
-            )
+                    )
+                    .into_any_element()
+            })
             .child(
                 KeyBinding::from_keystrokes(pending.keystrokes.clone(), false)
                     .size(rems_from_px(12_f32)),
