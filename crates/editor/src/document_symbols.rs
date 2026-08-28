@@ -13,7 +13,6 @@ use multi_buffer::{
 };
 use text::BufferId;
 use theme::{ActiveTheme as _, SyntaxTheme};
-use unicode_segmentation::UnicodeSegmentation as _;
 use util::maybe;
 
 use crate::display_map::DisplaySnapshot;
@@ -254,10 +253,11 @@ fn lsp_symbols_enabled(buffer: &Buffer, cx: &App) -> bool {
 /// Finds where the symbol name appears in the buffer and returns combined
 /// (tree-sitter + semantic token) highlights for those positions.
 ///
-/// First tries to find the name verbatim near the selection range so that
-/// complex names (`impl Trait for Type`) get full highlighting. Falls back
-/// to word-by-word matching for cases like `impl<T> Trait<T> for Type`
-/// where the LSP name doesn't appear verbatim in the buffer.
+/// The name is only matched verbatim near the selection range, so that
+/// complex names (`impl Trait for Type`) get full highlighting. A name that
+/// does not appear verbatim is not a slice of the source, so no buffer
+/// position describes it; `None` is returned and the caller falls back to
+/// re-parsing the label with the buffer's language.
 fn highlights_from_buffer(
     display_snapshot: &DisplaySnapshot,
     item: &OutlineItem<text::Anchor>,
@@ -294,37 +294,11 @@ fn highlights_from_buffer(
         .text_for_range(search_start..search_end)
         .collect::<String>();
 
-    let mut outline_text_highlights = Vec::new();
-    match search_text.find(outline_text.as_str()) {
-        Some(start_index) => {
-            let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
-            let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());
-            outline_text_highlights.extend(
-                display_snapshot
-                    .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme),
-            );
-        }
-        None => {
-            for (outline_text_word_start, outline_word) in outline_text.split_word_bound_indices() {
-                if let Some(start_index) = search_text.find(outline_word) {
-                    let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
-                    let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_word.len());
-                    outline_text_highlights.extend(
-                        display_snapshot
-                            .combined_highlights(multibuffer_start..multibuffer_end, syntax_theme)
-                            .into_iter()
-                            .map(|(range_in_word, style)| {
-                                (
-                                    outline_text_word_start + range_in_word.start
-                                        ..outline_text_word_start + range_in_word.end,
-                                    style,
-                                )
-                            }),
-                    );
-                }
-            }
-        }
-    }
+    let start_index = search_text.find(outline_text.as_str())?;
+    let multibuffer_start = search_start_offset + MultiBufferOffset(start_index);
+    let multibuffer_end = multibuffer_start + MultiBufferOffset(outline_text.len());
+    let outline_text_highlights =
+        display_snapshot.combined_highlights(multibuffer_start..multibuffer_end, syntax_theme);
 
     if outline_text_highlights.is_empty() {
         None
@@ -895,6 +869,87 @@ mod tests {
                 "reparsing the symbol text should highlight the `impl` keyword"
             );
             assert_eq!(symbol.highlight_ranges, expected);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_lsp_document_symbols_synthetic_label_ignores_buffer_words(
+        cx: &mut TestAppContext,
+    ) {
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+
+        // A synthesized label: it describes the symbol rather than slicing it,
+        // but it shares words (`/`, `security`, `answers`) with the string
+        // literal on the same line. The word-by-word fallback used to match
+        // those words inside that literal and paint them `@string`, striping a
+        // label that is not source text at all.
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                        nested_symbol(
+                            "GET /security/answers",
+                            lsp::SymbolKind::FUNCTION,
+                            lsp_range(0, 0, 0, 12),
+                            lsp_range(0, 3, 0, 7),
+                            Vec::new(),
+                        ),
+                    ])))
+                },
+            );
+
+        cx.set_state("fn maˇin() { let route = \"/security/answers\"; }\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let (_, symbols) = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .expect("Should have outline symbols");
+            assert_eq!(symbols.len(), 1);
+            let symbol = &symbols[0];
+            assert_eq!(symbol.text, "GET /security/answers");
+
+            let language = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer")
+                .read(cx)
+                .language()
+                .cloned()
+                .expect("buffer language");
+            let expected = highlight_ranges_from_text(&symbol.text, &language, cx.theme().syntax());
+            assert_eq!(
+                symbol.highlight_ranges, expected,
+                "a label that is not a verbatim source slice must not inherit \
+                 highlights from unrelated words on the same line"
+            );
         });
     }
 
