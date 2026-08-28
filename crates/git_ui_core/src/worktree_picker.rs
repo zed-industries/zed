@@ -1092,7 +1092,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let label = format!("Create new worktree based on {branch_label}");
 
                 let item = create_new_list_item(
-                    "create-from-current".to_string().into(),
+                    SharedString::new_static("create-from-current"),
                     label.into(),
                     self.creation_blocked_reason(cx),
                     selected,
@@ -1109,7 +1109,7 @@ impl PickerDelegate for WorktreePickerDelegate {
                 let label = format!("Create new worktree based on {branch_label}");
 
                 let item = create_new_list_item(
-                    "create-from-main".to_string().into(),
+                    SharedString::new_static("create-from-main"),
                     label.into(),
                     self.creation_blocked_reason(cx),
                     selected,
