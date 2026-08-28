@@ -97,30 +97,37 @@ pub fn get_default_system_shell_preferring_bash() -> String {
 }
 
 pub fn get_windows_bash() -> Option<String> {
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "Git Bash discovery runs once per process and asks Git for its relocated MSYS path"
-    )]
-    fn find_bash_in_git() -> Option<PathBuf> {
-        let git = which::which("git").ok()?;
-        let output = gpui_util::new_std_command(git)
-            .args([
-                "-c",
-                "alias.zed-find-bash=!test -x /usr/bin/bash && cygpath -w /usr/bin/bash",
-                "zed-find-bash",
-            ])
-            .output()
-            .ok()?;
-        if !output.status.success() {
+    fn find_bash_in_installation(install_root: &Path) -> Option<PathBuf> {
+        if !install_root.join("git-bash.exe").is_file() {
             return None;
         }
-        let output = String::from_utf8(output.stdout).ok()?;
-        let bash = PathBuf::from(output.trim_end_matches(['\r', '\n']));
+        [
+            install_root.join("bin").join("bash.exe"),
+            install_root.join("usr").join("bin").join("bash.exe"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    }
+
+    fn find_bash_in_scoop() -> Option<PathBuf> {
+        let scoop = std::env::var_os("SCOOP")
+            .map(PathBuf::from)
+            .or_else(|| Some(PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop")))?;
+        let bash = scoop.join("shims").join("bash.exe");
         bash.is_file().then_some(bash)
     }
 
+    fn find_bash_in_git() -> Option<PathBuf> {
+        let git = which::which("git").ok()?;
+        let binary_directory = git.parent()?;
+        let parent = binary_directory.parent()?;
+        find_bash_in_installation(parent).or_else(|| find_bash_in_installation(parent.parent()?))
+    }
+
     static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
+        let bash = find_bash_in_scoop()
+            .or_else(find_bash_in_git)
+            .map(|p| p.to_string_lossy().into_owned());
         if let Some(ref path) = bash {
             log::info!("Found bash at {}", path);
         }
