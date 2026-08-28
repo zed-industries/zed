@@ -45645,7 +45645,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
-    cx.update_editor(|editor, _, _| {
+    cx.update_editor(|editor, _, cx| {
         let bounds = size(px(1800.), px(900.));
         let settled = |width: f32, height: f32, editor_width: f32, bounds: Size<Pixels>| {
             Some(SettledScrollRange {
@@ -45654,7 +45654,13 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
                 editor_bounds_size: bounds,
             })
         };
-        editor.hold_scrollbar_range(true);
+        editor.set_search_results_status(
+            SearchResultsStatus {
+                pending: true,
+                ..SearchResultsStatus::default()
+            },
+            cx,
+        );
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1780.), px(100.)), px(1786.), bounds),
             settled(1780., 100., 1786., bounds),
@@ -45685,7 +45691,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             settled(1300., 160., 1276., resized_bounds),
             "after re-freezing on the resize, churn at the same bounds stays frozen again"
         );
-        editor.hold_scrollbar_range(false);
+        editor.set_search_results_status(SearchResultsStatus::default(), cx);
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
             None,
