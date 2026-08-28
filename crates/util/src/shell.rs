@@ -107,28 +107,6 @@ pub fn get_windows_bash() -> Option<String> {
         bash.is_file().then_some(bash)
     }
 
-    fn find_bash_in_registry() -> Option<PathBuf> {
-        for root in [
-            windows_registry::CURRENT_USER,
-            windows_registry::LOCAL_MACHINE,
-        ] {
-            for subkey in [
-                r"Software\GitForWindows",
-                r"Software\WOW6432Node\GitForWindows",
-            ] {
-                let install_root = root
-                    .open(subkey)
-                    .ok()
-                    .and_then(|key| key.get_string("InstallPath").ok())
-                    .map(PathBuf::from);
-                if let Some(bash) = install_root.and_then(|path| find_bash_in_installation(&path)) {
-                    return Some(bash);
-                }
-            }
-        }
-        None
-    }
-
     fn find_bash_in_git() -> Option<PathBuf> {
         if let Some(bash) = std::env::var_os("GIT_INSTALL_ROOT")
             .map(PathBuf::from)
@@ -143,9 +121,7 @@ pub fn get_windows_bash() -> Option<String> {
     }
 
     static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        let bash = find_bash_in_registry()
-            .or_else(find_bash_in_git)
-            .map(|p| p.to_string_lossy().into_owned());
+        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
         if let Some(ref path) = bash {
             log::info!("Found bash at {}", path);
         }
