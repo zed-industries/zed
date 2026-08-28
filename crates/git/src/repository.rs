@@ -6695,10 +6695,14 @@ mod tests {
             "origin\thttps://github.com/zed-industries/zed.git (push)\n",
             "upstream\t/Users/user/My Projects/upstream.git (fetch)\n",
             "upstream\t/Users/user/My Projects/upstream.git (push)\n",
+            "a\t/x (fetch) dir (fetch)\n",
+            "a\t/x (fetch) dir (push)\n",
+            "archive\t/tmp/remote [archive].git (fetch)\n",
+            "archive\t/tmp/remote [archive].git (push)\n",
         );
 
         let remote_urls = parse_remote_urls(stdout);
-        assert_eq!(remote_urls.len(), 2);
+        assert_eq!(remote_urls.len(), 4);
         assert_eq!(
             remote_urls.get("origin").map(String::as_str),
             Some("https://github.com/zed-industries/zed.git")
@@ -6706,6 +6710,14 @@ mod tests {
         assert_eq!(
             remote_urls.get("upstream").map(String::as_str),
             Some("/Users/user/My Projects/upstream.git")
+        );
+        assert_eq!(
+            remote_urls.get("a").map(String::as_str),
+            Some("/x (fetch) dir")
+        );
+        assert_eq!(
+            remote_urls.get("archive").map(String::as_str),
+            Some("/tmp/remote [archive].git")
         );
     }
 
