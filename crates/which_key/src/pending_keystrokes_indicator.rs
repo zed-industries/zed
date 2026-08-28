@@ -193,3 +193,164 @@ impl StatusItemView for PendingKeystrokesIndicator {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use gpui::{Action as _, Entity, FocusHandle, KeyBinding, TestAppContext, actions};
+
+    use super::*;
+
+    actions!(
+        pending_keystrokes_indicator_test,
+        [ShorterBinding, LongerBinding, LongestBinding]
+    );
+
+    struct TestView {
+        focus_handle: FocusHandle,
+        indicator: Entity<PendingKeystrokesIndicator>,
+        shorter_binding_count: Rc<Cell<usize>>,
+        longer_binding_count: Rc<Cell<usize>>,
+    }
+
+    #[derive(Debug, Default, PartialEq)]
+    struct PendingSnapshot {
+        keystrokes: Vec<String>,
+        generation: u64,
+        bindings: Vec<(Vec<String>, String)>,
+        timeout: Duration,
+    }
+
+    fn pending_snapshot(indicator: &PendingKeystrokesIndicator) -> Option<PendingSnapshot> {
+        indicator.pending.as_ref().map(|pending| PendingSnapshot {
+            keystrokes: pending
+                .keystrokes
+                .iter()
+                .map(|keystroke| keystroke.inner().unparse())
+                .collect(),
+            generation: pending.pending_input_generation,
+            bindings: pending
+                .bindings
+                .iter()
+                .map(|(keystrokes, action)| {
+                    (
+                        keystrokes
+                            .iter()
+                            .map(|keystroke| keystroke.inner().unparse())
+                            .collect(),
+                        action.to_string(),
+                    )
+                })
+                .collect(),
+            timeout: pending.timeout,
+        })
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let shorter_binding_count = self.shorter_binding_count.clone();
+            let longer_binding_count = self.longer_binding_count.clone();
+            div()
+                .key_context("PendingKeystrokesIndicatorTest")
+                .track_focus(&self.focus_handle)
+                .on_action(move |_: &ShorterBinding, _, _| {
+                    shorter_binding_count.set(shorter_binding_count.get() + 1);
+                })
+                .on_action(move |_: &LongerBinding, _, _| {
+                    longer_binding_count.set(longer_binding_count.get() + 1);
+                })
+                .on_action(|_: &LongestBinding, _, _| {})
+        }
+    }
+
+    #[gpui::test]
+    fn test_indicator_tracks_pending_input_lifecycle(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.bind_keys([
+                KeyBinding::new(
+                    "ctrl-b",
+                    ShorterBinding,
+                    Some("PendingKeystrokesIndicatorTest"),
+                ),
+                KeyBinding::new(
+                    "ctrl-b h",
+                    LongerBinding,
+                    Some("PendingKeystrokesIndicatorTest"),
+                ),
+                KeyBinding::new(
+                    "ctrl-b h j",
+                    LongestBinding,
+                    Some("PendingKeystrokesIndicatorTest"),
+                ),
+            ]);
+        });
+
+        let shorter_binding_count = Rc::new(Cell::new(0));
+        let longer_binding_count = Rc::new(Cell::new(0));
+        let (test_view, cx) = cx.add_window_view(|window, cx| TestView {
+            focus_handle: cx.focus_handle(),
+            indicator: cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)),
+            shorter_binding_count: shorter_binding_count.clone(),
+            longer_binding_count: longer_binding_count.clone(),
+        });
+        let (indicator, focus_handle) = test_view.read_with(cx, |test_view, _| {
+            (test_view.indicator.clone(), test_view.focus_handle.clone())
+        });
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+
+        let first_pending = indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
+        assert!(first_pending.is_some(), "expected pending input snapshot");
+        let first_pending = first_pending.unwrap_or_default();
+        assert_eq!(first_pending.keystrokes, vec!["ctrl-b"]);
+        assert_eq!(
+            first_pending.bindings,
+            vec![
+                (
+                    vec!["h".to_string()],
+                    humanize_action_name(LongerBinding.name()),
+                ),
+                (
+                    vec!["h".to_string(), "j".to_string()],
+                    humanize_action_name(LongestBinding.name()),
+                ),
+            ]
+        );
+
+        cx.executor().advance_clock(first_pending.timeout / 2);
+        cx.run_until_parked();
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_some()));
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+
+        let second_pending = indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
+        assert!(
+            second_pending.is_some(),
+            "expected updated pending input snapshot"
+        );
+        let second_pending = second_pending.unwrap_or_default();
+        assert_eq!(second_pending.keystrokes, vec!["ctrl-b", "h"]);
+        assert!(second_pending.generation > first_pending.generation);
+        assert_eq!(
+            second_pending.bindings,
+            vec![(
+                vec!["j".to_string()],
+                humanize_action_name(LongestBinding.name()),
+            )]
+        );
+
+        cx.executor().advance_clock(second_pending.timeout);
+        cx.run_until_parked();
+
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending.is_none()));
+        assert_eq!(shorter_binding_count.get(), 0);
+        assert_eq!(longer_binding_count.get(), 1);
+    }
+}
