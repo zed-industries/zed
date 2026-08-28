@@ -62,6 +62,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `editor.hover.sticky`                       | `hover_popover_sticky`                         |
 | `editor.hover.hidingDelay`                  | `hover_popover_hiding_delay`                   |
 | `editor.parameterHints.enabled`             | `auto_signature_help`                          |
+| `workbench.editor.languageDetection`        | `language_detection`                           |
 | `editor.multiCursorModifier`                | `multi_cursor_modifier`                        |
 | `editor.selectionHighlight`                 | `selection_highlight`                          |
 | `editor.roundedSelection`                   | `rounded_selection`                            |

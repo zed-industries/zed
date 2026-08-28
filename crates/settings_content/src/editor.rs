@@ -169,6 +169,12 @@ pub struct EditorSettingsContent {
     /// Default: false
     pub auto_signature_help: Option<bool>,
 
+    /// Whether to automatically detect the language of an untitled buffer from its contents.
+    /// Languages explicitly selected from the language selector are not changed.
+    ///
+    /// Default: true
+    pub language_detection: Option<bool>,
+
     /// Whether to show the signature help pop-up after completions or bracket pairs inserted.
     ///
     /// Default: false
