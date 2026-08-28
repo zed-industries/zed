@@ -2177,7 +2177,8 @@ impl GitGraph {
 
         self.load_selected_commit_message(cx, &commit_message_handle, &repository);
 
-        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(diff_handle));
+        let diff_receiver =
+            repository.update(cx, |repo, _| repo.load_commit_diff(diff_handle, false));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
             if let Ok(Ok(diff)) = diff_receiver.await {
@@ -4331,7 +4332,6 @@ impl workspace::SerializableItem for GitGraph {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
@@ -7715,6 +7715,7 @@ mod tests {
                     new_text: Some("updated content".into()),
                     is_binary: false,
                 }],
+                is_shallow_boundary: false,
             });
             graph.selected_commit_diff_stats = Some((1, 1));
             cx.notify();
