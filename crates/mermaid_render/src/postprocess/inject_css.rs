@@ -374,6 +374,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         r#"
         text, tspan, foreignObject div, foreignObject span, foreignObject p {{ font-family: {font} !important; }}
         foreignObject div, foreignObject span, foreignObject p {{ font-size: 16px; color: {text}; }}
+        .merman-foreignobject-fallback-text {{ font-size: 16px !important; }}
         foreignObject p {{ margin: 0; }}
         foreignObject {{ overflow: visible; }}
         foreignObject div {{ max-width: none !important; }}
@@ -416,7 +417,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         text.actor {{ text-anchor: middle; }}
         text.actor>tspan {{ fill: {actor_text} !important; stroke: none; }}
         .labelText, .labelText>tspan {{ fill: {actor_text} !important; }}
-        .actor-line {{ stroke: {actor_border} !important; }}
+        .actor-line {{ stroke: {actor_border} !important; fill: none !important; }}
         .messageLine0 {{ stroke: {text} !important; }}
         .messageLine1 {{ stroke: {text} !important; }}
         #arrowhead path {{ fill: {text} !important; stroke: {text} !important; }}
@@ -428,7 +429,7 @@ fn build_injected_css(theme: &MermaidTheme, svg_id: &str) -> String {
         .noteText, .noteText>tspan {{ fill: {note_text} !important; }}
         .activation0, .activation1, .activation2 {{ fill: {secondary} !important; stroke: {border} !important; }}
         .labelBox {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
-        .actor-man line {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
+        .actor-man line {{ stroke: {actor_border} !important; fill: none !important; }}
         .actor-man circle {{ stroke: {actor_border} !important; fill: {actor_bg} !important; }}
         .pieTitleText {{ fill: {text} !important; }}
         .slice {{ fill: {text} !important; }}

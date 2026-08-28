@@ -450,12 +450,12 @@ fn check_style() -> NamedJob {
 }
 
 fn check_dependencies() -> NamedJob {
-    fn install_cargo_machete() -> Step<Use> {
-        steps::taiki_install_action("cargo-machete@0.7.0")
+    fn install_cargo_shear() -> Step<Use> {
+        steps::taiki_install_action("cargo-shear@1.13.4")
     }
 
-    fn run_cargo_machete() -> Step<Run> {
-        named::bash("cargo machete")
+    fn run_cargo_shear() -> Step<Run> {
+        named::bash("cargo shear --locked --deny-warnings")
     }
 
     fn check_cargo_lock() -> Step<Run> {
@@ -482,8 +482,8 @@ fn check_dependencies() -> NamedJob {
             .add_step(steps::harden_runner())
             .add_step(steps::checkout_repo())
             .add_step(steps::cache_rust_dependencies_namespace())
-            .add_step(install_cargo_machete())
-            .add_step(run_cargo_machete())
+            .add_step(install_cargo_shear())
+            .add_step(run_cargo_shear())
             .add_step(check_cargo_lock())
             .add_step(check_crate_graph())
             .add_step(check_vulnerable_dependencies()),
