@@ -28,7 +28,6 @@ actions!(tabular_data, [OpenPreview, OpenPreviewToTheSide]);
 pub struct TabularDataPreviewPane {
     /// The reusable tabular viewer this adapter drives.
     pub(crate) table: Entity<TableView>,
-    pub(crate) focus_handle: FocusHandle,
     active_editor_state: EditorState,
     pub(crate) parsing_task: Option<Task<anyhow::Result<()>>>,
     /// Time when the last parsing operation ended, used for smart debouncing
@@ -135,7 +134,6 @@ impl TabularDataPreviewPane {
             let table = cx.new(|cx| TableView::new(window, cx));
 
             let mut view = TabularDataPreviewPane {
-                focus_handle: cx.focus_handle(),
                 active_editor_state: EditorState {
                     editor: editor.clone(),
                     _subscription: subscription,
@@ -170,8 +168,8 @@ impl TabularDataPreviewPane {
 }
 
 impl Focusable for TabularDataPreviewPane {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.table.read(cx).focus_handle(cx)
     }
 }
 
