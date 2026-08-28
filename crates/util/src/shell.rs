@@ -105,19 +105,13 @@ pub fn get_windows_bash() -> Option<String> {
         bash.is_file().then_some(bash)
     }
 
-    fn find_bash_in_scoop() -> Option<PathBuf> {
-        let install_root = std::env::var_os("GIT_INSTALL_ROOT")
-            .map(PathBuf::from)
-            .or_else(|| {
-                let scoop = std::env::var_os("SCOOP").map(PathBuf::from).or_else(|| {
-                    Some(PathBuf::from(std::env::var_os("USERPROFILE")?).join("scoop"))
-                })?;
-                Some(scoop.join("apps").join("git").join("current"))
-            })?;
-        find_bash_in_installation(&install_root)
-    }
-
     fn find_bash_in_git() -> Option<PathBuf> {
+        if let Some(bash) = std::env::var_os("GIT_INSTALL_ROOT")
+            .map(PathBuf::from)
+            .and_then(|path| find_bash_in_installation(&path))
+        {
+            return Some(bash);
+        }
         let git = which::which("git").ok()?;
         let binary_directory = git.parent()?;
         let parent = binary_directory.parent()?;
@@ -125,9 +119,7 @@ pub fn get_windows_bash() -> Option<String> {
     }
 
     static BASH: LazyLock<Option<String>> = LazyLock::new(|| {
-        let bash = find_bash_in_scoop()
-            .or_else(find_bash_in_git)
-            .map(|p| p.to_string_lossy().into_owned());
+        let bash = find_bash_in_git().map(|p| p.to_string_lossy().into_owned());
         if let Some(ref path) = bash {
             log::info!("Found bash at {}", path);
         }
