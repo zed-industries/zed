@@ -193,6 +193,8 @@ pub struct SettingsContent {
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
 
+    pub call_hierarchy: Option<CallHierarchySettingsContent>,
+
     pub git_panel: Option<GitPanelSettingsContent>,
 
     pub tabs: Option<ItemSettingsContent>,
@@ -397,8 +399,9 @@ impl SettingsContent {
 fallible_options::flattened_deserialize!(SettingsContent {
     sections: { project, theme, extension, workspace, editor, remote },
     options: {
-        file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent, agent_servers,
-        audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics, git,
+        call_hierarchy, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
+        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        git,
         global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
         journal, log, line_indicator_format, language_models, outline_panel, project_panel,
         node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
@@ -744,10 +747,10 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub file_icons: Option<bool>,
 
-    /// Whether to show folder icons or chevrons for directories in the git panel.
+    /// What to show for directories in the git panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
 
     /// How and when the scrollbar should be displayed.
     ///
@@ -931,7 +934,7 @@ pub struct FileFinderSettingsContent {
     /// Determines how much space the file finder can take up in relation to the available window width.
     ///
     /// Default: small
-    pub modal_max_width: Option<FileFinderWidthContent>,
+    pub modal_max_width: Option<ModalWidthContent>,
     /// Determines whether the file finder should skip focus for the active file in search results.
     ///
     /// Default: true
@@ -987,13 +990,34 @@ pub enum IncludeIgnoredContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
-pub enum FileFinderWidthContent {
+pub enum ModalWidthContent {
     #[default]
     Small,
     Medium,
     Large,
     XLarge,
     Full,
+}
+
+impl ModalWidthContent {
+    pub fn to_pixels(self, base_width: gpui::Pixels, window_width: gpui::Pixels) -> gpui::Pixels {
+        match self {
+            ModalWidthContent::Small => base_width,
+            ModalWidthContent::Full => window_width,
+            ModalWidthContent::XLarge => (window_width - gpui::px(512.)).max(base_width),
+            ModalWidthContent::Large => (window_width - gpui::px(768.)).max(base_width),
+            ModalWidthContent::Medium => (window_width - gpui::px(1024.)).max(base_width),
+        }
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct CallHierarchySettingsContent {
+    /// Determines how much space the call hierarchy picker can take up in relation to the available window width.
+    ///
+    /// Default: medium
+    pub modal_max_width: Option<ModalWidthContent>,
 }
 
 #[with_fallible_options]
@@ -1152,10 +1176,10 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the outline panel.
+    /// What to show for directories in the outline panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the outline panel.
     ///
     /// Default: true
