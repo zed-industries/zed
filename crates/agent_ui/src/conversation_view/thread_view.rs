@@ -1492,6 +1492,17 @@ impl ThreadView {
         if is_editor_empty {
             if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
                 self.dispatch_queued_entry(entry, window, cx);
+            } else if !is_generating && thread.read(cx).has_pending_interrupted_tool_calls() {
+                // Resuming a session with interrupted tool calls pending needs
+                // no message text: the pending notifications are delivered
+                // with the turn.
+                cx.emit(AcpThreadViewEvent::Interacted);
+                self.send_content(
+                    Task::ready(Ok(Some((Vec::new(), Vec::new())))),
+                    false,
+                    window,
+                    cx,
+                );
             }
             return;
         }
@@ -1828,16 +1839,27 @@ impl ThreadView {
         self.stop_current_and_send_new_message(message_editor, window, cx);
     }
 
+    /// Cancels the current turn without cascading to running subagents, for
+    /// turn handoffs (dispatching a queued message, stop-and-send) where
+    /// nobody asked to stop the subagents. Falls back to the generic ACP
+    /// cancel for non-native agents, which have no subagent concept.
+    fn cancel_turn_for_handoff(&self, cx: &mut Context<Self>) -> Task<()> {
+        if let Some(native_thread) = self.as_native_thread(cx) {
+            native_thread.update(cx, |thread, cx| thread.cancel_turn(cx))
+        } else {
+            self.thread.update(cx, |thread, cx| thread.cancel(cx))
+        }
+    }
+
     fn stop_current_and_send_new_message(
         &mut self,
         message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let thread = self.thread.clone();
         self.message_queue.pause();
 
-        let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
+        let cancelled = self.cancel_turn_for_handoff(cx);
 
         cx.spawn_in(window, async move |this, cx| {
             cancelled.await;
@@ -2283,7 +2305,7 @@ impl ThreadView {
             })
             .is_some();
 
-        let cancelled = self.thread.update(cx, |thread, cx| thread.cancel(cx));
+        let cancelled = self.cancel_turn_for_handoff(cx);
 
         let workspace = self.workspace.clone();
 
@@ -5398,6 +5420,8 @@ impl ThreadView {
         let focus_handle = message_editor.focus_handle(cx);
 
         let is_generating = self.thread.read(cx).status() != ThreadStatus::Idle;
+        let has_pending_interrupted = self.thread.read(cx).has_pending_interrupted_tool_calls();
+        let send_disabled = is_editor_empty && !is_generating && !has_pending_interrupted;
 
         if self.is_loading_contents {
             div()
@@ -5424,15 +5448,17 @@ impl ThreadView {
             IconButton::new("send-message", send_icon)
                 .style(ButtonStyle::Filled)
                 .map(|this| {
-                    if is_editor_empty && !is_generating {
+                    if send_disabled {
                         this.disabled(true).icon_color(Color::Muted)
                     } else {
                         this.icon_color(Color::Accent)
                     }
                 })
                 .tooltip(move |_window, cx| {
-                    if is_editor_empty && !is_generating {
+                    if send_disabled {
                         Tooltip::for_action("Type to Send", &Chat, cx)
+                    } else if is_editor_empty && !is_generating {
+                        Tooltip::for_action("Send to Report Interrupted Tool Calls", &Chat, cx)
                     } else if is_generating {
                         let focus_handle = focus_handle.clone();
 

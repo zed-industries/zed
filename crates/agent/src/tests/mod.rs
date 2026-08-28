@@ -28,8 +28,8 @@ use language_model::{
     CompletionIntent, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelImageExt, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResult, LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent,
-    ProviderErrorCategory, Role, StopReason, TokenUsage,
+    LanguageModelRequestToolInput, LanguageModelToolResult, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, ProviderErrorCategory, Role, StopReason, TokenUsage,
     fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
 };
 use pretty_assertions::assert_eq;
@@ -1138,6 +1138,1003 @@ async fn test_tool_call_id_scoped_per_completion_request(cx: &mut TestAppContext
          must map to distinct ACP tool call ids, otherwise the second tool call would overwrite \
          the first instead of appearing as a new entry"
     );
+}
+
+/// A tool call with `"blocking": false` must not hold up the turn: the
+/// model immediately receives a placeholder result carrying an
+/// `async_tool_call_id`, and the real result is delivered later as a new
+/// user message with the same id.
+#[gpui::test]
+async fn test_non_blocking_tool_call(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tools"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    // The runtime offers an optional `blocking` property on every tool
+    // schema, defaulting to blocking.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let echo_tool = completion
+        .tools
+        .iter()
+        .find(|tool| tool.name == EchoTool::NAME)
+        .unwrap();
+    let LanguageModelRequestToolInput::Function { input_schema, .. } = &echo_tool.input else {
+        panic!("expected a function tool");
+    };
+    assert_eq!(
+        input_schema["properties"]["blocking"]["default"],
+        json!(true),
+        "tools should offer the blocking property"
+    );
+
+    // The model calls one tool non-blockingly and one blockingly.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_slow".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_fast".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "fast"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"text": "fast"})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The turn did not wait for the gated tool: the model immediately
+    // received a placeholder result carrying an async_tool_call_id, plus the
+    // blocking call's real result.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let tool_result_text = |tool_use_id: &str| {
+        completion
+            .messages
+            .iter()
+            .flat_map(|message| &message.content)
+            .find_map(|content| match content {
+                MessageContent::ToolResult(result)
+                    if result.tool_use_id.to_string() == tool_use_id =>
+                {
+                    result.content.iter().find_map(|content| match content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            Some(text.to_string())
+                        }
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected a tool result for {tool_use_id}"))
+    };
+    let placeholder: serde_json::Value = serde_json::from_str(&tool_result_text("call_slow"))
+        .unwrap_or_else(|_| panic!("not json: {:?}", tool_result_text("call_slow")));
+    assert_eq!(placeholder["status"], json!("running"));
+    let async_id = placeholder["async_tool_call_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        async_id.starts_with("a~"),
+        "async tool call id should carry the fixed prefix: {async_id}"
+    );
+    assert_eq!(tool_result_text("call_fast"), "fast");
+
+    // Let the gated tool finish while the model is still responding; its
+    // result is delivered at the next reasoning boundary.
+    release_tx.send(()).unwrap();
+    cx.run_until_parked();
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The finished result steered the thread into a continuation whose
+    // request ends with a new user message carrying the same id.
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["tool_name"], json!(GatedEchoTool::NAME));
+    assert_eq!(delivery["status"], json!("completed"));
+    let result: serde_json::Value =
+        serde_json::from_str(delivery["result"].as_str().unwrap()).unwrap();
+    assert_eq!(result["text"], json!("slow"));
+    assert_eq!(
+        result["received_blocking_key"],
+        json!(false),
+        "the runtime must strip the blocking property before the tool runs"
+    );
+
+    // End the continuation turn; the original event stream completes after
+    // reporting the delivered user message.
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let remaining = events.collect::<Vec<_>>().await;
+    assert!(remaining.iter().any(|event| matches!(
+        event,
+        Ok(ThreadEvent::UserMessage(message))
+            if matches!(&*message.content, [UserMessageContent::Text(text)] if text.contains(&async_id))
+    )));
+    assert!(
+        remaining
+            .iter()
+            .any(|event| matches!(event, Ok(ThreadEvent::Stop(_))))
+    );
+}
+
+/// A non-blocking tool call that finishes after the turn ended requests a
+/// continuation turn so its result still reaches the model.
+#[gpui::test]
+async fn test_non_blocking_tool_call_requests_continuation_when_idle(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_slow".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The model gets the placeholder and ends its turn while the tool is
+    // still running.
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let placeholder_text = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|content| match content {
+            MessageContent::ToolResult(result) if result.tool_use_id.to_string() == "call_slow" => {
+                result.content.iter().find_map(|content| match content {
+                    language_model::LanguageModelToolResultContent::Text(text) => {
+                        Some(text.to_string())
+                    }
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("placeholder result for the non-blocking call");
+    let placeholder: serde_json::Value = serde_json::from_str(&placeholder_text).unwrap();
+    let async_id = placeholder["async_tool_call_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+    assert!(fake_model.pending_completions().is_empty());
+
+    // When the tool finishes with no turn running, a continuation is
+    // requested instead of the result being delivered mid-turn.
+    let continuation_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(&thread, {
+            let continuation_requested = continuation_requested.clone();
+            move |_, _: &ContinuationRequested, _| {
+                continuation_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        })
+    });
+    release_tx.send(()).unwrap();
+    cx.run_until_parked();
+    assert!(continuation_requested.load(std::sync::atomic::Ordering::SeqCst));
+
+    // Driving the continuation (as NativeAgent does) delivers the result.
+    let events = thread
+        .update(cx, |thread, cx| thread.send_existing(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["status"], json!("completed"));
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    let remaining = events.collect::<Vec<_>>().await;
+    assert!(
+        remaining
+            .iter()
+            .any(|event| matches!(event, Ok(ThreadEvent::Stop(_))))
+    );
+}
+
+/// A user message appended mid-turn via `Thread::steer` ends the turn at
+/// the next reasoning boundary and is processed as a continuation on the
+/// same event stream; steering an idle thread refuses.
+#[gpui::test]
+async fn test_steer_running_turn(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tools"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_1".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "first"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"text": "first"})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let steered = thread.update(cx, |thread, cx| {
+        thread.steer(ClientUserMessageId::new(), ["steer this"], cx)
+    });
+    assert!(steered, "steer should succeed while a turn is running");
+
+    // The boundary is reached once the in-flight tool batch completes.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "call_2".into(),
+            name: EchoTool::NAME.into(),
+            raw_input: json!({"text": "second"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"text": "second"})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The continuation's request ends with the steered user message (merged
+    // with the preceding tool results into one user message).
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    assert_eq!(last_message.content.last(), Some(&"steer this".into()));
+
+    fake_model.send_last_completion_stream_text_chunk("done");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+
+    let steered = thread.update(cx, |thread, cx| {
+        thread.steer(ClientUserMessageId::new(), ["too late"], cx)
+    });
+    assert!(!steered, "steer should refuse when no turn is running");
+}
+
+/// A non-blocking tool call inside a subagent session is delivered via a
+/// continuation turn on the subagent, and the parent's spawn_agent call
+/// keeps waiting until the subagent is quiescent, so the parent receives
+/// the subagent's truly final output.
+#[gpui::test]
+async fn test_subagent_can_use_non_blocking_tool_calls(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.create_dir(paths::settings_file().parent().unwrap())
+        .await
+        .unwrap();
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "default_profile": "test-profile",
+                "profiles": {
+                    "test-profile": {
+                        "name": "Test Profile",
+                        "tools": {
+                            SpawnAgentTool::NAME: true,
+                            ListDirectoryTool::NAME: true,
+                            GatedEchoTool::NAME: true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.update(|cx| {
+        settings::init(cx);
+        watch_settings(fs.clone(), cx);
+    });
+
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let subagent_tool_input = SpawnAgentToolInput {
+        label: "label".to_string(),
+        message: "subagent task prompt".to_string(),
+        session_id: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "subagent_1".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: serde_json::to_string(&subagent_tool_input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&subagent_tool_input).unwrap(),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+    let subagent_thread = agent.read_with(cx, |agent, _cx| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .thread
+            .clone()
+    });
+
+    // The gated tool is added mid-turn; the subagent's first tool call keeps
+    // the turn alive so the tool refresh at the next iteration picks it up.
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+    subagent_thread.update(cx, |thread, _cx| {
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "list_1".into(),
+            name: ListDirectoryTool::NAME.into(),
+            raw_input: json!({"path": "/a"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"path": "/a"})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The subagent calls the gated tool non-blockingly and ends its turn
+    // while the tool is still running.
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "gated_1".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = model
+        .pending_completions()
+        .pop()
+        .expect("the subagent should continue after the placeholder");
+    let placeholder_text = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|content| match content {
+            MessageContent::ToolResult(result) if result.tool_use_id.to_string() == "gated_1" => {
+                result.content.iter().find_map(|content| match content {
+                    language_model::LanguageModelToolResultContent::Text(text) => {
+                        Some(text.to_string())
+                    }
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("placeholder result for the non-blocking call");
+    let placeholder: serde_json::Value = serde_json::from_str(&placeholder_text).unwrap();
+    assert_eq!(placeholder["status"], json!("running"));
+    let async_id = placeholder["async_tool_call_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    model.send_last_completion_stream_text_chunk("started background work");
+    model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The subagent's turn ended, but the parent's spawn_agent call must
+    // still be waiting for the gated tool's result: no completion may be
+    // requested until the subagent is quiescent.
+    assert!(
+        subagent_thread.read_with(cx, |thread, _| thread.is_turn_complete()),
+        "the subagent's turn should have ended"
+    );
+    assert!(
+        model.pending_completions().is_empty(),
+        "no completion may run while the subagent's non-blocking tool is still executing"
+    );
+
+    release_tx.send(()).unwrap();
+    cx.run_until_parked();
+
+    // The finished result drives a continuation turn on the subagent.
+    let completion = model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested on the subagent");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["status"], json!("completed"));
+
+    model.send_last_completion_stream_text_chunk("final answer");
+    model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Only now does the parent's spawn_agent call resolve, with the
+    // subagent's truly final output.
+    let completion = model
+        .pending_completions()
+        .pop()
+        .expect("the parent should continue once the subagent is quiescent");
+    let spawn_result_text = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|content| match content {
+            MessageContent::ToolResult(result)
+                if result.tool_use_id.to_string() == "subagent_1" =>
+            {
+                result.content.iter().find_map(|content| match content {
+                    language_model::LanguageModelToolResultContent::Text(text) => {
+                        Some(text.to_string())
+                    }
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("spawn_agent result for the parent");
+    assert!(
+        spawn_result_text.contains("final answer"),
+        "parent should receive the subagent's final output, got: {spawn_result_text}"
+    );
+
+    model.send_last_completion_stream_text_chunk("parent done");
+    model.end_last_completion_stream();
+    send.await.unwrap();
+}
+
+/// Resuming a running subagent session via spawn_agent steers it: the
+/// message joins the running turn at its next boundary and the call returns
+/// an acknowledgment instead of the session's output. A non-blocking
+/// spawn_agent call's placeholder carries the new session_id, so the parent
+/// can reference the session before it finishes.
+#[gpui::test]
+async fn test_spawn_agent_steers_running_subagent(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.create_dir(paths::settings_file().parent().unwrap())
+        .await
+        .unwrap();
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "default_profile": "test-profile",
+                "profiles": {
+                    "test-profile": {
+                        "name": "Test Profile",
+                        "tools": {
+                            SpawnAgentTool::NAME: true,
+                            ListDirectoryTool::NAME: true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.update(|cx| {
+        settings::init(cx);
+        watch_settings(fs.clone(), cx);
+    });
+
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Prompt", cx));
+    cx.run_until_parked();
+
+    // Spawn the subagent non-blockingly so the parent keeps reasoning while
+    // it runs.
+    let subagent_tool_input = json!({
+        "label": "label",
+        "message": "subagent task prompt",
+        "blocking": false,
+    });
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "subagent_1".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: subagent_tool_input.to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(subagent_tool_input.clone()),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    // The placeholder result carries the new session id up front. (The
+    // parent's continuation and the subagent's first request race, so search
+    // all pending completions rather than relying on request order.)
+    let completions = model.pending_completions();
+    let (parent_completion, placeholder_text) = completions
+        .iter()
+        .find_map(|completion| {
+            completion
+                .messages
+                .iter()
+                .flat_map(|message| &message.content)
+                .find_map(|content| match content {
+                    MessageContent::ToolResult(result)
+                        if result.tool_use_id.to_string() == "subagent_1" =>
+                    {
+                        result.content.iter().find_map(|content| match content {
+                            language_model::LanguageModelToolResultContent::Text(text) => {
+                                Some(text.to_string())
+                            }
+                            _ => None,
+                        })
+                    }
+                    _ => None,
+                })
+                .map(|text| (completion.clone(), text))
+        })
+        .expect("placeholder result for the non-blocking spawn");
+    let placeholder: serde_json::Value = serde_json::from_str(&placeholder_text).unwrap();
+    assert_eq!(placeholder["status"], json!("running"));
+    assert!(
+        placeholder["async_tool_call_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("a~"),
+        "placeholder should carry an async tool call id: {placeholder}"
+    );
+    assert_eq!(
+        placeholder["session_id"],
+        json!(session_alias(&subagent_session_id).to_string()),
+        "placeholder should carry the short subagent session alias"
+    );
+
+    // The parent steers the running subagent by resuming its session, using
+    // the short alias from the placeholder. The subagent's own request is
+    // still pending, so drive the parent's completion directly.
+    let steer_input = SpawnAgentToolInput {
+        label: "steer".to_string(),
+        message: "course correct".to_string(),
+        session_id: Some(acp::SessionId::new(
+            session_alias(&subagent_session_id).to_string(),
+        )),
+    };
+    model.send_completion_stream_event(
+        &parent_completion,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "steer_1".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: serde_json::to_string(&steer_input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&steer_input).unwrap(),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    model.end_completion_stream(&parent_completion);
+    cx.run_until_parked();
+
+    // The steer call returns an acknowledgment immediately rather than
+    // awaiting the subagent's output.
+    let completion = model
+        .pending_completions()
+        .pop()
+        .expect("the parent should continue after the steer acknowledgment");
+    let steer_result_text = completion
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .find_map(|content| match content {
+            MessageContent::ToolResult(result) if result.tool_use_id.to_string() == "steer_1" => {
+                result.content.iter().find_map(|content| match content {
+                    language_model::LanguageModelToolResultContent::Text(text) => {
+                        Some(text.to_string())
+                    }
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("steer acknowledgment result");
+    assert!(
+        steer_result_text.contains("Steered the running agent session"),
+        "expected a steer acknowledgment, got: {steer_result_text}"
+    );
+
+    // Let the parent finish its turn; the subagent is still running.
+    model.send_last_completion_stream_text_chunk("waiting for the subagent");
+    model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The steered message ends the subagent's turn at its next boundary: one
+    // blocking tool call later, a continuation processes it.
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "list_1".into(),
+            name: ListDirectoryTool::NAME.into(),
+            raw_input: json!({"path": "/a"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"path": "/a"})),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = model
+        .pending_completions()
+        .pop()
+        .expect("the steered message should drive a continuation on the subagent");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    assert_eq!(last_message.content, vec!["course correct".into()]);
+
+    // The subagent's final output still arrives at the original spawn_agent
+    // call, whose non-blocking result is delivered to the now-idle parent as
+    // a continuation.
+    model.send_last_completion_stream_text_chunk("steered final answer");
+    model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let completion = model
+        .pending_completions()
+        .pop()
+        .expect("the spawn result should drive a continuation on the parent");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["tool_name"], json!(SpawnAgentTool::NAME));
+    assert_eq!(delivery["status"], json!("completed"));
+    assert!(
+        delivery["result"].as_str().unwrap().contains(&format!(
+            "\"session_id\":\"{}",
+            session_alias(&subagent_session_id)
+        )),
+        "the spawn result should carry the short session alias: {delivery}"
+    );
+    assert!(
+        delivery["result"]
+            .as_str()
+            .unwrap()
+            .contains("steered final answer"),
+        "the spawn result should carry the subagent's final output: {delivery}"
+    );
+
+    model.send_last_completion_stream_text_chunk("parent done");
+    model.end_last_completion_stream();
+    send.await.unwrap();
+}
+
+/// In-flight non-blocking tool calls are persisted with the thread. After a
+/// "restart" (a fresh Thread from the saved state), each is queued as a
+/// synthetic failure so the agent is told the result will never arrive.
+#[gpui::test]
+async fn test_non_blocking_tool_calls_persist_across_restart(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    let ThreadTest {
+        model,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let (_release_tx, release_rx) = oneshot::channel::<()>();
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+
+    let _events = thread
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Run the tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "gated_1".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The call is in flight when the thread is saved.
+    let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(db_thread.pending_non_blocking_tool_calls.len(), 1);
+    let async_id = db_thread.pending_non_blocking_tool_calls[0]
+        .async_id
+        .clone();
+
+    // Simulate a restart: a fresh Thread from the saved state.
+    let (project, context_server_registry, templates) = thread.read_with(cx, |thread, _| {
+        (
+            thread.project.clone(),
+            thread.context_server_registry.clone(),
+            thread.templates.clone(),
+        )
+    });
+    let restored = cx.new(|cx| {
+        Thread::from_db(
+            acp::SessionId::new("restored"),
+            db_thread,
+            project,
+            project_context.clone(),
+            context_server_registry,
+            templates,
+            cx,
+        )
+    });
+    restored.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    assert!(
+        restored.read_with(cx, |thread, _| thread.has_queued_non_blocking_results()),
+        "the restored thread should have the interrupted call queued"
+    );
+
+    // Until it is delivered, the synthetic failure round-trips through saves:
+    // a save between reopen and resume must not drop the interrupted call.
+    let resaved = restored.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert_eq!(resaved.pending_non_blocking_tool_calls.len(), 1);
+    assert_eq!(
+        resaved.pending_non_blocking_tool_calls[0].async_id,
+        async_id
+    );
+
+    // Driving the continuation delivers the synthetic failure with the same
+    // async_tool_call_id.
+    let events = restored
+        .update(cx, |thread, cx| thread.send_existing(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model
+        .pending_completions()
+        .pop()
+        .expect("a continuation completion should have been requested");
+    let last_message = completion.messages.last().unwrap();
+    assert_eq!(last_message.role, Role::User);
+    let MessageContent::Text(text) = &last_message.content[0] else {
+        panic!(
+            "expected a text user message, got {:?}",
+            last_message.content
+        );
+    };
+    let delivery: serde_json::Value = serde_json::from_str(text).unwrap();
+    assert_eq!(delivery["async_tool_call_id"], json!(async_id));
+    assert_eq!(delivery["tool_name"], json!(GatedEchoTool::NAME));
+    assert_eq!(delivery["status"], json!("failed"));
+    assert!(
+        delivery["result"].as_str().unwrap().contains("restarted"),
+        "the synthetic result should explain the interruption: {delivery}"
+    );
+
+    fake_model.send_last_completion_stream_text_chunk("understood");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+    events.collect::<Vec<_>>().await;
+
+    // Once delivered, nothing is pending anymore.
+    let resaved = restored.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+    assert!(resaved.pending_non_blocking_tool_calls.is_empty());
 }
 
 /// Same bug as `test_tool_call_id_scoped_per_completion_request`, but
@@ -4910,6 +5907,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
                         "name": "Test Profile",
                         "tools": {
                             EchoTool::NAME: true,
+                            GatedEchoTool::NAME: true,
                             DelayTool::NAME: true,
                             WordListTool::NAME: true,
                             ToolRequiringPermission::NAME: true,
@@ -6122,6 +7120,558 @@ async fn test_subagent_tool_resume_session(cx: &mut TestAppContext) {
     );
 }
 
+/// After a restart the subagent's session is no longer live, but its thread
+/// is persisted. Resuming it by its model-facing alias must restore the
+/// thread from the database instead of failing with "No subagent session
+/// found".
+#[gpui::test]
+async fn test_subagent_tool_resume_session_after_restart(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+    // Route registry model resolution to this same instance: threads restored
+    // from the database resolve their saved selection through the registry,
+    // and this test drives completions on `model` directly.
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(
+                Arc::new(FakeLanguageModelProvider::default().with_models(vec![model.clone()])),
+                cx,
+            );
+        });
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // First turn: spawn a subagent and let it complete.
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("spawning subagent");
+    let spawn_input = SpawnAgentToolInput {
+        label: "initial task".to_string(),
+        message: "do the first task".to_string(),
+        session_id: None,
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "subagent_1".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: serde_json::to_string(&spawn_input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&spawn_input).unwrap(),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+
+    // Subagent completes its task, then the parent completes the turn.
+    model.send_last_completion_stream_text_chunk("first task response");
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("First response");
+    model.end_last_completion_stream();
+    send.await.unwrap();
+
+    // Simulate a restart: close every session so none are live, then reopen
+    // the parent thread from the database.
+    cx.update(|cx| connection.clone().close_session(&subagent_session_id, cx))
+        .await
+        .unwrap();
+    cx.update(|cx| connection.clone().close_session(&session_id, cx))
+        .await
+        .unwrap();
+    drop(thread);
+    drop(acp_thread);
+    agent.read_with(cx, |agent, _| {
+        assert!(agent.sessions.is_empty(), "restart: no live sessions");
+    });
+
+    let acp_thread = agent
+        .update(cx, |agent, cx| {
+            agent.open_thread(session_id.clone(), project.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // Resume the subagent by the alias the model actually holds — the real
+    // session id never appears in model-facing output.
+    let send2 = acp_thread.update(cx, |thread, cx| thread.send_raw("Follow up", cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("resuming subagent");
+    let resume_input = SpawnAgentToolInput {
+        label: "follow-up task".to_string(),
+        message: "do the follow-up task".to_string(),
+        session_id: Some(acp::SessionId::new(
+            session_alias(&subagent_session_id).as_ref(),
+        )),
+    };
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "subagent_2".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: serde_json::to_string(&resume_input).unwrap(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                serde_json::to_value(&resume_input).unwrap(),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The subagent session should be restored and running the follow-up.
+    let subagent_acp_thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should be restored")
+            .acp_thread
+            .clone()
+    });
+    thread.read_with(cx, |thread, cx| {
+        let running = thread.running_subagent_ids(cx);
+        assert_eq!(running.len(), 1, "restored subagent should be running");
+        assert_eq!(running[0], subagent_session_id, "should be same session");
+    });
+
+    // Subagent responds to the follow-up, then the parent completes the turn.
+    model.send_last_completion_stream_text_chunk("follow-up task response");
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("Second response");
+    model.end_last_completion_stream();
+    send2.await.unwrap();
+
+    // The restored session shows both the pre-restart history and the new turn.
+    assert_eq!(
+        subagent_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx)),
+        indoc! {"
+            ## User
+
+            do the first task
+
+            ## Assistant
+
+            first task response
+
+            ## User
+
+            do the follow-up task
+
+            ## Assistant
+
+            follow-up task response
+
+        "}
+    );
+}
+
+/// A subagent with a non-blocking tool call in flight when Zed restarts has
+/// that call's synthetic failure queued on load. When the parent resumes the
+/// subagent, the resumed turn must deliver it — same as the continuation a
+/// reopened top-level thread gets.
+#[gpui::test]
+async fn test_subagent_resume_after_restart_delivers_interrupted_call(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+    });
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.create_dir(paths::settings_file().parent().unwrap())
+        .await
+        .unwrap();
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "default_profile": "test-profile",
+                "profiles": {
+                    "test-profile": {
+                        "name": "Test Profile",
+                        "tools": {
+                            SpawnAgentTool::NAME: true,
+                            ListDirectoryTool::NAME: true,
+                            GatedEchoTool::NAME: true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.update(|cx| {
+        settings::init(cx);
+        watch_settings(fs.clone(), cx);
+    });
+
+    fs.insert_tree(
+        "/",
+        json!({
+            "a": {
+                "b.md": "Lorem"
+            }
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+    let thread_store = cx.new(|cx| ThreadStore::new(cx));
+    let agent =
+        cx.update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+    let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+    let acp_thread = cx
+        .update(|cx| {
+            connection
+                .clone()
+                .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+        })
+        .await
+        .unwrap();
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    let model = Arc::new(FakeLanguageModel::default());
+    // Threads restored from the database resolve their saved model selection
+    // through the registry; point it at this same instance so restored
+    // threads stay drivable.
+    cx.update(|cx| {
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(
+                Arc::new(FakeLanguageModelProvider::default().with_models(vec![model.clone()])),
+                cx,
+            );
+        });
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+
+    // Parent and subagent completions interleave on the same model; find a
+    // pending completion by a needle only its thread's context contains.
+    let completion_containing = {
+        let model = model.clone();
+        move |needle: &str| {
+            model
+                .pending_completions()
+                .into_iter()
+                .find(|completion| {
+                    completion.messages.iter().any(|message| {
+                        message.content.iter().any(|content| match content {
+                            MessageContent::Text(text) => text.contains(needle),
+                            _ => false,
+                        })
+                    })
+                })
+                .unwrap_or_else(|| panic!("no pending completion containing {needle:?}"))
+        }
+    };
+
+    let (release_tx, release_rx) = oneshot::channel::<()>();
+
+    // Parent turn: spawn the subagent non-blockingly so the parent's turn can
+    // end while the subagent keeps running.
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("First prompt", cx));
+    cx.run_until_parked();
+    let spawn_input = json!({
+        "label": "initial task",
+        "message": "do the first task",
+        "blocking": false,
+    });
+    model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "subagent_1".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: spawn_input.to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(spawn_input.clone()),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // Give the subagent a tool that stays in flight until released.
+    let subagent_session_id = thread.read_with(cx, |thread, cx| {
+        thread
+            .running_subagent_ids(cx)
+            .get(0)
+            .expect("subagent thread should be running")
+            .clone()
+    });
+    let subagent_thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should exist")
+            .thread
+            .clone()
+    });
+    subagent_thread.update(cx, |thread, _cx| {
+        thread.add_tool(GatedEchoTool::new(release_rx));
+    });
+    // The gated tool is added while the subagent's turn is parked on its
+    // first completion; the refresh at the next iteration picks it up, so the
+    // first tool call must keep the turn alive (same dance as
+    // test_subagent_can_use_non_blocking_tool_calls).
+    let subagent_completion = completion_containing("do the first task");
+    model.send_completion_stream_event(
+        &subagent_completion,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "list_1".into(),
+            name: ListDirectoryTool::NAME.into(),
+            raw_input: json!({"path": "/a"}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(json!({"path": "/a"})),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    model.end_completion_stream(&subagent_completion);
+    cx.run_until_parked();
+
+    // The subagent calls the gated tool non-blockingly.
+    let subagent_completion = completion_containing("do the first task");
+    model.send_completion_stream_text_chunk(&subagent_completion, "starting the slow tool");
+    model.send_completion_stream_event(
+        &subagent_completion,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "gated_1".into(),
+            name: GatedEchoTool::NAME.into(),
+            raw_input: json!({"text": "slow", "blocking": false}).to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(
+                json!({"text": "slow", "blocking": false}),
+            ),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    model.end_completion_stream(&subagent_completion);
+    cx.run_until_parked();
+
+    // The placeholder drives one more completion; answering it ends the
+    // subagent's turn with the gated call still in flight.
+    let subagent_continuation = completion_containing("starting the slow tool");
+    model.send_completion_stream_text_chunk(&subagent_continuation, "running in the background");
+    model.end_completion_stream(&subagent_continuation);
+    cx.run_until_parked();
+
+    // End the parent's turn; the non-blocking spawn stays in flight.
+    let parent_completion = completion_containing("First prompt");
+    model.send_completion_stream_text_chunk(&parent_completion, "First response");
+    model.end_completion_stream(&parent_completion);
+    send.await.unwrap();
+    cx.run_until_parked();
+
+    // The subagent's turn ended, but its gated call is still in flight.
+    subagent_thread.read_with(cx, |thread, _| {
+        assert!(thread.is_turn_complete(), "subagent turn should have ended");
+        assert!(
+            !thread.is_quiescent(),
+            "gated call should still be in flight"
+        );
+    });
+
+    // Simulate a restart: close every session so none are live, then reopen
+    // the parent thread from the database.
+    cx.update(|cx| connection.clone().close_session(&subagent_session_id, cx))
+        .await
+        .unwrap();
+    cx.update(|cx| connection.clone().close_session(&session_id, cx))
+        .await
+        .unwrap();
+    drop(thread);
+    drop(acp_thread);
+    agent.read_with(cx, |agent, _| {
+        assert!(agent.sessions.is_empty(), "restart: no live sessions");
+    });
+
+    let acp_thread = agent
+        .update(cx, |agent, cx| {
+            agent.open_thread(session_id.clone(), project.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let thread = agent.read_with(cx, |agent, _| {
+        agent.sessions.get(&session_id).unwrap().thread.clone()
+    });
+    thread.update(cx, |thread, cx| {
+        thread.set_model(model.clone(), cx);
+    });
+    cx.run_until_parked();
+    assert!(
+        model.pending_completions().is_empty(),
+        "reopening must not start a turn on its own"
+    );
+
+    // The reopened parent has its in-flight spawn call's synthetic failure
+    // queued; delivering it waits for the user to resume the session. The
+    // parent reacts to the notification by resuming the subagent via its
+    // model-facing alias.
+    let send = acp_thread.update(cx, |thread, cx| thread.send_raw("Pick it back up", cx));
+    cx.run_until_parked();
+    let parent_continuation = completion_containing("First prompt");
+    let resume_input = json!({
+        "label": "follow-up task",
+        "message": "do the follow-up task",
+        "session_id": session_alias(&subagent_session_id).as_ref(),
+    });
+    model.send_completion_stream_event(
+        &parent_continuation,
+        LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+            id: "subagent_2".into(),
+            name: SpawnAgentTool::NAME.into(),
+            raw_input: resume_input.to_string(),
+            input: language_model::LanguageModelToolUseInput::Json(resume_input),
+            is_input_complete: true,
+            thought_signature: None,
+        }),
+    );
+    model.end_completion_stream(&parent_continuation);
+    cx.run_until_parked();
+
+    // The restored subagent's first completion request must carry the
+    // synthetic failure for the tool call that was in flight at the restart,
+    // as its own user message before the follow-up.
+    let subagent_resumed = completion_containing("do the follow-up task");
+    let user_message_position = |needle: &str| {
+        subagent_resumed.messages.iter().position(|message| {
+            message.role == Role::User
+                && message.content.iter().any(|content| match content {
+                    MessageContent::Text(text) => text.contains(needle),
+                    _ => false,
+                })
+        })
+    };
+    let delivered_ix = user_message_position("Zed was restarted before this tool call completed")
+        .unwrap_or_else(|| {
+            panic!("the resumed subagent should be told its in-flight tool call will never deliver: {subagent_resumed:#?}")
+        });
+    let follow_up_ix =
+        user_message_position("do the follow-up task").expect("follow-up message missing");
+    assert!(
+        delivered_ix < follow_up_ix,
+        "the interrupted-call notification should precede the follow-up: {subagent_resumed:#?}"
+    );
+
+    model.send_completion_stream_text_chunk(&subagent_resumed, "follow-up task response");
+    model.end_completion_stream(&subagent_resumed);
+    cx.run_until_parked();
+
+    let parent_follow_up = completion_containing("First prompt");
+    model.send_completion_stream_text_chunk(&parent_follow_up, "Second response");
+    model.end_completion_stream(&parent_follow_up);
+    cx.run_until_parked();
+    send.await.unwrap();
+
+    // Teardown: the pre-restart spawn call is still parked waiting for the
+    // In the restored session's view, the interrupted call renders as failed
+    // and the delivered result is its own user message between the replayed
+    // history and the follow-up — not fused into the follow-up.
+    let subagent_acp_thread = agent.read_with(cx, |agent, _| {
+        agent
+            .sessions
+            .get(&subagent_session_id)
+            .expect("subagent session should be restored")
+            .acp_thread
+            .clone()
+    });
+    let markdown = subagent_acp_thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
+    assert!(
+        markdown.contains("**Tool Call: gated_echo**\nStatus: Failed"),
+        "the interrupted call should render as failed: {markdown}"
+    );
+    let background_ix = markdown
+        .find("running in the background")
+        .expect("assistant history missing");
+    let delivered_ix = markdown
+        .find("Zed was restarted")
+        .expect("delivered result missing");
+    let follow_up_ix = markdown
+        .find("do the follow-up task")
+        .expect("follow-up missing");
+    assert!(
+        background_ix < delivered_ix && delivered_ix < follow_up_ix,
+        "the delivered result should be its own user message between the replayed history and the follow-up: {markdown}"
+    );
+
+    // Teardown: the pre-restart spawn call is still parked waiting for the
+    // gated call. Release it and drain the result on the old thread (no live
+    // session listens for its ContinuationRequested, so drive the turn
+    // directly) so the parked task finishes and no handles leak.
+    release_tx.send(()).unwrap();
+    cx.run_until_parked();
+    subagent_thread.update(cx, |thread, cx| {
+        thread.send_existing(cx).unwrap();
+    });
+    cx.run_until_parked();
+    let drain_completion = completion_containing("do the first task");
+    model.send_completion_stream_text_chunk(&drain_completion, "gate released");
+    model.end_completion_stream(&drain_completion);
+    cx.run_until_parked();
+}
+
 #[gpui::test]
 async fn test_subagent_thread_inherits_parent_thread_properties(cx: &mut TestAppContext) {
     init_test(cx);
@@ -6586,6 +8136,77 @@ async fn test_parent_cancel_stops_subagent(cx: &mut TestAppContext) {
         assert!(
             thread.is_turn_complete(),
             "subagent should be cancelled when parent cancels"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_turn_handoff_does_not_cancel_subagent(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(true, vec!["subagents".to_string()]);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+
+    let parent = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context.clone(),
+            context_server_registry.clone(),
+            Templates::new(),
+            Some(model.clone()),
+            cx,
+        )
+    });
+
+    let subagent = cx.new(|cx| Thread::new_subagent(&parent, cx));
+
+    parent.update(cx, |thread, _cx| {
+        thread.register_running_subagent(subagent.downgrade());
+    });
+
+    subagent
+        .update(cx, |thread, cx| {
+            thread.send(ClientUserMessageId::new(), ["Do work".to_string()], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(!thread.is_turn_complete(), "subagent should be running");
+    });
+
+    // Turn handoffs (new turn, queued-message dispatch, compaction) cancel
+    // only the parent's own turn, not the subagent.
+    parent.update(cx, |thread, cx| {
+        thread.cancel_turn(cx).detach();
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            !thread.is_turn_complete(),
+            "subagent must survive turn handoffs"
+        );
+    });
+
+    // Explicit stops still cascade to subagents.
+    parent.update(cx, |thread, cx| {
+        thread.cancel(cx).detach();
+    });
+
+    subagent.read_with(cx, |thread, _| {
+        assert!(
+            thread.is_turn_complete(),
+            "subagent should be cancelled on explicit stop"
         );
     });
 }
