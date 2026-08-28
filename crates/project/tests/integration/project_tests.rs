@@ -5771,7 +5771,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
                     lsp::TextDocumentSyncOptions {
                         open_close: Some(true),
                         change: Some(lsp::TextDocumentSyncKind::FULL),
-                        ..Default::default()
+                        ..lsp::TextDocumentSyncOptions::default()
                     },
                 )),
                 ..Default::default()
@@ -5806,7 +5806,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
                         },
                         completion_options: lsp::CompletionOptions {
                             trigger_characters: Some(vec![".".to_string()]),
-                            ..Default::default()
+                            ..lsp::CompletionOptions::default()
                         },
                     })
                     .ok(),
@@ -5862,7 +5862,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
                         },
                         completion_options: lsp::CompletionOptions {
                             trigger_characters: Some(vec![":".to_string()]),
-                            ..Default::default()
+                            ..lsp::CompletionOptions::default()
                         },
                     })
                     .ok(),
@@ -5910,7 +5910,7 @@ async fn test_dynamic_completion_registration_honors_document_selector(
                         },
                         completion_options: lsp::CompletionOptions {
                             trigger_characters: Some(vec!["!".to_string()]),
-                            ..Default::default()
+                            ..lsp::CompletionOptions::default()
                         },
                     })
                     .ok(),
@@ -6003,7 +6003,7 @@ async fn test_dynamic_diagnostic_registrations_honor_their_own_document_selector
                     lsp::TextDocumentSyncOptions {
                         open_close: Some(true),
                         change: Some(lsp::TextDocumentSyncKind::FULL),
-                        ..Default::default()
+                        ..lsp::TextDocumentSyncOptions::default()
                     },
                 )),
                 ..Default::default()
@@ -6067,9 +6067,9 @@ async fn test_dynamic_diagnostic_registrations_honor_their_own_document_selector
                 identifier: Some(identifier.to_string()),
                 inter_file_dependencies: false,
                 workspace_diagnostics: false,
-                ..Default::default()
+                ..lsp::DiagnosticOptions::default()
             },
-            static_registration_options: Default::default(),
+            static_registration_options: lsp::StaticRegistrationOptions::default(),
         })
         .ok()
     };
@@ -6155,7 +6155,7 @@ async fn test_unregistering_dynamic_completion_preserves_static_capability(
                         },
                         completion_options: lsp::CompletionOptions {
                             trigger_characters: Some(vec![":".to_string()]),
-                            ..Default::default()
+                            ..lsp::CompletionOptions::default()
                         },
                     })
                     .ok(),
@@ -6185,7 +6185,7 @@ async fn test_unregistering_dynamic_completion_preserves_static_capability(
                         },
                         completion_options: lsp::CompletionOptions {
                             trigger_characters: Some(vec!["@".to_string()]),
-                            ..Default::default()
+                            ..lsp::CompletionOptions::default()
                         },
                     })
                     .ok(),
@@ -6289,11 +6289,11 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string()]),
-                    ..Default::default()
+                    ..lsp::CompletionOptions::default()
                 }),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -6326,13 +6326,13 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                                 lsp::Position::new(0, text.len() as u32),
                             ),
                         )),
-                        ..Default::default()
+                        ..lsp::CompletionListItemDefaults::default()
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
                         text_edit_text: Some("textEditText".into()),
                         text_edit: None,
-                        ..Default::default()
+                        ..lsp::CompletionItem::default()
                     }],
                 })))
             })
@@ -6373,14 +6373,14 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
                                 lsp::Position::new(0, text.len() as u32),
                             ),
                         )),
-                        ..Default::default()
+                        ..lsp::CompletionListItemDefaults::default()
                     }),
                     items: vec![lsp::CompletionItem {
                         label: "labelText".into(),
                         text_edit_text: None,
                         insert_text: Some("irrelevant".into()),
                         text_edit: None,
-                        ..Default::default()
+                        ..lsp::CompletionItem::default()
                     }],
                 })))
             })
@@ -6427,11 +6427,11 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![":".to_string()]),
-                    ..Default::default()
+                    ..lsp::CompletionOptions::default()
                 }),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -6458,7 +6458,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
                     insert_text: Some("fullyQualifiedName".into()),
-                    ..Default::default()
+                    ..lsp::CompletionItem::default()
                 },
             ])))
         })
@@ -6490,7 +6490,7 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "component".into(),
-                    ..Default::default()
+                    ..lsp::CompletionItem::default()
                 },
             ])))
         })
@@ -6564,7 +6564,7 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
                 lsp::CompletionItem {
                     label: "fullyQualifiedName?".into(),
                     insert_text: Some("fully\rQualified\r\nName".into()),
-                    ..Default::default()
+                    ..lsp::CompletionItem::default()
                 },
             ])))
         })
@@ -6881,7 +6881,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                                         .into_iter()
                                         .collect(),
                                     ),
-                                    ..Default::default()
+                                    ..lsp::WorkspaceEdit::default()
                                 },
                             },
                             DEFAULT_LSP_REQUEST_TIMEOUT,
@@ -7072,17 +7072,17 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
             capabilities: lsp::ServerCapabilities {
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
-                    ..Default::default()
+                    ..lsp::CompletionOptions::default()
                 }),
                 text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
                     lsp::TextDocumentSyncOptions {
                         save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
-                        ..Default::default()
+                        ..lsp::TextDocumentSyncOptions::default()
                     },
                 )),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -7158,7 +7158,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     fs.save(
         path!("/dir/file1").as_ref(),
         &"the first contents".into(),
-        Default::default(),
+        LineEnding::default(),
     )
     .await
     .unwrap();
@@ -7169,7 +7169,7 @@ async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext)
     fs.save(
         path!("/dir/file1").as_ref(),
         &"the second contents".into(),
-        Default::default(),
+        LineEnding::default(),
     )
     .await
     .unwrap();
@@ -7209,7 +7209,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     fs.save(
         path!("/dir/file1").as_ref(),
         &"the first contents".into(),
-        Default::default(),
+        LineEnding::default(),
     )
     .await
     .unwrap();
@@ -7837,7 +7837,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         .detach();
     });
 
-    fs.remove_file(path!("/dir/file2").as_ref(), Default::default())
+    fs.remove_file(path!("/dir/file2").as_ref(), fs::RemoveOptions::default())
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -7900,7 +7900,7 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
         buffer.edit([(0..0, "x")], None, cx);
     });
     events.lock().clear();
-    fs.remove_file(path!("/dir/file3").as_ref(), Default::default())
+    fs.remove_file(path!("/dir/file3").as_ref(), fs::RemoveOptions::default())
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -7947,7 +7947,7 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
     fs.save(
         path!("/dir/file.txt").as_ref(),
         &"version 2 from external tool".into(),
-        Default::default(),
+        LineEnding::default(),
     )
     .await
     .unwrap();
@@ -8514,35 +8514,35 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 severity: Some(DiagnosticSeverity::WARNING),
                 message: lsp::DiagnosticMessage::from("error 1"),
                 related_information: Some(error_1_related_information.to_vec()),
-                ..Default::default()
+                ..lsp::Diagnostic::default()
             },
             lsp::Diagnostic {
                 range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
                 severity: Some(DiagnosticSeverity::HINT),
                 message: lsp::DiagnosticMessage::from("error 1 hint 1"),
                 related_information: Some(error_1_hint_related_information.to_vec()),
-                ..Default::default()
+                ..lsp::Diagnostic::default()
             },
             lsp::Diagnostic {
                 range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
                 severity: Some(DiagnosticSeverity::ERROR),
                 message: lsp::DiagnosticMessage::from("error 2"),
                 related_information: Some(error_2_related_information.to_vec()),
-                ..Default::default()
+                ..lsp::Diagnostic::default()
             },
             lsp::Diagnostic {
                 range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
                 severity: Some(DiagnosticSeverity::HINT),
                 message: lsp::DiagnosticMessage::from("error 2 hint 1"),
                 related_information: Some(error_2_hint_related_information.to_vec()),
-                ..Default::default()
+                ..lsp::Diagnostic::default()
             },
             lsp::Diagnostic {
                 range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
                 severity: Some(DiagnosticSeverity::HINT),
                 message: lsp::DiagnosticMessage::from("error 2 hint 2"),
                 related_information: Some(error_2_hint_related_information.to_vec()),
-                ..Default::default()
+                ..lsp::Diagnostic::default()
             },
         ],
         version: None,
@@ -8767,12 +8767,12 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
                     file_operations: Some(lsp::WorkspaceFileOperationsServerCapabilities {
                         did_rename: Some(watched_paths.clone()),
                         will_rename: Some(watched_paths),
-                        ..Default::default()
+                        ..lsp::WorkspaceFileOperationsServerCapabilities::default()
                     }),
                 }),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -8875,7 +8875,7 @@ async fn test_dynamic_call_hierarchy_followups_use_prepared_server(cx: &mut gpui
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -8988,7 +8988,7 @@ async fn test_dynamic_rename_registration_routes_prepare_rename(cx: &mut gpui::T
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9074,7 +9074,7 @@ async fn test_dynamic_rename_registration_without_prepare_provider_skips_prepare
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9172,11 +9172,11 @@ async fn test_prepare_rename_prefers_server_with_prepare_support(cx: &mut gpui::
             capabilities: lsp::ServerCapabilities {
                 rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                     prepare_provider: Some(false),
-                    work_done_progress_options: Default::default(),
+                    work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
                 })),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
     let mut prepared_servers = language_registry.register_fake_lsp(
@@ -9186,11 +9186,11 @@ async fn test_prepare_rename_prefers_server_with_prepare_support(cx: &mut gpui::
             capabilities: lsp::ServerCapabilities {
                 rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
                     prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
+                    work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
                 })),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9299,9 +9299,9 @@ async fn test_perform_rename_falls_back_when_prepared_server_is_gone(
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 rename_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9333,7 +9333,7 @@ async fn test_perform_rename_falls_back_when_prepared_server_is_gone(
                         .into_iter()
                         .collect(),
                     ),
-                    ..Default::default()
+                    ..lsp::WorkspaceEdit::default()
                 }))
             }
         }
@@ -9392,7 +9392,7 @@ async fn test_perform_rename_falls_back_when_server_unregisters_rename(
         FakeLspAdapter {
             name: "dynamic-rename-server",
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
     let mut static_servers = language_registry.register_fake_lsp(
@@ -9401,9 +9401,9 @@ async fn test_perform_rename_falls_back_when_server_unregisters_rename(
             name: "static-rename-server",
             capabilities: lsp::ServerCapabilities {
                 rename_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9525,7 +9525,7 @@ async fn test_dynamic_formatting_registrations_honor_document_selectors(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9635,7 +9635,7 @@ async fn test_dynamic_formatting_registration_with_pattern_only_selector_fails_o
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9720,7 +9720,7 @@ async fn test_dynamic_formatting_registration_with_empty_selector_matches_nothin
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9805,7 +9805,7 @@ async fn test_dynamic_formatting_registration_honors_language_selector(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -9915,7 +9915,7 @@ async fn test_dynamic_range_formatting_registrations_honor_document_selectors(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -12585,12 +12585,12 @@ async fn test_dynamic_code_action_registrations_use_matching_options(
                     lsp::TextDocumentSyncOptions {
                         open_close: Some(true),
                         change: Some(lsp::TextDocumentSyncKind::FULL),
-                        ..Default::default()
+                        ..lsp::TextDocumentSyncOptions::default()
                     },
                 )),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -12647,7 +12647,7 @@ async fn test_dynamic_code_action_registrations_use_matching_options(
                         lsp::CodeAction {
                             title: "organize imports".to_string(),
                             kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
-                            ..Default::default()
+                            ..lsp::CodeAction::default()
                         },
                     )]))
                 }
@@ -12670,6 +12670,125 @@ async fn test_dynamic_code_action_registrations_use_matching_options(
 
     assert_eq!(code_action_request_count.load(atomic::Ordering::SeqCst), 1);
     assert_eq!(code_actions.len(), 1);
+}
+
+#[gpui::test]
+async fn test_format_code_actions_skip_resolve_from_non_matching_registration(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_language_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "untitled-code-actions".to_string(),
+                    method: "textDocument/codeAction".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "typescript", "scheme": "untitled" }],
+                        "codeActionKinds": [CodeActionKind::SOURCE_ORGANIZE_IMPORTS.as_str()],
+                        "resolveProvider": true,
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let _code_action_requests = fake_server
+        .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
+            Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "organize imports".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    data: Some(json!({ "marker": true })),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [(
+                                params.text_document.uri,
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 0),
+                                    ),
+                                    "organized ".to_string(),
+                                )],
+                            )]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..lsp::WorkspaceEdit::default()
+                    }),
+                    ..lsp::CodeAction::default()
+                },
+            )]))
+        });
+    let resolve_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _resolve_requests = fake_server
+        .set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>({
+            let resolve_request_count = resolve_request_count.clone();
+            move |action, _| {
+                resolve_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(action) }
+            }
+        });
+
+    project
+        .update(cx, |project, cx| {
+            project.apply_code_action_kind(
+                HashSet::from_iter([buffer.clone()]),
+                CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                true,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resolve_request_count.load(atomic::Ordering::SeqCst),
+        0,
+        "expected no resolve request when the resolve capability comes from a non-matching registration",
+    );
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "organized a");
+    });
 }
 
 #[gpui::test]

@@ -1490,6 +1490,7 @@ impl LocalLspStore {
                 Self::execute_code_actions_on_server(
                     &lsp_store,
                     language_server,
+                    buffer,
                     actions,
                     push_to_history,
                     &mut project_transaction,
@@ -2144,9 +2145,26 @@ impl LocalLspStore {
 
                     zlog::trace!(logger => "Executing {}", describe_code_action(&action));
 
-                    if let Err(err) =
-                        Self::try_resolve_code_action(server, &mut action, None, request_timeout)
-                            .await
+                    let can_resolve_actions = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.text_document_capability_matches_for_server(
+                            &buffer.handle,
+                            server.server_id(),
+                            "textDocument/codeAction",
+                            |capabilities| {
+                                GetCodeActions::can_resolve_actions(
+                                    capabilities.server_capabilities,
+                                )
+                            },
+                            cx,
+                        )
+                    })?;
+                    if let Err(err) = Self::try_resolve_code_action(
+                        server,
+                        &mut action,
+                        can_resolve_actions,
+                        request_timeout,
+                    )
+                    .await
                     {
                         zlog::error!(
                             logger =>
@@ -2747,14 +2765,11 @@ impl LocalLspStore {
     async fn try_resolve_code_action(
         lang_server: &LanguageServer,
         action: &mut CodeAction,
-        can_resolve_override: Option<bool>,
+        can_resolve: bool,
         request_timeout: Duration,
     ) -> anyhow::Result<()> {
         match &mut action.lsp_action {
             LspAction::Action(lsp_action) => {
-                let can_resolve = can_resolve_override.unwrap_or_else(|| {
-                    GetCodeActions::can_resolve_actions(&lang_server.capabilities())
-                });
                 if !action.resolved
                     && can_resolve
                     && lsp_action.data.is_some()
@@ -2770,8 +2785,6 @@ impl LocalLspStore {
                 }
             }
             LspAction::CodeLens(lens) => {
-                let can_resolve = can_resolve_override
-                    .unwrap_or_else(|| GetCodeLens::can_resolve_lens(&lang_server.capabilities()));
                 if !action.resolved && can_resolve {
                     *lens = lang_server
                         .request::<lsp::request::CodeLensResolve>(lens.clone(), request_timeout)
@@ -3355,6 +3368,7 @@ impl LocalLspStore {
     pub async fn execute_code_actions_on_server(
         lsp_store: &WeakEntity<LspStore>,
         language_server: &Arc<LanguageServer>,
+        buffer: &Entity<Buffer>,
         actions: Vec<CodeAction>,
         push_to_history: bool,
         project_transaction: &mut ProjectTransaction,
@@ -3365,11 +3379,28 @@ impl LocalLspStore {
                 .global_lsp_settings
                 .get_request_timeout()
         });
+        let server_id = language_server.server_id();
+        let can_resolve_actions = lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.text_document_capability_matches_for_server(
+                buffer,
+                server_id,
+                "textDocument/codeAction",
+                |capabilities| {
+                    GetCodeActions::can_resolve_actions(capabilities.server_capabilities)
+                },
+                cx,
+            )
+        })?;
 
         for mut action in actions {
-            Self::try_resolve_code_action(language_server, &mut action, None, request_timeout)
-                .await
-                .context("resolving a formatting code action")?;
+            Self::try_resolve_code_action(
+                language_server,
+                &mut action,
+                can_resolve_actions,
+                request_timeout,
+            )
+            .await
+            .context("resolving a formatting code action")?;
 
             if let Some(edit) = action.lsp_action.edit() {
                 if edit.changes.is_none() && edit.document_changes.is_none() {
@@ -4743,7 +4774,7 @@ impl LspStore {
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
                 language_server_dynamic_registrations: Default::default(),
-                initial_server_capabilities: Default::default(),
+                initial_server_capabilities: HashMap::default(),
                 buffers_being_formatted: Default::default(),
                 buffers_to_refresh_hash_set: HashSet::default(),
                 buffers_to_refresh_queue: VecDeque::new(),
@@ -5701,20 +5732,6 @@ impl LspStore {
         check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
         cx: &App,
     ) -> bool {
-        self.remote_text_document_capability_matches_with_unknown_context(
-            buffer, server_id, method, true, check, cx,
-        )
-    }
-
-    fn remote_text_document_capability_matches_with_unknown_context(
-        &self,
-        buffer: &Entity<Buffer>,
-        server_id: LanguageServerId,
-        method: &str,
-        match_unknown_context: bool,
-        check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
-        cx: &App,
-    ) -> bool {
         let registration_method = text_document_registration_method(method);
         let language = buffer.read(cx).language().map(|language| language.name());
         let context = self.remote_document_selector_context(server_id, language.as_ref());
@@ -5725,7 +5742,6 @@ impl LspStore {
                 .get(&server_id)
                 .and_then(|registrations| registrations.get(registration_method)),
             context.as_ref(),
-            match_unknown_context,
             check,
         )
     }
@@ -5751,9 +5767,7 @@ impl LspStore {
             });
         }
 
-        self.remote_text_document_capability_matches_with_unknown_context(
-            buffer, server_id, method, false, check, cx,
-        )
+        self.remote_text_document_capability_matches(buffer, server_id, method, check, cx)
     }
 
     fn check_if_any_relevant_text_document_server_matches<F>(
@@ -6337,7 +6351,7 @@ impl LspStore {
                 LocalLspStore::try_resolve_code_action(
                     &lang_server,
                     &mut action,
-                    Some(can_resolve),
+                    can_resolve,
                     request_timeout,
                 )
                 .await
@@ -6455,7 +6469,7 @@ impl LspStore {
                 LocalLspStore::try_resolve_code_action(
                     &lang_server,
                     &mut action,
-                    Some(true),
+                    true,
                     request_timeout,
                 )
                 .await
@@ -9544,19 +9558,18 @@ impl LspStore {
 
     pub(crate) fn language_server_capable_of_lsp_request<R: LspCommand>(
         &self,
-        buffer: &Buffer,
+        buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
         request: &R,
         cx: &mut App,
     ) -> bool {
-        self.as_local().is_some_and(|local| {
-            local
-                .language_servers_for_buffer(buffer, cx)
-                .find(|(_, server)| server.server_id() == server_id)
-                .is_some_and(|(adapter, server)| {
-                    lsp_command_allowed_for_buffer(local, request, buffer, adapter, server)
-                })
-        })
+        self.text_document_capability_matches_for_server(
+            buffer,
+            server_id,
+            <R::LspRequest as lsp::request::Request>::METHOD,
+            |capabilities| request.check_capabilities(capabilities),
+            cx,
+        )
     }
 
     fn remove_worktree(&mut self, id_to_remove: WorktreeId, cx: &mut Context<Self>) {
@@ -14457,7 +14470,6 @@ fn remote_text_document_capabilities_match(
         &collections::IndexMap<String, dynamic_registration::DynamicTextDocumentRegistration>,
     >,
     context: Option<&DocumentSelectorContext>,
-    match_unknown_context: bool,
     mut check: impl FnMut(AdapterServerCapabilities<'_>) -> bool,
 ) -> bool {
     let Some(initial_capabilities) = initial_capabilities else {
@@ -14480,10 +14492,9 @@ fn remote_text_document_capabilities_match(
         return false;
     };
     registrations.values().any(|registration| {
-        context.map_or_else(
-            || registration.document_selector.is_none() || match_unknown_context,
-            |context| document_selector_matches(registration.document_selector.as_ref(), context),
-        ) && check(AdapterServerCapabilities {
+        context.is_none_or(|context| {
+            document_selector_matches(registration.document_selector.as_ref(), context)
+        }) && check(AdapterServerCapabilities {
             server_capabilities: &registration.server_capabilities,
             code_action_kinds: None,
         })
@@ -16280,7 +16291,6 @@ mod tests {
                 Some(&merged_capabilities),
                 None,
                 Some(&context),
-                false,
                 rename_capability_check,
             ),
             "old hosts send only merged capabilities, which must be consulted",
@@ -16299,7 +16309,6 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 Some(&context),
-                false,
                 rename_capability_check,
             ),
             "a registration scoped to another language must not match",
@@ -16317,28 +16326,9 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 None,
-                true,
                 rename_capability_check,
             ),
             "without a selector context the guest must fail open and let the host re-filter",
-        );
-    }
-
-    #[test]
-    fn remote_capability_check_can_fail_closed_without_selector_context() {
-        let initial_capabilities = lsp::ServerCapabilities::default();
-        let merged_capabilities = rename_capabilities();
-        let registrations = rename_registrations("python");
-        assert!(
-            !remote_text_document_capabilities_match(
-                Some(&initial_capabilities),
-                Some(&merged_capabilities),
-                Some(&registrations),
-                None,
-                false,
-                rename_capability_check,
-            ),
-            "resolve checks must not guess when the host will not re-filter by selector",
         );
     }
 
@@ -16354,7 +16344,6 @@ mod tests {
                 Some(&merged_capabilities),
                 Some(&registrations),
                 Some(&context),
-                false,
                 rename_capability_check,
             ),
             "initial capabilities without the capability and no registrations must not match",

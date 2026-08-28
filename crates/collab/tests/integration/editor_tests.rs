@@ -1215,14 +1215,14 @@ async fn test_remote_rename_uses_server_that_prepared_it(
     let unprepared_capabilities = lsp::ServerCapabilities {
         rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
             prepare_provider: Some(false),
-            work_done_progress_options: Default::default(),
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
         })),
         ..lsp::ServerCapabilities::default()
     };
     let prepared_capabilities = lsp::ServerCapabilities {
         rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
             prepare_provider: Some(true),
-            work_done_progress_options: Default::default(),
+            work_done_progress_options: lsp::WorkDoneProgressOptions::default(),
         })),
         ..lsp::ServerCapabilities::default()
     };
@@ -1483,7 +1483,7 @@ async fn test_remote_dynamic_call_hierarchy_followups_use_prepared_server(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
     client_b.language_registry().add(rust_lang());
@@ -1491,7 +1491,7 @@ async fn test_remote_dynamic_call_hierarchy_followups_use_prepared_server(
         "Rust",
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities::default(),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 

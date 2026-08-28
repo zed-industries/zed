@@ -4695,10 +4695,8 @@ impl Project {
         if let Some(server_id) = request.language_server_id {
             let server_is_capable = !self.is_local()
                 || self.lsp_store.update(cx, |lsp_store, cx| {
-                    buffer.update(cx, |buffer, cx| {
-                        lsp_store
-                            .language_server_capable_of_lsp_request(buffer, server_id, &request, cx)
-                    })
+                    lsp_store
+                        .language_server_capable_of_lsp_request(&buffer, server_id, &request, cx)
                 });
             if !server_is_capable {
                 request.language_server_id = None;

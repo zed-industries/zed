@@ -1228,10 +1228,8 @@ impl LspCommand for PerformRename {
             // the request upstream, where the authoritative store re-validates.
             let server_is_capable = lsp_store.update(&mut cx, |lsp_store, cx| {
                 lsp_store.as_local().is_none()
-                    || buffer.update(cx, |buffer, cx| {
-                        lsp_store
-                            .language_server_capable_of_lsp_request(buffer, server_id, &request, cx)
-                    })
+                    || lsp_store
+                        .language_server_capable_of_lsp_request(&buffer, server_id, &request, cx)
             });
             if !server_is_capable {
                 request.language_server_id = None;
