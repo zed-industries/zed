@@ -10416,6 +10416,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp_command_selector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "futures 0.3.32",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "menu",
+ "notifications",
+ "picker",
+ "project",
+ "serde_json",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+ "zlog",
+]
+
+[[package]]
 name = "lsp_locations"
 version = "0.1.0"
 dependencies = [
@@ -22807,6 +22831,7 @@ dependencies = [
  "languages",
  "line_ending_selector",
  "log",
+ "lsp_command_selector",
  "lsp_locations",
  "markdown",
  "markdown_preview",

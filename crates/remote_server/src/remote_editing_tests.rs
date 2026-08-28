@@ -4504,6 +4504,134 @@ async fn test_remote_lsp_show_document(cx: &mut TestAppContext, server_cx: &mut 
 }
 
 #[gpui::test]
+async fn test_remote_execute_lsp_command(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: (LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..LanguageMatcher::default()
+            })
+            .into(),
+            ..LanguageConfig::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                ..FakeLspAdapter::default()
+            },
+        )
+    });
+
+    let mut fake_lsp = server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            lsp::ServerCapabilities {
+                execute_command_provider: Some(lsp::ExecuteCommandOptions {
+                    commands: vec!["the-command".to_string()],
+                    ..lsp::ExecuteCommandOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            Some(Box::new(|fake| {
+                fake.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+                    |params, _| async move {
+                        assert_eq!(params.command, "the-command");
+                        assert_eq!(params.arguments, vec![json!("foo"), json!(42)]);
+                        Ok(Some(json!({"answer": 3})))
+                    },
+                );
+            })),
+        )
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+
+    cx.run_until_parked();
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let _fake_lsp = fake_lsp.next().await.unwrap();
+
+    let server_id = cx.read(|cx| {
+        project
+            .read(cx)
+            .language_server_statuses(cx)
+            .next()
+            .expect("a language server should be running")
+            .0
+    });
+
+    let result = project
+        .update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.execute_lsp_command(
+                    server_id,
+                    "the-command".to_string(),
+                    vec![json!("foo"), json!(42)],
+                    cx,
+                )
+            })
+        })
+        .await
+        .expect("executing an advertised command should succeed");
+    assert_eq!(result, Some(json!({"answer": 3})));
+
+    let unadvertised = project
+        .update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                lsp_store.execute_lsp_command(
+                    server_id,
+                    "unadvertised-command".to_string(),
+                    Vec::new(),
+                    cx,
+                )
+            })
+        })
+        .await;
+    assert_eq!(
+        unadvertised
+            .err()
+            .map(|error| format!("{error:#}").contains("not advertised")),
+        Some(true),
+        "unadvertised commands should be rejected"
+    );
+}
+
+#[gpui::test]
 async fn test_remote_restore_unstaged_hunk_clears_diff(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

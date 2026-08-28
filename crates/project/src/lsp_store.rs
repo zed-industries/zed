@@ -4687,6 +4687,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
 
+        client.add_entity_request_handler(Self::handle_execute_lsp_command);
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_clear_flycheck);
@@ -6223,6 +6224,67 @@ impl LspStore {
                         .remove(&lang_server.server_id())
                         .unwrap_or_default()
                 });
+            })
+        } else {
+            Task::ready(Err(anyhow!("no upstream client and not local")))
+        }
+    }
+
+    pub fn execute_lsp_command(
+        &self,
+        server_id: LanguageServerId,
+        command: String,
+        arguments: Vec<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<serde_json::Value>>> {
+        if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = upstream_client.request(proto::ExecuteLspCommand {
+                project_id,
+                language_server_id: server_id.to_proto(),
+                command,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| argument.to_string())
+                    .collect(),
+            });
+            cx.background_spawn(async move {
+                let response = request.await?;
+                response
+                    .result
+                    .map(|result| serde_json::from_str(&result))
+                    .transpose()
+                    .context("deserializing executeCommand result")
+            })
+        } else if self.mode.is_local() {
+            let Some(server) = self.language_server_for_id(server_id) else {
+                return Task::ready(Err(anyhow!("language server {server_id} not found")));
+            };
+            let available_commands = server
+                .capabilities()
+                .execute_command_provider
+                .as_ref()
+                .map(|options| options.commands.clone())
+                .unwrap_or_default();
+            if !available_commands.contains(&command) {
+                return Task::ready(Err(anyhow!(
+                    "command {command} is not advertised by the language server"
+                )));
+            }
+            let request_timeout = ProjectSettings::get_global(cx)
+                .global_lsp_settings
+                .get_request_timeout();
+            cx.background_spawn(async move {
+                server
+                    .request::<lsp::request::ExecuteCommand>(
+                        lsp::ExecuteCommandParams {
+                            command,
+                            arguments,
+                            ..lsp::ExecuteCommandParams::default()
+                        },
+                        request_timeout,
+                    )
+                    .await
+                    .into_response()
             })
         } else {
             Task::ready(Err(anyhow!("no upstream client and not local")))
@@ -10967,6 +11029,29 @@ impl LspStore {
         }
 
         Ok(proto::Ack {})
+    }
+
+    async fn handle_execute_lsp_command(
+        lsp_store: Entity<Self>,
+        envelope: TypedEnvelope<proto::ExecuteLspCommand>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ExecuteLspCommandResponse> {
+        let server_id = LanguageServerId::from_proto(envelope.payload.language_server_id);
+        let arguments = envelope
+            .payload
+            .arguments
+            .iter()
+            .map(|argument| serde_json::from_str(argument))
+            .collect::<Result<Vec<serde_json::Value>, _>>()
+            .context("deserializing executeCommand arguments")?;
+        let result = lsp_store
+            .update(&mut cx, |lsp_store, cx| {
+                lsp_store.execute_lsp_command(server_id, envelope.payload.command, arguments, cx)
+            })
+            .await?;
+        Ok(proto::ExecuteLspCommandResponse {
+            result: result.map(|result| result.to_string()),
+        })
     }
 
     async fn handle_lsp_ext_run_flycheck(

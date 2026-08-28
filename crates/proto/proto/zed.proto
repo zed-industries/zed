@@ -520,7 +520,9 @@ message Envelope {
     LspExtExpandAbbreviation lsp_ext_expand_abbreviation = 488;
     LspExtExpandAbbreviationResponse lsp_ext_expand_abbreviation_response = 489;
     LanguageServerShowDocumentRequest language_server_show_document_request = 490;
-    LanguageServerShowDocumentResponse language_server_show_document_response = 491; // current max
+    LanguageServerShowDocumentResponse language_server_show_document_response = 491;
+    ExecuteLspCommand execute_lsp_command = 492;
+    ExecuteLspCommandResponse execute_lsp_command_response = 493; // current max
   }
 
   reserved 87 to 88;

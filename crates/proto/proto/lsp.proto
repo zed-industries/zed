@@ -970,6 +970,17 @@ message LanguageServerShowDocumentResponse {
   bool success = 1;
 }
 
+message ExecuteLspCommand {
+  uint64 project_id = 1;
+  uint64 language_server_id = 2;
+  string command = 3;
+  repeated string arguments = 4;
+}
+
+message ExecuteLspCommandResponse {
+  optional string result = 1;
+}
+
 message GetDocumentColor {
   uint64 project_id = 1;
   uint64 buffer_id = 2;
