@@ -5074,18 +5074,7 @@ impl Editor {
         cx.propagate();
     }
 
-    pub fn tab(&mut self, _: &Tab, window: &mut
-    pub fn next_snippet_tabstop(
-        &mut self,
-        _: &NextSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            cx.propagate();
-            return;
-        }
- Window, cx: &mut Context<Self>) {
+    pub fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode.is_single_line() {
             cx.propagate();
             return;
@@ -5094,17 +5083,6 @@ impl Editor {
         if self.move_to_next_snippet_tabstop(window, cx) {
             return;
         }
-    pub fn next_snippet_tabstop(
-        &mut self,
-        _: &NextSnippetTabstop,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.mode.is_single_line() || self.snippet_stack.is_empty() {
-            cx.propagate();
-            return;
-        }
-
         if self.read_only(cx) {
             return;
         }

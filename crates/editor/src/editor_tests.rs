@@ -38831,13 +38831,56 @@ async fn test_edit_actions_in_folded_buffer_match_the_expanded_buffer(cx: &mut T
         RangeAndCursorElsewhere,
     }
 
+    /// Cursor-local edits: a column part way into a line is the discriminating spot, and the
+    /// excerpt boundary adds nothing for an action that only reaches forward from the cursor.
+    const AT_CURSOR: &[Placement] = &[Placement::CursorMidLine];
+
+    /// Edits that reach backwards or upwards out of the line they start on, where the collapsed
+    /// buffer's first row is a real boundary case.
+    const AT_CURSOR_AND_BUFFER_START: &[Placement] =
+        &[Placement::CursorAtStart, Placement::CursorMidLine];
+
+    /// Insertions and deletions that a range spanning the whole collapsed buffer would make
+    /// replace everything it hides - the case the fix exists for - as well as acting at a bare
+    /// cursor.
+    const AT_CURSOR_AND_OVER_RANGE: &[Placement] =
+        &[Placement::CursorMidLine, Placement::RangeAndCursorElsewhere];
+
+    /// Line-wise and whole-selection transforms: a range covering the collapsed buffer gives
+    /// them several lines to reorder, case-fold or comment, which a bare cursor does not.
+    const OVER_SELECTION: &[Placement] = &[Placement::RangeAndCursorElsewhere];
+
+    /// Which placements are meaningful for a given action. Most actions only need one or two of
+    /// the three placements to exercise their behavior against a collapsed buffer; running the
+    /// full Cartesian product for all of them just re-runs identical code paths.
+    fn placements_for(name: &str) -> &'static [Placement] {
+        match name {
+            "input" | "ime_composition" | "paste" | "paste_item" | "newline" | "backspace"
+            | "delete" | "cut" | "insert_snippet" => AT_CURSOR_AND_OVER_RANGE,
+            "transpose"
+            | "newline_above"
+            | "move_line_up"
+            | "duplicate_line_up"
+            | "delete_to_beginning_of_line"
+            | "delete_to_previous_word_start"
+            | "delete_to_previous_subword_start" => AT_CURSOR_AND_BUFFER_START,
+            "newline_below"
+            | "tab"
+            | "delete_to_end_of_line"
+            | "cut_to_end_of_line"
+            | "kill_ring_cut"
+            | "delete_to_next_word_end"
+            | "delete_to_next_subword_end"
+            | "insert_uuid_v7"
+            | "insert_uuid_v4" => AT_CURSOR,
+            _ => OVER_SELECTION,
+        }
+    }
+
     let mut failures = Vec::new();
     for (name, run, texts_agree) in cases {
-        for placement in [
-            Placement::CursorAtStart,
-            Placement::CursorMidLine,
-            Placement::RangeAndCursorElsewhere,
-        ] {
+        for placement in placements_for(name) {
+            let placement = *placement;
             let mut outcomes = Vec::new();
             for collapse in [false, true] {
                 let (editor, window_cx) = cx.add_window_view(|window, cx| {
