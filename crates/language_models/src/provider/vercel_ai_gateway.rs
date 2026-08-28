@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, env_var,
+    ProviderSettingsView, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
@@ -399,10 +399,6 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.capabilities.tools
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
 
     fn supports_images(&self) -> bool {

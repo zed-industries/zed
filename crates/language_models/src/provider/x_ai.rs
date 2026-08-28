@@ -9,8 +9,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter,
-    env_var,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -382,14 +381,6 @@ impl LanguageModel for XAiLanguageModel {
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         supported_thinking_effort_levels(&self.model)
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        if self.model.requires_json_schema_subset() {
-            LanguageModelToolSchemaFormat::JsonSchemaSubset
-        } else {
-            LanguageModelToolSchemaFormat::JsonSchema
-        }
     }
 
     fn telemetry_id(&self) -> String {

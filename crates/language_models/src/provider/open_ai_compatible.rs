@@ -8,7 +8,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, SubPageProviderSettings,
+    ProviderSettingsView, RateLimiter, SubPageProviderSettings,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -356,10 +356,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
 
     fn supports_tools(&self) -> bool {
         self.model.capabilities.tools
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
 
     fn supports_images(&self) -> bool {

@@ -498,7 +498,6 @@ impl CodegenAlternative {
 
         let temperature = AgentSettings::temperature_for_model(model, cx);
 
-        let tool_input_format = model.tool_input_format();
         let tool_choice = model
             .supports_tool_choice(LanguageModelToolChoice::Any)
             .then_some(LanguageModelToolChoice::Any);
@@ -525,17 +524,21 @@ impl CodegenAlternative {
             user_message.content.push(user_prompt.into());
             messages.push(user_message);
 
+            let tool_schema = |mut schema: serde_json::Value| {
+                language_model::tool_schema::normalize_tool_schema(&mut schema);
+                schema
+            };
             let tools = vec![
                 LanguageModelRequestTool::function(
                     REWRITE_SECTION_TOOL_NAME.to_string(),
                     "Replaces text in <rewrite_this></rewrite_this> tags with your replacement_text.".to_string(),
-                    language_model::tool_schema::root_schema_for::<RewriteSectionInput>(tool_input_format).to_value(),
+                    tool_schema(language_model::tool_schema::root_schema_for::<RewriteSectionInput>().to_value()),
                     false,
                 ),
                 LanguageModelRequestTool::function(
                     FAILURE_MESSAGE_TOOL_NAME.to_string(),
                     "Use this tool to provide a message to the user when you're unable to complete a task.".to_string(),
-                    language_model::tool_schema::root_schema_for::<FailureMessageInput>(tool_input_format).to_value(),
+                    tool_schema(language_model::tool_schema::root_schema_for::<FailureMessageInput>().to_value()),
                     false,
                 ),
             ];
