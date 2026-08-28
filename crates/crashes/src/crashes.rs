@@ -8,6 +8,7 @@ use std::{panic::Location, pin::Pin};
 use system_specs::GpuSpecs;
 
 use std::{
+    collections::BTreeMap,
     env,
     fs::{self, File},
     io, panic,
@@ -180,7 +181,7 @@ pub struct CrashServer {
     initialization_params: Mutex<Option<InitCrashHandler>>,
     panic_info: Mutex<Option<CrashPanic>>,
     active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
-    user_info: Mutex<Option<UserInfo>>,
+    tags: Mutex<BTreeMap<String, String>>,
     abort_message_location: Mutex<Option<AbortMessageLocation>>,
     shutdown: Arc<AtomicBool>,
     has_connection: Arc<AtomicBool>,
@@ -199,7 +200,10 @@ pub struct CrashInfo {
     pub abort_message: Option<String>,
     pub gpus: Vec<system_specs::GpuInfo>,
     pub active_gpu: Option<system_specs::GpuSpecs>,
-    pub user_info: Option<UserInfo>,
+    /// Session state the crashed application attached with [`set_tag`], keyed
+    /// by Sentry submission field.
+    #[serde(default)]
+    pub tags: BTreeMap<String, String>,
 }
 
 /// Where to find the C runtime's abort diagnostic in the crashed process's
@@ -228,7 +232,11 @@ pub struct CrashPanic {
     pub span: String,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+/// The Sentry field identifying the crashing user, which the uploader falls
+/// back to filling in itself when a session never reported one.
+pub const SENTRY_USER_ID: &str = "sentry[user][id]";
+
+#[derive(Debug, Clone)]
 pub struct UserInfo {
     pub metrics_id: Option<String>,
     pub is_staff: Option<bool>,
@@ -253,7 +261,29 @@ pub fn set_gpu_info(crash_client: &Arc<Client>, specs: GpuSpecs) {
 }
 
 pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
-    send_crash_server_message(crash_client, CrashServerMessage::UserInfo(info));
+    set_tag(crash_client, SENTRY_USER_ID, info.metrics_id);
+    set_tag(
+        crash_client,
+        "sentry[user][is_staff]",
+        info.is_staff.map(|is_staff| is_staff.to_string()),
+    );
+}
+
+/// Attaches a value to every crash this session produces from now on, or clears
+/// it when `value` is `None`. A later call with the same key replaces the
+/// earlier value, so independent callers can each track state that changes
+/// during a session without coordinating.
+///
+/// `key` is the Sentry submission field to upload the value under, such as
+/// `sentry[user][username]` or any name under `sentry[tags]`, which is why the
+/// value reaches Sentry without the crash handler modelling what it means.
+pub fn set_tag(crash_client: &Arc<Client>, key: impl Into<String>, value: Option<String>) {
+    let key = key.into();
+    debug_assert!(
+        key.starts_with("sentry["),
+        "crash tag key {key:?} is not a Sentry submission field"
+    );
+    send_crash_server_message(crash_client, CrashServerMessage::Tag { key, value });
 }
 
 /// Requests an orderly exit from the crash-handler sidecar.
@@ -266,7 +296,7 @@ enum CrashServerMessage {
     Init(InitCrashHandler),
     Panic(CrashPanic),
     GPUInfo(GpuSpecs),
-    UserInfo(UserInfo),
+    Tag { key: String, value: Option<String> },
     AbortMessageLocation(AbortMessageLocation),
     Shutdown,
 }
@@ -439,7 +469,7 @@ impl minidumper::ServerHandler for CrashServer {
             abort_message,
             active_gpu: self.active_gpu.lock().clone(),
             gpus,
-            user_info: self.user_info.lock().clone(),
+            tags: self.tags.lock().clone(),
         };
 
         let crash_data_path = self
@@ -465,9 +495,14 @@ impl minidumper::ServerHandler for CrashServer {
             CrashServerMessage::GPUInfo(gpu_specs) => {
                 self.active_gpu.lock().replace(gpu_specs);
             }
-            CrashServerMessage::UserInfo(user_info) => {
-                self.user_info.lock().replace(user_info);
-            }
+            CrashServerMessage::Tag { key, value } => match value {
+                Some(value) => {
+                    self.tags.lock().insert(key, value);
+                }
+                None => {
+                    self.tags.lock().remove(&key);
+                }
+            },
             CrashServerMessage::AbortMessageLocation(location) => {
                 self.abort_message_location.lock().replace(location);
             }
@@ -673,7 +708,7 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
             Box::new(CrashServer {
                 initialization_params: Mutex::default(),
                 panic_info: Mutex::default(),
-                user_info: Mutex::default(),
+                tags: Mutex::default(),
                 abort_message_location: Mutex::default(),
                 shutdown: shutdown.clone(),
                 has_connection,
@@ -689,6 +724,71 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Clearing a tag has to remove it rather than record an empty value,
+    /// because that is how an application withdraws identifying state from
+    /// crashes it has not produced yet.
+    #[test]
+    fn setting_a_tag_to_none_removes_it() {
+        let server = test_crash_server();
+
+        server.receive(CrashServerMessage::Tag {
+            key: SENTRY_USER_ID.to_string(),
+            value: Some("metrics-1".to_string()),
+        });
+        server.receive(CrashServerMessage::Tag {
+            key: "sentry[tags][custom]".to_string(),
+            value: Some("first".to_string()),
+        });
+        server.receive(CrashServerMessage::Tag {
+            key: "sentry[tags][custom]".to_string(),
+            value: Some("second".to_string()),
+        });
+        assert_eq!(
+            server.tags.lock().clone(),
+            BTreeMap::from([
+                (SENTRY_USER_ID.to_string(), "metrics-1".to_string()),
+                ("sentry[tags][custom]".to_string(), "second".to_string()),
+            ])
+        );
+
+        server.receive(CrashServerMessage::Tag {
+            key: SENTRY_USER_ID.to_string(),
+            value: None,
+        });
+        assert_eq!(
+            server.tags.lock().clone(),
+            BTreeMap::from([("sentry[tags][custom]".to_string(), "second".to_string())])
+        );
+    }
+
+    /// A crash is reported by the build that starts next, so an upgrade always
+    /// reads crash data written by the previous build. Tags were introduced
+    /// after `user_info`, and dropping a stale identity is acceptable, but
+    /// failing to parse would discard the whole crash.
+    #[test]
+    fn crash_info_written_before_tags_existed_still_parses() {
+        let crash_info: CrashInfo = serde_json::from_str(
+            r#"{
+                "init": {
+                    "session_id": "session-1",
+                    "zed_version": "1.2.3",
+                    "binary": "zed",
+                    "release_channel": "stable",
+                    "commit_sha": "abc123"
+                },
+                "panic": null,
+                "minidump_error": null,
+                "gpus": [],
+                "active_gpu": null,
+                "user_info": { "metrics_id": "metrics-1", "is_staff": true }
+            }"#,
+        )
+        .expect("crash data from an older build must still parse");
+
+        assert_eq!(crash_info.init.session_id, "session-1");
+        assert!(crash_info.tags.is_empty());
+    }
 
     #[test]
     fn abort_message_read_len_requires_page_rounded_total() {
@@ -778,6 +878,29 @@ mod tests {
             );
 
             libc::munmap(mapping, 2 * page_size);
+        }
+    }
+
+    impl CrashServer {
+        fn receive(&self, message: CrashServerMessage) {
+            use minidumper::ServerHandler as _;
+
+            let message =
+                serde_json::to_vec(&message).expect("failed to serialize a crash server message");
+            self.on_message(0, message);
+        }
+    }
+
+    fn test_crash_server() -> CrashServer {
+        CrashServer {
+            initialization_params: Mutex::default(),
+            panic_info: Mutex::default(),
+            active_gpu: Mutex::default(),
+            tags: Mutex::default(),
+            abort_message_location: Mutex::default(),
+            shutdown: Arc::default(),
+            has_connection: Arc::default(),
+            logs_dir: PathBuf::new(),
         }
     }
 }
