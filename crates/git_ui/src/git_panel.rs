@@ -2267,66 +2267,18 @@ impl GitPanel {
         let Some(selected_ix) = self.selected_entry else {
             return;
         };
-        let Some(list_entry) = self.entries.get(selected_ix).cloned() else {
-            return;
+        let entries = if self.entries[selected_ix].directory_entry().is_some() {
+            self.directory_descendants(selected_ix)
+                .map(|entries| entries.to_vec())
+                .unwrap_or_default()
+        } else {
+            let Some(entry) = self.entries[selected_ix].status_entry() else {
+                return;
+            };
+            vec![entry.clone()]
         };
 
-        if let Some(dir_entry) = list_entry.directory_entry() {
-            self.revert_directory(dir_entry.key.clone(), window, cx);
-            return;
-        }
-
-        let path_style = self.project.read(cx).path_style(cx);
-        maybe!({
-            let entry = list_entry.status_entry()?.to_owned();
-            let skip_prompt = action.skip_prompt || entry.status.is_created();
-
-            let prompt = if skip_prompt {
-                Task::ready(Ok(0))
-            } else {
-                let (message, confirm_text) = if entry.status.is_deleted() {
-                    ("Are you sure you want to restore ", "Restore File")
-                } else {
-                    (
-                        "Are you sure you want to discard changes to ",
-                        "Discard Changes",
-                    )
-                };
-                let prompt = window.prompt(
-                    PromptLevel::Warning,
-                    &format!(
-                        "{}{}?",
-                        message,
-                        MarkdownInlineCode(
-                            entry
-                                .repo_path
-                                .file_name()
-                                .unwrap_or(entry.repo_path.display(path_style).as_ref())
-                        ),
-                    ),
-                    None,
-                    &[confirm_text, "Cancel"],
-                    cx,
-                );
-                cx.background_spawn(prompt)
-            };
-
-            let this = cx.weak_entity();
-            window
-                .spawn(cx, async move |cx| {
-                    if prompt.await? != 0 {
-                        return anyhow::Ok(());
-                    }
-
-                    this.update_in(cx, |this, window, cx| {
-                        this.revert_entry(&entry, window, cx);
-                    })?;
-
-                    Ok(())
-                })
-                .detach();
-            Some(())
-        });
+        self.revert_entries(entries.iter().collect(), action, window, cx);
     }
 
     fn add_to_gitignore(
@@ -2420,158 +2372,132 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    fn revert_directory(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
-        let workspace = self.workspace.clone();
-        let Some(active_repo) = self.active_repository.clone() else {
-            return;
-        };
-
-        let entries = self
-            .view_mode
-            .tree_state()
-            .and_then(|state| state.directory_descendants.get(&key))
-            .cloned()
-            .unwrap_or_default();
-
-        if entries.is_empty() {
-            return;
-        }
-
-        if entries.len() == 1 {
-            self.revert_entry(&entries[0].clone(), window, cx);
-            return;
-        }
-
-        let tracked: Vec<GitStatusEntry> = entries
-            .iter()
-            .filter(|e| !e.status.is_created())
-            .cloned()
-            .collect();
-        let new_files: Vec<GitStatusEntry> = entries
-            .iter()
-            .filter(|e| e.status.is_created())
-            .cloned()
-            .collect();
-
-        let mut details = entries
-            .iter()
-            .filter_map(|e| e.repo_path.as_ref().file_name())
-            .map(|f| f.to_string())
-            .take(5)
-            .join(" ");
-
-        if entries.len() > 5 {
-            details.push_str(&format!("\nand {} more\u{2026}", entries.len() - 5));
-        }
-
-        let msg = if new_files.is_empty() {
-            "Discard changes to these files?"
-        } else {
-            "Trash these files?"
-        };
-        let confirm_label = if tracked.is_empty() {
-            "Trash"
-        } else {
-            "Discard"
-        };
-        let confirm_rx = window.prompt(
-            PromptLevel::Info,
-            msg,
-            Some(&details),
-            &[confirm_label, "Cancel"],
-            cx,
-        );
-        let confirm = cx.background_spawn(confirm_rx);
-
-        cx.spawn_in(window, async move |this, cx| {
-            if confirm.await? != 0 {
-                return Ok(());
-            }
-            if !tracked.is_empty() {
-                this.update_in(cx, |this, window, cx| {
-                    this.perform_checkout(tracked, window, cx);
-                })
-                .ok();
-            }
-            if !new_files.is_empty() {
-                let tasks = workspace.update(cx, |workspace, cx| {
-                    new_files
-                        .iter()
-                        .filter_map(|entry| {
-                            workspace.project().update(cx, |project, cx| {
-                                let project_path = active_repo
-                                    .read(cx)
-                                    .repo_path_to_project_path(&entry.repo_path, cx)?;
-                                project.delete_file(project_path, cx)
-                            })
-                        })
-                        .collect::<Vec<_>>()
-                })?;
-                let to_unstage = new_files
-                    .into_iter()
-                    .filter(|e| !e.status.staging().is_fully_unstaged())
-                    .collect();
-                this.update(cx, |this, cx| {
-                    this.change_file_stage(false, to_unstage, cx);
-                })?;
-                for task in tasks {
-                    task.await?;
-                }
-            }
-            Ok(())
-        })
-        .detach_and_prompt_err(
-            "Failed to discard folder changes",
-            window,
-            cx,
-            |e, _, _| Some(format!("{e}")),
-        );
-    }
-
-    fn revert_entry(
+    fn revert_entries(
         &mut self,
-        entry: &GitStatusEntry,
+        entries: Vec<&GitStatusEntry>,
+        action: &RestoreFile,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         maybe!({
             let active_repo = self.active_repository.clone()?;
-            let path = active_repo
-                .read(cx)
-                .repo_path_to_project_path(&entry.repo_path, cx)?;
             let workspace = self.workspace.clone();
+            let path_style = self.project.read(cx).path_style(cx);
 
-            if entry.status.staging().has_staged() {
-                self.change_file_stage(false, vec![entry.clone()], cx);
-            }
-            let filename = path.path.file_name()?.to_string();
+            let (tracked, untracked): (Vec<_>, Vec<_>) = entries
+                .into_iter()
+                .partition(|entry| !entry.status.is_created());
 
-            if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.clone()], window, cx);
+            let skip_prompt = action.skip_prompt;
+
+            let prompt = if skip_prompt {
+                None
+            } else if tracked.len() + untracked.len() == 1 {
+                let entry = tracked.first().or_else(|| untracked.first())?;
+
+                let (message, confirm_text) = if entry.status.is_deleted() {
+                    ("Are you sure you want to restore ", "Restore File")
+                } else if entry.status.is_created() {
+                    ("Trash ", "Trash")
+                } else {
+                    (
+                        "Are you sure you want to discard changes to ",
+                        "Discard Changes",
+                    )
+                };
+
+                Some(window.prompt(
+                    PromptLevel::Warning,
+                    &format!(
+                        "{}{}?",
+                        message,
+                        MarkdownInlineCode(
+                            entry
+                                .repo_path
+                                .file_name()
+                                .unwrap_or(entry.repo_path.display(path_style).as_ref())
+                        ),
+                    ),
+                    None,
+                    &[confirm_text, "Cancel"],
+                    cx,
+                ))
             } else {
-                let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
-                cx.spawn_in(window, async move |_, cx| {
-                    match prompt.await? {
-                        TrashCancel::Trash => {}
-                        TrashCancel::Cancel => return Ok(()),
+                let count = tracked.len() + untracked.len();
+
+                Some(window.prompt(
+                    PromptLevel::Warning,
+                    &format!(
+                        "{} {} files?",
+                        if untracked.is_empty() {
+                            "Discard changes to"
+                        } else {
+                            "Discard"
+                        },
+                        count,
+                    ),
+                    None,
+                    &["Discard", "Cancel"],
+                    cx,
+                ))
+            };
+
+            // Resolve paths NOW, before entering async context.
+            let paths = untracked
+                .iter()
+                .filter_map(|entry| {
+                    active_repo
+                        .read(cx)
+                        .repo_path_to_project_path(&entry.repo_path, cx)
+                })
+                .collect::<Vec<_>>();
+
+            let tracked = tracked.into_iter().cloned().collect::<Vec<_>>();
+
+            cx.spawn_in(window, async move |this, cx| {
+                if let Some(prompt) = prompt {
+                    if prompt.await? != 0 {
+                        return Ok(());
                     }
+                }
+
+                if !tracked.is_empty() {
+                    this.update_in(cx, |this, window, cx| {
+                        let staged = tracked
+                            .iter()
+                            .filter(|entry| entry.status.staging().has_staged())
+                            .cloned()
+                            .collect::<Vec<_>>();
+
+                        if !staged.is_empty() {
+                            this.change_file_stage(false, staged, cx);
+                        }
+
+                        this.perform_checkout(tracked, window, cx);
+                    })?;
+                }
+
+                for path in paths {
                     let task = workspace.update(cx, |workspace, cx| {
                         workspace
                             .project()
                             .update(cx, |project, cx| project.trash_file(path, cx))
                     })?;
+
                     if let Some(task) = task {
                         task.await?;
                     }
-                    Ok(())
-                })
-                .detach_and_prompt_err(
-                    "Failed to trash file",
-                    window,
-                    cx,
-                    |e, _, _| Some(format!("{e}")),
-                );
-            }
+                }
+
+                Ok(())
+            })
+            .detach_and_prompt_err(
+                "Failed to revert changes",
+                window,
+                cx,
+                |e, _, _| Some(format!("{e}")),
+            );
+
             Some(())
         });
     }
@@ -2664,7 +2590,9 @@ impl GitPanel {
 
         match entries.len() {
             0 => return,
-            1 => return self.revert_entry(&entries[0], window, cx),
+            1 => {
+                return self.revert_entries(vec![&entries[0]], &RestoreFile::default(), window, cx);
+            }
             _ => {}
         }
         let mut details = entries
@@ -2713,7 +2641,14 @@ impl GitPanel {
 
         match to_delete.len() {
             0 => return,
-            1 => return self.revert_entry(&to_delete[0], window, cx),
+            1 => {
+                return self.revert_entries(
+                    vec![&to_delete[0]],
+                    &RestoreFile::default(),
+                    window,
+                    cx,
+                );
+            }
             _ => {}
         };
 
