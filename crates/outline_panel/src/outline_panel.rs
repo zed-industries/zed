@@ -2357,7 +2357,7 @@ impl OutlinePanel {
                 let color =
                     entry_git_aware_label_color(entry.git_summary, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
-                    FileIcons::get_icon(entry.path.as_std_path(), cx)
+                    FileIcons::get_icon(Path::new(&name), cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
                 } else {
                     None
@@ -2415,15 +2415,15 @@ impl OutlinePanel {
                 let (icon, name) = match self.buffer_snapshot_for_id(external_file.buffer_id, cx) {
                     Some(buffer_snapshot) => match buffer_snapshot.file() {
                         Some(file) => {
-                            let path = file.path();
+                            let name = file.file_name(cx).to_string();
                             let icon = if settings.file_icons {
-                                FileIcons::get_icon(path.as_std_path(), cx)
+                                FileIcons::get_icon(Path::new(&name), cx)
                             } else {
                                 None
                             }
                             .map(Icon::from_path)
                             .map(|icon| icon.color(color).into_any_element());
-                            (icon, file_name(path.as_std_path()))
+                            (icon, name)
                         }
                         None => (None, "Untitled".to_string()),
                     },
@@ -2719,6 +2719,26 @@ impl OutlinePanel {
                 }
             }
             None => file_name(entry.path.as_std_path()),
+        }
+    }
+
+    fn fs_entry_label(&self, fs_entry: &FsEntry, cx: &App) -> Option<String> {
+        match fs_entry {
+            FsEntry::ExternalFile(external) => Some(
+                self.buffer_snapshot_for_id(external.buffer_id, cx)?
+                    .file()?
+                    .file_name(cx)
+                    .to_string(),
+            ),
+            FsEntry::Directory(FsEntryDirectory {
+                worktree_id, entry, ..
+            })
+            | FsEntry::File(FsEntryFile {
+                worktree_id, entry, ..
+            }) => match entry.path.file_name() {
+                Some(name) => Some(name.to_string()),
+                None => Some(self.entry_name(worktree_id, entry, cx)),
+            },
         }
     }
 
@@ -4128,10 +4148,13 @@ impl OutlinePanel {
             let id = state.entries.len();
             match &entry {
                 PanelEntry::Fs(fs_entry) => {
-                    if let Some(file_name) = self
-                        .relative_path(fs_entry, cx)
-                        .and_then(|path| Some(path.file_name()?.to_string()))
-                    {
+                    let candidate_label = match fs_entry {
+                        FsEntry::Directory(directory) => {
+                            directory.entry.path.file_name().map(str::to_string)
+                        }
+                        _ => self.fs_entry_label(fs_entry, cx),
+                    };
+                    if let Some(file_name) = candidate_label {
                         state
                             .match_candidates
                             .push(StringMatchCandidate::new(id, &file_name));
@@ -4569,21 +4592,9 @@ impl OutlinePanel {
 
     fn width_estimate(&self, depth: usize, entry: &PanelEntry, cx: &App) -> u64 {
         let item_text_chars = match entry {
-            PanelEntry::Fs(FsEntry::ExternalFile(external)) => self
-                .buffer_snapshot_for_id(external.buffer_id, cx)
-                .and_then(|snapshot| Some(snapshot.file()?.path().file_name()?.len()))
-                .unwrap_or_default(),
-            PanelEntry::Fs(FsEntry::Directory(directory)) => directory
-                .entry
-                .path
-                .file_name()
-                .map(|name| name.len())
-                .unwrap_or_default(),
-            PanelEntry::Fs(FsEntry::File(file)) => file
-                .entry
-                .path
-                .file_name()
-                .map(|name| name.len())
+            PanelEntry::Fs(fs_entry) => self
+                .fs_entry_label(fs_entry, cx)
+                .map(|label| label.len())
                 .unwrap_or_default(),
             PanelEntry::FoldedDirs(folded_dirs) => {
                 folded_dirs

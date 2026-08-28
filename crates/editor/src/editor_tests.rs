@@ -10509,6 +10509,47 @@ async fn test_copy_file_location_from_multibuffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_file_name_for_external_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+    fs.insert_tree(path!("/elsewhere"), json!({ "external.csv": "a,b\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/elsewhere/external.csv"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name(&CopyFileName, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external.csv".to_string()),
+        "copy_file_name should work for a file outside the project"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name_without_extension(&CopyFileNameWithoutExtension, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external".to_string()),
+        "copy_file_name_without_extension should work for a file outside the project"
+    );
+}
+
+#[gpui::test]
 async fn test_copy_file_location_across_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
