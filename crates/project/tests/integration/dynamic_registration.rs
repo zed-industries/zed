@@ -298,6 +298,106 @@ async fn test_local_semantic_tokens_request_uses_matching_dynamic_registration(
 }
 
 #[gpui::test]
+async fn test_semantic_tokens_refresh_when_duplicate_removal_changes_provider_order(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    let (project, fake_server) =
+        setup_dynamic_registration_test(cx, lsp::ServerCapabilities::default()).await;
+    let server_id = fake_server.server.server_id();
+    let method = "textDocument/semanticTokens";
+
+    let (buffer, _lsp_handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let registration_options = |scheme: &str, token_type: &str| {
+        serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+            text_document_registration_options: lsp::TextDocumentRegistrationOptions {
+                document_selector: Some(vec![lsp::DocumentFilter {
+                    language: Some("rust".to_string()),
+                    scheme: Some(scheme.to_string()),
+                    pattern: None,
+                }]),
+            },
+            semantic_tokens_options: lsp::SemanticTokensOptions {
+                legend: lsp::SemanticTokensLegend {
+                    token_types: vec![token_type.to_owned().into()],
+                    token_modifiers: Vec::new(),
+                },
+                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                ..lsp::SemanticTokensOptions::default()
+            },
+            static_registration_options: lsp::StaticRegistrationOptions::default(),
+        })
+        .ok()
+    };
+
+    let (refresh_events, _refresh_events_subscription) = observe_refresh_events(&project, cx);
+    register_capability(
+        &fake_server,
+        method,
+        "file-keyword-a",
+        registration_options("file", "keyword"),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "file-function",
+        registration_options("file", "function"),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "file-keyword-b",
+        registration_options("file", "keyword"),
+    )
+    .await;
+    register_capability(
+        &fake_server,
+        method,
+        "untitled-comment",
+        registration_options("untitled", "comment"),
+    )
+    .await;
+    cx.executor().run_until_parked();
+    refresh_events.lock().clear();
+
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let stylizer_token_type = |cx: &mut gpui::TestAppContext| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            let language = buffer.read(cx).language().map(|language| language.name());
+            lsp_store
+                .get_or_create_token_stylizer(server_id, language.as_ref(), cx)
+                .and_then(|stylizer| stylizer.token_type_name(TokenType(0)).cloned())
+        })
+    };
+    assert_eq!(
+        stylizer_token_type(cx).as_deref(),
+        Some("keyword"),
+        "expected the newest matching duplicate to provide the initial legend",
+    );
+
+    unregister_capabilities(&fake_server, method, &["file-keyword-b"]).await;
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        refresh_events.lock().as_slice(),
+        &[format!("semantic_tokens({server_id})")],
+        "expected removing an ordered duplicate to invalidate semantic tokens",
+    );
+    assert_eq!(
+        stylizer_token_type(cx).as_deref(),
+        Some("function"),
+        "expected the next matching registration to provide the updated legend",
+    );
+}
+
+#[gpui::test]
 async fn test_multi_registration_inlay_hint(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let (project, fake_server) =

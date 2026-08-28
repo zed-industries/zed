@@ -40,11 +40,16 @@ pub(super) type CapabilityRegistrations<T> = Vec<(RegistrationSource, T)>;
 struct CapabilityRegistrationChange {
     active_capability_changed: bool,
     text_document_registration_changed: bool,
+    registration_changed: bool,
 }
 
 impl CapabilityRegistrationChange {
     fn applicability_may_have_changed(self) -> bool {
         self.active_capability_changed || self.text_document_registration_changed
+    }
+
+    fn ordered_capability_may_have_changed(self) -> bool {
+        self.active_capability_changed || self.registration_changed
     }
 }
 
@@ -140,6 +145,7 @@ impl LspStore {
         Ok(CapabilityRegistrationChange {
             active_capability_changed: active_changed,
             text_document_registration_changed: applicable_set_changed,
+            registration_changed,
         })
     }
 
@@ -202,6 +208,7 @@ impl LspStore {
         Ok(Some(CapabilityRegistrationChange {
             active_capability_changed: active_changed,
             text_document_registration_changed: applicable_set_changed,
+            registration_changed: true,
         }))
     }
 
@@ -885,7 +892,7 @@ impl LspStore {
                             cx,
                             |capabilities| &mut capabilities.semantic_tokens_provider,
                         )?
-                        .applicability_may_have_changed()
+                        .ordered_capability_may_have_changed()
                         {
                             // Re-query already-open buffers, which would otherwise keep
                             // tree-sitter-only highlighting until edited.
@@ -1068,7 +1075,9 @@ impl LspStore {
                             cx,
                             |capabilities| &mut capabilities.semantic_tokens_provider,
                         )?
-                        .is_some_and(CapabilityRegistrationChange::applicability_may_have_changed)
+                        .is_some_and(
+                            CapabilityRegistrationChange::ordered_capability_may_have_changed,
+                        )
                     {
                         self.refresh_semantic_tokens(server_id, cx);
                     }
