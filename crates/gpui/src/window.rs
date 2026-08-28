@@ -2527,6 +2527,14 @@ impl Window {
         self.on_next_frame(move |_, cx| cx.notify(entity));
     }
 
+    /// Whether the window will paint on the next frame. The test harness
+    /// paints only on demand, so a test reads this after an event to check
+    /// that a handler asked for a paint.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn needs_paint(&self) -> bool {
+        self.invalidator.is_dirty()
+    }
+
     /// Runs all callbacks scheduled via [`Self::on_next_frame`], returning how many ran.
     ///
     /// Tests have no platform frame loop, so this simulates the delivery of the
