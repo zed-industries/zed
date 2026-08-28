@@ -361,8 +361,7 @@ TBD: Centered layout related settings
     "active_encoding_button": "non_utf8",
     // Show/hide an indicator with a countdown while a multi-stroke
     // key binding is pending.
-    // Hovering it lists the bindings that could still match;
-    // clicking it opens the key context view.
+    // Hovering it lists the bindings that could still match.
     // Defaults to true.
     "pending_keystrokes_indicator": true
   },
