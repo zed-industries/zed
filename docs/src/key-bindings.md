@@ -175,7 +175,9 @@ The other kind of conflict that arises is when you have two bindings, one of whi
 
 When this happens, and both bindings are active in the current context, Zed will wait for 1 second after you type `ctrl-w` to see if you're about to type `left`. If you don't type anything, or if you type a different key, then `DeleteToNextWordEnd` will be triggered. If you do, then `DeleteToEndOfLine` will be triggered.
 
-While Zed is waiting, a countdown indicator with the pending keystrokes is shown in the status bar. Hovering it lists the bindings that could still match. It can be hidden with `{"status_bar": {"pending_keystrokes_indicator": false}}`.
+Zed can also wait before inserting printable text when it might begin a multi-stroke binding. For example, with a `j k` binding, typing `j` waits briefly for `k`; otherwise, `j` is inserted after the timeout.
+
+Whenever pending input has a timeout, a countdown indicator with the pending keystrokes is shown in the status bar. Hovering it lists the bindings that could still match and pauses the timeout so you can read them. The timeout resumes with the same remaining duration when the pointer leaves. The indicator can be hidden with `{"status_bar": {"pending_keystrokes_indicator": false}}`. Vim and Helix modes continue to use their existing pending-key indicator instead.
 
 ### Non-QWERTY keyboards
 

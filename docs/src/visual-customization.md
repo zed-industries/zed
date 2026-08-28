@@ -359,9 +359,9 @@ TBD: Centered layout related settings
     // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
     // Defaults to "non_utf8".
     "active_encoding_button": "non_utf8",
-    // Show/hide an indicator with a countdown while a multi-stroke
-    // key binding is pending.
-    // Hovering it lists the bindings that could still match.
+    // Show/hide an indicator with a countdown while timed multi-stroke
+    // input is pending. Hovering it lists the bindings that could still match
+    // and pauses the timeout.
     // Defaults to true.
     "pending_keystrokes_indicator": true
   },
