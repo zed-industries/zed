@@ -1699,10 +1699,14 @@ float4 variable_blur_fragment(VariableBlurVertexOutput input): SV_Target {
     float2 position = composite.region.origin + input.uv * composite.region.size;
     float2 box_min = layer.bounds.origin;
     float2 box_max = box_min + layer.bounds.size;
-    bool inside = all(position >= box_min) && all(position < box_max);
-    float mask = inside
-        ? saturate(gradient_color(layer.mask, position, layer.bounds, input.mask_solid).a)
-        : 0.0;
+    // The pass also blurs the pad around the layer, the pixels only the
+    // other pass reads. Clamp the mask read to the bounds, so a pad row
+    // above the layer blurs like the top row. With a mask of zero there,
+    // the pad stays sharp, and the other pass then mixes that sharpness
+    // back into the layer near its edge.
+    float2 mask_position = clamp(position, box_min, box_max);
+    float mask =
+        saturate(gradient_color(layer.mask, mask_position, layer.bounds, input.mask_solid).a);
     float sigma = mask * layer.backdrop_blur;
     float4 centre = t_sprite.SampleLevel(s_sprite, input.uv, 0.0);
     if (sigma < 0.3) {

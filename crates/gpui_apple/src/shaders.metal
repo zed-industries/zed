@@ -1672,10 +1672,14 @@ fragment float4 variable_blur_fragment(
       input.uv * float2(composite->region.size.width, composite->region.size.height);
   float2 box_min = float2(layer.bounds.origin.x, layer.bounds.origin.y);
   float2 box_max = box_min + float2(layer.bounds.size.width, layer.bounds.size.height);
-  bool inside = all(position >= box_min) && all(position < box_max);
-  float mask = inside
-      ? saturate(fill_color(layer.mask, position, layer.bounds, input.mask_solid).a)
-      : 0.0;
+  // The pass also blurs the pad around the layer, the pixels only the
+  // other pass reads. Clamp the mask read to the bounds, so a pad row
+  // above the layer blurs like the top row. With a mask of zero there,
+  // the pad stays sharp, and the other pass then mixes that sharpness
+  // back into the layer near its edge.
+  float2 mask_position = clamp(position, box_min, box_max);
+  float mask =
+      saturate(fill_color(layer.mask, mask_position, layer.bounds, input.mask_solid).a);
   float sigma = mask * params->sigma;
   float4 centre = source.sample(edge_sampler, input.uv);
   if (sigma < 0.3) {

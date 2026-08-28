@@ -337,17 +337,20 @@ const VARIABLE_BLUR_RADIUS_CAP: i32 = 96;
 @fragment
 fn fs_variable_blur(input: VariableBlurVarying) -> @location(0) vec4<f32> {
     let position = b_layer.region.origin + input.uv * b_layer.region.size;
-    var mask = 0.0;
     let box_min = b_layer.layer.bounds.origin;
     let box_max = box_min + b_layer.layer.bounds.size;
-    if (all(position >= box_min) && all(position < box_max)) {
-        mask = saturate(gradient_color(
-            b_layer.layer.mask,
-            position,
-            b_layer.layer.bounds,
-            input.mask_solid,
-        ).a);
-    }
+    // The pass also blurs the pad around the layer, the pixels only the
+    // other pass reads. Clamp the mask read to the bounds, so a pad row
+    // above the layer blurs like the top row. With a mask of zero there,
+    // the pad stays sharp, and the other pass then mixes that sharpness
+    // back into the layer near its edge.
+    let mask_position = clamp(position, box_min, box_max);
+    let mask = saturate(gradient_color(
+        b_layer.layer.mask,
+        mask_position,
+        b_layer.layer.bounds,
+        input.mask_solid,
+    ).a);
     let sigma = mask * b_layer.layer.backdrop_blur;
     let centre = textureSampleLevel(t_layer_content, s_layer_smooth, input.uv, 0.0);
     if (sigma < 0.3) {
