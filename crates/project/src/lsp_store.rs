@@ -5904,6 +5904,11 @@ impl LspStore {
                     {
                         continue;
                     }
+                    if request
+                        .can_query_server_without_capability_check(language_server.server_id())
+                    {
+                        return LanguageServerQueryOutcome::Query(Arc::clone(language_server));
+                    }
                     let mut applicable_capabilities =
                         applicable_lsp_command_capabilities_for_buffer(
                             local,
@@ -7258,10 +7263,6 @@ impl LspStore {
         let server_id = item.server_id;
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetIncomingCalls { item };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
-
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
@@ -7299,12 +7300,8 @@ impl LspStore {
                 ))
             })
         } else {
-            let task = self.request_lsp(
-                buffer,
-                LanguageServerToQuery::Other(server_id),
-                GetIncomingCalls { item },
-                cx,
-            );
+            let request = GetIncomingCalls { item };
+            let task = self.request_lsp(buffer, request.server_to_query(), request, cx);
             cx.background_spawn(async move { Ok(Some(task.await?)) })
         }
     }
@@ -7318,10 +7315,6 @@ impl LspStore {
         let server_id = item.server_id;
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request = GetOutgoingCalls { item };
-            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
-                return Task::ready(Ok(None));
-            }
-
             let request_timeout = ProjectSettings::get_global(cx)
                 .global_lsp_settings
                 .get_request_timeout();
@@ -7359,12 +7352,8 @@ impl LspStore {
                 ))
             })
         } else {
-            let task = self.request_lsp(
-                buffer,
-                LanguageServerToQuery::Other(server_id),
-                GetOutgoingCalls { item },
-                cx,
-            );
+            let request = GetOutgoingCalls { item };
+            let task = self.request_lsp(buffer, request.server_to_query(), request, cx);
             cx.background_spawn(async move { Ok(Some(task.await?)) })
         }
     }

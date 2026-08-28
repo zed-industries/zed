@@ -1359,6 +1359,144 @@ async fn test_remote_rename_uses_server_that_prepared_it(
 }
 
 #[gpui::test]
+async fn test_remote_dynamic_call_hierarchy_followups_use_prepared_server(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+
+    client_a.language_registry().add(rust_lang());
+    let mut fake_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ "one.rs": "fn one() {}" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let buffer_b = editor_b
+        .read_with(cx_b, |editor, cx| editor.buffer().read(cx).as_singleton())
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "file-call-hierarchy".to_string(),
+                    method: "textDocument/prepareCallHierarchy".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let item = lsp::CallHierarchyItem {
+        name: "one".to_string(),
+        kind: lsp::SymbolKind::FUNCTION,
+        tags: None,
+        detail: None,
+        uri: lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 11)),
+        selection_range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
+        data: None,
+    };
+    let _prepare_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let item = item.clone();
+            move |_, _| {
+                let item = item.clone();
+                async move { Ok(Some(vec![item])) }
+            }
+        });
+    let incoming_request_count = Arc::new(AtomicUsize::new(0));
+    let _incoming_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            let incoming_request_count = incoming_request_count.clone();
+            move |_, _| {
+                incoming_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let outgoing_request_count = Arc::new(AtomicUsize::new(0));
+    let _outgoing_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+            let outgoing_request_count = outgoing_request_count.clone();
+            move |_, _| {
+                outgoing_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+
+    let items = project_b
+        .update(cx_b, |project, cx| {
+            project.prepare_call_hierarchy(&buffer_b, 0, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    let item = items.into_iter().next().unwrap();
+
+    project_b
+        .update(cx_b, |project, cx| project.incoming_calls(item.clone(), cx))
+        .await
+        .unwrap()
+        .unwrap();
+    project_b
+        .update(cx_b, |project, cx| project.outgoing_calls(item, cx))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(incoming_request_count.load(atomic::Ordering::SeqCst), 1);
+    assert_eq!(outgoing_request_count.load(atomic::Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
 async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let client_a = server.create_client(cx_a, "user_a").await;

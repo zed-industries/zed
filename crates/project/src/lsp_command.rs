@@ -106,6 +106,12 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     /// Returns whether the given static or dynamic capability supports this request.
     fn check_capabilities(&self, _: AdapterServerCapabilities<'_>) -> bool;
 
+    /// Returns whether this follow-up request can be sent to a previously selected server without
+    /// rechecking its current capabilities.
+    fn can_query_server_without_capability_check(&self, _server_id: LanguageServerId) -> bool {
+        false
+    }
+
     fn response_without_request<'a, I>(&self, _applicable_capabilities: I) -> Option<Self::Response>
     where
         I: Iterator<Item = AdapterServerCapabilities<'a>>,
@@ -673,6 +679,14 @@ impl LspCommand for GetIncomingCalls {
         "Get incoming calls"
     }
 
+    fn server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.item.server_id)
+    }
+
+    fn can_query_server_without_capability_check(&self, server_id: LanguageServerId) -> bool {
+        server_id == self.item.server_id
+    }
+
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         capabilities
             .server_capabilities
@@ -818,6 +832,14 @@ impl LspCommand for GetOutgoingCalls {
 
     fn display_name(&self) -> &str {
         "Get outgoing calls"
+    }
+
+    fn server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::Other(self.item.server_id)
+    }
+
+    fn can_query_server_without_capability_check(&self, server_id: LanguageServerId) -> bool {
+        server_id == self.item.server_id
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {

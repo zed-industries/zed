@@ -8856,6 +8856,119 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_dynamic_call_hierarchy_followups_use_prepared_server(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "fn one() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities::default(),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "file-call-hierarchy".to_string(),
+                    method: "textDocument/prepareCallHierarchy".to_string(),
+                    register_options: Some(json!({
+                        "documentSelector": [{ "language": "rust", "scheme": "file" }],
+                    })),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let item = lsp::CallHierarchyItem {
+        name: "one".to_string(),
+        kind: lsp::SymbolKind::FUNCTION,
+        tags: None,
+        detail: None,
+        uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 11)),
+        selection_range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
+        data: None,
+    };
+    let _prepare_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyPrepare, _, _>({
+            let item = item.clone();
+            move |_, _| {
+                let item = item.clone();
+                async move { Ok(Some(vec![item])) }
+            }
+        });
+    let incoming_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _incoming_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyIncomingCalls, _, _>({
+            let incoming_request_count = incoming_request_count.clone();
+            move |_, _| {
+                incoming_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+    let outgoing_request_count = Arc::new(atomic::AtomicUsize::new(0));
+    let _outgoing_requests = fake_server
+        .set_request_handler::<lsp::request::CallHierarchyOutgoingCalls, _, _>({
+            let outgoing_request_count = outgoing_request_count.clone();
+            move |_, _| {
+                outgoing_request_count.fetch_add(1, atomic::Ordering::SeqCst);
+                async move { Ok(None) }
+            }
+        });
+
+    let items = project
+        .update(cx, |project, cx| {
+            project.prepare_call_hierarchy(&buffer, 0, cx)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    let item = items.into_iter().next().unwrap();
+
+    project
+        .update(cx, |project, cx| project.incoming_calls(item.clone(), cx))
+        .await
+        .unwrap()
+        .unwrap();
+    project
+        .update(cx, |project, cx| project.outgoing_calls(item, cx))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(incoming_request_count.load(atomic::Ordering::SeqCst), 1);
+    assert_eq!(outgoing_request_count.load(atomic::Ordering::SeqCst), 1);
+}
+
+#[gpui::test]
 async fn test_dynamic_rename_registration_routes_prepare_rename(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
