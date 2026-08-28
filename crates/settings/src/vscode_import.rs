@@ -184,6 +184,7 @@ impl VsCodeSettings {
             diagnostics: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
+            call_hierarchy: None,
             file_finder: None,
             git: self.git_settings_content(),
             git_panel: self.git_panel_settings_content(),
@@ -679,7 +680,13 @@ impl VsCodeSettings {
     fn outline_panel_settings_content(&self) -> Option<OutlinePanelSettingsContent> {
         skip_default(OutlinePanelSettingsContent {
             file_icons: self.read_bool("outline.icons"),
-            folder_icons: self.read_bool("outline.icons"),
+            folder_indicator: self.read_bool("outline.icons").map(|icons| {
+                if icons {
+                    FolderIndicator::Icon
+                } else {
+                    FolderIndicator::Chevron
+                }
+            }),
             git_status: self.read_bool("git.decorations.enabled"),
             ..Default::default()
         })
@@ -822,7 +829,7 @@ impl VsCodeSettings {
             drag_and_drop: None,
             entry_spacing: None,
             file_icons: None,
-            folder_icons: None,
+            folder_indicator: None,
             git_status: self.read_bool("git.decorations.enabled"),
             hide_gitignore: self.read_bool("explorer.excludeGitIgnore"),
             hide_hidden: None,

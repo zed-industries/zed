@@ -130,6 +130,10 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
+    (GetIncomingCalls, Background),
+    (GetIncomingCallsResponse, Background),
+    (GetOutgoingCalls, Background),
+    (GetOutgoingCallsResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -203,6 +207,8 @@ messages!(
     (PerformRename, Background),
     (PerformRenameResponse, Background),
     (Ping, Foreground),
+    (PrepareCallHierarchy, Background),
+    (PrepareCallHierarchyResponse, Background),
     (PrepareRename, Background),
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
@@ -484,6 +490,9 @@ request_messages!(
     (OpenNewBuffer, OpenBufferResponse),
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
+    (PrepareCallHierarchy, PrepareCallHierarchyResponse),
+    (GetIncomingCalls, GetIncomingCallsResponse),
+    (GetOutgoingCalls, GetOutgoingCallsResponse),
     (PrepareRename, PrepareRenameResponse),
     (RefreshInlayHints, Ack),
     (RefreshSemanticTokens, Ack),
@@ -663,7 +672,10 @@ lsp_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse, true),
     (GetImplementation, GetImplementationResponse, true),
     (InlayHints, InlayHintsResponse, false),
-    (SemanticTokens, SemanticTokensResponse, true)
+    (SemanticTokens, SemanticTokensResponse, true),
+    (PrepareCallHierarchy, PrepareCallHierarchyResponse, true),
+    (GetIncomingCalls, GetIncomingCallsResponse, true),
+    (GetOutgoingCalls, GetOutgoingCallsResponse, true),
 );
 
 entity_messages!(
@@ -1065,6 +1077,9 @@ impl LspQuery {
             Some(lsp_query::Request::GetDocumentLinks(_)) => ("GetDocumentLinks", false),
             Some(lsp_query::Request::InlayHints(_)) => ("InlayHints", false),
             Some(lsp_query::Request::SemanticTokens(_)) => ("SemanticTokens", false),
+            Some(lsp_query::Request::PrepareCallHierarchy(_)) => ("PrepareCallHierarchy", false),
+            Some(lsp_query::Request::GetIncomingCalls(_)) => ("GetIncomingCalls", false),
+            Some(lsp_query::Request::GetOutgoingCalls(_)) => ("GetOutgoingCalls", false),
             None => ("<unknown>", true),
         }
     }
