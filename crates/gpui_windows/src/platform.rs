@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot::{self, Receiver};
-use gpui_util::{ResultExt, get_windows_system_shell, new_std_command};
+use gpui_util::{ResultExt, get_powershell, new_std_command};
 use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
@@ -79,7 +79,7 @@ pub(crate) struct WindowsPlatformState {
 #[derive(Default)]
 struct PlatformCallbacks {
     open_urls: Cell<Option<Box<dyn FnMut(Vec<String>)>>>,
-    quit: Cell<Option<Box<dyn FnMut()>>>,
+    quit: Cell<Option<Box<dyn FnMut() -> bool>>>,
     reopen: Cell<Option<Box<dyn FnMut()>>>,
     app_menu_action: Cell<Option<Box<dyn FnMut(&dyn Action)>>>,
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
@@ -460,8 +460,12 @@ impl Platform for WindowsPlatform {
             }
         }
 
-        self.inner
-            .with_callback(|callbacks| &callbacks.quit, |callback| callback());
+        self.inner.with_callback(
+            |callbacks| &callbacks.quit,
+            |callback| {
+                callback();
+            },
+        );
     }
 
     fn quit(&self) {
@@ -503,9 +507,13 @@ impl Platform for WindowsPlatform {
         // can pump the Win32 message loop (via `CreateProcessW`), which
         // re-enters message handling possibly resulting in another mutable
         // borrow of the `AppCell` ending up with a double borrow panic
+        let Some(powershell) = get_powershell() else {
+            log::error!("failed to restart: PowerShell is unavailable");
+            return;
+        };
         self.foreground_executor
             .spawn(async move {
-                let mut command = new_std_command(get_windows_system_shell());
+                let mut command = new_std_command(powershell);
                 let arguments = encode_restart_arguments(&arguments);
                 command
                     .arg("-command")
@@ -667,7 +675,7 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+    fn on_quit(&self, callback: Box<dyn FnMut() -> bool>) {
         self.inner.state.callbacks.quit.set(Some(callback));
     }
 
@@ -997,7 +1005,8 @@ impl WindowsPlatformInner {
             | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
-            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            | WM_GPUI_GPU_DEVICE_LOST
+            | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
             WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
@@ -1022,8 +1031,27 @@ impl WindowsPlatformInner {
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
             WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
             WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_END_SESSION => self.handle_end_session(),
             _ => unreachable!(),
         }
+    }
+
+    fn handle_end_session(&self) -> Option<isize> {
+        let mut shutdown_completed = false;
+        self.with_callback(
+            |callbacks| &callbacks.quit,
+            |callback| shutdown_completed = callback(),
+        );
+        log::logger().flush();
+        if shutdown_completed {
+            std::process::exit(0);
+        }
+
+        // Shutdown couldn't run synchronously, since the AppCell is already borrowed.
+        // Windows may terminate the application as soon as we return from this handler, but if we post a WM_QUIT message now,
+        // we may get to gracefully shut down the app before we're terminated by the OS.
+        unsafe { PostQuitMessage(0) };
+        Some(0)
     }
 
     fn close_one_window(&self, target_window: HWND) -> bool {

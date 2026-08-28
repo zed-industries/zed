@@ -188,6 +188,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+  "reveal_if_open": false,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
   // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
@@ -381,6 +383,9 @@
   "minimum_split_diff_width": 100,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
+  // Whether to automatically detect the language of an untitled buffer from its contents.
+  // Languages explicitly selected from the language selector are not changed.
+  "language_detection": true,
   // Whether to show the signature help after completion or a bracket pair inserted.
   // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
@@ -767,6 +772,8 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Start searching as you type in project search, without pressing Enter.
+    "search_on_type": true,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -828,8 +835,15 @@
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
     "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the project panel.
-    "folder_icons": true,
+    // What to show for directories in the project panel.
+    //
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    "folder_indicator": "icon",
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.
@@ -943,8 +957,15 @@
     "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the outline panel.
-    "folder_icons": true,
+    // What to show for directories in the outline panel.
+    //
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    "folder_indicator": "icon",
     // Whether to show the git status in the outline panel.
     "git_status": true,
     // Amount of indentation for nested items.
@@ -1012,10 +1033,17 @@
     //
     // Default: false
     "file_icons": false,
-    // Whether to show folder icons or chevrons for directories in the git panel.
+    // What to show for directories in the git panel.
     //
-    // Default: true
-    "folder_icons": true,
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    //
+    // Default: icon
+    "folder_indicator": "icon",
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
@@ -1199,7 +1227,7 @@
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
-          "ask_user": true,
+          "ask_user": false,
           "edit_file": true,
           "write_file": true,
           "fetch": true,
@@ -1226,7 +1254,7 @@
         "tools": {
           "create_thread": true,
           "diagnostics": true,
-          "ask_user": true,
+          "ask_user": false,
           "fetch": true,
           "list_agents_and_models": true,
           "list_directory": true,
@@ -1426,6 +1454,13 @@
     // Whether to keep tabs in preview mode when code navigation is used to navigate away from them.
     // If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
     "enable_keep_preview_on_code_navigation": false,
+  },
+  // Settings related to the call hierarchy picker.
+  "call_hierarchy": {
+    // Determines how much space the call hierarchy picker can take up in relation to the available window width.
+    //
+    // Default: medium
+    "modal_max_width": "medium",
   },
   // Settings related to the file finder.
   "file_finder": {
@@ -1807,31 +1842,44 @@
     // "copilot": {
     //   "enterprise_uri": "",
     //   "proxy": "",
-    //   "proxy_no_verify": false
-    //   "enable_next_edit_suggestions": true
+    //   "proxy_no_verify": false,
+    //   "enable_next_edit_suggestions": true,
+    //   // The debounce delay in milliseconds before automatically requesting a prediction.
+    //   // Set to 0 to request predictions immediately.
+    //   "prediction_debounce": 75
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
+      "prediction_debounce": 75,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+      "prediction_debounce": 150,
     },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
     },
     "open_ai_compatible_api": {
       "api_url": "",
       "model": "",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
+    },
+    "zed": {
+      "prediction_debounce": 0,
+    },
+    "mercury": {
+      "prediction_debounce": 0,
     },
     // Controls whether Zed may collect training data when using Zed's Edit Predictions.
     // Data is only captured when the project is detected as open source.
@@ -2456,7 +2504,7 @@
       },
     },
     "SystemVerilog": {
-      "language_servers": ["!slang", "..."],
+      "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],
       "use_on_type_format": false,
     },
     "Vue.js": {

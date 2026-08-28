@@ -19,6 +19,7 @@ use futures::{
     select_biased, stream,
     task::Poll,
 };
+use futures_lite::future::yield_now;
 use fuzzy::CharBag;
 use git::{
     BISECT_LOG, COMMIT_MESSAGE, DOT_GIT, FETCH_HEAD, FSMONITOR_DAEMON, GC_PID, GITIGNORE,
@@ -3107,6 +3108,8 @@ impl LocalSnapshot {
         for repo_exclude in repo_excludes.into_iter().rev() {
             ignore_stack = ignore_stack.append(IgnoreKind::RepoExclude, repo_exclude);
         }
+        ignore_stack.global_ignore_root =
+            Some(repo_root.clone().unwrap_or_else(|| self.abs_path().clone()));
         ignore_stack.repo_root = repo_root;
         let mut ancestor_ignore_stack = ignore_stack.clone();
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
@@ -5383,6 +5386,7 @@ impl BackgroundScanner {
             && path.ends_with(DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
         for child_abs_path in child_paths {
@@ -6015,6 +6019,7 @@ impl BackgroundScanner {
 
         if let Ok(Some(_)) = self.fs.metadata(&job.abs_path.join(DOT_GIT)).await {
             ignore_stack.repo_root = Some(job.abs_path.clone());
+            ignore_stack.global_ignore_root = Some(job.abs_path.clone());
         }
 
         for mut entry in snapshot.child_entries(&path).cloned() {
@@ -7196,6 +7201,40 @@ fn read_file_header(file: &mut dyn Read, abs_path: &Path) -> Result<(Vec<u8>, bo
     Ok((header, reached_eof))
 }
 
+const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
+
+async fn read_file_to_end(
+    file: &mut (dyn Read + Send),
+    content: &mut Vec<u8>,
+    abs_path: &Path,
+) -> Result<()> {
+    let mut buf = vec![0u8; STREAM_BLOCK_BYTES];
+    loop {
+        let mut block_len = 0;
+        while block_len < buf.len() {
+            let n = file
+                .read(&mut buf[block_len..])
+                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
+            if n == 0 {
+                break;
+            }
+            block_len += n;
+        }
+
+        if block_len == 0 {
+            break;
+        }
+
+        content.extend_from_slice(&buf[..block_len]);
+        if block_len < buf.len() {
+            break;
+        }
+
+        yield_now().await;
+    }
+    Ok(())
+}
+
 pub async fn decode_file_text(
     fs: &dyn Fs,
     abs_path: &Path,
@@ -7215,22 +7254,12 @@ pub async fn decode_file_text(
     // If the file is eligible for opening, read the rest of the file.
     let mut content = file_first_bytes;
     if !reached_eof {
-        let mut buf = [0u8; 8 * 1024];
-        loop {
-            let n = file
-                .read(&mut buf)
-                .with_context(|| format!("reading remaining bytes of the file {abs_path:?}"))?;
-            if n == 0 {
-                break;
-            }
-            content.extend_from_slice(&buf[..n]);
-        }
+        read_file_to_end(&mut *file, &mut content, abs_path).await?;
     }
     let decoded = decode_text(content)?;
     Ok((decoded.text, decoded.encoding, decoded.has_bom))
 }
 
-const STREAM_BLOCK_BYTES: usize = 1024 * 1024;
 /// Reads and decodes a file straight into a [`Rope`].
 /// The returned rope has already had its line endings normalized, the
 /// [`LineEnding`] detected before normalizing is returned alongside it.
@@ -7255,7 +7284,7 @@ pub async fn decode_file_text_to_rope(
     if bom_encoding.is_none()
         && byte_content == ByteContent::Unknown
         && let Some((rope, line_ending)) =
-            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path)?
+            stream_utf8_into_rope(&mut *file, prefix, reached_eof, abs_path).await?
     {
         return Ok((rope, line_ending, encoding_rs::UTF_8, false));
     }
@@ -7273,8 +7302,8 @@ pub async fn decode_file_text_to_rope(
 /// Returns `None` if the file turns out not to be plain UTF-8, in which case the
 /// caller re-reads it and decodes it the slow way. `prefix` is the portion of
 /// the file already consumed from `file` for encoding detection.
-fn stream_utf8_into_rope(
-    file: &mut dyn Read,
+async fn stream_utf8_into_rope(
+    file: &mut (dyn Read + Send),
     prefix: Vec<u8>,
     reached_eof: bool,
     abs_path: &Path,
@@ -7338,6 +7367,8 @@ fn stream_utf8_into_rope(
         if eof {
             break;
         }
+
+        yield_now().await;
     }
 
     // At EOF everything should have been consumed. Anything left over is a
@@ -7393,33 +7424,63 @@ mod tests {
 
     /// Streams `bytes` the way `decode_file_text_to_rope` would, returning the
     /// decoded text and detected line ending, or `None` if the fast path bailed.
-    fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
+    async fn stream(bytes: &[u8]) -> Option<(String, LineEnding)> {
         let mut reader = std::io::Cursor::new(bytes.to_vec());
         stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+            .await
             .unwrap()
             .map(|(rope, line_ending)| (rope.to_string(), line_ending))
     }
 
     #[test]
-    fn test_stream_utf8_normalizes_line_endings() {
+    fn test_stream_utf8_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
+
+        assert!(
+            stream_utf8_into_rope(&mut reader, Vec::new(), false, Path::new("test"))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+    }
+
+    #[test]
+    fn test_file_reading_yields_between_blocks() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; STREAM_BLOCK_BYTES * 2]);
+        let mut content = Vec::new();
+
+        assert!(
+            read_file_to_end(&mut reader, &mut content, Path::new("test"))
+                .now_or_never()
+                .is_none()
+        );
+        assert_eq!(reader.position(), STREAM_BLOCK_BYTES as u64);
+        assert_eq!(content.len(), STREAM_BLOCK_BYTES);
+    }
+
+    #[gpui::test]
+    async fn test_stream_utf8_normalizes_line_endings() {
         let crlf = "one\r\ntwo\r\nthree\r\n".repeat(40);
-        let (text, line_ending) = stream(crlf.as_bytes()).unwrap();
+        let (text, line_ending) = stream(crlf.as_bytes()).await.unwrap();
         assert_eq!(text, crlf.replace("\r\n", "\n"));
         assert_eq!(line_ending, LineEnding::Windows);
 
         let cr = "one\rtwo\rthree\r".repeat(40);
-        assert_eq!(stream(cr.as_bytes()).unwrap().0, cr.replace('\r', "\n"));
+        assert_eq!(
+            stream(cr.as_bytes()).await.unwrap().0,
+            cr.replace('\r', "\n")
+        );
     }
 
-    #[test]
-    fn test_stream_utf8_block_boundaries() {
+    #[gpui::test]
+    async fn test_stream_utf8_block_boundaries() {
         // A carriage return landing on the last byte of a block, with and
         // without its newline arriving in the next one.
         for (suffix, expected) in [("\r\ntail\n", "\ntail\n"), ("\rtail", "\ntail")] {
             let filler = "a".repeat(STREAM_BLOCK_BYTES - 1);
             let source = format!("{filler}{suffix}");
             assert_eq!(
-                stream(source.as_bytes()).unwrap().0,
+                stream(source.as_bytes()).await.unwrap().0,
                 format!("{filler}{expected}"),
                 "suffix = {suffix:?}"
             );
@@ -7431,7 +7492,7 @@ mod tests {
                 let filler = "a".repeat(STREAM_BLOCK_BYTES - split);
                 let source = format!("{filler}{ch}tail");
                 assert_eq!(
-                    stream(source.as_bytes()).unwrap().0,
+                    stream(source.as_bytes()).await.unwrap().0,
                     source,
                     "ch = {ch:?}, split = {split}"
                 );
@@ -7439,13 +7500,13 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_stream_utf8_falls_back_on_non_utf8() {
+    #[gpui::test]
+    async fn test_stream_utf8_falls_back_on_non_utf8() {
         // Each of these must bail so the caller re-reads and decodes the slow
         // way, rather than silently mangling the file.
-        assert_eq!(stream(b"hello \xff\xfeA"), None, "invalid utf-8");
-        assert_eq!(stream(b"hello \xe2\x82"), None, "truncated at eof");
-        assert_eq!(stream(b"plain \x1b$B text"), None, "iso-2022 escape");
+        assert_eq!(stream(b"hello \xff\xfeA").await, None, "invalid utf-8");
+        assert_eq!(stream(b"hello \xe2\x82").await, None, "truncated at eof");
+        assert_eq!(stream(b"plain \x1b$B text").await, None, "iso-2022 escape");
     }
 
     /// reproduction of issue #50785
