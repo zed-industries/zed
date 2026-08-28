@@ -41,7 +41,7 @@ use std::{
     u32,
 };
 
-use outline_panel_settings::{DockSide, OutlinePanelSettings, ShowIndentGuides};
+use outline_panel_settings::{DockSide, FolderIndicator, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -2372,7 +2372,10 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    icon.unwrap_or_else(empty_icon),
+                    reserve_chevron_slot(
+                        settings.folder_indicator,
+                        icon.unwrap_or_else(empty_icon),
+                    ),
                 )
             }
             FsEntry::Directory(directory) => {
@@ -2387,13 +2390,13 @@ impl OutlinePanel {
                     directory.entry.is_ignored,
                     is_active,
                 );
-                let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, directory.entry.path.as_std_path(), cx)
-                } else {
-                    FileIcons::get_chevron_icon(is_expanded, cx)
-                }
-                .map(Icon::from_path)
-                .map(|icon| icon.color(color).into_any_element());
+                let icon = folder_indicator_element(
+                    settings.folder_indicator,
+                    is_expanded,
+                    directory.entry.path.as_std_path(),
+                    color,
+                    cx,
+                );
                 (
                     ElementId::from(directory.entry.id.to_proto() as usize),
                     HighlightedLabel::new(
@@ -2436,7 +2439,10 @@ impl OutlinePanel {
                     )
                     .color(color)
                     .into_any_element(),
-                    icon.unwrap_or_else(empty_icon),
+                    reserve_chevron_slot(
+                        settings.folder_indicator,
+                        icon.unwrap_or_else(empty_icon),
+                    ),
                 )
             }
         };
@@ -2484,13 +2490,13 @@ impl OutlinePanel {
                 .map(|entry| entry.git_summary)
                 .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
-            let icon = if settings.folder_icons {
-                FileIcons::get_folder_icon(is_expanded, &Path::new(&name), cx)
-            } else {
-                FileIcons::get_chevron_icon(is_expanded, cx)
-            }
-            .map(Icon::from_path)
-            .map(|icon| icon.color(color).into_any_element());
+            let icon = folder_indicator_element(
+                settings.folder_indicator,
+                is_expanded,
+                Path::new(&name),
+                color,
+                cx,
+            );
             (
                 ElementId::from(
                     folded_dir
@@ -2659,7 +2665,7 @@ impl OutlinePanel {
                     .toggle_state(is_active)
                     .child(
                         h_flex()
-                            .child(h_flex().w(px(16.)).justify_center().child(icon_element))
+                            .child(h_flex().min_w(px(16.)).justify_center().child(icon_element))
                             .child(h_flex().h_6().child(label_element).ml_1()),
                     )
                     .on_secondary_mouse_down(cx.listener(
@@ -5315,6 +5321,48 @@ fn empty_icon() -> AnyElement {
         .invisible()
         .flex_none()
         .into_any_element()
+}
+
+fn folder_indicator_element(
+    indicator: FolderIndicator,
+    expanded: bool,
+    path: &Path,
+    color: Color,
+    cx: &App,
+) -> Option<AnyElement> {
+    let indicators = FileIcons::get_folder_indicators(indicator, expanded, path, cx);
+    let render_indicator = |icon_path| Icon::from_path(icon_path).color(color);
+
+    match (indicators.chevron, indicators.icon) {
+        (Some(chevron), Some(icon)) => Some(
+            h_flex()
+                .flex_none()
+                .gap_0p5()
+                .child(render_indicator(chevron))
+                .child(render_indicator(icon))
+                .into_any_element(),
+        ),
+        (Some(only), None) | (None, Some(only)) => Some(render_indicator(only).into_any_element()),
+        (None, None) => None,
+    }
+}
+
+/// Adds a blank as wide as a chevron in front of `icon` in `both` mode. Leaves `icon`
+/// alone in the other modes.
+///
+/// Directories show a chevron and an icon in `both` mode. Without the blank, a file's
+/// icon would line up under the folder chevrons instead of the folder icons.
+fn reserve_chevron_slot(indicator: FolderIndicator, icon: AnyElement) -> AnyElement {
+    if indicator.shows_chevron() && indicator.shows_icon() {
+        h_flex()
+            .flex_none()
+            .gap_0p5()
+            .child(empty_icon())
+            .child(icon)
+            .into_any_element()
+    } else {
+        icon
+    }
 }
 
 #[derive(Debug, Default)]

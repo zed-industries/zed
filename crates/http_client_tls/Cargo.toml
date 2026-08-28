@@ -16,5 +16,7 @@ path = "src/http_client_tls.rs"
 doctest = true
 
 [dependencies]
+log.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
+webpki-roots.workspace = true

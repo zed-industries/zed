@@ -191,15 +191,15 @@ const MIN_DRAWS_TO_REPORT: u64 = 1_000;
 /// Computes and sends a `Frame Duration Report` telemetry event for the given
 /// window if enough frames were drawn since the last report.
 ///
-/// The report contains bucketed draw durations (how long `Window::draw` took)
-/// and bucketed present intervals (the achieved frame-to-frame cadence while
-/// the window was animating), so missed frames are visible in the fleet even
-/// when no input was involved.
+/// The report contains bucketed draw durations (how long `Window::draw` took),
+/// bucketed present intervals (the achieved frame-to-frame cadence while the
+/// window was animating), and the average dirty-to-present duration.
 ///
-/// Call this periodically (e.g. every five minutes) from a spawned task.
+/// Call this periodically from a spawned task.
 pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let current = window.frame_duration_snapshot();
-    let window_id = window.window_handle().window_id();
+    let window_handle = window.window_handle();
+    let window_id = window_handle.window_id();
 
     let open_window_ids = open_window_ids(cx);
     let state = cx.default_global::<FrameDurationTelemetryState>();
@@ -208,7 +208,7 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         .retain(|window_id, _| open_window_ids.contains(window_id));
     let now = Instant::now();
 
-    let (delta_draws, delta_intervals, report_window_seconds) =
+    let (delta_draws, delta_intervals, delta_dirty_to_present, report_window_seconds) =
         if let Some((prev_instant, prev_snapshot)) = state.previous.get(&window_id) {
             let mut delta_draws = current.draw_duration_histogram.clone();
             delta_draws
@@ -218,8 +218,20 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
             delta_intervals
                 .subtract(&prev_snapshot.present_interval_histogram)
                 .ok();
+            let mut delta_dirty_to_present = current.dirty_to_present_histogram.clone();
+            if delta_dirty_to_present
+                .subtract(&prev_snapshot.dirty_to_present_histogram)
+                .is_err()
+            {
+                delta_dirty_to_present = current.dirty_to_present_histogram.clone();
+            }
             let elapsed = now.duration_since(*prev_instant).as_secs();
-            (delta_draws, delta_intervals, elapsed)
+            (
+                delta_draws,
+                delta_intervals,
+                delta_dirty_to_present,
+                elapsed,
+            )
         } else {
             // First report for this window: the full cumulative histograms are
             // the delta from the empty starting state. We don't know how long
@@ -228,6 +240,7 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
             (
                 current.draw_duration_histogram.clone(),
                 current.present_interval_histogram.clone(),
+                current.dirty_to_present_histogram.clone(),
                 0u64,
             )
         };
@@ -251,6 +264,7 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
     let intervals_18to36 = count_frames_in_range(&delta_intervals, MS18_NS, MS36_NS);
     let intervals_36to100 = count_frames_in_range(&delta_intervals, MS36_NS, MS100_NS);
     // intervals > 100ms are implicitly total_intervals - (the buckets above)
+    let average_dirty_to_present_ms = delta_dirty_to_present.mean() / 1_000_000.0;
 
     telemetry::event!(
         "Frame Duration Report",
@@ -264,6 +278,8 @@ pub fn report_frame_duration_telemetry(window: &Window, cx: &mut App) {
         intervals_18to36 = intervals_18to36,
         intervals_36to100 = intervals_36to100,
         total_intervals = total_intervals,
+        average_dirty_to_present_ms = average_dirty_to_present_ms,
+        root_entity_type_name = window_handle.root_entity_type_name(),
         report_window_seconds = report_window_seconds,
     );
 }
