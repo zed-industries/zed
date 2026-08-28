@@ -1,4 +1,4 @@
-use crate::available_languages::AvailableLanguage;
+use crate::available_languages::{AvailableLanguage, LanguageOrigin};
 use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
@@ -391,23 +391,71 @@ impl LanguageRegistry {
         manifest_name: Option<ManifestName>,
         load: LanguageLoader,
     ) {
-        let state = &mut *self.state.write();
-
-        let was_added = state.available_languages.register(
+        self.register_language_with_origin(
             name,
             grammar_name,
             matcher,
             hidden,
             manifest_name,
             load,
+            LanguageOrigin::Native,
         );
-        if !was_added {
-            return;
+    }
+
+    pub fn register_extension_language(
+        &self,
+        name: LanguageName,
+        grammar_name: Option<Arc<str>>,
+        matcher: Arc<LanguageMatcher>,
+        hidden: bool,
+        manifest_name: Option<ManifestName>,
+        load: LanguageLoader,
+    ) -> bool {
+        self.register_language_with_origin(
+            name,
+            grammar_name,
+            matcher,
+            hidden,
+            manifest_name,
+            load,
+            LanguageOrigin::Extension,
+        )
+    }
+
+    fn register_language_with_origin(
+        &self,
+        name: LanguageName,
+        grammar_name: Option<Arc<str>>,
+        matcher: Arc<LanguageMatcher>,
+        hidden: bool,
+        manifest_name: Option<ManifestName>,
+        load: LanguageLoader,
+        origin: LanguageOrigin,
+    ) -> bool {
+        let state = &mut *self.state.write();
+
+        let Some(was_loaded) = state.available_languages.register(
+            name.clone(),
+            grammar_name,
+            matcher,
+            hidden,
+            manifest_name,
+            load,
+            origin,
+        ) else {
+            log::warn!(
+                "not registering extension language {name}: a language with this name is already registered outside of extensions"
+            );
+            return false;
+        };
+        if was_loaded {
+            state.languages.retain(|language| language.name() != name);
         }
 
         state.version += 1;
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();
+        true
     }
 
     /// Adds grammars to the registry. Language configurations reference a grammar by name. The
@@ -430,11 +478,17 @@ impl LanguageRegistry {
         }
 
         let mut state = self.state.write();
-        state.grammars.extend(
-            grammars
-                .into_iter()
-                .map(|(name, path)| (name, AvailableGrammar::Unloaded(path))),
-        );
+        for (name, path) in grammars {
+            if let Some(AvailableGrammar::Native(_)) = state.grammars.get(&name) {
+                log::warn!(
+                    "not registering extension grammar {name}: a native grammar with this name is already registered"
+                );
+                continue;
+            }
+            state
+                .grammars
+                .insert(name, AvailableGrammar::Unloaded(path));
+        }
         state.version += 1;
         state.reload_count += 1;
         *state.subscription.0.borrow_mut() = ();
@@ -476,6 +530,7 @@ impl LanguageRegistry {
             manifest_name: None,
             load: Arc::new(|| async { Err(anyhow!("already loaded")) }.boxed()),
             loaded: true,
+            origin: LanguageOrigin::Native,
         });
         state.add(language);
     }
@@ -672,34 +727,76 @@ impl LanguageRegistry {
                         }
                         .await;
 
-                        match language {
-                            Ok(language) => {
-                                let language = Arc::new(language);
-                                let mut state = this.state.write();
-
-                                state.add(language.clone());
+                        let language = language.map(Arc::new);
+                        if let Err(error) = &language {
+                            log::error!("failed to load language {language_name}:\n{error:?}");
+                        }
+                        let stale_txs = {
+                            let mut state = this.state.write();
+                            let is_current = state
+                                .available_languages
+                                .get_language(language_id)
+                                .is_some();
+                            if is_current {
+                                if let Ok(language) = &language {
+                                    state.add(language.clone());
+                                }
                                 state.mark_language_loaded(language_id);
-                                if let Some(mut txs) = state.loading_languages.remove(&language_id)
-                                {
-                                    for tx in txs.drain(..) {
-                                        let _ = tx.send(Ok(language.clone()));
+                                if let Some(txs) = state.loading_languages.remove(&language_id) {
+                                    for tx in txs {
+                                        let _ = tx.send(match &language {
+                                            Ok(language) => Ok(language.clone()),
+                                            Err(error) => Err(anyhow!(
+                                                "failed to load language {language_name}: {error}"
+                                            )),
+                                        });
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                log::error!("failed to load language {language_name}:\n{e:?}");
-                                let mut state = this.state.write();
-                                state.mark_language_loaded(language_id);
-                                if let Some(mut txs) = state.loading_languages.remove(&language_id)
-                                {
-                                    for tx in txs.drain(..) {
-                                        let _ = tx.send(Err(anyhow!(
-                                            "failed to load language {language_name}: {e}",
-                                        )));
-                                    }
-                                }
+                                None
+                            } else {
+                                let txs = state
+                                    .loading_languages
+                                    .remove(&language_id)
+                                    .unwrap_or_default();
+                                let replacement_id = state
+                                    .available_languages
+                                    .find_by_exact_name(language_name.0.as_ref())
+                                    .map(|language| language.id());
+                                Some((txs, replacement_id))
                             }
                         };
+                        if let Some((txs, replacement_id)) = stale_txs
+                            && !txs.is_empty()
+                        {
+                            match replacement_id {
+                                Some(replacement_id) => {
+                                    let result = match this.load_language(replacement_id).await {
+                                        Ok(result) => result,
+                                        Err(_) => Err(anyhow!(LanguageNotFound)),
+                                    };
+                                    match result {
+                                        Ok(replacement_language) => {
+                                            for tx in txs {
+                                                let _ = tx.send(Ok(replacement_language.clone()));
+                                            }
+                                        }
+                                        Err(error) => {
+                                            let message = format!("{error:#}");
+                                            for tx in txs {
+                                                let _ = tx.send(Err(anyhow!(
+                                                    "failed to load language {language_name}: {message}"
+                                                )));
+                                            }
+                                        }
+                                    }
+                                }
+                                None => {
+                                    for tx in txs {
+                                        let _ = tx.send(Err(anyhow!(LanguageNotFound)));
+                                    }
+                                }
+                            }
+                        }
                     })
                     .detach();
 
@@ -938,11 +1035,14 @@ impl LanguageRegistryState {
             return;
         }
 
+        let removed_languages = self
+            .available_languages
+            .remove_extension_languages(languages_to_remove);
         self.languages
-            .retain(|language| !languages_to_remove.contains(&language.name()));
-        self.available_languages.remove(languages_to_remove);
-        self.grammars
-            .retain(|name, _| !grammars_to_remove.contains(name));
+            .retain(|language| !removed_languages.contains(&language.name()));
+        self.grammars.retain(|name, grammar| {
+            !grammars_to_remove.contains(name) || matches!(grammar, AvailableGrammar::Native(_))
+        });
         self.version += 1;
         self.reload_count += 1;
         *self.subscription.0.borrow_mut() = ();

@@ -26,6 +26,8 @@ mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
+#[cfg(test)]
+mod proto_diagnostics_tests;
 
 pub use crate::language_settings::{
     AutoIndentMode, EditPredictionPromptFormat, EditPredictionsMode, IndentGuideSettings,
@@ -101,7 +103,9 @@ use util::rel_path::RelPath;
 pub use available_languages::AvailableLanguage;
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic::{Diagnostic, DiagnosticSourceKind, RelatedInformation, RelatedLocation};
+pub use diagnostic::{
+    Diagnostic, DiagnosticMessage, DiagnosticSourceKind, RelatedInformation, RelatedLocation,
+};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use file_content::{
     ByteContent, DecodedText, FILE_ANALYSIS_BYTES, analyze_byte_content, decode_text, encode_text,
