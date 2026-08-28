@@ -3,7 +3,6 @@ use anyhow::{Context as _, Result};
 use block::ConcreteBlock;
 use cocoa::{
     base::{NO, YES},
-    foundation::{NSSize, NSUInteger},
     quartzcore::AutoresizingMask,
 };
 use gpui::{
@@ -12,6 +11,7 @@ use gpui::{
 };
 #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
 use image::RgbaImage;
+use objc2_foundation::{NSSize, NSUInteger};
 
 use core_foundation::base::TCFType;
 use core_video::{
