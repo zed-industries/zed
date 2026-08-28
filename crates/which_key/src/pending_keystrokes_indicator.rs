@@ -2,8 +2,7 @@ use command_palette::humanize_action_name;
 use gpui::{Animation, AnimationExt, App, Context, KeybindingKeystroke, Render, Window};
 use settings::Settings;
 use std::{rc::Rc, time::Duration};
-use ui::{ButtonLike, CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keystrokes};
-use util::ResultExt;
+use ui::{CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keystrokes};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
 use crate::FILTERED_KEYSTROKES;
@@ -119,27 +118,26 @@ impl Render for PendingKeystrokesIndicator {
             return div().hidden().into_any_element();
         };
 
-        ButtonLike::new("pending-keystrokes-indicator")
+        h_flex()
+            .id("pending-keystrokes-indicator")
+            .gap_1()
+            .px_1()
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        CircularProgress::new(1.0, 1.0, px(13.), cx)
-                            .stroke_width(px(2.))
-                            .progress_color(cx.theme().colors().text_muted)
-                            .with_animation(
-                                (
-                                    "pending-keystrokes-countdown",
-                                    pending.pending_input_generation,
-                                ),
-                                Animation::new(pending.timeout).with_max_fps(30.0),
-                                |progress, delta| progress.value(1.0 - delta),
-                            ),
-                    )
-                    .child(
-                        KeyBinding::from_keystrokes(pending.keystrokes.clone(), false)
-                            .size(rems_from_px(12_f32)),
+                CircularProgress::new(1.0, 1.0, px(13.), cx)
+                    .stroke_width(px(2.))
+                    .progress_color(cx.theme().colors().text_muted)
+                    .with_animation(
+                        (
+                            "pending-keystrokes-countdown",
+                            pending.pending_input_generation,
+                        ),
+                        Animation::new(pending.timeout).with_max_fps(30.0),
+                        |progress, delta| progress.value(1.0 - delta),
                     ),
+            )
+            .child(
+                KeyBinding::from_keystrokes(pending.keystrokes.clone(), false)
+                    .size(rems_from_px(12_f32)),
             )
             .tooltip(Tooltip::element(move |_, _| {
                 let pending = &pending;
@@ -172,18 +170,8 @@ impl Render for PendingKeystrokesIndicator {
                             .color(Color::Muted),
                         )
                     })
-                    .child(
-                        Label::new("Click to open the key context view")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    )
                     .into_any_element()
             }))
-            .on_click(|_, window, cx| {
-                if let Some(action) = cx.build_action("dev::OpenKeyContextView", None).log_err() {
-                    window.dispatch_action(action, cx);
-                }
-            })
             .into_any_element()
     }
 }
