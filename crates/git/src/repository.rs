@@ -3,7 +3,7 @@ use crate::stash::GitStash;
 use crate::status::{
     DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
 };
-use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
+use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
@@ -764,7 +764,7 @@ pub struct SearchCommitArgs {
 
 pub fn commit_hash_search_query(query: &str) -> Option<&str> {
     let query = query.trim();
-    (7..=40)
+    (SHORT_SHA_LENGTH..=SHA256_HEX_LENGTH)
         .contains(&query.len())
         .then_some(query)
         .filter(|query| query.bytes().all(|byte| byte.is_ascii_hexdigit()))
