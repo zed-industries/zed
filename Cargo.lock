@@ -5987,7 +5987,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
- "log",
  "net",
  "serde",
  "serde_json",
