@@ -188,6 +188,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+  "reveal_if_open": false,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
   // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
