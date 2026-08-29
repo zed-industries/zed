@@ -26413,6 +26413,101 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
     }
 }
 
+/// Restoring is driven by the hunks handed to it, not by the selections, so the shared expansion
+/// in `start_transaction_at` does not cover it. The per-hunk restore buttons and the restore-all
+/// command both pass hunks for a buffer the cursor may not be in.
+#[gpui::test]
+async fn test_restoring_hunks_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let base_text_1 = "aaaa\nbbbb\ncccc";
+    let base_text_2 = "dddd\neeee\nffff";
+    let buffer_1 = cx.new(|cx| Buffer::local("Xaaa\nXbbb\nXccc", cx));
+    let buffer_2 = cx.new(|cx| Buffer::local("Xddd\nXeee\nXfff", cx));
+
+    let multibuffer = cx.new(|cx| {
+        let mut multibuffer = MultiBuffer::new(ReadWrite);
+        for (index, buffer) in [buffer_1.clone(), buffer_2.clone()].into_iter().enumerate() {
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(index as u64),
+                buffer,
+                [Point::new(0, 0)..Point::new(2, 4)],
+                0,
+                cx,
+            );
+        }
+        multibuffer
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let (editor, cx) = cx
+        .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
+    editor.update_in(cx, |editor, _window, cx| {
+        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+        for (buffer, base_text) in [
+            (buffer_1.clone(), base_text_1),
+            (buffer_2.clone(), base_text_2),
+        ] {
+            let diff = cx.new(|cx| {
+                BufferDiff::new_with_base_text(base_text, &buffer.read(cx).text_snapshot(), cx)
+            });
+            editor
+                .buffer
+                .update(cx, |buffer, cx| buffer.add_diff(diff, cx));
+        }
+    });
+    cx.executor().run_until_parked();
+
+    let buffer_1_id = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
+    let buffer_2_id = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
+
+    editor.update_in(cx, |editor, window, cx| {
+        // The cursor sits in the buffer that is *not* being restored, so a selection-based
+        // expansion would leave the restored buffer collapsed.
+        let elsewhere = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot
+                .excerpts_for_buffer(buffer_2_id)
+                .next()
+                .expect("the second buffer is excerpted");
+            snapshot
+                .anchor_in_excerpt(excerpt.context.start)
+                .expect("the second buffer's excerpt start has a multibuffer anchor")
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([elsewhere..elsewhere]);
+        });
+        editor.fold_buffer(buffer_1_id, cx);
+        assert!(editor.is_buffer_folded(buffer_1_id, cx));
+
+        let hunks = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range = snapshot
+                .range_for_buffer(buffer_1_id)
+                .expect("the first buffer is excerpted");
+            let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+            editor
+                .diff_hunks_in_ranges(std::slice::from_ref(&range), &snapshot)
+                .collect::<Vec<_>>()
+        };
+        assert!(!hunks.is_empty(), "the folded buffer should have hunks");
+        editor.apply_restore(hunks, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    editor.update(cx, |editor, cx| {
+        // Without the restore having changed anything the unfold assertion would pass
+        // vacuously, so check that the hunks really were restored.
+        assert_eq!(buffer_1.read(cx).text(), base_text_1);
+        assert!(
+            !editor.is_buffer_folded(buffer_1_id, cx),
+            "restoring hunks edited the buffer without expanding it, \
+             leaving the change invisible"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -39250,6 +39345,73 @@ async fn test_paste_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
         gamma
         delta
         "});
+}
+
+/// `Rewrap` edits the buffer directly rather than through `transact`, so it does not reach the
+/// shared expansion in `start_transaction_at` and needs its own.
+#[gpui::test]
+async fn test_rewrap_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    // Longer than the 40 column limit set below, so that rewrapping has to reflow it.
+    const PARAGRAPH: &str =
+        "the quick brown fox jumps over the lazy dog and keeps running\nand running\n";
+
+    init_test(cx, |settings| {
+        settings.defaults.allow_rewrap = Some(language_settings::RewrapBehavior::Anywhere);
+        settings.defaults.preferred_line_length = Some(40);
+    });
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                (PARAGRAPH, vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let folded_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([folded_start..folded_start]);
+        });
+        editor.fold_buffer(buffer_ids[0], cx);
+        assert!(editor.is_buffer_folded(buffer_ids[0], cx));
+
+        editor.rewrap(RewrapOptions::default(), cx);
+
+        let text = editor
+            .buffer()
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .find(|buffer| buffer.read(cx).remote_id() == buffer_ids[0])
+            .expect("the rewrapped buffer is still in the multibuffer")
+            .read(cx)
+            .text();
+
+        // Without the rewrap having done anything the unfold assertion below would pass
+        // vacuously, so check that the paragraph really was reflowed.
+        assert_ne!(text, PARAGRAPH, "rewrap left the paragraph unchanged");
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[0], cx),
+            "rewrap edited the buffer without expanding it, leaving the change invisible"
+        );
+    });
 }
 
 /// Two cursors inside the same collapsed buffer must stay cursors. They land on the same

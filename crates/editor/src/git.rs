@@ -1080,6 +1080,11 @@ impl Editor {
         }
 
         for (buffer, changes) in revert_changes {
+            // The buffers to restore come from the hunks rather than from the selections, so the
+            // shared expansion in `start_transaction_at` does not reach them: restoring a hunk
+            // can target a collapsed buffer while the cursor sits in a different one.
+            let buffer_id = buffer.read(cx).remote_id();
+            self.unfold_buffer(buffer_id, cx);
             buffer.update(cx, |buffer, cx| {
                 buffer.edit(
                     changes
