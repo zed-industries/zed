@@ -9,8 +9,8 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
     Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    ResizeEdge, Scene, Size, TextInputConfiguration, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
 };
 use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
@@ -63,6 +63,22 @@ pub(crate) struct WebWindowInner {
     /// synchronously from inside an input dispatch, and a `RefCell`
     /// double-borrow panic on wasm never unwinds, wedging the app.
     pub(crate) suppress_focus_status_events: Cell<bool>,
+    /// The visual viewport's width and greatest height seen at that width,
+    /// in layout pixels. The keyboard-visibility probe compares the current
+    /// height against this maximum; the width detects rotation, which must
+    /// restart the calibration.
+    pub(crate) visual_viewport_probe: Cell<(f64, f64)>,
+    /// The visual viewport height when the current pointer gesture began.
+    /// A mid-gesture change means the software keyboard opened or closed and
+    /// reflowed the layout, so the release position no longer refers to what
+    /// the user aimed at.
+    pub(crate) gesture_start_visual_viewport_height: Cell<f64>,
+    /// A touch that may still resolve into a tap: its pointer id and starting
+    /// position, cleared once it travels beyond touch slop. Virtual keyboard
+    /// and IME focus may only change when a touch release completes a tap;
+    /// pans must leave them untouched, or scrolling over editable content
+    /// flickers the keyboard and drags the caret around.
+    pub(crate) touch_tap_candidate: Cell<Option<(i32, Point<Pixels>)>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
@@ -185,6 +201,9 @@ impl WebWindow {
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
             suppress_focus_status_events: Cell::new(false),
+            visual_viewport_probe: Cell::new((0.0, 0.0)),
+            gesture_start_visual_viewport_height: Cell::new(0.0),
+            touch_tap_candidate: Cell::new(None),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
@@ -648,6 +667,10 @@ impl PlatformWindow for WebWindow {
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
         self.inner.state.borrow_mut().input_handler.take()
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.inner.ime_mirror.apply_configuration(&configuration);
     }
 
     fn prompt(

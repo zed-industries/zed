@@ -2000,7 +2000,6 @@ impl SerializableItem for MarkdownPreviewView {
         workspace: &mut Workspace,
         item_id: ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let workspace_id = workspace.database_id()?;
@@ -3121,12 +3120,12 @@ mod tests {
         }
 
         let serialize_task = multi_workspace
-            .update(cx, |multi_workspace, window, cx| {
+            .update(cx, |multi_workspace, _window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     preview
                         .update(cx, |preview, cx| {
-                            preview.serialize(workspace, cx.entity_id().as_u64(), false, window, cx)
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, cx)
                         })
                         .unwrap()
                 })
@@ -3269,12 +3268,12 @@ mod tests {
         wait_for_preview_serialization(cx).await;
 
         let serialize_task = multi_workspace
-            .update(cx, |multi_workspace, window, cx| {
+            .update(cx, |multi_workspace, _window, cx| {
                 let workspace = multi_workspace.workspace().clone();
                 workspace.update(cx, |workspace, cx| {
                     preview
                         .update(cx, |preview, cx| {
-                            preview.serialize(workspace, cx.entity_id().as_u64(), false, window, cx)
+                            preview.serialize(workspace, cx.entity_id().as_u64(), false, cx)
                         })
                         .unwrap()
                 })
