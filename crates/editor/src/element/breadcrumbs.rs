@@ -7293,7 +7293,11 @@ mod tests {
                     store.update_user_settings(cx, |settings| {
                         let panel = settings.project_panel.get_or_insert_default();
                         panel.file_icons = Some(file_icons);
-                        panel.folder_icons = Some(folder_icons);
+                        panel.folder_indicator = Some(if folder_icons {
+                            settings::FolderIndicator::Icon
+                        } else {
+                            settings::FolderIndicator::Chevron
+                        });
                     });
                 });
             });

@@ -159,7 +159,9 @@ impl settings::Settings for BreadcrumbListingSettings {
             hide_gitignore: project_panel.hide_gitignore.unwrap(),
             hide_hidden: project_panel.hide_hidden.unwrap(),
             file_icons: project_panel.file_icons.unwrap(),
-            folder_icons: project_panel.folder_icons.unwrap(),
+            // The menu's rows have no disclosure to paint, so `Chevron` maps to the row
+            // chevron and both icon-bearing modes map to the folder icon.
+            folder_icons: project_panel.folder_indicator.unwrap().shows_icon(),
             git_status,
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
         }

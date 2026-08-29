@@ -67,7 +67,7 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 
 The breadcrumb bar above the editor is clickable. Selecting a directory segment lists that directory's contents; selecting the file segment lists the file's top-level symbols; selecting a symbol segment lists that symbol's children, or its siblings when it has none. Type to filter, use `left` and `right` to move between levels, and `enter` to open. You can also open it with {#kb editor::OpenBreadcrumbNavigation}. The menu's own bindings live in the `BreadcrumbNavigationMenu > Editor` context in `keymaps/specific-overrides.json`.
 
-Menu rows follow the project panel's `sort_mode`, `sort_order`, `hide_gitignore`, `hide_hidden`, `file_icons`, `folder_icons`, `git_status` and `auto_fold_dirs` settings, so changing those changes the menu too. Git status in the menu additionally requires git status tracking itself: rows are drawn without it when `git.disable_git` is `true` or `git.enable_status` is `false`.
+Menu rows follow the project panel's `sort_mode`, `sort_order`, `hide_gitignore`, `hide_hidden`, `file_icons`, `folder_indicator`, `git_status` and `auto_fold_dirs` settings, so changing those changes the menu too. Git status in the menu additionally requires git status tracking itself: rows are drawn without it when `git.disable_git` is `true` or `git.enable_status` is `false`.
 
 ## Quick Reference
 
