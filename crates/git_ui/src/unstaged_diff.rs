@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -322,7 +322,7 @@ impl UnstagedDiff {
         let editor = diff.editor().read(cx).rhs_editor().clone();
         let editor = editor.read(cx);
         let snapshot = diff.multibuffer().read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let (selection, ranges) = diff.selected_ranges(cx);
         let stage = editor
             .diff_hunks_in_ranges(&ranges, &snapshot)
@@ -419,16 +419,6 @@ impl Item for UnstagedDiff {
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Unstaged Changes".into())
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(0, _cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
@@ -598,7 +588,6 @@ impl SerializableItem for UnstagedDiff {
         _: &mut Workspace,
         _: workspace::ItemId,
         _: bool,
-        _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         Some(Task::ready(Ok(())))

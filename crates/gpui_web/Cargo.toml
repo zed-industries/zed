@@ -11,13 +11,14 @@ workspace = true
 
 [features]
 default = ["multithreaded"]
-multithreaded = ["dep:wasm_thread"]
+multithreaded = ["dep:wasm_thread", "scheduler/wasm-threads"]
 
 [lib]
 path = "src/gpui_web.rs"
 
 [target.'cfg(target_family = "wasm")'.dependencies]
 gpui.workspace = true
+scheduler.workspace = true
 parking_lot = { workspace = true, features = ["nightly"] }
 gpui_wgpu.workspace = true
 http_client.workspace = true
@@ -38,21 +39,27 @@ wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0c
 ], optional = true }
 web-sys = { version = "0.3", features = [
     "console",
+    "Blob",
     "Clipboard",
     "ClipboardEvent",
+    "ClipboardItem",
     "CompositionEvent",
     "CssStyleDeclaration",
     "DataTransfer",
+    "DataTransferItem",
+    "DataTransferItemList",
     "Document",
     "DomRect",
     "DragEvent",
     "Element",
     "EventTarget",
+    "File",
     "HtmlCanvasElement",
     "HtmlElement",
-    "HtmlInputElement",
+    "HtmlTextAreaElement",
     "IdleDeadline",
     "IdleRequestOptions",
+    "InputEvent",
     "KeyboardEvent",
     "Location",
     "MediaQueryList",
@@ -60,6 +67,9 @@ web-sys = { version = "0.3", features = [
     "MouseEvent",
     "Navigator",
     "PointerEvent",
+    "ReadableStream",
+    "ReadableStreamDefaultReader",
+    "ReadableStreamReadResult",
     "ResizeObserver",
     "ResizeObserverBoxOptions",
     "ResizeObserverEntry",
@@ -77,3 +87,6 @@ web-sys = { version = "0.3", features = [
     "WheelEvent",
     "Window",
 ] }
+
+[package.metadata.cargo-shear]
+ignored = ["scheduler"]

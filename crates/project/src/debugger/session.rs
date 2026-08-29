@@ -52,7 +52,6 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::Duration;
-use std::u64;
 use std::{
     any::Any,
     collections::hash_map::Entry,
@@ -1358,7 +1357,7 @@ impl Session {
                 cx.spawn(async move |this, cx| {
                     task.await;
                     this.update(cx, |this, cx| {
-                        this.continue_thread(active_thread_id, cx);
+                        this.continue_program(active_thread_id, cx);
                     })
                 })
                 .detach();
@@ -1527,7 +1526,8 @@ impl Session {
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),
             Events::Continued(event) => {
-                if event.all_threads_continued.unwrap_or_default() {
+                // DAP defines an omitted `allThreadsContinued` as `true`.
+                if event.all_threads_continued.unwrap_or(true) {
                     self.active_snapshot.thread_states.continue_all_threads();
                     self.breakpoint_store.update(cx, |store, cx| {
                         store.remove_active_position(Some(self.session_id()), cx)
@@ -2142,6 +2142,38 @@ impl Session {
         }
     }
 
+    fn on_continue_response(
+        thread_id: ThreadId,
+    ) -> impl FnOnce(
+        &mut Self,
+        Result<dap::ContinueResponse>,
+        &mut Context<Self>,
+    ) -> Option<dap::ContinueResponse>
+    + 'static {
+        move |this, response, cx| match response.log_err() {
+            Some(response) => {
+                if response.all_threads_continued.unwrap_or(true) {
+                    this.active_snapshot.thread_states.continue_all_threads();
+                } else {
+                    this.active_snapshot
+                        .thread_states
+                        .continue_thread(thread_id);
+                }
+                this.breakpoint_store.update(cx, |store, cx| {
+                    store.remove_active_position(Some(this.session_id()), cx)
+                });
+                this.invalidate_generic();
+                cx.notify();
+                Some(response)
+            }
+            None => {
+                this.active_snapshot.thread_states.stop_thread(thread_id);
+                cx.notify();
+                None
+            }
+        }
+    }
+
     fn clear_active_debug_line_response(
         &mut self,
         response: Result<()>,
@@ -2280,11 +2312,30 @@ impl Session {
         })
     }
 
+    pub fn continue_program(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.continue_execution(thread_id, None, cx);
+    }
+
     pub fn continue_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        if !self
+            .capabilities
+            .supports_single_thread_execution_requests
+            .unwrap_or_default()
+        {
+            return;
+        }
+
+        self.continue_execution(thread_id, Some(true), cx);
+    }
+
+    fn continue_execution(
+        &mut self,
+        thread_id: ThreadId,
+        single_thread: Option<bool>,
+        cx: &mut Context<Self>,
+    ) {
         self.select_historic_snapshot(None, cx);
 
-        let supports_single_thread_execution_requests =
-            self.capabilities.supports_single_thread_execution_requests;
         self.active_snapshot
             .thread_states
             .continue_thread(thread_id);
@@ -2292,10 +2343,10 @@ impl Session {
             ContinueCommand {
                 args: ContinueArguments {
                     thread_id: thread_id.0,
-                    single_thread: supports_single_thread_execution_requests,
+                    single_thread,
                 },
             },
-            Self::on_step_response::<ContinueCommand>(thread_id),
+            Self::on_continue_response(thread_id),
             cx,
         )
         .detach();

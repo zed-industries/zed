@@ -30,7 +30,6 @@ use collections::HashMap;
 use gpui_util::ResultExt;
 use refineable::Refineable;
 use smallvec::SmallVec;
-use stacksafe::{StackSafe, stacksafe};
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -44,6 +43,11 @@ use std::{
 };
 
 use super::ImageCacheProvider;
+
+#[cfg(feature = "stacker")]
+type StackSafe<T> = stacksafe::StackSafe<T>;
+#[cfg(not(feature = "stacker"))]
+type StackSafe<T> = T;
 
 const DRAG_THRESHOLD: f64 = 2.;
 const DEFAULT_TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
@@ -1777,8 +1781,11 @@ impl InteractiveElement for Div {
 
 impl ParentElement for Div {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        #[cfg(feature = "stacker")]
         self.children
-            .extend(elements.into_iter().map(StackSafe::new))
+            .extend(elements.into_iter().map(StackSafe::new));
+        #[cfg(not(feature = "stacker"))]
+        self.children.extend(elements);
     }
 }
 
@@ -1816,7 +1823,7 @@ impl Element for Div {
         }
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1852,7 +1859,7 @@ impl Element for Div {
         (layout_id, DivFrameState { child_layout_ids })
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -1947,7 +1954,7 @@ impl Element for Div {
         )
     }
 
-    #[stacksafe]
+    #[cfg_attr(feature = "stacker", stacksafe::stacksafe)]
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,

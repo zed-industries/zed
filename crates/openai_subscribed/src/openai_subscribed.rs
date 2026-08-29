@@ -37,7 +37,12 @@ const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
-const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const TOKEN_REFRESH_BUFFER_MS: u64 = Duration::from_mins(5).as_millis() as u64;
+/// Requests the complete account catalog without Codex CLI version filtering.
+///
+/// The backend treats this exact version as an ungated sentinel. Other versions
+/// are compared with each model's `minimal_client_version`.
+const UNGATED_MODEL_CATALOG_CLIENT_VERSION: &str = "0.0.0";
 // Codex applies the same bound because model discovery is a startup-critical request.
 const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -88,21 +93,15 @@ impl std::fmt::Display for RefreshError {
 }
 
 impl State {
-    /// Creates the state and starts loading any persisted credentials.
+    /// Creates state and starts loading persisted credentials.
+    ///
+    /// Model discovery requests the ungated account catalog because host
+    /// application versions are unrelated to Codex CLI compatibility versions.
+    ///
     /// [`State::load_task`] resolves once the load finishes.
     pub fn new(
         http_client: Arc<dyn HttpClient>,
         credentials_provider: Arc<dyn CredentialsProvider>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new_with_client_version(http_client, credentials_provider, "0.0.0".into(), cx)
-    }
-
-    /// Creates the state with the client version reported during model discovery.
-    pub fn new_with_client_version(
-        http_client: Arc<dyn HttpClient>,
-        credentials_provider: Arc<dyn CredentialsProvider>,
-        client_version: SharedString,
         cx: &mut Context<Self>,
     ) -> Self {
         let load_task = cx
@@ -160,7 +159,7 @@ impl State {
             load_task: Some(load_task),
             credentials_provider,
             http_client,
-            client_version,
+            client_version: UNGATED_MODEL_CATALOG_CLIENT_VERSION.into(),
             available_models: ChatGptModel::all(),
             auth_generation: 0,
             model_catalog_generation: 0,
@@ -798,7 +797,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 })
                 .await?;
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            let mut event_stream = mapper.map_stream(response_stream.boxed());
+            let mut event_stream = language_model::stream_in_background(
+                mapper.map_stream(response_stream.boxed()).boxed(),
+                cx.background_executor().clone(),
+            );
             let mut compacted_context = None;
             let mut usage = language_model::TokenUsage::default();
 
@@ -890,6 +892,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
         let request_limiter = self.request_limiter.clone();
+        let executor = cx.background_executor().clone();
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
@@ -915,7 +918,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         async move {
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            Ok(mapper.map_stream(future.await?.boxed()).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(future.await?.boxed()).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }

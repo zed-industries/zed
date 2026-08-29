@@ -1,3 +1,5 @@
+#[cfg(feature = "profiler")]
+use crate::DebugFrameOverlayMode;
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 #[cfg(feature = "profiler")]
@@ -16,13 +18,15 @@ use crate::{
     RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
     SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextRenderingMode, TextStyle,
-    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 
+use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
+use crate::interactive::TouchEvent;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
@@ -115,6 +119,8 @@ impl DispatchPhase {
 }
 
 struct WindowInvalidatorInner {
+    #[cfg(feature = "profiler")]
+    pub window_id: WindowId,
     pub dirty: bool,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,
@@ -126,8 +132,9 @@ struct WindowInvalidatorInner {
 
 /// Per-frame invalidation bookkeeping, drained at draw time and emitted to the
 /// frame profiler. Tracks when the current frame first became dirty and how
-/// many invalidations were coalesced into it. Only populated when the profiler
-/// is compiled in and `profiler::trace_enabled()` is set.
+/// many invalidations were coalesced into it, whenever the profiler is
+/// compiled in. Retention of the resulting per-frame records is what
+/// `profiler::trace_enabled()` controls, not this measurement.
 #[cfg(feature = "profiler")]
 #[derive(Default)]
 struct FrameDirtyAccumulator {
@@ -141,9 +148,11 @@ pub(crate) struct WindowInvalidator {
 }
 
 impl WindowInvalidator {
-    pub fn new() -> Self {
+    pub fn new(#[allow(unused_variables)] window_id: WindowId) -> Self {
         WindowInvalidator {
             inner: Rc::new(RefCell::new(WindowInvalidatorInner {
+                #[cfg(feature = "profiler")]
+                window_id,
                 dirty: true,
                 draw_phase: DrawPhase::None,
                 dirty_views: FxHashSet::default(),
@@ -161,11 +170,17 @@ impl WindowInvalidator {
         inner.dirty_views.insert(entity);
         if inner.draw_phase == DrawPhase::None {
             #[cfg(feature = "profiler")]
-            Self::record_frame_dirty(&mut inner);
+            let dirty_at = Self::record_frame_dirty(&mut inner);
             let became_dirty = !inner.dirty;
             inner.dirty = true;
             let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+            #[cfg(feature = "profiler")]
+            let window_id = inner.window_id;
             drop(inner);
+            #[cfg(feature = "profiler")]
+            if became_dirty {
+                profiler::journal::record_frame_pending(window_id, dirty_at);
+            }
             cx.push_effect(Effect::Notify { emitter: entity });
             if let Some(waker) = waker {
                 waker();
@@ -186,11 +201,17 @@ impl WindowInvalidator {
         inner.dirty = dirty;
         if dirty {
             inner.update_count += 1;
-            #[cfg(feature = "profiler")]
-            Self::record_frame_dirty(&mut inner);
         }
+        #[cfg(feature = "profiler")]
+        let dirty_at = dirty.then(|| Self::record_frame_dirty(&mut inner));
         let waker = became_dirty.then(|| inner.platform_waker.clone()).flatten();
+        #[cfg(feature = "profiler")]
+        let window_id = inner.window_id;
         drop(inner);
+        #[cfg(feature = "profiler")]
+        if became_dirty && let Some(dirty_at) = dirty_at {
+            profiler::journal::record_frame_pending(window_id, dirty_at);
+        }
         if let Some(waker) = waker {
             waker();
         }
@@ -225,11 +246,10 @@ impl WindowInvalidator {
     }
 
     #[cfg(feature = "profiler")]
-    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) {
-        if profiler::trace_enabled() {
-            inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
-            inner.frame_dirty.invalidations += 1;
-        }
+    fn record_frame_dirty(inner: &mut WindowInvalidatorInner) -> Instant {
+        let dirty_at = *inner.frame_dirty.dirty_at.get_or_insert_with(Instant::now);
+        inner.frame_dirty.invalidations += 1;
+        dirty_at
     }
 
     #[cfg(feature = "profiler")]
@@ -1138,13 +1158,17 @@ pub struct Window {
     pub(crate) element_opacity: f32,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
+    /// The [`TextInputConfiguration`] most recently forwarded to the platform
+    /// window, so that only actual changes are forwarded (reconfiguring a live
+    /// input session can restart the IME connection).
+    last_text_input_configuration: Option<TextInputConfiguration>,
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
     next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
-    next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -1168,6 +1192,7 @@ pub struct Window {
     #[cfg(feature = "profiler")]
     window_profiler: profiler::WindowProfiler,
     last_input_modality: InputModality,
+    touch_gestures: TouchGestureRecognizer,
     pub(crate) refreshing: bool,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
@@ -1185,6 +1210,8 @@ pub struct Window {
     captured_hitbox: Option<HitboxId>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
+    #[cfg(feature = "profiler")]
+    debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay,
     pub(crate) a11y: A11y,
 }
 
@@ -1340,6 +1367,7 @@ impl Window {
             kind,
             is_movable,
             app_owns_titlebar_drag,
+            inactive_frame_interval,
             is_resizable,
             is_minimizable,
             display_id,
@@ -1397,7 +1425,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
-        let invalidator = WindowInvalidator::new();
+        let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
         let needs_present = Rc::new(Cell::new(false));
@@ -1518,6 +1546,8 @@ impl Window {
             let input_rate_tracker = input_rate_tracker.clone();
             let mut deferred_force_render = false;
             move |request_frame_options| {
+                #[cfg(feature = "profiler")]
+                let _foreground_turn = profiler::journal::foreground_turn();
                 // This must be checked before anything else: if this request
                 // arrived re-entrantly while a draw is on this thread's stack
                 // (e.g. via a nested message pump in the Windows window
@@ -1557,7 +1587,7 @@ impl Window {
                 {
                     None
                 } else if !active.get() && !input_rate_tracker.borrow_mut().is_high_rate() {
-                    Some(Duration::from_micros(33333))
+                    inactive_frame_interval
                 } else if let Some(ThermalState::Critical | ThermalState::Serious) = thermal_state {
                     Some(Duration::from_micros(16667))
                 } else {
@@ -1571,12 +1601,11 @@ impl Window {
                     {
                         // Don't lose a pending forced render to throttling.
                         deferred_force_render |= force_render;
-                        // Must still complete the frame on platforms that require it.
-                        // On Wayland, `surface.frame()` was already called to request the
-                        // next frame callback, so we must call `surface.commit()` (via
-                        // `complete_frame`) or the compositor won't send another callback.
+                        // Deferred by throttling: ask demand-driven platforms to retry.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .update(&mut cx, |_, window, _| {
+                                window.platform_window.schedule_frame();
+                            })
                             .log_err();
                         // The demand that entered this branch (a deferred forced
                         // render or pending next-frame callbacks) is still
@@ -1629,7 +1658,11 @@ impl Window {
 
                 handle
                     .update(&mut cx, |_, window, _| {
-                        window.complete_frame();
+                        if window.invalidator.is_dirty()
+                            || !window.next_frame_callbacks.borrow().is_empty()
+                        {
+                            window.platform_window.schedule_frame();
+                        }
                     })
                     .log_err();
 
@@ -1822,6 +1855,7 @@ impl Window {
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
             requested_autoscroll: None,
+            last_text_input_configuration: None,
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
@@ -1849,6 +1883,11 @@ impl Window {
             #[cfg(feature = "profiler")]
             window_profiler: profiler::WindowProfiler::new(handle.window_id())?,
             last_input_modality: InputModality::Mouse,
+            touch_gestures: TouchGestureRecognizer::new(
+                cx.platform
+                    .gestures()
+                    .map_or_else(GestureTuning::default, |gestures| gestures.tuning()),
+            ),
             refreshing: false,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -1863,6 +1902,8 @@ impl Window {
             captured_hitbox: None,
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
+            #[cfg(feature = "profiler")]
+            debug_frame_overlay: crate::debug_overlay::DebugFrameOverlay::new(),
             a11y: A11y::new(
                 a11y_active_flag,
                 accessibility_force_disabled,
@@ -2026,24 +2067,15 @@ impl Window {
 
         self.focus = Some(handle.id);
         self.focus_generation = self.focus_generation.wrapping_add(1);
-        self.clear_pending_keystrokes();
-
-        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
-        // current effect cycle, and only for this window.
-        let window_handle = self.handle;
-        cx.defer(move |cx| {
-            window_handle
-                .update(cx, |_, window, cx| {
-                    window.pending_input_changed(cx);
-                })
-                .ok();
-        });
+        self.clear_pending_keystrokes(cx);
 
         self.refresh();
     }
 
     /// Remove focus from all elements within this context's window.
-    pub fn blur(&mut self) {
+    pub fn blur(&mut self, cx: &mut App) {
+        self.clear_pending_keystrokes(cx);
+
         if !self.focus_enabled {
             return;
         }
@@ -2056,8 +2088,8 @@ impl Window {
     }
 
     /// Blur the window and don't allow anything in it to be focused again.
-    pub fn disable_focus(&mut self) {
-        self.blur();
+    pub fn disable_focus(&mut self, cx: &mut App) {
+        self.blur(cx);
         self.focus_enabled = false;
     }
 
@@ -2326,6 +2358,7 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        self.platform_window.schedule_frame();
         // Next-frame callbacks create frame demand without dirtying the
         // window, so the platform's frame source must be woken explicitly.
         self.invalidator.wake_platform();
@@ -2431,6 +2464,15 @@ impl Window {
             .render_to_image(&self.rendered_frame.scene)
     }
 
+    /// Returns the quads in the most recently rendered frame's scene, so tests can assert on
+    /// painted output without rasterizing the frame. Quad bounds are in scaled pixels and are
+    /// not clipped; each quad carries the content mask it will be clipped to when drawn. Quads
+    /// whose bounds don't intersect their content mask are culled at paint time and won't appear.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_quads(&self) -> Vec<Quad> {
+        self.rendered_frame.scene.quads.clone()
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
@@ -2439,6 +2481,13 @@ impl Window {
     /// Returns whether or not the window is currently fullscreen
     pub fn is_fullscreen(&self) -> bool {
         self.platform_window.is_fullscreen()
+    }
+
+    /// Returns whether the window is currently in simple (borderless) fullscreen,
+    /// where it covers the entire screen including the menu bar and notch area.
+    /// Always `false` on platforms other than macOS.
+    pub fn is_simple_fullscreen(&self) -> bool {
+        self.platform_window.is_simple_fullscreen()
     }
 
     pub(crate) fn appearance_changed(&mut self, cx: &mut App) {
@@ -2803,16 +2852,12 @@ impl Window {
         self.capslock
     }
 
-    fn complete_frame(&self) {
-        self.platform_window.completed_frame();
-    }
-
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
-        // Drain every draw in profiler builds so a stale first-invalidation
-        // timestamp can't leak across enable/disable of runtime tracing.
+        // Drain every draw in profiler builds so a previous frame's
+        // first-invalidation timestamp can't be attributed to this one.
         #[cfg(feature = "profiler")]
         let frame_dirty = self.invalidator.take_frame_dirty();
         #[cfg(feature = "profiler")]
@@ -2847,6 +2892,16 @@ impl Window {
         }
         if !cx.mode.skip_drawing() {
             self.draw_roots(cx);
+            #[cfg(feature = "profiler")]
+            {
+                let viewport_size = self.viewport_size;
+                let scale_factor = self.scale_factor();
+                self.debug_frame_overlay.paint(
+                    &mut self.next_frame.scene,
+                    viewport_size,
+                    scale_factor,
+                );
+            }
         }
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -2865,6 +2920,7 @@ impl Window {
         {
             self.platform_window.set_input_handler(input_handler);
         }
+        self.apply_text_input_configuration(cx);
 
         self.layout_engine.as_mut().unwrap().clear();
         self.text_system().finish_frame();
@@ -2927,8 +2983,12 @@ impl Window {
         self.needs_present.set(true);
 
         #[cfg(feature = "profiler")]
-        self.window_profiler
-            .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+        {
+            let draw_duration = self
+                .window_profiler
+                .end_draw(frame_dirty.dirty_at, frame_dirty.invalidations);
+            self.debug_frame_overlay.record_frame(draw_duration);
+        }
 
         // Exit the scope to obtain the arena-clear token this draw owes; the
         // scope's teardown itself happens in `ElementArenaScope::drop`.
@@ -2959,9 +3019,15 @@ impl Window {
 
     #[profiling::function]
     fn present(&mut self) {
+        #[cfg(feature = "profiler")]
+        let _foreground_turn = profiler::journal::foreground_turn();
+        #[cfg(feature = "profiler")]
+        let present_start = Instant::now();
         self.platform_window.draw(&self.rendered_frame.scene);
         #[cfg(feature = "profiler")]
         self.window_profiler.record_present(
+            present_start,
+            Instant::now(),
             self.active.get(),
             !self.next_frame_callbacks.borrow().is_empty(),
         );
@@ -2974,7 +3040,7 @@ impl Window {
     /// Benchmarks drive drawing synchronously rather than through a platform
     /// frame-request loop, so they call this after each measured update to
     /// submit the frame like production presentation would.
-    #[cfg(feature = "bench")]
+    #[cfg(any(feature = "bench-support", all(test, feature = "profiler")))]
     pub fn present_if_needed(&mut self) {
         if self.needs_present.get() {
             self.present();
@@ -2991,6 +3057,34 @@ impl Window {
     #[cfg(feature = "profiler")]
     pub fn frame_duration_snapshot(&self) -> profiler::FrameDurationSnapshot {
         self.window_profiler.frame_duration_snapshot()
+    }
+
+    /// Returns the current mode of the debug frame overlay.
+    #[cfg(feature = "profiler")]
+    pub fn debug_frame_overlay_mode(&self) -> DebugFrameOverlayMode {
+        self.debug_frame_overlay.mode()
+    }
+
+    /// Sets the mode of the debug frame overlay and schedules a redraw.
+    #[cfg(feature = "profiler")]
+    pub fn set_debug_frame_overlay_mode(&mut self, mode: DebugFrameOverlayMode) {
+        self.debug_frame_overlay.set_mode(mode);
+        self.refresh();
+    }
+
+    /// Advances the debug frame overlay through its hidden, frame-time-only,
+    /// and detailed modes.
+    #[cfg(feature = "profiler")]
+    pub fn cycle_debug_frame_overlay_mode(&mut self) {
+        self.set_debug_frame_overlay_mode(self.debug_frame_overlay.mode().next());
+    }
+
+    /// Clears the debug frame overlay's frame-time statistics, except for the
+    /// total frame count, and schedules a redraw.
+    #[cfg(feature = "profiler")]
+    pub fn reset_debug_frame_overlay_stats(&mut self) {
+        self.debug_frame_overlay.reset_stats();
+        self.refresh();
     }
 
     fn draw_roots(&mut self, cx: &mut App) {
@@ -4751,6 +4845,26 @@ impl Window {
         }
     }
 
+    /// Forwards the focused input handler's [`TextInputConfiguration`] to the
+    /// platform window when it differs from the last forwarded value. With no
+    /// input handler the default configuration applies, so a field's
+    /// preferences don't outlive its focus.
+    fn apply_text_input_configuration(&mut self, cx: &mut App) {
+        let configuration = match self.platform_window.take_input_handler() {
+            Some(mut input_handler) => {
+                let configuration = input_handler.text_input_configuration(self, cx);
+                self.platform_window.set_input_handler(input_handler);
+                configuration
+            }
+            None => TextInputConfiguration::default(),
+        };
+        if self.last_text_input_configuration.as_ref() != Some(&configuration) {
+            self.platform_window
+                .set_text_input_configuration(configuration.clone());
+            self.last_text_input_configuration = Some(configuration);
+        }
+    }
+
     /// Register a mouse event listener on the window for the next frame. The type of event
     /// is determined by the first parameter of the given listener. When the next frame is rendered
     /// the listener will be cleared.
@@ -4915,11 +5029,11 @@ impl Window {
             .unwrap_or_else(|| action.name().to_string())
     }
 
-    /// Dispatch a mouse or keyboard event on the window.
+    /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
-        self.window_profiler.begin_input();
+        self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
         // Track input modality for focus-visible styling and hover suppression.
         // Hover is suppressed during keyboard modality so that keyboard navigation
@@ -5040,6 +5154,8 @@ impl Window {
             self.dispatch_mouse_event(any_mouse_event, cx);
         } else if let Some(any_key_event) = event.keyboard_event() {
             self.dispatch_key_event(any_key_event, cx);
+        } else if let Some(touch_event) = event.touch_event() {
+            self.dispatch_touch_event(touch_event, cx);
         }
 
         // Must run after the move is dispatched: the platform owns the gesture afterwards, so this
@@ -5087,6 +5203,57 @@ impl Window {
         {
             self.refresh();
         }
+    }
+
+    /// Runs the portable gesture recognizer over a raw touch event and
+    /// dispatches whatever it resolves (scroll steps, synthesized taps)
+    /// through the ordinary mouse-event path.
+    fn dispatch_touch_event(&mut self, event: &TouchEvent, cx: &mut App) {
+        let recognized_gestures = self.touch_gestures.handle_event(event);
+        let mut tapped = false;
+        for gesture in recognized_gestures {
+            tapped |= matches!(gesture, RecognizedTouchGesture::Tap { .. });
+            self.dispatch_recognized_touch_gesture(gesture, cx);
+        }
+        // The platform's touch-release handler may inspect the input handler
+        // as soon as this dispatch returns (the web platform decides virtual
+        // keyboard visibility there, inside the user gesture). Input handlers
+        // are registered during draw, so draw now to make them reflect any
+        // focus change the tap just caused.
+        if tapped && self.invalidator.is_dirty() {
+            self.draw(cx).clear(cx);
+        }
+        if self.touch_gestures.has_momentum() {
+            self.schedule_touch_momentum_tick();
+        }
+    }
+
+    fn dispatch_recognized_touch_gesture(&mut self, gesture: RecognizedTouchGesture, cx: &mut App) {
+        match gesture {
+            RecognizedTouchGesture::Scroll(scroll_wheel) => {
+                self.mouse_position = scroll_wheel.position;
+                cx.propagate_event = true;
+                self.dispatch_mouse_event(&scroll_wheel, cx);
+            }
+            RecognizedTouchGesture::Tap { down, up } => {
+                self.mouse_position = up.position;
+                cx.propagate_event = true;
+                self.dispatch_mouse_event(&down, cx);
+                cx.propagate_event = true;
+                self.dispatch_mouse_event(&up, cx);
+            }
+        }
+    }
+
+    fn schedule_touch_momentum_tick(&mut self) {
+        self.on_next_frame(|window, cx| {
+            if let Some(gesture) = window.touch_gestures.tick_momentum() {
+                window.dispatch_recognized_touch_gesture(gesture, cx);
+            }
+            if window.touch_gestures.has_momentum() {
+                window.schedule_touch_momentum_tick();
+            }
+        });
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
@@ -5343,6 +5510,19 @@ impl Window {
             .retain(&(), |callback| callback(self, cx));
     }
 
+    fn defer_pending_input_changed(&self, cx: &mut App) {
+        // Avoid re-entrant entity updates by deferring observer notifications to the end of the
+        // current effect cycle, and only for this window.
+        let window_handle = self.handle;
+        cx.defer(move |cx| {
+            window_handle
+                .update(cx, |_, window, cx| {
+                    window.pending_input_changed(cx);
+                })
+                .ok();
+        });
+    }
+
     fn dispatch_key_down_up_event(
         &mut self,
         event: &dyn Any,
@@ -5407,8 +5587,15 @@ impl Window {
         self.active_pending_input().is_some()
     }
 
-    pub(crate) fn clear_pending_keystrokes(&mut self) {
-        self.pending_input.take();
+    #[cfg(test)]
+    pub(crate) fn pending_input_is_none(&self) -> bool {
+        self.pending_input.is_none()
+    }
+
+    pub(crate) fn clear_pending_keystrokes(&mut self, cx: &mut App) {
+        if self.pending_input.take().is_some() {
+            self.defer_pending_input_changed(cx);
+        }
     }
 
     /// Returns the currently pending input keystrokes that might result in a multi-stroke key binding.
@@ -5634,6 +5821,14 @@ impl Window {
     /// Toggle full screen status on the current window at the platform level.
     pub fn toggle_fullscreen(&self) {
         self.platform_window.toggle_fullscreen();
+    }
+
+    /// Toggle simple (borderless) fullscreen, where the window covers the entire
+    /// screen including the menu bar and, on notched displays, the area around the
+    /// notch. Unlike [`Window::toggle_fullscreen`], this does not move the window
+    /// into its own Mission Control space. Only has an effect on macOS.
+    pub fn toggle_simple_fullscreen(&self) {
+        self.platform_window.toggle_simple_fullscreen();
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
@@ -6058,7 +6253,7 @@ impl Window {
                 }
             }
             accesskit::Action::Blur => {
-                self.blur();
+                self.blur(cx);
             }
             _ => {
                 log::debug!(
@@ -6325,6 +6520,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             any_handle: AnyWindowHandle {
                 id,
                 state_type: TypeId::of::<V>(),
+                root_entity_type_name: std::any::type_name::<V>(),
             },
             state_type: PhantomData,
         }
@@ -6447,12 +6643,18 @@ impl<V: 'static> From<WindowHandle<V>> for AnyWindowHandle {
 pub struct AnyWindowHandle {
     pub(crate) id: WindowId,
     state_type: TypeId,
+    root_entity_type_name: &'static str,
 }
 
 impl AnyWindowHandle {
     /// Get the ID of this window.
     pub fn window_id(&self) -> WindowId {
         self.id
+    }
+
+    /// Returns the name of the window's declared root entity type.
+    pub fn root_entity_type_name(&self) -> &'static str {
+        self.root_entity_type_name
     }
 
     /// Attempt to convert this handle to a window handle with a specific root view type.
@@ -6949,6 +7151,25 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_window_reports_no_raw_handle_instead_of_panicking(cx: &mut TestAppContext) {
+        use raw_window_handle::{HandleError, HasDisplayHandle as _, HasWindowHandle as _};
+
+        let window = cx.add_window(|_, _| EmptyView);
+        window
+            .update(cx, |_, window, _| {
+                assert!(matches!(
+                    window.window_handle(),
+                    Err(HandleError::NotSupported)
+                ));
+                assert!(matches!(
+                    window.display_handle(),
+                    Err(HandleError::NotSupported)
+                ));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
     fn test_appearance_change_runs_after_app_update(cx: &mut TestAppContext) {
         let window = cx.add_window(|_, _| EmptyView);
         let observed_appearance = Rc::new(Cell::new(None));
@@ -6971,6 +7192,80 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(observed_appearance.get(), Some(WindowAppearance::Dark));
+    }
+
+    #[gpui::test]
+    fn queued_frame_callback_wakes_a_parked_render_loop(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, _| {
+            window.active.set(true);
+            window.on_next_frame(|_, _| {});
+        })
+        .unwrap();
+        assert!(
+            test_window.frame_scheduled(),
+            "queuing work on a parked window must wake the render loop"
+        );
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(
+            test_window.frame_scheduled(),
+            "presenting the frame must await one compositor callback"
+        );
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!test_window.frame_scheduled());
+    }
+
+    #[gpui::test]
+    fn pending_presentation_wakes_a_parked_render_loop(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!test_window.frame_scheduled());
+
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+
+        assert!(
+            test_window.frame_scheduled(),
+            "a rendered scene awaiting presentation must wake the render loop"
+        );
+    }
+
+    #[gpui::test]
+    fn callback_queued_during_a_frame_requests_a_follow_up(cx: &mut TestAppContext) {
+        let window = cx.add_window(|_, _| Empty);
+        let test_window = cx.test_window(window.into());
+
+        let callback_ran = Rc::new(Cell::new(false));
+        cx.update_window(window.into(), |_, window, _| {
+            // Inactive windows are frame-rate throttled, which would defer the
+            // ticks this test drives manually.
+            window.active.set(true);
+            let callback_ran = callback_ran.clone();
+            window.on_next_frame(move |window, _| {
+                window.on_next_frame(move |_, _| callback_ran.set(true));
+            });
+        })
+        .unwrap();
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(!callback_ran.get());
+        assert!(
+            test_window.frame_scheduled(),
+            "a callback queued mid-frame must schedule a follow-up before the loop parks"
+        );
+
+        assert!(test_window.simulate_scheduled_frame());
+        assert!(callback_ran.get());
     }
 
     struct RootView {

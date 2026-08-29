@@ -88,6 +88,7 @@
       "cmd-j": "editor::Hover",
       "cmd-p": "editor::ShowSignatureHelp",
       "cmd-\\": "assistant::InlineAssist",
+      "ctrl-alt-h": "call_hierarchy::ShowIncomingCalls",
     },
   },
   {
@@ -226,6 +227,13 @@
     "context": "Editor && mode == auto_height",
     "bindings": {
       "escape": "editor::Cancel",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "bindings": {
+      "ctrl-alt-h": "call_hierarchy::ToggleDirection",
+      "cmd-k": null,
     },
   },
 ]

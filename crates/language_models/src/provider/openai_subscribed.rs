@@ -9,7 +9,6 @@ use language_model::{
     LanguageModelProviderState, ProviderSettingsView,
 };
 use openai_subscribed::{PROVIDER_ID, PROVIDER_NAME, State, create_language_model};
-use release_channel::AppVersion;
 use std::sync::Arc;
 use ui::{ConfiguredApiCard, prelude::*};
 
@@ -26,15 +25,7 @@ impl OpenAiSubscribedProvider {
         credentials_provider: Arc<dyn CredentialsProvider>,
         cx: &mut App,
     ) -> Self {
-        let app_version = AppVersion::global(cx);
-        let client_version = format!(
-            "{}.{}.{}",
-            app_version.major, app_version.minor, app_version.patch
-        )
-        .into();
-        let state = cx.new(|cx| {
-            State::new_with_client_version(http_client, credentials_provider, client_version, cx)
-        });
+        let state = cx.new(|cx| State::new(http_client, credentials_provider, cx));
         Self { state }
     }
 }

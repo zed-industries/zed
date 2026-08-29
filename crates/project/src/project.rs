@@ -52,7 +52,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
     is_submodule_git_dir, linked_worktree_short_name, repo_identity_path,
-    worktrees_directory_for_repo,
+    repo_identity_path_if_local, worktrees_directory_for_repo,
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
@@ -166,6 +166,7 @@ pub use task_inventory::{
 };
 
 pub use buffer_store::ProjectTransaction;
+pub use lsp_command::{CallHierarchyItem, IncomingCall, OutgoingCall};
 pub use lsp_store::{
     DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
     LanguageServerPromptRequest, LanguageServerStatus, LanguageServerToQuery, LspStore,
@@ -423,7 +424,12 @@ pub enum Event {
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
-    EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
+    EntryRenamed {
+        transaction: ProjectTransaction,
+        new_project_path: ProjectPath,
+        old_abs_path: PathBuf,
+        new_abs_path: PathBuf,
+    },
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
     BufferEdited {
@@ -1258,7 +1264,7 @@ impl Project {
                 .detach();
 
             let bookmark_store =
-                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+                cx.new(|cx| BookmarkStore::new(worktree_store.clone(), buffer_store.clone(), cx));
 
             let breakpoint_store =
                 cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
@@ -1513,7 +1519,7 @@ impl Project {
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             let bookmark_store =
-                cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+                cx.new(|cx| BookmarkStore::new(worktree_store.clone(), buffer_store.clone(), cx));
 
             let breakpoint_store = cx.new(|_| {
                 BreakpointStore::remote(
@@ -1776,7 +1782,7 @@ impl Project {
             cx.new(|cx| ProjectEnvironment::new(None, worktree_store.downgrade(), None, true, cx));
 
         let bookmark_store =
-            cx.new(|_| BookmarkStore::new(worktree_store.clone(), buffer_store.clone()));
+            cx.new(|cx| BookmarkStore::new(worktree_store.clone(), buffer_store.clone(), cx));
 
         let breakpoint_store = cx.new(|_| {
             BreakpointStore::remote(
@@ -2674,11 +2680,12 @@ impl Project {
 
             project
                 .update(cx, |_, cx| {
-                    cx.emit(Event::EntryRenamed(
+                    cx.emit(Event::EntryRenamed {
                         transaction,
-                        new_path.clone(),
-                        new_abs_path.clone(),
-                    ));
+                        new_project_path: new_path.clone(),
+                        old_abs_path: old_abs_path.clone(),
+                        new_abs_path: new_abs_path.clone(),
+                    });
                 })
                 .ok();
 
@@ -3857,6 +3864,7 @@ impl Project {
                 });
                 cx.emit(Event::DisconnectedFromRemote { server_not_running });
             }
+            &remote::RemoteClientEvent::Reconnected => {}
         }
     }
 
@@ -4116,6 +4124,9 @@ impl Project {
         new_language: Arc<Language>,
         cx: &mut Context<Self>,
     ) {
+        buffer.update(cx, |buffer, _| {
+            buffer.set_content_language_detection_enabled(false);
+        });
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.set_language_for_buffer(buffer, new_language, cx)
         })
@@ -4440,6 +4451,56 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.references(buffer, position, cx)
         });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn prepare_call_hierarchy<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<CallHierarchyItem>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.prepare_call_hierarchy(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn incoming_calls(
+        &mut self,
+        item: CallHierarchyItem,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<IncomingCall>>>> {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.incoming_calls(item, cx));
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn outgoing_calls(
+        &mut self,
+        item: CallHierarchyItem,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<OutgoingCall>>>> {
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self
+            .lsp_store
+            .update(cx, |lsp_store, cx| lsp_store.outgoing_calls(item, cx));
         cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
@@ -5289,6 +5350,16 @@ impl Project {
         })
     }
 
+    pub fn get_file_permalink(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut App,
+    ) -> Task<Result<url::Url>> {
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.get_file_permalink(project_path, cx)
+        })
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(
@@ -5714,7 +5785,8 @@ impl Project {
         mut cx: AsyncApp,
     ) -> Result<()> {
         let toggled_log_kind =
-            match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+            match proto::toggle_lsp_logs::LogType::try_from(envelope.payload.log_type)
+                .ok()
                 .context("invalid log type")?
             {
                 proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,
