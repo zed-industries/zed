@@ -591,6 +591,43 @@ async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
 }
 
 #[gpui::test]
+async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+        }),
+    )
+    .await;
+
+    let result = fs
+        .rename(
+            Path::new(path!("/root/source.txt")),
+            Path::new(path!("/root/target.txt")),
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        fs.load(Path::new(path!("/root/source.txt"))).await.unwrap(),
+        "from source"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/root/target.txt"))).await.unwrap(),
+        "from target"
+    );
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();
