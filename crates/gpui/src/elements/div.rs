@@ -23,8 +23,8 @@ use crate::{
     LayoutId, ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MousePressureEvent, MouseUpEvent, OngoingScroll, Overflow, ParentElement,
     PinchEvent, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    StyleRefinement, StyleTransitionContext, StyleTransitionState, StyleTransitions, Styled, Task,
+    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -736,6 +736,26 @@ impl Interactivity {
 pub trait InteractiveElement: Sized {
     /// Retrieve the interactivity state associated with this element
     fn interactivity(&mut self) -> &mut Interactivity;
+
+    /// Transitions the style properties selected by `build` when their values change.
+    ///
+    /// GPUI stores transition state by element ID. Elements created repeatedly at the same call
+    /// site must have an explicit [`Self::id`].
+    ///
+    /// A property with a missing endpoint changes immediately. Incompatible length
+    /// representations hold the old value until the motion completes.
+    #[track_caller]
+    fn transitions(mut self, build: impl FnOnce(StyleTransitions) -> StyleTransitions) -> Self {
+        let transitions = build(StyleTransitions::new());
+        let interactivity = self.interactivity();
+
+        interactivity
+            .element_id
+            .get_or_insert_with(|| ElementId::CodeLocation(*core::panic::Location::caller()));
+        interactivity.style_transitions = Some(Box::new(transitions));
+
+        self
+    }
 
     /// Assign this element to a group of elements that can be styled together
     fn group(mut self, group: impl Into<SharedString>) -> Self {
@@ -2050,6 +2070,7 @@ pub struct Interactivity {
     /// The base style of the element, before any modifications are applied
     /// by focus, active, etc.
     pub base_style: Box<StyleRefinement>,
+    pub(crate) style_transitions: Option<Box<StyleTransitions>>,
     pub(crate) focus_style: Option<Box<StyleRefinement>>,
     pub(crate) in_focus_style: Option<Box<StyleRefinement>>,
     pub(crate) focus_visible_style: Option<Box<StyleRefinement>>,
@@ -2188,7 +2209,8 @@ impl Interactivity {
                     );
                 }
 
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+                let style =
+                    self.compute_style_internal(None, None, element_state.as_mut(), window, cx);
                 let layout_id = f(style, window, cx);
                 (layout_id, element_state)
             },
@@ -2253,7 +2275,14 @@ impl Interactivity {
             |element_state, window| {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
-                let style = self.compute_style_internal(None, element_state.as_mut(), window, cx);
+
+                let style = self.compute_style_internal(
+                    None,
+                    Some(bounds),
+                    element_state.as_mut(),
+                    window,
+                    cx,
+                );
 
                 if let Some(element_state) = element_state.as_mut() {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
@@ -2405,7 +2434,13 @@ impl Interactivity {
                 let mut element_state =
                     element_state.map(|element_state| element_state.unwrap_or_default());
 
-                let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
+                let style = self.compute_style_internal(
+                    hitbox,
+                    Some(bounds),
+                    element_state.as_mut(),
+                    window,
+                    cx,
+                );
 
                 #[cfg(any(feature = "test-support", test))]
                 if let Some(debug_selector) = &self.debug_selector {
@@ -3268,7 +3303,14 @@ impl Interactivity {
         window.with_optional_element_state(global_id, |element_state, window| {
             let mut element_state =
                 element_state.map(|element_state| element_state.unwrap_or_default());
-            let style = self.compute_style_internal(hitbox, element_state.as_mut(), window, cx);
+
+            let style = self.compute_style_internal(
+                hitbox,
+                hitbox.map(|hitbox| hitbox.bounds),
+                element_state.as_mut(),
+                window,
+                cx,
+            );
             (style, element_state)
         })
     }
@@ -3277,7 +3319,8 @@ impl Interactivity {
     fn compute_style_internal(
         &self,
         hitbox: Option<&Hitbox>,
-        element_state: Option<&mut InteractiveElementState>,
+        bounds: Option<Bounds<Pixels>>,
+        mut element_state: Option<&mut InteractiveElementState>,
         window: &mut Window,
         cx: &mut App,
     ) -> Style {
@@ -3375,7 +3418,7 @@ impl Interactivity {
             }
         }
 
-        if let Some(element_state) = element_state {
+        if let Some(element_state) = element_state.as_deref_mut() {
             let clicked_state = element_state
                 .clicked_state
                 .get_or_insert_with(Default::default)
@@ -3390,6 +3433,24 @@ impl Interactivity {
                 && clicked_state.element
             {
                 style.refine(active_style)
+            }
+        }
+
+        if let Some(element_state) = element_state {
+            if let Some(transitions) = self.style_transitions.as_ref() {
+                if transitions.apply(
+                    &mut style,
+                    element_state
+                        .style_transitions
+                        .get_or_insert_with(Default::default),
+                    bounds.map(|bounds| StyleTransitionContext::new(bounds, window.rem_size())),
+                    cx.background_executor().now(),
+                    cx.reduce_motion(),
+                ) {
+                    window.request_animation_frame();
+                }
+            } else {
+                element_state.style_transitions = None;
             }
         }
 
@@ -3492,6 +3553,7 @@ pub struct InteractiveElementState {
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
+    pub(crate) style_transitions: Option<Box<StyleTransitionState>>,
 }
 
 /// Whether or not the element or a group that contains it is clicked by the mouse.
