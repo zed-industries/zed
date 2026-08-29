@@ -5544,6 +5544,324 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_breadcrumb_menu_gives_up_a_listing_replaced_by_a_file(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Fs, Project};
+        use serde_json::json;
+        use std::path::Path;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "a": { "b": { "c": { "x.txt": "", "y.txt": "" } } } }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::new_test("a/b/c").into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+
+        let dismissed = Rc::new(AtomicBool::new(false));
+        let _subscription = menu.update(cx, |_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+
+        // Both mutations land in one scan, so the update the listing sees names a path that
+        // still exists - as a file. Existence alone cannot reject it.
+        fs.remove_dir(
+            Path::new(path!("/root/a/b/c")),
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        fs.insert_file(path!("/root/a/b/c"), b"now a file".to_vec())
+            .await;
+        cx.run_until_parked();
+
+        assert!(
+            dismissed.load(Ordering::SeqCst),
+            "a path that came back as a file cannot be listed; reloading would paint it as an \
+             empty directory"
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_a_drill_gives_up_a_directory_deleted_mid_flight(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use project::{FakeFs, Fs, Project};
+        use serde_json::json;
+        use std::path::Path;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new(
+                "enter",
+                Confirm,
+                Some("BreadcrumbNavigationMenu > Editor"),
+            )]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({ "gone": { "inner.txt": "" }, "stay.txt": "" }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree_id = project.update(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                div().size_full().child(self.menu.clone())
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::empty().into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+        });
+
+        let dismissed = Rc::new(AtomicBool::new(false));
+        let _subscription = menu.update(cx, |_, cx| {
+            let dismissed = dismissed.clone();
+            cx.subscribe(&menu, move |_, _, _: &DismissEvent, _| {
+                dismissed.store(true, Ordering::SeqCst);
+            })
+        });
+
+        // Select the directory row, then start the drill without letting anything land.
+        cx.simulate_input("gone");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx);
+        });
+
+        // The removal names the drill's target while the listing being left is still the
+        // current one, where it classifies as an ordinary child change - only the drill's own
+        // check can notice its target is gone.
+        fs.remove_dir(
+            Path::new(path!("/root/gone")),
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            dismissed.load(Ordering::SeqCst),
+            "the drill's target is gone; installing its listing would paint a dead path as an \
+             empty directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumb_directory_rows_reload_on_a_git_change_below_their_children(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use git::status::{FileStatus, StatusCode};
+        use project::{FakeFs, Project};
+        use serde_json::json;
+        use util::path;
+        use workspace::Workspace;
+
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                ".git": {},
+                "sub": { "deep": { "file.txt": "x\n" }, "top.txt": "" },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+        cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+        cx.run_until_parked();
+
+        let workspace_window =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = workspace_window.root(cx).unwrap();
+        let buffer = cx.new(|cx| language::Buffer::local("", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let menu_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(buffer, window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                workspace.downgrade(),
+                BreadcrumbListing::Directory {
+                    worktree_id,
+                    path: RelPath::new_test("sub").into_arc(),
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost { menu }
+        });
+        let menu = menu_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*menu_window, cx);
+        cx.run_until_parked();
+
+        let reloads_before = menu.read_with(cx, |menu, _| menu.directory_reload_count_for_test());
+
+        // The changed file is below the listing's immediate children, so the worktree
+        // subscription's path check never fires for it; only the git store names it.
+        fs.set_status_for_repo(
+            path!("/root/.git").as_ref(),
+            &[(
+                "sub/deep/file.txt",
+                FileStatus::worktree(StatusCode::Modified),
+            )],
+        );
+        cx.run_until_parked();
+
+        let reloads_after_status =
+            menu.read_with(cx, |menu, _| menu.directory_reload_count_for_test());
+        assert!(
+            reloads_after_status > reloads_before,
+            "a git change below the immediate children must reload the rows: their summaries \
+             aggregate the whole subtree"
+        );
+
+        // An index-only change touches no worktree path at all.
+        fs.set_index_for_repo(
+            path!("/root/.git").as_ref(),
+            &[("sub/deep/file.txt", "y\n".to_string())],
+        );
+        cx.run_until_parked();
+
+        let reloads_after_index =
+            menu.read_with(cx, |menu, _| menu.directory_reload_count_for_test());
+        assert!(
+            reloads_after_index > reloads_after_status,
+            "an index-only change touches no path, so only the git subscription can reload for it"
+        );
+    }
+
+    #[gpui::test]
     async fn test_breadcrumb_menu_filtered_selection_survives_a_reload(cx: &mut TestAppContext) {
         use crate::editor_tests::init_test;
         use crate::test::build_editor;
@@ -5649,6 +5967,34 @@ mod tests {
             Some("ab.txt"),
             "a reload must not move the highlight off the row the user arrowed to"
         );
+
+        // A second refresh lands while the first one's rank is still in flight. The first
+        // latched the arrowed row and blanked the selection, so this one derives `None` - and
+        // must leave the latch alone rather than carry that `None` in.
+        menu.update(cx, |menu, cx| {
+            menu.apply_reloaded_selection_for_test(
+                Some(RelPath::new_test("ab.txt").into_arc()),
+                cx,
+            );
+            assert_eq!(
+                menu.selected_index(),
+                None,
+                "fixture: the first refresh must blank the selection the second one reads"
+            );
+            menu.apply_reloaded_selection_for_test(None, cx);
+        });
+        cx.run_until_parked();
+
+        let after_second_refresh = menu.read_with(cx, |menu, cx| {
+            let rows = menu.published_row_labels(cx);
+            menu.selected_index()
+                .and_then(|index| rows.get(index).cloned())
+        });
+        assert_eq!(
+            after_second_refresh.as_deref(),
+            Some("ab.txt"),
+            "back-to-back refreshes must not drop the user's row to the top match"
+        );
     }
 
     #[test]
@@ -5690,6 +6036,33 @@ mod tests {
             listing_path_impact(RelPath::empty(), RelPath::empty()),
             ListingPathImpact::Dead,
             "the worktree root goes through the same existence check, which always finds it"
+        );
+    }
+
+    #[test]
+    fn test_arming_the_filter_barrier_keeps_the_outstanding_one() {
+        use super::menu::FilterSettled;
+        use futures::FutureExt as _;
+        use postage::stream::Stream as _;
+
+        let settled = FilterSettled::default();
+        settled.arm_for_test();
+        let mut receiver = settled
+            .receiver()
+            .expect("an armed barrier hands a receiver out");
+
+        // A superseding rank arms again while that receiver is still awaited.
+        settled.arm_for_test();
+        assert!(
+            receiver.recv().now_or_never().is_none(),
+            "re-arming must not release a receiver already handed out: no rows have been \
+             published for the replacement query yet"
+        );
+
+        settled.settle();
+        assert!(
+            receiver.recv().now_or_never().is_some(),
+            "the settle that follows the publish must release it"
         );
     }
 
@@ -6379,6 +6752,107 @@ mod tests {
                 !menu.symbol_restore_pending(),
                 "a reload under an active query has to consume the latch, not park it for the \
                  next listing"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_a_symbol_reload_blanks_the_filter_with_the_outline(cx: &mut TestAppContext) {
+        use crate::editor_tests::init_test;
+        use crate::test::build_editor;
+        use language::{Language, LanguageConfig};
+
+        init_test(cx, |_| {});
+
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig::default(),
+                Some(tree_sitter_rust::LANGUAGE.into()),
+            )
+            .with_outline_query("(function_item name: (_) @name) @item")
+            .expect("rust outline query"),
+        );
+        let buffer = cx
+            .new(|cx| language::Buffer::local("fn alpha() {}\nfn beta() {}\nfn gamma() {}\n", cx));
+        buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx));
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+        let multi_buffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+        struct MenuHost {
+            menu: Entity<BreadcrumbNavigationMenu>,
+            _editor: Entity<Editor>,
+        }
+        impl gpui::Render for MenuHost {
+            fn render(
+                &mut self,
+                _window: &mut gpui::Window,
+                _cx: &mut gpui::Context<Self>,
+            ) -> impl gpui::IntoElement {
+                self.menu.clone()
+            }
+        }
+
+        let host_window = cx.add_window(|window, cx| {
+            let editor = cx.new(|cx| build_editor(multi_buffer.clone(), window, cx));
+            let menu = BreadcrumbNavigationMenu::new(
+                editor.downgrade(),
+                WeakEntity::new_invalid(),
+                BreadcrumbListing::Symbols {
+                    buffer_id,
+                    parent: None,
+                },
+                None,
+                false,
+                window,
+                cx,
+            );
+            MenuHost {
+                menu,
+                _editor: editor,
+            }
+        });
+        let menu = host_window
+            .root(cx)
+            .unwrap()
+            .read_with(cx, |host, _| host.menu.clone());
+        let cx = &mut VisualTestContext::from_window(*host_window, cx);
+        cx.run_until_parked();
+
+        menu.update(cx, |menu, cx| menu.set_filter_query_for_test("a", cx));
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, _| {
+            assert!(
+                menu.selected_index().is_some(),
+                "fixture: the rank must put a selection up before the edit"
+            );
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            let end = buffer.len();
+            buffer.edit([(end..end, "fn delta() {}\n")], None, cx);
+        });
+        // Deliberately not parked: the reload is still in flight, and what the menu publishes
+        // inside this window is what a click or a landing rank can act on. Candidates and
+        // matches are outline indices, so rows and selection must go with the items they
+        // indexed.
+        menu.read_with(cx, |menu, cx| {
+            assert_eq!(
+                menu.published_row_labels(cx),
+                Vec::<SharedString>::new(),
+                "blanked items cannot keep published rows"
+            );
+            assert_eq!(
+                menu.selected_index(),
+                None,
+                "the selection indexes the matches; it cannot outlive them"
+            );
+        });
+
+        cx.run_until_parked();
+        menu.read_with(cx, |menu, _| {
+            assert!(
+                menu.selected_index().is_some(),
+                "the reload has to rerank the query over the fresh outline"
             );
         });
     }

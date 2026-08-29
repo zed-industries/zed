@@ -477,6 +477,18 @@ impl BreadcrumbNavigationMenu {
         self.directory_reload_count
     }
 
+    /// The tail of a directory refresh, with the `selected_path` a real refresh would have
+    /// derived at its start. Split out so a test can land two refreshes inside the window a
+    /// rank leaves open, which no amount of parking can time reliably.
+    #[cfg(test)]
+    pub fn apply_reloaded_selection_for_test(
+        &mut self,
+        selected_path: Option<Arc<RelPath>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_reloaded_selection(selected_path, cx);
+    }
+
     #[cfg(test)]
     pub fn apply_initial_selection_for_test(&mut self, cx: &mut Context<Self>) {
         self.pending_initial_selection = true;
@@ -2229,11 +2241,16 @@ impl FilterSettled {
         }
     }
 
-    fn settle(&self) {
+    #[cfg(test)]
+    pub(super) fn arm_for_test(&self) {
+        self.arm();
+    }
+
+    pub(super) fn settle(&self) {
         self.0.borrow_mut().take();
     }
 
-    fn receiver(&self) -> Option<postage::barrier::Receiver> {
+    pub(super) fn receiver(&self) -> Option<postage::barrier::Receiver> {
         self.0
             .borrow()
             .as_ref()
