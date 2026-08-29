@@ -15,6 +15,7 @@ mod workspace;
 
 pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
+use anyhow::Context;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -169,7 +170,7 @@ pub enum ReduceMotionMode {
 }
 
 #[with_fallible_options]
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, PartialEq, Default, Clone, Serialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
@@ -191,6 +192,8 @@ pub struct SettingsContent {
 
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
+
+    pub call_hierarchy: Option<CallHierarchySettingsContent>,
 
     pub git_panel: Option<GitPanelSettingsContent>,
 
@@ -393,6 +396,27 @@ impl SettingsContent {
     }
 }
 
+fallible_options::flattened_deserialize!(SettingsContent {
+    sections: { project, theme, extension, workspace, editor, remote },
+    options: {
+        call_hierarchy, file_finder, git_panel, tabs, tab_bar, status_bar, preview_tabs, agent,
+        agent_servers, audio, auto_update, base_keymap, collaboration_panel, debugger, diagnostics,
+        git,
+        global_lsp_settings, image_viewer, markdown_preview, repl, helix_mode, hide_mouse,
+        journal, log, line_indicator_format, language_models, outline_panel, project_panel,
+        node, proxy, reduce_motion, server_url, credentials_url, session, telemetry, terminal,
+        title_bar, vim_mode, calls, which_key, vim, modeline_lines, feature_flags,
+        instrumentation,
+    },
+    defaults: {},
+});
+
+fallible_options::flattened_deserialize!(UserSettingsContent {
+    sections: { content, release_channel_overrides, platform_overrides },
+    options: {},
+    defaults: { profiles },
+});
+
 // These impls are there to optimize builds by avoiding monomorphization downstream. Yes, they're repetitive, but using default impls
 // break the optimization, for whatever reason.
 pub trait RootUserSettings: Sized + DeserializeOwned {
@@ -468,7 +492,7 @@ pub struct SettingsProfile {
 }
 
 #[with_fallible_options]
-#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
@@ -723,10 +747,10 @@ pub struct GitPanelSettingsContent {
     /// Default: false
     pub file_icons: Option<bool>,
 
-    /// Whether to show folder icons or chevrons for directories in the git panel.
+    /// What to show for directories in the git panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
 
     /// How and when the scrollbar should be displayed.
     ///
@@ -910,7 +934,7 @@ pub struct FileFinderSettingsContent {
     /// Determines how much space the file finder can take up in relation to the available window width.
     ///
     /// Default: small
-    pub modal_max_width: Option<FileFinderWidthContent>,
+    pub modal_max_width: Option<ModalWidthContent>,
     /// Determines whether the file finder should skip focus for the active file in search results.
     ///
     /// Default: true
@@ -966,13 +990,34 @@ pub enum IncludeIgnoredContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "lowercase")]
-pub enum FileFinderWidthContent {
+pub enum ModalWidthContent {
     #[default]
     Small,
     Medium,
     Large,
     XLarge,
     Full,
+}
+
+impl ModalWidthContent {
+    pub fn to_pixels(self, base_width: gpui::Pixels, window_width: gpui::Pixels) -> gpui::Pixels {
+        match self {
+            ModalWidthContent::Small => base_width,
+            ModalWidthContent::Full => window_width,
+            ModalWidthContent::XLarge => (window_width - gpui::px(512.)).max(base_width),
+            ModalWidthContent::Large => (window_width - gpui::px(768.)).max(base_width),
+            ModalWidthContent::Medium => (window_width - gpui::px(1024.)).max(base_width),
+        }
+    }
+}
+
+#[with_fallible_options]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
+pub struct CallHierarchySettingsContent {
+    /// Determines how much space the call hierarchy picker can take up in relation to the available window width.
+    ///
+    /// Default: medium
+    pub modal_max_width: Option<ModalWidthContent>,
 }
 
 #[with_fallible_options]
@@ -1131,10 +1176,10 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: true
     pub file_icons: Option<bool>,
-    /// Whether to show folder icons or chevrons for directories in the outline panel.
+    /// What to show for directories in the outline panel.
     ///
-    /// Default: true
-    pub folder_icons: Option<bool>,
+    /// Default: icon
+    pub folder_indicator: Option<FolderIndicator>,
     /// Whether to show the git status in the outline panel.
     ///
     /// Default: true
@@ -1524,7 +1569,6 @@ impl merge_from::MergeFrom for SaturatingBool {
     Deserialize,
     MergeFrom,
     JsonSchema,
-    derive_more::FromStr,
 )]
 #[serde(transparent)]
 pub struct DelayMs(pub u64);
@@ -1538,5 +1582,18 @@ impl From<u64> for DelayMs {
 impl std::fmt::Display for DelayMs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}ms", self.0)
+    }
+}
+
+impl std::str::FromStr for DelayMs {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.trim()
+            .strip_suffix("ms")
+            .unwrap_or(s.trim())
+            .parse::<u64>()
+            .map(DelayMs)
+            .with_context(|| format!("failed to parse delay duration: {s}"))
     }
 }

@@ -769,7 +769,7 @@ impl Editor {
                         if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
                         } else if current_level == fold_at_level {
-                            // Fold iff there is no selection completely contained within the fold region
+                            // Fold if and only if there is no selection completely contained within the fold region
                             if !row_ranges_to_keep.iter().any(|selection| {
                                 selection.end >= nested_start_row
                                     && selection.start <= nested_end_row
@@ -778,7 +778,7 @@ impl Editor {
                             }
                         }
 
-                        start_row = nested_end_row + 1;
+                        start_row = (start_row + 1).max(nested_end_row);
                     }
                     None => start_row += 1,
                 }

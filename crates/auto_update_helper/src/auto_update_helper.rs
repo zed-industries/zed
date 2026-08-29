@@ -18,7 +18,10 @@ fn main() {}
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
-    use std::{borrow::Cow, path::Path};
+    use std::{
+        ffi::{OsStr, OsString},
+        path::Path,
+    };
 
     use super::dialog::create_dialog_window;
     use super::updater::perform_update;
@@ -37,9 +40,10 @@ mod windows_impl {
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;
     pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
-    #[derive(Debug, Default)]
+    #[derive(Debug, PartialEq, Eq)]
     struct Args {
         launch: bool,
+        launch_arguments: Vec<OsString>,
     }
 
     pub(crate) fn run() -> Result<()> {
@@ -56,9 +60,14 @@ mod windows_impl {
         log::info!("======= Starting Zed update =======");
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
-        let args = parse_args(std::env::args().skip(1));
+        let args = parse_args(std::env::args_os().skip(1));
         std::thread::spawn(move || {
-            let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch);
+            let result = perform_update(
+                app_dir.as_path(),
+                Some(hwnd),
+                args.launch,
+                &args.launch_arguments,
+            );
             tx.send(result).ok();
             unsafe { PostMessageW(Some(HWND(hwnd as _)), WM_TERMINATE, WPARAM(0), LPARAM(0)) }.ok();
         });
@@ -83,24 +92,23 @@ mod windows_impl {
         Ok(())
     }
 
-    fn parse_args(input: impl IntoIterator<Item = String>) -> Args {
-        let mut args: Args = Args { launch: true };
+    fn parse_args(input: impl IntoIterator<Item = OsString>) -> Args {
+        let mut args = Args {
+            launch: true,
+            launch_arguments: Vec::new(),
+        };
 
         let mut input = input.into_iter();
         if let Some(arg) = input.next() {
-            let launch_arg;
-
-            if arg == "--launch" {
-                launch_arg = input.next().map(Cow::Owned);
-            } else if let Some(rest) = arg.strip_prefix("--launch=") {
-                launch_arg = Some(Cow::Borrowed(rest));
+            if arg == OsStr::new("--launch") {
+                args.launch = input.next().as_deref() != Some(OsStr::new("false"));
+            } else if let Some(launch) = arg.to_str().and_then(|arg| arg.strip_prefix("--launch="))
+            {
+                args.launch = launch != "false";
             } else {
-                launch_arg = None;
+                args.launch_arguments.push(arg);
             }
-
-            if launch_arg.as_deref() == Some("false") {
-                args.launch = false;
-            }
+            args.launch_arguments.extend(input);
         }
 
         args
@@ -123,6 +131,8 @@ mod windows_impl {
 
     #[cfg(test)]
     mod tests {
+        use std::ffi::OsString;
+
         use crate::windows_impl::parse_args;
 
         #[test]
@@ -142,6 +152,18 @@ mod windows_impl {
             assert!(parse_args(["--launch".into()]).launch);
             assert!(parse_args(["--launch=".into()]).launch);
             assert!(parse_args(["--launch=invalid".into()]).launch);
+        }
+
+        #[test]
+        fn test_parse_args_preserves_launch_arguments() {
+            let launch_arguments = vec![
+                OsString::from("--user-data-dir"),
+                OsString::from(r"C:\Zed Data"),
+            ];
+            assert_eq!(
+                parse_args(launch_arguments.clone()).launch_arguments,
+                launch_arguments
+            );
         }
     }
 }

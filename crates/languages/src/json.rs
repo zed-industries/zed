@@ -69,11 +69,12 @@ impl ContextProvider for JsonTaskProvider {
                 .await
                 .ok()?;
             let path = cx.update(|cx| file.abs_path(cx)).as_path().into();
+            let contents_text = contents.text.to_string();
 
             let task_templates = if is_package_json {
                 let package_json = serde_json_lenient::from_str::<
                     HashMap<String, serde_json_lenient::Value>,
-                >(&contents.text)
+                >(&contents_text)
                 .ok()?;
                 let package_json = PackageJsonData::new(path, package_json);
                 let command = package_json.package_manager.unwrap_or("npm").to_owned();
@@ -100,7 +101,7 @@ impl ContextProvider for JsonTaskProvider {
                     }])
                     .collect()
             } else if is_composer_json {
-                serde_json_lenient::Value::from_str(&contents.text)
+                serde_json_lenient::Value::from_str(&contents_text)
                     .ok()?
                     .get("scripts")?
                     .as_object()?
