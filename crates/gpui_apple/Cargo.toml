@@ -24,6 +24,7 @@ gpui.workspace = true
 anyhow.workspace = true
 block.workspace = true
 cocoa.workspace = true
+cocoa-foundation.workspace = true
 collections.workspace = true
 core-foundation.workspace = true
 core-video.workspace = true

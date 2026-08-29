@@ -579,6 +579,8 @@ clap = { version = "4.4", features = ["derive", "wrap_help"] }
 clap_complete = { version = "4.4" }
 clap_complete_nushell = { version = "4.4" }
 cocoa = "=0.26.0"
+cocoa-foundation = "=0.2.0"
+io-surface = "=0.16.0"
 console = "0.16"
 console_error_panic_hook = "0.1.7"
 const_format = "0.2"
