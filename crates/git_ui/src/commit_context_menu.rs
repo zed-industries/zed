@@ -3,6 +3,7 @@ use git::Oid;
 use gpui::{Action, ClipboardItem, Entity, FocusHandle, SharedString, WeakEntity, Window, actions};
 use project::{GIT_COMMAND_TASK_TAG, git_store::Repository};
 
+use std::sync::Arc;
 use task::{TaskContext, TaskVariables, VariableName};
 use ui::{Color, ContextMenu, ContextMenuEntry, IconName, IconPosition, prelude::*};
 use workspace::Workspace;
@@ -33,6 +34,12 @@ pub(crate) enum CommitContextMenuSource {
     GitPanel,
 }
 
+pub(crate) enum CommitComparisonAction {
+    Select(Arc<dyn Fn(&mut Window, &mut App)>),
+    Compare(Arc<dyn Fn(&mut Window, &mut App)>),
+    Selected,
+}
+
 pub(crate) fn commit_context_menu(
     commit: CommitContextMenuData,
     source: CommitContextMenuSource,
@@ -40,6 +47,7 @@ pub(crate) fn commit_context_menu(
     focus_handle: FocusHandle,
     repository: Option<WeakEntity<Repository>>,
     workspace: WeakEntity<Workspace>,
+    comparison_action: Option<CommitComparisonAction>,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
@@ -77,6 +85,24 @@ pub(crate) fn commit_context_menu(
                     );
                 }
             })
+            .when_some(
+                comparison_action,
+                |menu, comparison_action| match comparison_action {
+                    CommitComparisonAction::Select(callback) => {
+                        menu.entry("Select for Compare", None, move |window, cx| {
+                            callback(window, cx)
+                        })
+                    }
+                    CommitComparisonAction::Compare(callback) => {
+                        menu.entry("Compare with Selected Commit", None, move |window, cx| {
+                            callback(window, cx)
+                        })
+                    }
+                    CommitComparisonAction::Selected => {
+                        menu.item(ContextMenuEntry::new("Selected for Compare").disabled(true))
+                    }
+                },
+            )
             .entry(
                 "Copy SHA",
                 Some(CopyCommitSha.boxed_clone()),

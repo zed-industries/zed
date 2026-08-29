@@ -492,6 +492,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
             .add_request_handler(forward_read_only_project_request::<proto::GitShow>)
             .add_request_handler(forward_read_only_project_request::<proto::LoadCommitDiff>)
+            .add_request_handler(forward_read_only_project_request::<proto::LoadCommitRangeDiff>)
             .add_request_handler(forward_mutating_project_request::<proto::GitReset>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCheckoutFiles>)
             .add_request_handler(forward_mutating_project_request::<proto::GitAddPathToGitignore>)

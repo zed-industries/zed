@@ -1,6 +1,8 @@
 pub use crate::commit_context_menu::{CopyCommitSha, CopyCommitTag, OpenCommitView};
 use crate::{
-    commit_context_menu::{CommitContextMenuData, CommitContextMenuSource, commit_context_menu},
+    commit_context_menu::{
+        CommitComparisonAction, CommitContextMenuData, CommitContextMenuSource, commit_context_menu,
+    },
     commit_tooltip::CommitAvatar,
     commit_view::CommitView,
     git_status_icon,
@@ -1314,6 +1316,7 @@ pub struct GitGraph {
     /// hidden regardless of whether the table is resizable. `true` means the column is hidden.
     column_visibility: TableRow<bool>,
     selected_entry_idx: Option<usize>,
+    compare_base: Option<Oid>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     log_source: LogSource,
@@ -1338,6 +1341,7 @@ impl GitGraph {
         self.search_state.selected_index = None;
         self.search_state.state.next_state();
         self.context_menu = None;
+        self.compare_base = None;
         cx.emit(ItemEvent::Edit);
         cx.notify();
     }
@@ -1561,6 +1565,7 @@ impl GitGraph {
             column_widths,
             column_visibility,
             selected_entry_idx: None,
+            compare_base: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
             selected_commit_diff: None,
@@ -2410,6 +2415,34 @@ impl GitGraph {
         self.copy_commit_tag(selected_entry_index, window, cx);
     }
 
+    fn select_compare_base(&mut self, commit: Oid, cx: &mut Context<Self>) {
+        self.compare_base = Some(commit);
+        cx.notify();
+    }
+
+    fn compare_commits(
+        &mut self,
+        base_commit: Oid,
+        target_commit: Oid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+
+        CommitView::open_compare(
+            base_commit.to_string(),
+            target_commit.to_string(),
+            repository.downgrade(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
+        self.compare_base = None;
+        cx.notify();
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2424,6 +2457,31 @@ impl GitGraph {
         let repository = self
             .get_repository(cx)
             .map(|repository| repository.downgrade());
+        let comparison_action = match self.compare_base {
+            None => {
+                let git_graph = cx.weak_entity();
+                let commit_sha = commit.data.sha;
+                CommitComparisonAction::Select(Arc::new(move |_window, cx| {
+                    git_graph
+                        .update(cx, |git_graph, cx| {
+                            git_graph.select_compare_base(commit_sha, cx);
+                        })
+                        .log_err();
+                }))
+            }
+            Some(base_commit) if base_commit == commit.data.sha => CommitComparisonAction::Selected,
+            Some(base_commit) => {
+                let git_graph = cx.weak_entity();
+                let target_commit = commit.data.sha;
+                CommitComparisonAction::Compare(Arc::new(move |window, cx| {
+                    git_graph
+                        .update(cx, |git_graph, cx| {
+                            git_graph.compare_commits(base_commit, target_commit, window, cx);
+                        })
+                        .log_err();
+                }))
+            }
+        };
         let context_menu = commit_context_menu(
             CommitContextMenuData {
                 sha: commit.data.sha,
@@ -2439,6 +2497,7 @@ impl GitGraph {
             self.focus_handle.clone(),
             repository,
             self.workspace.clone(),
+            Some(comparison_action),
             window,
             cx,
         );

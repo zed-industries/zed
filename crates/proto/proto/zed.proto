@@ -517,6 +517,8 @@ message Envelope {
     GetIncomingCallsResponse get_incoming_calls_response = 485;
     GetOutgoingCalls get_outgoing_calls = 486;
     GetOutgoingCallsResponse get_outgoing_calls_response = 487; // current max
+    LoadCommitRangeDiff load_commit_range_diff = 488;
+    LoadCommitRangeDiffResponse load_commit_range_diff_response = 489; // current max
   }
 
   reserved 87 to 88;

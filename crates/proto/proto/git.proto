@@ -306,6 +306,18 @@ message LoadCommitDiffResponse {
   bool is_shallow_boundary = 2;
 }
 
+message LoadCommitRangeDiff {
+  uint64 project_id = 1;
+  reserved 2;
+  uint64 repository_id = 3;
+  string base_commit = 4;
+  string target_commit = 5;
+}
+
+message LoadCommitRangeDiffResponse {
+  repeated CommitFile files = 1;
+}
+
 message CommitFile {
   string path = 1;
   optional string old_text = 2;

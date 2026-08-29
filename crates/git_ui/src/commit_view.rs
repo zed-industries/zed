@@ -80,6 +80,7 @@ pub struct CommitView {
     message_expanded: bool,
     message_scroll_handle: ScrollHandle,
     stash: Option<usize>,
+    compare_base: Option<SharedString>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
     project: Entity<Project>,
@@ -201,6 +202,66 @@ impl CommitView {
         )
     }
 
+    pub fn open_compare(
+        base_commit: String,
+        target_commit: String,
+        repo: WeakEntity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let commit_diff = repo
+            .update(cx, |repo, _| {
+                repo.load_commit_range_diff(base_commit.clone(), target_commit.clone())
+            })
+            .ok();
+        let commit_details = repo.update(cx, |repo, _| repo.show(target_commit)).ok();
+        let workspace_for_notification = workspace.clone();
+
+        window
+            .spawn(cx, async move |cx| {
+                let commit_diff = commit_diff.context("repository is no longer available")?;
+                let commit_details = commit_details.context("repository is no longer available")?;
+                let (commit_diff, commit_details) = futures::join!(commit_diff, commit_details);
+                let commit_diff = commit_diff??;
+                let commit_details = commit_details??;
+                let repo = repo
+                    .upgrade()
+                    .context("repository is no longer available")?;
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project();
+                    let workspace_entity = cx.entity();
+                    let workspace_handle = cx.weak_entity();
+                    let commit_view = cx.new(|cx| {
+                        CommitView::new(
+                            commit_details,
+                            commit_diff,
+                            repo,
+                            project.clone(),
+                            workspace_entity,
+                            workspace_handle,
+                            None,
+                            Some(base_commit.into()),
+                            None,
+                            window,
+                            cx,
+                        )
+                    });
+                    workspace.add_item_to_active_pane(
+                        Box::new(commit_view),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(workspace_for_notification, window, cx);
+    }
+
     fn open_with_options(
         commit_sha: String,
         repo: WeakEntity<Repository>,
@@ -249,6 +310,7 @@ impl CommitView {
                                 workspace_entity,
                                 workspace_handle,
                                 stash,
+                                None,
                                 file_filter,
                                 window,
                                 cx,
@@ -296,6 +358,7 @@ impl CommitView {
         workspace_entity: Entity<Workspace>,
         workspace: WeakEntity<Workspace>,
         stash: Option<usize>,
+        compare_base: Option<SharedString>,
         file_filter: Option<RepoPath>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -522,6 +585,7 @@ impl CommitView {
             message_scroll_handle: ScrollHandle::new(),
             multibuffer,
             stash,
+            compare_base,
             repository,
             project,
             workspace,
@@ -1197,12 +1261,22 @@ impl Item for CommitView {
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        if let Some(base_commit) = &self.compare_base {
+            let base_short = base_commit.get(0..7).unwrap_or(base_commit);
+            let target_short = self.commit.sha.get(0..7).unwrap_or(&self.commit.sha);
+            return format!("Compare {base_short}…{target_short}").into();
+        }
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
         let subject = truncate_and_trailoff(self.commit.message.split('\n').next().unwrap(), 20);
         format!("{short_sha} — {subject}").into()
     }
 
     fn tab_tooltip_content(&self, _: &App) -> Option<TabTooltipContent> {
+        if let Some(base_commit) = &self.compare_base {
+            return Some(TabTooltipContent::Text(
+                format!("Compare {base_commit}…{}", self.commit.sha).into(),
+            ));
+        }
         let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
         let subject = self.commit.message.split('\n').next().unwrap();
 
@@ -1376,6 +1450,7 @@ impl Item for CommitView {
                 multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,
+                compare_base: self.compare_base.clone(),
                 repository: self.repository.clone(),
                 project: self.project.clone(),
                 workspace: self.workspace.clone(),
@@ -1428,6 +1503,7 @@ impl Render for CommitViewToolbar {
 
         let commit_view_ref = commit_view.read(cx);
         let is_stash = commit_view_ref.stash.is_some();
+        let compare_base = commit_view_ref.compare_base.clone();
 
         let (additions, deletions) = commit_view_ref.calculate_changed_lines(cx);
 
@@ -1451,6 +1527,9 @@ impl Render for CommitViewToolbar {
 
         h_flex()
             .gap_1()
+            .children(compare_base.map(|base_commit| {
+                Label::new(format!("Compare {base_commit}…{commit_sha}")).color(Color::Muted)
+            }))
             .when(additions > 0 || deletions > 0, |this| {
                 this.child(
                     h_flex()

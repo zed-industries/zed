@@ -989,6 +989,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_compare_checkpoints);
         client.add_entity_request_handler(Self::handle_diff_checkpoints);
         client.add_entity_request_handler(Self::handle_load_commit_diff);
+        client.add_entity_request_handler(Self::handle_load_commit_range_diff);
         client.add_entity_request_handler(Self::handle_checkout_files);
         client.add_entity_request_handler(Self::handle_add_path_to_gitignore);
         client.add_entity_request_handler(Self::handle_add_path_to_git_info_exclude);
@@ -4479,6 +4480,36 @@ impl GitStore {
         })
     }
 
+    async fn handle_load_commit_range_diff(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::LoadCommitRangeDiff>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::LoadCommitRangeDiffResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let commit_diff = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.load_commit_range_diff(
+                    envelope.payload.base_commit,
+                    envelope.payload.target_commit,
+                )
+            })
+            .await??;
+
+        Ok(proto::LoadCommitRangeDiffResponse {
+            files: commit_diff
+                .files
+                .into_iter()
+                .map(|file| proto::CommitFile {
+                    path: file.path.as_unix_str().to_owned(),
+                    old_text: file.old_text,
+                    new_text: file.new_text,
+                    is_binary: file.is_binary,
+                })
+                .collect(),
+        })
+    }
+
     async fn handle_reset(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitReset>,
@@ -7133,6 +7164,53 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn load_commit_range_diff(
+        &mut self,
+        base_commit: String,
+        target_commit: String,
+    ) -> oneshot::Receiver<Result<CommitDiff>> {
+        let id = self.id;
+        self.send_job(
+            "load_commit_range_diff",
+            None,
+            move |git_repo, cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                        .load_commit_range(base_commit, target_commit, cx)
+                        .await
+                        .map(decode_commit_diff),
+                    RepositoryState::Remote(RemoteRepositoryState {
+                        client, project_id, ..
+                    }) => {
+                        let response = client
+                            .request(proto::LoadCommitRangeDiff {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                base_commit,
+                                target_commit,
+                            })
+                            .await?;
+                        Ok(CommitDiff {
+                            files: response
+                                .files
+                                .into_iter()
+                                .map(|file| {
+                                    Ok(CommitFile {
+                                        path: RepoPath::from_proto(&file.path)?,
+                                        old_text: file.old_text,
+                                        new_text: file.new_text,
+                                        is_binary: file.is_binary,
+                                    })
+                                })
+                                .collect::<Result<Vec<_>>>()?,
+                            is_shallow_boundary: false,
+                        })
+                    }
+                }
+            },
+        )
     }
 
     pub fn file_history_changed_files(

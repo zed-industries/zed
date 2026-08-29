@@ -917,6 +917,12 @@ pub trait GitRepository: Send + Sync {
         ignore_shallow_boundary: bool,
         cx: AsyncApp,
     ) -> BoxFuture<'_, Result<CommitDiff>>;
+    fn load_commit_range(
+        &self,
+        base_commit: String,
+        target_commit: String,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(
         &self,
         path: RepoPath,
@@ -1539,6 +1545,105 @@ impl GitRepository for RealGitRepository {
                     new_content,
                     is_binary,
                 })
+            }
+
+            Ok(CommitDiff {
+                files,
+                is_shallow_boundary: false,
+            })
+        })
+        .boxed()
+    }
+
+    fn load_commit_range(
+        &self,
+        base_commit: String,
+        target_commit: String,
+        cx: AsyncApp,
+    ) -> BoxFuture<'_, Result<CommitDiff>> {
+        let git = self.git_binary();
+        cx.background_spawn(async move {
+            let diff_output = git
+                .build_command(&[
+                    "diff",
+                    "--no-renames",
+                    "--raw",
+                    "-z",
+                    "--no-abbrev",
+                    &base_commit,
+                    &target_commit,
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .context("starting git diff process")?;
+            anyhow::ensure!(
+                diff_output.status.success(),
+                "git diff failed: {}",
+                String::from_utf8_lossy(&diff_output.stderr)
+            );
+
+            let diff_stdout = String::from_utf8_lossy(&diff_output.stdout);
+            let changes = parse_git_diff_raw(&diff_stdout);
+
+            let mut cat_file_process = git
+                .build_command(&["cat-file", "--batch=%(objectsize)"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("starting git cat-file process")?;
+
+            let mut files = Vec::<CommitFile>::new();
+            let stdin = cat_file_process
+                .stdin
+                .take()
+                .context("git cat-file process has no stdin")?;
+            let stdout = cat_file_process
+                .stdout
+                .take()
+                .context("git cat-file process has no stdout")?;
+            let mut stdin = BufWriter::with_capacity(512, stdin);
+            let mut stdout = BufReader::new(stdout);
+            let mut info_line = String::new();
+            let mut newline = [b'\0'];
+            for change in changes {
+                let change = change?;
+                let Some(rel_path) = RelPath::from_unix_str(change.path).log_err() else {
+                    continue;
+                };
+
+                let objects = [change.new_object, change.old_object];
+                let mut has_blobs = false;
+                for object in objects.iter().flatten() {
+                    if object.kind == CommitDiffObjectKind::Blob {
+                        stdin.write_all(object.oid.as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                        has_blobs = true;
+                    }
+                }
+                if has_blobs {
+                    stdin.flush().await?;
+                }
+
+                let [new_object, old_object] = objects;
+                let new_object =
+                    load_commit_object(new_object, &mut stdout, &mut info_line, &mut newline)
+                        .await?;
+                let old_object =
+                    load_commit_object(old_object, &mut stdout, &mut info_line, &mut newline)
+                        .await?;
+                let is_binary = new_object.as_ref().is_some_and(|object| object.is_binary)
+                    || old_object.as_ref().is_some_and(|object| object.is_binary);
+
+                files.push(CommitFile {
+                    path: RepoPath(Arc::from(rel_path)),
+                    old_content: old_object.map(|object| object.content),
+                    new_content: new_object.map(|object| object.content),
+                    is_binary,
+                });
             }
 
             Ok(CommitDiff {
@@ -4589,6 +4694,78 @@ mod tests {
                     TreeDiffStatus::Modified { old: base_oid },
                 )]),
             }
+        );
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_range(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().expect("failed to create temporary repository");
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("changed.txt"), "before\n")
+            .expect("failed to write initial file");
+        fs::write(repo_dir.path().join("deleted.txt"), "deleted\n")
+            .expect("failed to write initial deleted file");
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "initial"]);
+        let base_commit = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        fs::write(repo_dir.path().join("changed.txt"), "after\n").expect("failed to update file");
+        fs::remove_file(repo_dir.path().join("deleted.txt")).expect("failed to delete file");
+        fs::write(repo_dir.path().join("added.txt"), "added\n")
+            .expect("failed to write added file");
+        git_command(repo_dir.path(), ["add", "-A"]);
+        git_command(repo_dir.path(), ["commit", "-m", "target"]);
+        let target_commit = git_command_output(repo_dir.path(), ["rev-parse", "HEAD"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open repository");
+        let diff = repository
+            .load_commit_range(base_commit, target_commit, cx.to_async())
+            .await
+            .expect("failed to load commit range");
+
+        let files = diff
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.path.as_unix_str(),
+                    file.old_content.as_deref(),
+                    file.new_content.as_deref(),
+                    file.status(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            files,
+            vec![
+                (
+                    "added.txt",
+                    None,
+                    Some(b"added\n".as_slice()),
+                    CommitFileStatus::Added,
+                ),
+                (
+                    "changed.txt",
+                    Some(b"before\n".as_slice()),
+                    Some(b"after\n".as_slice()),
+                    CommitFileStatus::Modified,
+                ),
+                (
+                    "deleted.txt",
+                    Some(b"deleted\n".as_slice()),
+                    None,
+                    CommitFileStatus::Deleted,
+                ),
+            ]
         );
     }
 
