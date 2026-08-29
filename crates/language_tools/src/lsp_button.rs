@@ -311,7 +311,10 @@ impl LanguageServerState {
                 let button = ContextMenuEntry::new(label).handler({
                     let state = cx.entity();
                     move |_, cx| {
-                        let lsp_store = state.read(cx).lsp_store.clone();
+                        let lsp_store = state.update(cx, |state, _| {
+                            state.language_servers.clear_failed_binary_statuses();
+                            state.lsp_store.clone()
+                        });
                         lsp_store
                             .update(cx, |lsp_store, cx| {
                                 if restart {
@@ -770,6 +773,20 @@ impl LanguageServers {
     /// reaching end-of-life via restart). `binary_statuses` is intentionally
     /// preserved — it is keyed by name and shared across restart cycles to
     /// drive the "Downloading… → Starting…" status UX.
+    /// Drops terminal failure statuses.
+    ///
+    /// `binary_statuses` is name-keyed and is otherwise only ever inserted into, so a server
+    /// whose binary could not start stays reported for the lifetime of the process: closing
+    /// every file of that language does not clear it, and neither does stopping or restarting
+    /// all servers, since those iterate running servers and one that never started is not among
+    /// them. The continuity this map exists for covers the steps on the way to running
+    /// ("Downloading…" → "Starting…") across a restart cycle, not a terminal failure - a fresh
+    /// attempt reports that again by itself if it still fails.
+    fn clear_failed_binary_statuses(&mut self) {
+        self.binary_statuses
+            .retain(|_, server| !matches!(server.status, BinaryStatus::Failed { .. }));
+    }
+
     fn remove_server(&mut self, server_id: LanguageServerId) {
         self.health_statuses.remove(&server_id);
         self.servers_per_buffer_abs_path
@@ -1222,13 +1239,19 @@ impl LspButton {
                 });
                 new_lsp_items.extend(worktree_servers.into_iter().map(ServerData::into_lsp_item));
             }
-            if !new_lsp_items.is_empty() {
-                if can_stop_all {
-                    new_lsp_items.push(LspMenuItem::ToggleServersButton { restart: true });
-                    new_lsp_items.push(LspMenuItem::ToggleServersButton { restart: false });
-                } else if can_restart_all {
-                    new_lsp_items.push(LspMenuItem::ToggleServersButton { restart: true });
-                }
+            // `can_restart_all` is true precisely when every server is stopped, which is also
+            // when there is nothing left to list. Gating these buttons on a non-empty item list
+            // therefore made "Restart All Servers" - which doubles as the only way to start
+            // servers again - unreachable in exactly the state it exists for, leaving an empty
+            // menu with no affordance after "Stop All Servers". A project that has never had a
+            // language server still gets no button, since it has no statuses of either kind.
+            let has_known_servers = !state.language_servers.health_statuses.is_empty()
+                || !state.language_servers.binary_statuses.is_empty();
+            if can_stop_all {
+                new_lsp_items.push(LspMenuItem::ToggleServersButton { restart: true });
+                new_lsp_items.push(LspMenuItem::ToggleServersButton { restart: false });
+            } else if can_restart_all && has_known_servers {
+                new_lsp_items.push(LspMenuItem::ToggleServersButton { restart: true });
             }
 
             state.items = new_lsp_items;

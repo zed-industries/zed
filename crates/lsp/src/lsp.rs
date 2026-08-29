@@ -1134,6 +1134,7 @@ impl LanguageServer {
         let server = self.server.clone();
         let name = self.name.clone();
         let server_id = self.server_id;
+        let drain_executor = self.executor.clone();
         let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
         Some(async move {
             log::debug!("language server shutdown started");
@@ -1162,8 +1163,27 @@ impl LanguageServer {
             response_handlers.lock().take();
             Self::notify_internal::<notification::Exit>(&notification_serializers, ()).ok();
             notification_serializers.close();
-            output_done.recv().await;
-            server.lock().take().map(|mut child| child.kill());
+
+            // Bound the drain. The kill below sits behind this await, so a server whose io
+            // handling never finishes (busy server, full pipe, stuck writer) would keep the
+            // process alive indefinitely - and the caller has already scrubbed this server
+            // from its registries and detached this task, so nothing would ever notice.
+            let mut drain_timer = drain_executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
+            select! {
+                _ = output_done.recv().fuse() => {}
+                () = drain_timer => {
+                    log::warn!("timeout waiting for language server {name} (id {server_id}) to drain its output before being killed");
+                }
+            }
+
+            // Kill unconditionally rather than only after a clean drain: by this point the
+            // server is administratively unreachable, so a surviving process would keep its
+            // notification handlers wired with nothing left able to stop it.
+            if let Some(mut child) = server.lock().take()
+                && let Err(error) = child.kill()
+            {
+                log::warn!("failed to kill language server {name} (id {server_id}): {error}");
+            }
             drop(tasks);
             log::debug!("language server shutdown finished");
             Some(())

@@ -12015,13 +12015,37 @@ impl LspStore {
                     .timer(SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT)
                     .fuse();
 
-                select! {
-                    server = startup.fuse() => server,
+                let mut startup = startup.fuse();
+                let mut launch_timed_out = false;
+                let server = select! {
+                    server = startup => server,
                     () = timer => {
-                        log::info!("timeout waiting for language server {name} to finish launching before stopping");
+                        launch_timed_out = true;
                         None
                     },
+                };
+
+                // Giving up on the wait must not mean giving up on the process. The launch
+                // carries on regardless, while the caller has already removed this server from
+                // every registry, so a process left running here is unreachable: its handlers
+                // stay wired under an id nothing iterates, and no later "Stop All" can reach it.
+                // Wait for the launch on its own task instead and shut it down when it lands.
+                if launch_timed_out {
+                    log::info!(
+                        "timeout waiting for language server {name} to finish launching before stopping; \
+                         it will be shut down once its launch completes"
+                    );
+                    cx.background_spawn(async move {
+                        if let Some(server) = startup.await
+                            && let Some(shutdown) = server.shutdown()
+                        {
+                            shutdown.await;
+                        }
+                    })
+                    .detach();
+                    return;
                 }
+                server
             }
 
             Some(LanguageServerState::Running { server, .. }) => Some(server),
