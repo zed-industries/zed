@@ -37,7 +37,6 @@ use git::repository::{GitRepository, RealGitRepository};
 use is_executable::IsExecutable;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
-use smol::io::AsyncWriteExt;
 #[cfg(feature = "test-support")]
 use std::path::Component;
 use std::{
@@ -932,7 +931,15 @@ impl Fs for RealFs {
             let mut tmp_file =
                 tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             tmp_file.write_all(data.as_bytes())?;
-            tmp_file.persist(path)?;
+            // The rename is atomic against Zed itself crashing, but not against the machine
+            // crashing: a filesystem is free to persist the new directory entry before the
+            // file's data blocks, which leaves a zero-length file at the destination. Syncing
+            // the contents before the rename and the directory after it is what makes the
+            // replacement survive power loss.
+            copy_permissions_from_destination(&path, &tmp_file)?;
+            tmp_file.as_file().sync_all()?;
+            tmp_file.persist(&path)?;
+            fsync_parent_dir(&path)?;
             anyhow::Ok(())
         })
         .await?;
@@ -970,21 +977,14 @@ impl Fs for RealFs {
     }
 
     async fn save(&self, path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
-        let buffer_size = text.summary().len.min(10 * 1024);
-        if let Some(path) = path.parent() {
-            self.create_dir(path)
+        if let Some(parent) = path.parent() {
+            self.create_dir(parent)
                 .await
-                .with_context(|| format!("Failed to create directory at {:?}", path))?;
+                .with_context(|| format!("Failed to create directory at {:?}", parent))?;
         }
-        let file = smol::fs::File::create(path)
-            .await
-            .with_context(|| format!("Failed to create file at {:?}", path))?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in text::chunks_with_line_ending(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
-        }
-        writer.flush().await?;
-        Ok(())
+        let path = path.to_path_buf();
+        let text = text.clone();
+        smol::unblock(move || save_durably(&path, &text, line_ending)).await
     }
 
     async fn write(&self, path: &Path, content: &[u8]) -> Result<()> {
@@ -3527,6 +3527,149 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
         Ok(((info.nFileIndexHigh as u64) << 32) | (info.nFileIndexLow as u64))
     })
     .await
+}
+
+/// Writes `text` to `path` so that neither a crash nor power loss can leave the destination
+/// truncated, half-written, or holding contents Zed already reported as saved.
+///
+/// `File::create` publishes an empty file before the new contents exist anywhere on disk, and
+/// flushing a `BufWriter` only moves bytes into the kernel's page cache, so the plain write is
+/// destructive at both ends: a crash mid-write destroys the previous contents, and a crash
+/// shortly after a "successful" save can still lose the new ones. Writing a sibling temporary
+/// file, syncing it, and renaming it over the destination keeps a complete version of the file
+/// visible at every instant.
+///
+/// The rename is only used where it does not change what the destination *is*. A path that does
+/// not exist yet, a non-regular file (FIFO, device), a file with other hard links, and a file
+/// whose ownership we cannot reproduce are all written in place instead, since renaming would
+/// respectively apply the temp file's restrictive mode, replace a special file with a regular
+/// one, break the link, or silently change the owner. Those paths are still synced.
+fn save_durably(path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    let path = resolve_final_symlink(path);
+
+    let replaceable = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata.is_file() && hard_link_count(&metadata) <= 1,
+        Err(_) => false,
+    };
+    if replaceable && let Some(parent) = path.parent() {
+        match save_via_rename(&path, parent, text, line_ending) {
+            Ok(()) => return Ok(()),
+            // Nothing has touched the destination yet, so falling back is never worse than
+            // writing in place would have been to begin with.
+            Err(error) => log::warn!(
+                "failed to replace {path:?} via a temporary file ({error:#}), writing in place"
+            ),
+        }
+    }
+
+    save_in_place(&path, text, line_ending)
+        .with_context(|| format!("Failed to write file at {:?}", path))
+}
+
+fn save_via_rename(path: &Path, parent: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    let mut temp_file = tempfile::NamedTempFile::new_in(parent)?;
+    write_rope(temp_file.as_file_mut(), text, line_ending)?;
+    copy_permissions_from_destination(path, &temp_file)?;
+    temp_file.as_file().sync_all()?;
+    temp_file.persist(path)?;
+    fsync_parent_dir(path)?;
+    Ok(())
+}
+
+fn save_in_place(path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    write_rope(&mut file, text, line_ending)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+fn write_rope(file: &mut std::fs::File, text: &Rope, line_ending: LineEnding) -> io::Result<()> {
+    let buffer_size = text.summary().len.min(10 * 1024).max(1);
+    let mut writer = io::BufWriter::with_capacity(buffer_size, file);
+    for chunk in text::chunks_with_line_ending(text, line_ending) {
+        writer.write_all(chunk.as_bytes())?;
+    }
+    writer.flush()
+}
+
+/// Resolves `path` when its final component is a symlink, so that the contents are written
+/// through to the link's target the way an in-place write would. Left as-is when the link
+/// cannot be resolved: the caller then writes in place, which follows the link itself.
+fn resolve_final_symlink(path: &Path) -> PathBuf {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => std::fs::canonicalize(path)
+            .unwrap_or_else(|error| {
+                log::warn!("failed to resolve symlink {path:?} ({error}), writing through it");
+                path.to_path_buf()
+            }),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Gives a temporary file the mode, and where it differs from ours the ownership, of the
+/// destination it is about to replace. `NamedTempFile` is created 0600 and `persist` keeps the
+/// temp file's own metadata, so without this a replaced file loses its permissions. Returns an
+/// error rather than proceeding when ownership cannot be reproduced, which sends the caller
+/// back to writing in place.
+fn copy_permissions_from_destination(
+    path: &Path,
+    temp_file: &tempfile::NamedTempFile,
+) -> Result<()> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        // A file that does not exist yet has nothing to preserve.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    temp_file
+        .as_file()
+        .set_permissions(metadata.permissions())?;
+    copy_ownership_from_destination(&metadata, temp_file.path())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn copy_ownership_from_destination(metadata: &std::fs::Metadata, temp_path: &Path) -> Result<()> {
+    let (uid, gid) = (metadata.uid(), metadata.gid());
+    if uid == unsafe { libc::geteuid() } && gid == unsafe { libc::getegid() } {
+        return Ok(());
+    }
+    std::os::unix::fs::chown(temp_path, Some(uid), Some(gid))
+        .with_context(|| format!("Failed to preserve ownership of {:?}", temp_path))
+}
+
+#[cfg(not(unix))]
+fn copy_ownership_from_destination(_: &std::fs::Metadata, _: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn hard_link_count(metadata: &std::fs::Metadata) -> u64 {
+    metadata.nlink()
+}
+
+#[cfg(not(unix))]
+fn hard_link_count(_: &std::fs::Metadata) -> u64 {
+    1
+}
+
+/// Flushes the directory entry produced by a rename. The rename itself is atomic, but until the
+/// directory's own metadata is synced a system crash can leave the destination pointing at
+/// neither the old nor the new file.
+#[cfg(not(target_os = "windows"))]
+fn fsync_parent_dir(path: &Path) -> io::Result<()> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    std::fs::File::open(parent)?.sync_all()
+}
+
+/// Windows has no handle for a directory's contents to sync, and `ReplaceFileW` already commits
+/// the replacement itself.
+#[cfg(target_os = "windows")]
+fn fsync_parent_dir(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]

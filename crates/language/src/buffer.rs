@@ -397,7 +397,20 @@ pub enum DiskState {
     /// File created in Zed that has not been saved.
     New,
     /// File present on the filesystem.
-    Present { mtime: MTime, size: u64 },
+    ///
+    /// `inode` is the file's identity as reported by the filesystem, and is part of this
+    /// state because `{mtime, size}` alone cannot see an external write: a tool that rewrites
+    /// a file to the same length within one mtime tick - formatters, build steps, `git`
+    /// operations and sync clients all do - would otherwise compare equal to the previous
+    /// state, so no reload is requested and the buffer stays stale indefinitely. Most such
+    /// tools replace the file by renaming a new one over it, which changes its identity even
+    /// when neither timestamp nor length moved. `None` where identity is unknown, which is the
+    /// case for files described over the wire.
+    Present {
+        mtime: MTime,
+        size: u64,
+        inode: Option<u64>,
+    },
     /// Deleted file that was previously present.
     Deleted,
     /// An old version of a file that was previously present
@@ -2471,10 +2484,15 @@ impl Buffer {
         };
         match file.disk_state() {
             DiskState::New => false,
+            // Inequality, not `>`: an mtime that is merely *different* from the one recorded
+            // at the last save or reload means the file changed underneath us. Requiring it to
+            // be strictly greater misses every case `MTime`'s own documentation warns about -
+            // coarse mtime granularity making a same-tick external write compare equal, clock
+            // adjustments, restored backups, and tools that preserve timestamps (`cp -p`,
+            // `rsync -t`, `touch -r`) - and this check is the only thing standing between a
+            // save and silently overwriting newer contents on disk.
             DiskState::Present { mtime, .. } => match self.saved_mtime {
-                Some(saved_mtime) => {
-                    mtime.bad_is_greater_than(saved_mtime) && self.has_unsaved_edits()
-                }
+                Some(saved_mtime) => mtime != saved_mtime && self.has_unsaved_edits(),
                 None => true,
             },
             DiskState::Deleted => false,

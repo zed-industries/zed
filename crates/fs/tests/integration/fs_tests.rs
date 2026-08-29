@@ -15,6 +15,7 @@ use fs::*;
 use gpui::{BackgroundExecutor, TestAppContext};
 use serde_json::json;
 use tempfile::TempDir;
+use text::LineEnding;
 use util::path;
 
 #[gpui::test]
@@ -455,6 +456,100 @@ async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor
     gpui::block_on(fs.atomic_write(file_to_be_replaced.clone(), "Hello".into())).unwrap();
     let content = std::fs::read_to_string(&file_to_be_replaced).unwrap();
     assert_eq!(content, "Hello");
+}
+
+#[gpui::test]
+async fn test_realfs_save_replaces_contents(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("file.txt");
+    std::fs::write(&path, "Hello").unwrap();
+
+    gpui::block_on(fs.save(&path, &"World".into(), LineEnding::Unix)).unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "World");
+
+    // A file that does not exist yet is created rather than replaced.
+    let new_path = temp_dir.path().join("new.txt");
+    gpui::block_on(fs.save(&new_path, &"Fresh".into(), LineEnding::Unix)).unwrap();
+    assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "Fresh");
+}
+
+/// Replacing a file by renaming a temporary one over it would otherwise hand the destination
+/// the temp file's 0600 mode.
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_save_preserves_permissions(executor: BackgroundExecutor) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("script.sh");
+    std::fs::write(&path, "old").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    gpui::block_on(fs.save(&path, &"new".into(), LineEnding::Unix)).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o755);
+}
+
+/// A rename would detach the destination from its other links, so a linked file has to be
+/// written in place instead.
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_save_preserves_hard_links(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("file.txt");
+    let link = temp_dir.path().join("link.txt");
+    std::fs::write(&path, "old").unwrap();
+    std::fs::hard_link(&path, &link).unwrap();
+
+    gpui::block_on(fs.save(&path, &"new".into(), LineEnding::Unix)).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    assert_eq!(std::fs::read_to_string(&link).unwrap(), "new");
+}
+
+/// Writing through a symlink must update its target and leave the link itself in place.
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_save_writes_through_symlink(executor: BackgroundExecutor) {
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let target = temp_dir.path().join("target.txt");
+    let link = temp_dir.path().join("link.txt");
+    std::fs::write(&target, "old").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    gpui::block_on(fs.save(&link, &"new".into(), LineEnding::Unix)).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "new");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+}
+
+#[gpui::test]
+#[cfg(unix)]
+async fn test_realfs_atomic_write_preserves_permissions(executor: BackgroundExecutor) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let fs = RealFs::new(None, executor);
+    let temp_dir = TempDir::new().unwrap();
+    let path = temp_dir.path().join("settings.json");
+    std::fs::write(&path, "{}").unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    gpui::block_on(fs.atomic_write(path.clone(), "{\"a\": 1}".into())).unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"a\": 1}");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o644);
 }
 
 #[gpui::test]

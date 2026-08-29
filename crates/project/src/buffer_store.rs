@@ -564,6 +564,7 @@ impl LocalBufferStore {
                         Some(mtime) => DiskState::Present {
                             mtime,
                             size: entry.size,
+                            inode: Some(entry.inode),
                         },
                         None => old_file.disk_state,
                     },

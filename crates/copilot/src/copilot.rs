@@ -1722,6 +1722,7 @@ mod tests {
             language::DiskState::Present {
                 mtime: ::fs::MTime::from_seconds_and_nanos(100, 42),
                 size: 0,
+                inode: None,
             }
         }
 

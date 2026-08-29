@@ -1684,6 +1684,7 @@ impl LocalWorktree {
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
                             size: metadata.len,
+                            inode: Some(metadata.inode),
                         },
                         is_local: true,
                         is_private,
@@ -1742,6 +1743,7 @@ impl LocalWorktree {
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
                             size: metadata.len,
+                            inode: Some(metadata.inode),
                         },
                         is_local: true,
                         is_private,
@@ -1902,6 +1904,7 @@ impl LocalWorktree {
                     disk_state: DiskState::Present {
                         mtime: metadata.mtime,
                         size: metadata.len,
+                        inode: Some(metadata.inode),
                     },
                     entry_id: None,
                     is_local: true,
@@ -3883,6 +3886,7 @@ impl File {
                 DiskState::Present {
                     mtime,
                     size: entry.size,
+                    inode: Some(entry.inode),
                 }
             } else {
                 DiskState::New
@@ -3912,7 +3916,11 @@ impl File {
         } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
-            DiskState::Present { mtime, size: 0 }
+            DiskState::Present {
+                mtime,
+                size: 0,
+                inode: None,
+            }
         } else {
             DiskState::New
         };
