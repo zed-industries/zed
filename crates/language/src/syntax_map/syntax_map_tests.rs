@@ -992,12 +992,12 @@ fn test_injections_are_preserved_when_a_sibling_layer_is_reparsed(cx: &mut App) 
     registry.add(Arc::new(markdown_inline_lang_with_html_injections()));
     registry.add(Arc::new(html_lang_with_injections()));
 
-    // Each list item is a separate inline layer, so each HTML comment lives in its own
-    // injection layer.
+    // Each list item is a separate inline layer, so the inline HTML of each item lives
+    // in its own injection layer.
     let mut buffer = Buffer::new(
         ReplicaId::LOCAL,
         BufferId::new(1).unwrap(),
-        "- one <!--first-->\n- two <!--second-->\n- three <!--third-->".to_string(),
+        "- one <!--first-->\n- two <!--second-->\n- three <b>3</b>".to_string(),
     );
 
     let mut syntax_map = SyntaxMap::new(&buffer);
@@ -1007,8 +1007,8 @@ fn test_injections_are_preserved_when_a_sibling_layer_is_reparsed(cx: &mut App) 
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["comment"],
-        "- one «<!--first-->»\n- two «<!--second-->»\n- three «<!--third-->»",
+        &["comment", "tag"],
+        "- one «<!--first-->»\n- two «<!--second-->»\n- three <«b»>3</«b»>",
     );
 
     // Editing one list item must not invalidate the injections of the adjacent items,
@@ -1021,8 +1021,8 @@ fn test_injections_are_preserved_when_a_sibling_layer_is_reparsed(cx: &mut App) 
     assert_capture_ranges(
         &syntax_map,
         &buffer,
-        &["comment"],
-        "- one «<!--first-->»\n- two «<!--second-->» \n- three «<!--third-->»",
+        &["comment", "tag"],
+        "- one «<!--first-->»\n- two «<!--second-->» \n- three <«b»>3</«b»>",
     );
 }
 
