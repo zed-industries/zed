@@ -2891,7 +2891,9 @@ impl GitGraph {
                                     .gap_1()
                                     .justify_center()
                                     .overflow_hidden()
-                                    .child(Label::new(author_name).size(LabelSize::Small).truncate())
+                                    .child(
+                                        Label::new(author_name).size(LabelSize::Small).truncate(),
+                                    )
                                     .child(
                                         Label::new(short_sha)
                                             .size(LabelSize::Small)
@@ -2899,71 +2901,129 @@ impl GitGraph {
                                     ),
                             );
                         }
-                        this
-                    .child(
-                        v_flex()
-                            .py_1()
-                            .w_full()
-                            .items_center()
-                            .child(avatar)
-                            .child(Label::new(author_name).mt_1p5())
-                            .child(
-                                Label::new(date_string)
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
-                            ),
-                    )
-                    .children((!ref_names.is_empty()).then(|| {
-                        h_flex().gap_1().flex_wrap().justify_center().children(
-                            ref_names.iter().map(|name| {
-                                let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                self.render_ref_chip(name, accent_color, is_head, selected_idx, cx)
-                            }),
+                        this.child(
+                            v_flex()
+                                .py_1()
+                                .w_full()
+                                .items_center()
+                                .child(avatar)
+                                .child(Label::new(author_name).mt_1p5())
+                                .child(
+                                    Label::new(date_string)
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
+                                ),
                         )
-                    }))
-                    .child(
-                        v_flex()
-                            .ml_neg_1()
-                            .gap_1p5()
-                            .when(!author_email.is_empty(), |this| {
-                                let copied_state: Entity<CopiedState> = window.use_keyed_state(
-                                    "author-email-copy",
-                                    cx,
-                                    CopiedState::new,
-                                );
-                                let is_copied = copied_state.read(cx).is_copied();
+                        .children((!ref_names.is_empty()).then(|| {
+                            h_flex().gap_1().flex_wrap().justify_center().children(
+                                ref_names.iter().map(|name| {
+                                    let is_head =
+                                        Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                    self.render_ref_chip(
+                                        name,
+                                        accent_color,
+                                        is_head,
+                                        selected_idx,
+                                        cx,
+                                    )
+                                }),
+                            )
+                        }))
+                        .child(
+                            v_flex()
+                                .ml_neg_1()
+                                .gap_1p5()
+                                .when(!author_email.is_empty(), |this| {
+                                    let copied_state: Entity<CopiedState> = window.use_keyed_state(
+                                        "author-email-copy",
+                                        cx,
+                                        CopiedState::new,
+                                    );
+                                    let is_copied = copied_state.read(cx).is_copied();
 
-                                let (icon, icon_color, tooltip_label) = if is_copied {
-                                    (IconName::Check, Color::Success, "Email Copied!")
-                                } else {
-                                    (IconName::Envelope, Color::Muted, "Copy Email")
-                                };
+                                    let (icon, icon_color, tooltip_label) = if is_copied {
+                                        (IconName::Check, Color::Success, "Email Copied!")
+                                    } else {
+                                        (IconName::Envelope, Color::Muted, "Copy Email")
+                                    };
 
-                                let copy_email = author_email.clone();
-                                let author_email_for_tooltip = author_email.clone();
+                                    let copy_email = author_email.clone();
+                                    let author_email_for_tooltip = author_email.clone();
 
-                                this.child(
-                                    Button::new("author-email-copy", author_email.clone())
+                                    this.child(
+                                        Button::new("author-email-copy", author_email.clone())
+                                            .start_icon(
+                                                Icon::new(icon)
+                                                    .size(IconSize::Small)
+                                                    .color(icon_color),
+                                            )
+                                            .label_size(LabelSize::Small)
+                                            .truncate(true)
+                                            .color(Color::Muted)
+                                            .tooltip(move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    tooltip_label,
+                                                    None,
+                                                    author_email_for_tooltip.clone(),
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(move |_, _, cx| {
+                                                copied_state.update(cx, |state, _cx| {
+                                                    state.mark_copied();
+                                                });
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    copy_email.to_string(),
+                                                ));
+                                                let state_id = copied_state.entity_id();
+                                                cx.spawn(async move |cx| {
+                                                    cx.background_executor()
+                                                        .timer(COPIED_STATE_DURATION)
+                                                        .await;
+                                                    cx.update(|cx| {
+                                                        cx.notify(state_id);
+                                                    })
+                                                })
+                                                .detach();
+                                            }),
+                                    )
+                                })
+                                .child({
+                                    let copy_sha = full_sha.clone();
+                                    let copied_state: Entity<CopiedState> =
+                                        window.use_keyed_state("sha-copy", cx, CopiedState::new);
+                                    let is_copied = copied_state.read(cx).is_copied();
+
+                                    let (icon, icon_color, tooltip_label) = if is_copied {
+                                        (IconName::Check, Color::Success, "Commit SHA Copied!")
+                                    } else {
+                                        (IconName::Hash, Color::Muted, "Copy Commit SHA")
+                                    };
+
+                                    Button::new("sha-button", &full_sha)
                                         .start_icon(
                                             Icon::new(icon).size(IconSize::Small).color(icon_color),
                                         )
                                         .label_size(LabelSize::Small)
                                         .truncate(true)
                                         .color(Color::Muted)
-                                        .tooltip(move |_, cx| {
-                                            Tooltip::with_meta(
-                                                tooltip_label,
-                                                None,
-                                                author_email_for_tooltip.clone(),
-                                                cx,
-                                            )
+                                        .tooltip({
+                                            let full_sha = full_sha.clone();
+                                            move |_, cx| {
+                                                Tooltip::with_meta(
+                                                    tooltip_label,
+                                                    None,
+                                                    full_sha.clone(),
+                                                    cx,
+                                                )
+                                            }
                                         })
                                         .on_click(move |_, _, cx| {
                                             copied_state.update(cx, |state, _cx| {
                                                 state.mark_copied();
                                             });
                                             cx.write_to_clipboard(ClipboardItem::new_string(
-                                                copy_email.to_string(),
+                                                copy_sha.to_string(),
                                             ));
                                             let state_id = copied_state.entity_id();
                                             cx.spawn(async move |cx| {
@@ -2975,92 +3035,45 @@ impl GitGraph {
                                                 })
                                             })
                                             .detach();
-                                        }),
-                                )
-                            })
-                            .child({
-                                let copy_sha = full_sha.clone();
-                                let copied_state: Entity<CopiedState> =
-                                    window.use_keyed_state("sha-copy", cx, CopiedState::new);
-                                let is_copied = copied_state.read(cx).is_copied();
-
-                                let (icon, icon_color, tooltip_label) = if is_copied {
-                                    (IconName::Check, Color::Success, "Commit SHA Copied!")
-                                } else {
-                                    (IconName::Hash, Color::Muted, "Copy Commit SHA")
-                                };
-
-                                Button::new("sha-button", &full_sha)
-                                    .start_icon(
-                                        Icon::new(icon).size(IconSize::Small).color(icon_color),
-                                    )
-                                    .label_size(LabelSize::Small)
-                                    .truncate(true)
-                                    .color(Color::Muted)
-                                    .tooltip({
-                                        let full_sha = full_sha.clone();
-                                        move |_, cx| {
-                                            Tooltip::with_meta(
-                                                tooltip_label,
-                                                None,
-                                                full_sha.clone(),
-                                                cx,
-                                            )
-                                        }
-                                    })
-                                    .on_click(move |_, _, cx| {
-                                        copied_state.update(cx, |state, _cx| {
-                                            state.mark_copied();
-                                        });
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            copy_sha.to_string(),
-                                        ));
-                                        let state_id = copied_state.entity_id();
-                                        cx.spawn(async move |cx| {
-                                            cx.background_executor()
-                                                .timer(COPIED_STATE_DURATION)
-                                                .await;
-                                            cx.update(|cx| {
-                                                cx.notify(state_id);
-                                            })
                                         })
-                                        .detach();
-                                    })
-                            })
-                            .when_some(remote.clone(), |this, remote| {
-                                let provider_name = remote.host.name();
-                                let icon = ui::git_hosting_provider_icon(provider_name.as_str());
-                                let parsed_remote = ParsedGitRemote {
-                                    owner: remote.owner.as_ref().into(),
-                                    repo: remote.repo.as_ref().into(),
-                                };
-                                let params = BuildCommitPermalinkParams {
-                                    sha: full_sha.as_ref(),
-                                };
-                                let url = remote
-                                    .host
-                                    .build_commit_permalink(&parsed_remote, params)
-                                    .to_string();
+                                })
+                                .when_some(remote.clone(), |this, remote| {
+                                    let provider_name = remote.host.name();
+                                    let icon =
+                                        ui::git_hosting_provider_icon(provider_name.as_str());
+                                    let parsed_remote = ParsedGitRemote {
+                                        owner: remote.owner.as_ref().into(),
+                                        repo: remote.repo.as_ref().into(),
+                                    };
+                                    let params = BuildCommitPermalinkParams {
+                                        sha: full_sha.as_ref(),
+                                    };
+                                    let url = remote
+                                        .host
+                                        .build_commit_permalink(&parsed_remote, params)
+                                        .to_string();
 
-                                this.child(
-                                    Button::new(
-                                        "view-on-provider",
-                                        format!("View on {}", provider_name),
+                                    this.child(
+                                        Button::new(
+                                            "view-on-provider",
+                                            format!("View on {}", provider_name),
+                                        )
+                                        .start_icon(
+                                            Icon::new(icon)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .label_size(LabelSize::Small)
+                                        .truncate(true)
+                                        .color(Color::Muted)
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                cx.open_url(&url);
+                                            },
+                                        ),
                                     )
-                                    .start_icon(
-                                        Icon::new(icon).size(IconSize::Small).color(Color::Muted),
-                                    )
-                                    .label_size(LabelSize::Small)
-                                    .truncate(true)
-                                    .color(Color::Muted)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            cx.open_url(&url);
-                                        },
-                                    ),
-                                )
-                            }),
-                    )
+                                }),
+                        )
                     }),
             )
             .child(Divider::horizontal())
