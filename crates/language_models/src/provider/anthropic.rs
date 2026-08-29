@@ -827,9 +827,11 @@ impl LanguageModel for AnthropicModel {
             request.speed = None;
         }
         let request = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.run(async move {
             let response = request.await?;
             let stream = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
+            let stream = language_model::stream_in_background(stream.boxed(), executor);
             let (context, usage) = collect_compaction_result(stream.boxed(), PROVIDER_NAME).await?;
             Ok(CompactionResult { context, usage })
         });
@@ -906,9 +908,14 @@ impl LanguageModel for AnthropicModel {
             request.speed = None;
         }
         let request = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response))
+            let events = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID).map_stream(response);
+            Ok(language_model::stream_in_background(
+                events.boxed(),
+                executor,
+            ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
