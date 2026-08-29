@@ -75,6 +75,9 @@ pub struct ThemeSettings {
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
+    /// The font family used for Mermaid diagrams.
+    /// Falls back to the UI font family if unset.
+    mermaid_font_family: Option<SharedString>,
     /// The line height for buffers, and the terminal.
     ///
     /// Changing this may affect the spacing of some UI elements.
@@ -442,6 +445,14 @@ impl ThemeSettings {
             .unwrap_or(&self.buffer_font.family)
     }
 
+    /// Returns the font family to use for Mermaid diagrams,
+    /// falling back to the UI font family when unset.
+    pub fn mermaid_font_family(&self) -> &SharedString {
+        self.mermaid_font_family
+            .as_ref()
+            .unwrap_or(&self.ui_font.family)
+    }
+
     /// Returns the markdown preview font size.
     ///
     /// Note: the fallback deliberately uses `self.ui_font_size` instead of `ui_font_size(cx)`,
@@ -756,6 +767,10 @@ impl settings::Settings for ThemeSettings {
                 .markdown_preview_theme
                 .clone()
                 .map(ThemeSelection::from),
+            mermaid_font_family: content
+                .mermaid_font_family
+                .as_ref()
+                .map(|font| font.0.clone().into()),
             theme: theme_selection,
             experimental_theme_overrides: content.experimental_theme_overrides.clone(),
             theme_overrides: content.theme_overrides.clone(),

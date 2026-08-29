@@ -85,6 +85,9 @@
   "markdown_preview_font_family": null,
   // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
   "markdown_preview_code_font_family": null,
+  // The font family for Mermaid diagrams in the agent panel and markdown preview.
+  // Falls back to the UI font family if unset.
+  "mermaid_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
