@@ -1,5 +1,15 @@
 use std::{rc::Rc, time::Duration};
 
+/// Creates a duration from a number of whole seconds.
+pub const fn secs(seconds: u64) -> Duration {
+    Duration::from_secs(seconds)
+}
+
+/// Creates a duration from a number of whole milliseconds.
+pub const fn millis(milliseconds: u64) -> Duration {
+    Duration::from_millis(milliseconds)
+}
+
 /// Creates a [`Motion`] from a duration.
 pub trait DurationWithEasing {
     /// Uses this duration with the supplied easing function.
