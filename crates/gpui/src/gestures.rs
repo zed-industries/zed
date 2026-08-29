@@ -526,22 +526,40 @@ impl TouchGestureRecognizer {
         let mut recognized = SmallVec::new();
         match event.phase {
             TouchPhase::Started => {
-                if let Some(momentum) = self.momentum.take() {
+                let caught_fling = if let Some(momentum) = self.momentum.take() {
                     recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
                         momentum.position,
                         Point::default(),
                         TouchPhase::Ended,
                     )));
-                }
+                    true
+                } else {
+                    false
+                };
                 if matches!(self.state, TouchGestureState::Idle) {
                     let mut velocity_tracker = VelocityTracker::default();
                     velocity_tracker.push(now, event.position);
-                    self.state = TouchGestureState::Pending(ActiveTouch {
+                    let touch = ActiveTouch {
                         id: event.id,
                         start_position: event.position,
                         emitted_position: event.position,
                         velocity_tracker,
-                    });
+                    };
+                    if caught_fling {
+                        // A touch that catches a fling is a drag from the
+                        // first pixel: waiting out the slop would freeze the
+                        // content mid-scroll and then jump. It can also never
+                        // be a tap; releasing it just leaves the content
+                        // stopped, as on Android and iOS.
+                        recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
+                            touch.start_position,
+                            Point::default(),
+                            TouchPhase::Started,
+                        )));
+                        self.state = TouchGestureState::Panning(touch);
+                    } else {
+                        self.state = TouchGestureState::Pending(touch);
+                    }
                 }
             }
             TouchPhase::Moved => match mem::replace(&mut self.state, TouchGestureState::Idle) {
@@ -612,12 +630,6 @@ impl TouchGestureRecognizer {
                     });
                 }
                 TouchGestureState::Panning(touch) if touch.id == event.id => {
-                    let delta = event.position - touch.emitted_position;
-                    recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
-                        touch.start_position,
-                        delta,
-                        TouchPhase::Ended,
-                    )));
                     // The release deliberately contributes no velocity
                     // sample: it usually repeats the last movement's position
                     // with a later timestamp, which would dilute the
@@ -637,21 +649,45 @@ impl TouchGestureRecognizer {
                         touch.velocity_tracker.velocity()
                     };
                     let speed = (velocity.x.powi(2) + velocity.y.powi(2)).sqrt();
+                    let mut release_delta = event.position - touch.emitted_position;
                     if speed >= self.tuning.min_fling_velocity {
                         let direction = point(velocity.x / speed, velocity.y / speed);
                         let speed = speed.min(MAX_FLING_VELOCITY);
                         let duration = self.tuning.scroll_physics.fling_duration(speed);
                         if !duration.is_zero() {
+                            let total_distance =
+                                self.tuning.scroll_physics.fling_distance(speed, duration);
+                            // Prediction may have left the content ahead of
+                            // the raw release position. Emitting that
+                            // correction here would visibly snap the content
+                            // backwards just as the fling launches, so fold
+                            // it into the fling instead: start the curve
+                            // already advanced by the overshoot, keeping the
+                            // total travel exact while staying monotonic.
+                            let overshoot = -(f32::from(release_delta.x) * direction.x
+                                + f32::from(release_delta.y) * direction.y);
+                            let emitted_distance = if overshoot > 0. && overshoot < total_distance {
+                                release_delta +=
+                                    point(px(direction.x * overshoot), px(direction.y * overshoot));
+                                overshoot
+                            } else {
+                                0.
+                            };
                             self.momentum = Some(Momentum {
                                 position: touch.start_position,
                                 direction,
                                 speed,
                                 started_at: now,
                                 duration,
-                                emitted_distance: 0.,
+                                emitted_distance,
                             });
                         }
                     }
+                    recognized.push(RecognizedTouchGesture::Scroll(scroll_event(
+                        touch.start_position,
+                        release_delta,
+                        TouchPhase::Ended,
+                    )));
                 }
                 other => self.state = other,
             },
@@ -1077,17 +1113,87 @@ mod tests {
         };
         assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(6.)));
 
-        // The release targets the raw position: the total scrolled distance
-        // equals the finger's actual travel despite the predictions.
+        // A release without a fling (the finger stopped long before lifting)
+        // targets the raw position: the total scrolled distance equals the
+        // finger's actual travel despite the predictions.
         let recognized = recognizer.handle_event_at(
             &touch_event(touch, TouchPhase::Ended, 100., 130.),
-            now + Duration::from_millis(48),
+            now + Duration::from_millis(120),
         );
         let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
             panic!("expected scroll, got {recognized:?}");
         };
         assert_eq!(scroll.touch_phase, TouchPhase::Ended);
+        assert!(!recognizer.has_momentum());
         assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(-4.)));
+    }
+
+    #[test]
+    fn predicted_overshoot_folds_into_the_fling_without_scrolling_backwards() {
+        let now = Instant::now();
+        let mut total_with_prediction = 0f32;
+        let mut total_without_prediction = 0f32;
+        for use_prediction in [true, false] {
+            let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+            let mut total = 0f32;
+            let mut drain = |recognized: &[RecognizedTouchGesture], upward_only: bool| {
+                for gesture in recognized {
+                    let RecognizedTouchGesture::Scroll(scroll) = gesture else {
+                        panic!("expected scroll, got {gesture:?}");
+                    };
+                    let delta = scroll.delta.pixel_delta(px(16.)).y;
+                    if upward_only {
+                        assert!(
+                            delta <= px(0.),
+                            "content moved backwards by {delta:?} during an upward gesture"
+                        );
+                    }
+                    total += f32::from(delta);
+                }
+            };
+
+            recognizer.handle_event_at(
+                &touch_event(TouchId(1), TouchPhase::Started, 100., 500.),
+                now,
+            );
+            for step in 1..=5u64 {
+                let raw_y = 500. - step as f32 * 40.;
+                let mut moved = touch_event(TouchId(1), TouchPhase::Moved, 100., raw_y);
+                if use_prediction {
+                    moved.predicted_position = Some(point(px(100.), px(raw_y - 25.)));
+                }
+                let recognized =
+                    recognizer.handle_event_at(&moved, now + Duration::from_millis(step * 16));
+                drain(&recognized, use_prediction);
+            }
+            // The release leaves the emitted position 25px ahead of the raw
+            // one; with prediction the correction must not scroll backwards.
+            let recognized = recognizer.handle_event_at(
+                &touch_event(TouchId(1), TouchPhase::Ended, 100., 300.),
+                now + Duration::from_millis(90),
+            );
+            drain(&recognized, use_prediction);
+            assert!(recognizer.has_momentum());
+            let mut tick = now + Duration::from_millis(90);
+            while recognizer.has_momentum() {
+                tick += Duration::from_millis(16);
+                if let Some(gesture) = recognizer.tick_momentum_at(tick) {
+                    drain(&[gesture], use_prediction);
+                }
+            }
+
+            if use_prediction {
+                total_with_prediction = total;
+            } else {
+                total_without_prediction = total;
+            }
+        }
+        // Folding the overshoot into the fling redistributes the travel but
+        // must not change where the content comes to rest.
+        assert!(
+            (total_with_prediction - total_without_prediction).abs() < 0.01,
+            "totals diverged: {total_with_prediction} vs {total_without_prediction}"
+        );
     }
 
     #[test]
@@ -1196,11 +1302,70 @@ mod tests {
             now + Duration::from_millis(200),
         );
         assert!(!recognizer.has_momentum());
+        let [
+            RecognizedTouchGesture::Scroll(closing),
+            RecognizedTouchGesture::Scroll(opening),
+        ] = recognized.as_slice()
+        else {
+            panic!("expected closing and opening scrolls, got {recognized:?}");
+        };
+        assert_eq!(closing.touch_phase, TouchPhase::Ended);
+        assert!(closing.delta.pixel_delta(px(16.)).is_zero());
+        assert_eq!(opening.touch_phase, TouchPhase::Started);
+        assert!(opening.delta.pixel_delta(px(16.)).is_zero());
+    }
+
+    #[test]
+    fn catching_a_fling_pans_immediately_and_never_taps() {
+        let mut recognizer = TouchGestureRecognizer::new(GestureTuning::default());
+        let now = Instant::now();
+
+        recognizer.handle_event_at(
+            &touch_event(TouchId(1), TouchPhase::Started, 100., 300.),
+            now,
+        );
+        for step in 1..=3 {
+            recognizer.handle_event_at(
+                &touch_event(
+                    TouchId(1),
+                    TouchPhase::Moved,
+                    100.,
+                    300. - step as f32 * 33.,
+                ),
+                now + Duration::from_millis(step * 16),
+            );
+        }
+        recognizer.handle_event_at(
+            &touch_event(TouchId(1), TouchPhase::Ended, 100., 200.),
+            now + Duration::from_millis(64),
+        );
+        assert!(recognizer.has_momentum());
+
+        recognizer.handle_event_at(
+            &touch_event(TouchId(2), TouchPhase::Started, 100., 200.),
+            now + Duration::from_millis(200),
+        );
+
+        // A movement well within the slop scrolls immediately.
+        let recognized = recognizer.handle_event_at(
+            &touch_event(TouchId(2), TouchPhase::Moved, 100., 197.),
+            now + Duration::from_millis(216),
+        );
         let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
-            panic!("expected closing scroll, got {recognized:?}");
+            panic!("expected scroll, got {recognized:?}");
+        };
+        assert_eq!(scroll.touch_phase, TouchPhase::Moved);
+        assert_eq!(scroll.delta.pixel_delta(px(16.)), point(px(0.), px(-3.)));
+
+        // Releasing the catch is not a tap.
+        let recognized = recognizer.handle_event_at(
+            &touch_event(TouchId(2), TouchPhase::Ended, 100., 197.),
+            now + Duration::from_millis(232),
+        );
+        let [RecognizedTouchGesture::Scroll(scroll)] = recognized.as_slice() else {
+            panic!("expected scroll, got {recognized:?}");
         };
         assert_eq!(scroll.touch_phase, TouchPhase::Ended);
-        assert!(scroll.delta.pixel_delta(px(16.)).is_zero());
     }
 
     #[test]

@@ -1303,9 +1303,22 @@ fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
     mouse_position_in_element(mouse_event)
 }
 
-/// The position of the last event from `getPredictedEvents()`, or `None`
-/// when the browser offers no prediction (Safari lacks the method, Firefox
-/// returns an empty array).
+/// How far ahead of the raw pointer position predictions may reach.
+///
+/// Browsers predict much further (Chrome offers samples out to 25ms), but
+/// prediction error grows with the horizon and surfaces as jitter: the
+/// emitted pan deltas gain a term proportional to lead x change in velocity,
+/// which at long leads visibly reverses direction mid-drag. Measurements
+/// show leads up to ~10ms track at or below the raw stream's frame-to-frame
+/// variation; AOSP similarly caps touch resampling extrapolation at 8ms
+/// (`RESAMPLE_MAX_PREDICTION` in `InputTransport.cpp`).
+const MAX_PREDICTION_LEAD_MS: f64 = 10.;
+
+/// The predicted pointer position closest to [`MAX_PREDICTION_LEAD_MS`]
+/// ahead of `event`, from `getPredictedEvents()`, or `None` when the browser
+/// offers no prediction (Safari lacks the method, Firefox returns an empty
+/// array). A prediction further out than the cap is linearly scaled back to
+/// it.
 ///
 /// Accessed through `Reflect` because calling a missing method through the
 /// web-sys binding would throw, and predicted events' `offsetX`/`offsetY`
@@ -1319,13 +1332,31 @@ fn predicted_pointer_position(
     let method = js_sys::Reflect::get(event, &JsValue::from_str("getPredictedEvents")).ok()?;
     let method = method.dyn_ref::<js_sys::Function>()?;
     let predicted_events: js_sys::Array = method.call0(event).ok()?.dyn_into().ok()?;
-    let last_index = predicted_events.length().checked_sub(1)?;
-    let predicted: web_sys::PointerEvent = predicted_events.get(last_index).dyn_into().ok()?;
+    let mut best: Option<(f64, web_sys::PointerEvent)> = None;
+    for predicted in predicted_events.iter() {
+        let Ok(predicted) = predicted.dyn_into::<web_sys::PointerEvent>() else {
+            continue;
+        };
+        let lead = predicted.time_stamp() - event.time_stamp();
+        if lead <= 0. {
+            continue;
+        }
+        let distance_to_cap = (lead - MAX_PREDICTION_LEAD_MS).abs();
+        if best
+            .as_ref()
+            .is_none_or(|(best_distance, _)| distance_to_cap < *best_distance)
+        {
+            best = Some((distance_to_cap, predicted));
+        }
+    }
+    let (_, predicted) = best?;
+    let lead = predicted.time_stamp() - event.time_stamp();
+    let scale = (MAX_PREDICTION_LEAD_MS / lead).min(1.) as f32;
     let event: &web_sys::MouseEvent = event.as_ref();
     let predicted: &web_sys::MouseEvent = predicted.as_ref();
     Some(point(
-        position.x + px((predicted.client_x() - event.client_x()) as f32),
-        position.y + px((predicted.client_y() - event.client_y()) as f32),
+        position.x + px((predicted.client_x() - event.client_x()) as f32 * scale),
+        position.y + px((predicted.client_y() - event.client_y()) as f32 * scale),
     ))
 }
 
