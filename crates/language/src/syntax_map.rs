@@ -247,6 +247,9 @@ enum ParseMode {
 struct ChangedRegion {
     depth: usize,
     range: Range<Anchor>,
+    /// The range of the layer whose injections are being invalidated. Only layers nested
+    /// inside of it can be invalidated, because only that layer will recreate them.
+    owner_range: Range<Anchor>,
 }
 
 #[derive(Default)]
@@ -625,6 +628,7 @@ impl SyntaxSnapshot {
                             ChangedRegion {
                                 depth: layer.depth + 1,
                                 range: layer.range.clone(),
+                                owner_range: layer.range.clone(),
                             },
                             text,
                         );
@@ -810,24 +814,14 @@ impl SyntaxSnapshot {
                         grammar.injection_config.as_ref().zip(registry.as_ref()),
                         changed_ranges.is_empty(),
                     ) {
-                        // Handle invalidation and reactivation of injections on comment update.
-                        // The expanded ranges are clamped to this layer's own range, because a
-                        // layer only owns the injections nested inside of it. Without clamping,
-                        // reparsing one layer would invalidate the injections of sibling layers
-                        // on the adjacent rows, which nothing would then reparse.
+                        // Handle invalidation and reactivation of injections on comment update
                         let mut expanded_ranges: Vec<_> = changed_ranges
                             .iter()
-                            .filter_map(|range| {
+                            .map(|range| {
                                 let start_row = range.start.to_point(text).row.saturating_sub(1);
                                 let end_row = range.end.to_point(text).row.saturating_add(2);
-                                let start = text
-                                    .point_to_offset(Point::new(start_row, 0))
-                                    .max(step_start_byte);
-                                let end = text
-                                    .point_to_offset(Point::new(end_row, 0))
-                                    .min(text.len())
-                                    .min(step_end_byte);
-                                (start < end).then_some(start..end)
+                                text.point_to_offset(Point::new(start_row, 0))
+                                    ..text.point_to_offset(Point::new(end_row, 0)).min(text.len())
                             })
                             .collect();
                         expanded_ranges.sort_unstable_by_key(|r| r.start);
@@ -845,6 +839,7 @@ impl SyntaxSnapshot {
                                     depth: step.depth + 1,
                                     range: text.anchor_before(range.start)
                                         ..text.anchor_after(range.end),
+                                    owner_range: step.range.clone(),
                                 },
                                 text,
                             );
@@ -1960,6 +1955,10 @@ impl ChangedRegion {
         Ord::cmp(&self.depth, &other.depth)
             .then_with(|| range_a.start.cmp(&range_b.start, buffer))
             .then_with(|| range_b.end.cmp(&range_a.end, buffer))
+            // Regions that differ only in their owner must both be kept, as they
+            // invalidate different layers.
+            .then_with(|| self.owner_range.start.cmp(&other.owner_range.start, buffer))
+            .then_with(|| other.owner_range.end.cmp(&self.owner_range.end, buffer))
     }
 }
 
@@ -1990,6 +1989,17 @@ impl ChangeRegionSet {
             }
             if region.range.start.cmp(&layer.range.end, text).is_ge() {
                 break;
+            }
+            // Only the layer that owns an injection will recreate it, so a layer that
+            // merely abuts or overlaps the owner must be left alone.
+            if region
+                .owner_range
+                .start
+                .cmp(&layer.range.start, text)
+                .is_gt()
+                || region.owner_range.end.cmp(&layer.range.end, text).is_lt()
+            {
+                continue;
             }
             return true;
         }

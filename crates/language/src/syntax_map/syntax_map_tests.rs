@@ -1027,6 +1027,51 @@ fn test_injections_are_preserved_when_a_sibling_layer_is_reparsed(cx: &mut App) 
 }
 
 #[gpui::test]
+fn test_injections_are_preserved_when_an_abutting_layer_is_reparsed(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let markdown = markdown_lang();
+    registry.add(markdown.clone());
+    registry.add(Arc::new(markdown_inline_lang_with_html_injections()));
+    registry.add(Arc::new(html_lang_with_injections()));
+
+    // A line starting with a comment is an HTML block, so the first two lines become HTML
+    // layers of their own, while the last two lines are one paragraph whose inline layer
+    // has HTML injected into it. The second HTML block ends exactly where that paragraph
+    // begins.
+    let text = "<!--first--> a\n<!--second--> b\n<b>c</b> d\n<i>e</i> f";
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        text.to_string(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(markdown.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["comment", "tag"],
+        "«<!--first-->» a\n«<!--second-->» b\n<«b»>c</«b»> d\n<«i»>e</«i»> f",
+    );
+
+    // Reparsing the second HTML block must not invalidate the HTML injected into the
+    // paragraph that starts at its end offset.
+    let second_block_end = text.find("\n<b>").unwrap();
+    buffer.edit([(second_block_end..second_block_end, " ")]);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(markdown, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["comment", "tag"],
+        "«<!--first-->» a\n«<!--second-->» b \n<«b»>c</«b»> d\n<«i»>e</«i»> f",
+    );
+}
+
+#[gpui::test]
 fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     let text = r#"
         <body>
