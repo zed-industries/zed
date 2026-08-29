@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-support")]
 pub use bench_context::{BenchAppContext, BenchReport, BenchWindowContext, bench_platform};
 use collections::{FxHashMap, FxHashSet, HashMap, TypeIdHashMap, TypeIdHashSet, VecDeque};
 pub use context::*;
@@ -60,7 +60,7 @@ use crate::{
 };
 
 mod async_context;
-#[cfg(feature = "bench")]
+#[cfg(feature = "bench-support")]
 mod bench_context;
 mod context;
 mod entity_map;
@@ -918,8 +918,19 @@ impl App {
         platform.on_quit(Box::new({
             let cx = Rc::downgrade(&app);
             move || {
-                if let Some(cx) = cx.upgrade() {
-                    cx.borrow_mut().shutdown();
+                let Some(cx) = cx.upgrade() else {
+                    return true;
+                };
+                match cx.try_borrow_mut() {
+                    Ok(mut cx) => {
+                        cx.shutdown();
+                        true
+                    }
+                    Err(_) => {
+                        // Quit was requested while the AppCell was borrowed, so we can't shut down synchronously.
+                        // The platform decides how to proceed.
+                        false
+                    }
                 }
             }
         }));
@@ -1691,7 +1702,7 @@ impl App {
                     }
                 }
             } else {
-                #[cfg(any(test, feature = "test-support", feature = "bench"))]
+                #[cfg(any(test, feature = "test-support", feature = "bench-support"))]
                 for window in self
                     .windows
                     .values()
@@ -1753,9 +1764,9 @@ impl App {
                 if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
-                            .update(self, |_, window, _| {
+                            .update(self, |_, window, cx| {
                                 if window.focus == Some(handle_id) {
-                                    window.blur();
+                                    window.blur(cx);
                                 }
                             })
                             .unwrap();
@@ -2379,10 +2390,7 @@ impl App {
         for window in self.windows() {
             window
                 .update(self, |_, window, cx| {
-                    if window.pending_input_keystrokes().is_some() {
-                        window.clear_pending_keystrokes();
-                        window.pending_input_changed(cx);
-                    }
+                    window.clear_pending_keystrokes(cx);
                 })
                 .ok();
         }
