@@ -23,7 +23,7 @@ tree-sitter = { workspace = true, features = ["wasm"] }
 serde_json_lenient.workspace = true
 serde_json.workspace = true
 settings_content.workspace = true
-settings_json.workspace = true
+settings_json = { workspace = true, features = ["editing"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

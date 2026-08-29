@@ -23,8 +23,8 @@ use language_model::{
     CompactionResult, DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
     ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
@@ -216,7 +216,15 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         }
 
         if status == StatusCode::PAYMENT_REQUIRED {
-            return Err(LanguageModelCompletionError::PaymentRequired);
+            return Err(LanguageModelCompletionError::from_provider_response(
+                PROVIDER_NAME,
+                Some(status),
+                None,
+                "payment required to use this language model; please upgrade your account"
+                    .to_string(),
+                None,
+                ProviderErrorCategory::PaymentRequired,
+            ));
         }
 
         let mut body = String::new();
@@ -266,6 +274,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();
         let auth_context = token_provider.auth_context(cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.run(async move {
             let PerformLlmCompletionResponse {
                 response,
@@ -297,6 +306,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
                 &ANTHROPIC_PROVIDER_NAME,
                 move |event| mapper.map_event(event),
             );
+            let stream = language_model::stream_in_background(stream.boxed(), executor);
             let (context, usage) =
                 collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME).await?;
             Ok(CompactionResult { context, usage })
@@ -372,18 +382,27 @@ impl From<ApiError> for LanguageModelCompletionError {
                         .unwrap_or(error.status)
                 };
 
-                return LanguageModelCompletionError::UpstreamProviderError {
-                    message: cloud_error.message,
-                    status,
-                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
-                };
+                let category =
+                    ProviderErrorCategory::from_http_status(status, &cloud_error.message);
+                return LanguageModelCompletionError::from_provider_response(
+                    PROVIDER_NAME,
+                    Some(status),
+                    Some(cloud_error.code),
+                    cloud_error.message,
+                    cloud_error.retry_after.map(Duration::from_secs_f64),
+                    category,
+                );
             }
 
-            return LanguageModelCompletionError::from_http_status(
+            let category =
+                ProviderErrorCategory::from_http_status(error.status, &cloud_error.message);
+            return LanguageModelCompletionError::from_provider_response(
                 PROVIDER_NAME,
-                error.status,
+                Some(error.status),
+                Some(cloud_error.code),
                 cloud_error.message,
                 None,
+                category,
             );
         }
 
@@ -661,20 +680,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         format!("zed.dev/{}", self.model.id)
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic
-            | cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::OpenAi => {
-                LanguageModelToolSchemaFormat::JsonSchema
-            }
-            cloud_llm_client::LanguageModelProvider::Google
-            | cloud_llm_client::LanguageModelProvider::XAi => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
-        }
-    }
-
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count as u64
     }
@@ -751,6 +756,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let auth_context = token_provider.auth_context(cx);
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -777,10 +783,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
                     let mut mapper =
                         AnthropicEventMapper::new(provider_name.clone(), ANTHROPIC_PROVIDER_ID);
-                    Ok(map_cloud_completion_events(
+                    let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
                         move |event| mapper.map_event(event),
+                    );
+                    Ok(language_model::stream_in_background(
+                        events.boxed(),
+                        executor,
                     ))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
@@ -821,6 +831,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 }
 
                 let auth_context = token_provider.auth_context(cx);
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -846,10 +857,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .await?;
 
                     let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
-                    Ok(map_cloud_completion_events(
+                    let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
                         move |event| mapper.map_event(event),
+                    );
+                    Ok(language_model::stream_in_background(
+                        events.boxed(),
+                        executor,
                     ))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
@@ -872,6 +887,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
                 let auth_context = token_provider.auth_context(cx);
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -897,10 +913,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .await?;
 
                     let mut mapper = OpenAiEventMapper::new();
-                    Ok(map_cloud_completion_events(
+                    let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
                         move |event| mapper.map_event(event),
+                    );
+                    Ok(language_model::stream_in_background(
+                        events.boxed(),
+                        executor,
                     ))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
@@ -1236,7 +1256,8 @@ mod tests {
     use http_client::FakeHttpClient;
     use http_client::http::{HeaderMap, StatusCode};
     use language_model::{
-        LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent, Role, Speed,
+        LanguageModelCompletionError, LanguageModelRequestMessage, MessageContent,
+        ProviderErrorCategory, Role, Speed,
     };
     use serde_json::json;
     use std::sync::Mutex;
@@ -1542,7 +1563,7 @@ mod tests {
 
     #[test]
     fn test_api_error_conversion_with_upstream_http_error() {
-        // upstream_http_error with 503 status should become ServerOverloaded
+        // upstream_http_error with 503 status should become an Overloaded rejection
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout","upstream_status":503}"#;
 
         let api_error = ApiError {
@@ -1554,19 +1575,22 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
-                assert_eq!(
-                    message,
-                    "Received an error from the Anthropic API: upstream connect error or disconnect/reset before headers, reset reason: connection timeout"
-                );
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                retry_after,
+                category: ProviderErrorCategory::Overloaded,
+                ..
+            } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream 503, got: {:?}",
+                "Expected Overloaded rejection for upstream 503, got: {:?}",
                 completion_error
             ),
         }
 
-        // upstream_http_error with 500 status should become ApiInternalServerError
+        // upstream_http_error with 500 status should preserve the rejection
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the OpenAI API: internal server error","upstream_status":500}"#;
 
         let api_error = ApiError {
@@ -1578,19 +1602,31 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                retry_after,
+                category,
+            } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code.as_deref(), Some("upstream_http_error"));
                 assert_eq!(
                     message,
                     "Received an error from the OpenAI API: internal server error"
                 );
+                assert_eq!(retry_after, None);
+                assert_eq!(category, ProviderErrorCategory::InternalServer);
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream 500, got: {:?}",
+                "Expected ProviderRejection for upstream 500, got: {:?}",
                 completion_error
             ),
         }
 
-        // upstream_http_error with 429 status should become RateLimitExceeded
+        // upstream_http_error with 429 status should become a RateLimit rejection
         let error_body = r#"{"code":"upstream_http_error","message":"Received an error from the Google API: rate limit exceeded","upstream_status":429}"#;
 
         let api_error = ApiError {
@@ -1602,19 +1638,22 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError { message, .. } => {
-                assert_eq!(
-                    message,
-                    "Received an error from the Google API: rate limit exceeded"
-                );
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                retry_after,
+                category: ProviderErrorCategory::RateLimit,
+                ..
+            } => {
+                assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(retry_after, None);
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream 429, got: {:?}",
+                "Expected RateLimit rejection for upstream 429, got: {:?}",
                 completion_error
             ),
         }
 
-        // Regular 500 error without upstream_http_error should remain ApiInternalServerError for Zed
+        // Regular 500 error without upstream_http_error should preserve the Zed rejection
         let error_body = "Regular internal server error";
 
         let api_error = ApiError {
@@ -1626,17 +1665,28 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, message } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                retry_after,
+                category,
+            } => {
                 assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code, None);
                 assert_eq!(message, "Regular internal server error");
+                assert_eq!(retry_after, None);
+                assert_eq!(category, ProviderErrorCategory::InternalServer);
             }
             _ => panic!(
-                "Expected ApiInternalServerError for regular 500, got: {:?}",
+                "Expected ProviderRejection for regular 500, got: {:?}",
                 completion_error
             ),
         }
 
-        // upstream_http_429 format should be converted to UpstreamProviderError
+        // upstream_http_429 format should be converted to a RateLimit rejection
         let error_body = r#"{"code":"upstream_http_429","message":"Upstream Anthropic rate limit exceeded.","retry_after":30.5}"#;
 
         let api_error = ApiError {
@@ -1648,17 +1698,17 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::UpstreamProviderError {
-                message,
-                status,
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
                 retry_after,
+                category: ProviderErrorCategory::RateLimit,
+                ..
             } => {
-                assert_eq!(message, "Upstream Anthropic rate limit exceeded.");
-                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+                assert_eq!(provider, PROVIDER_NAME);
                 assert_eq!(retry_after, Some(Duration::from_secs_f64(30.5)));
             }
             _ => panic!(
-                "Expected UpstreamProviderError for upstream_http_429, got: {:?}",
+                "Expected RateLimit rejection for upstream_http_429, got: {:?}",
                 completion_error
             ),
         }
@@ -1675,11 +1725,20 @@ mod tests {
         let completion_error: LanguageModelCompletionError = api_error.into();
 
         match completion_error {
-            LanguageModelCompletionError::ApiInternalServerError { provider, .. } => {
+            LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status,
+                code,
+                message,
+                ..
+            } => {
                 assert_eq!(provider, PROVIDER_NAME);
+                assert_eq!(status, Some(StatusCode::INTERNAL_SERVER_ERROR));
+                assert_eq!(code, None);
+                assert_eq!(message, "Not JSON at all");
             }
             _ => panic!(
-                "Expected ApiInternalServerError for invalid JSON, got: {:?}",
+                "Expected ProviderRejection for invalid JSON, got: {:?}",
                 completion_error
             ),
         }
