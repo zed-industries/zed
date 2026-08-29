@@ -3543,7 +3543,15 @@ async fn file_id(path: impl AsRef<Path>) -> Result<u64> {
 /// not exist yet, a non-regular file (FIFO, device), a file with other hard links, and a file
 /// whose ownership we cannot reproduce are all written in place instead, since renaming would
 /// respectively apply the temp file's restrictive mode, replace a special file with a regular
-/// one, break the link, or silently change the owner. Those paths are still synced.
+/// one, break the link, or silently change the owner. A symlink is not among them: it is
+/// resolved first and its target replaced, which leaves the link itself intact.
+///
+/// Writing in place keeps the truncate window this function exists to close, and that is the
+/// cost of the guarantee those destinations need instead - a hard link that survives the save
+/// cannot also be replaced by a different file. The in-place writes are still synced, so they
+/// keep the second guarantee: a save that reports success has reached the disk. Only a file
+/// with other hard links, one whose ownership we cannot reproduce, and a symlink we could not
+/// resolve are exposed; a path that does not exist yet has no previous contents to lose.
 fn save_durably(path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()> {
     let path = resolve_final_symlink(path);
 

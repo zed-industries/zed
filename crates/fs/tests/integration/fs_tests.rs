@@ -499,29 +499,38 @@ async fn test_realfs_save_preserves_permissions(executor: BackgroundExecutor) {
 #[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_save_preserves_hard_links(executor: BackgroundExecutor) {
+    use std::os::unix::fs::MetadataExt as _;
+
     let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("file.txt");
     let link = temp_dir.path().join("link.txt");
     std::fs::write(&path, "old").unwrap();
     std::fs::hard_link(&path, &link).unwrap();
+    let inode_before = std::fs::metadata(&path).unwrap().ino();
 
     gpui::block_on(fs.save(&path, &"new".into(), LineEnding::Unix)).unwrap();
 
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
     assert_eq!(std::fs::read_to_string(&link).unwrap(), "new");
+    // Both names still refer to one file, which is only true of a write made in place. This
+    // is the case that keeps the truncate window: the link cannot survive a replacement.
+    assert_eq!(std::fs::metadata(&path).unwrap().ino(), inode_before);
 }
 
 /// Writing through a symlink must update its target and leave the link itself in place.
 #[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_save_writes_through_symlink(executor: BackgroundExecutor) {
+    use std::os::unix::fs::MetadataExt as _;
+
     let fs = RealFs::new(None, executor);
     let temp_dir = TempDir::new().unwrap();
     let target = temp_dir.path().join("target.txt");
     let link = temp_dir.path().join("link.txt");
     std::fs::write(&target, "old").unwrap();
     std::os::unix::fs::symlink(&target, &link).unwrap();
+    let inode_before = std::fs::metadata(&target).unwrap().ino();
 
     gpui::block_on(fs.save(&link, &"new".into(), LineEnding::Unix)).unwrap();
 
@@ -532,6 +541,9 @@ async fn test_realfs_save_writes_through_symlink(executor: BackgroundExecutor) {
             .file_type()
             .is_symlink()
     );
+    // Unlike a hard link, a symlink does not force the write in place: the target is replaced
+    // by a rename, and the link keeps pointing at the path that now holds the new file.
+    assert_ne!(std::fs::metadata(&target).unwrap().ino(), inode_before);
 }
 
 #[gpui::test]

@@ -404,8 +404,16 @@ pub enum DiskState {
     /// operations and sync clients all do - would otherwise compare equal to the previous
     /// state, so no reload is requested and the buffer stays stale indefinitely. Most such
     /// tools replace the file by renaming a new one over it, which changes its identity even
-    /// when neither timestamp nor length moved. `None` where identity is unknown, which is the
-    /// case for files described over the wire.
+    /// when neither timestamp nor length moved.
+    ///
+    /// Identity does not close that gap entirely: a tool that rewrites the file *in place* to
+    /// the same length within one mtime tick keeps all three fields and is still invisible
+    /// here. Only hashing the contents would catch it, and that would mean reading every file
+    /// on every scan.
+    ///
+    /// `None` where identity is unknown, which is the case for files described over the wire.
+    /// Compare two states with [`DiskState::differs_from`] rather than `==`, so that an
+    /// unknown identity is not itself read as a change.
     Present {
         mtime: MTime,
         size: u64,
@@ -419,6 +427,33 @@ pub enum DiskState {
 }
 
 impl DiskState {
+    /// Whether these two observations of a file describe contents that may differ.
+    ///
+    /// This is deliberately not `!=`. Identity is compared only when both observations know
+    /// it, so a state that arrived over the wire - which carries none - is judged on the
+    /// fields the two have in common rather than being reported as changed for that reason
+    /// alone.
+    pub fn differs_from(self, other: Self) -> bool {
+        match (self, other) {
+            (
+                DiskState::Present { mtime, size, inode },
+                DiskState::Present {
+                    mtime: other_mtime,
+                    size: other_size,
+                    inode: other_inode,
+                },
+            ) => {
+                mtime != other_mtime
+                    || size != other_size
+                    || match (inode, other_inode) {
+                        (Some(inode), Some(other_inode)) => inode != other_inode,
+                        _ => false,
+                    }
+            }
+            _ => self != other,
+        }
+    }
+
     /// Returns the file's last known modification time on disk.
     pub fn mtime(self) -> Option<MTime> {
         match self {
@@ -1734,7 +1769,7 @@ impl Buffer {
 
             let old_state = old_file.disk_state();
             let new_state = new_file.disk_state();
-            if old_state != new_state {
+            if old_state.differs_from(new_state) {
                 file_changed = true;
                 if !was_dirty && matches!(new_state, DiskState::Present { .. }) {
                     cx.emit(BufferEvent::ReloadNeeded)
