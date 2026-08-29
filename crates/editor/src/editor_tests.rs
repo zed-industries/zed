@@ -26444,7 +26444,7 @@ async fn test_restoring_hunks_in_folded_buffer_unfolds_it(cx: &mut TestAppContex
     let (editor, cx) = cx
         .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
     editor.update_in(cx, |editor, _window, cx| {
-        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
         for (buffer, base_text) in [
             (buffer_1.clone(), base_text_1),
             (buffer_2.clone(), base_text_2),
