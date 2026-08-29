@@ -3584,7 +3584,7 @@ fn save_in_place(path: &Path, text: &Rope, line_ending: LineEnding) -> Result<()
 }
 
 fn write_rope(file: &mut std::fs::File, text: &Rope, line_ending: LineEnding) -> io::Result<()> {
-    let buffer_size = text.summary().len.min(10 * 1024).max(1);
+    let buffer_size = text.summary().len.clamp(1, 10 * 1024);
     let mut writer = io::BufWriter::with_capacity(buffer_size, file);
     for chunk in text::chunks_with_line_ending(text, line_ending) {
         writer.write_all(chunk.as_bytes())?;
