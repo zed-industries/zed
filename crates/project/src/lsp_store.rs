@@ -2409,16 +2409,38 @@ impl LocalLspStore {
                 .global_lsp_settings
                 .get_request_timeout()
         });
+        // The server frames both the range it is asked to format and the edits it returns in
+        // the document it last received, which is not necessarily the buffer's current text.
+        // Resolving the anchors against that snapshot sends the server coordinates for the
+        // text it actually holds; the returned edits are then converted back in the same
+        // version, so the buffer maps them forward itself.
+        //
+        // TODO(#22930): when formatting a multibuffer selection, this buffer may never have
+        // been sent to this server at all. There is no version to frame against in that case
+        // and the current snapshot is the only available approximation.
+        let server_version = this.update(cx, |this, cx| {
+            this.as_local()?.latest_version_sent_to_server(
+                buffer_handle.read(cx).remote_id(),
+                language_server.server_id(),
+            )
+        })?;
+
         let lsp_edits = {
             let mut lsp_ranges = Vec::new();
-            this.update(cx, |_this, cx| {
-                // TODO(#22930): In the case of formatting multibuffer selections, this buffer may
-                // not have been sent to the language server. This seems like a fairly systemic
-                // issue, though, the resolution probably is not specific to formatting.
-                //
-                // TODO: Instead of using current snapshot, should use the latest snapshot sent to
-                // LSP.
-                let snapshot = buffer_handle.read(cx).snapshot();
+            this.update(cx, |this, cx| {
+                let snapshot = this
+                    .as_local_mut()
+                    .and_then(|local| {
+                        local
+                            .buffer_snapshot_for_lsp_version(
+                                buffer_handle,
+                                language_server.server_id(),
+                                server_version,
+                                cx,
+                            )
+                            .ok()
+                    })
+                    .unwrap_or_else(|| buffer_handle.read(cx).text_snapshot());
                 for range in ranges {
                     lsp_ranges.push(range_to_lsp(range.to_point_utf16(&snapshot))?);
                 }
@@ -2506,7 +2528,7 @@ impl LocalLspStore {
                     buffer_handle,
                     lsp_edits,
                     language_server.server_id(),
-                    None,
+                    server_version,
                     cx,
                 )
             })?
@@ -2847,13 +2869,8 @@ impl LocalLspStore {
         // omit it. Such a server analyzed the last text we sent it, which is not
         // necessarily the buffer's current text, so resolve against that version instead
         // of clipping the ranges onto whatever is on screen now.
-        let version = version.or_else(|| {
-            self.buffer_snapshots
-                .get(&buffer.read(cx).remote_id())
-                .and_then(|snapshots| snapshots.get(&server_id))
-                .and_then(|snapshots| snapshots.last())
-                .map(|snapshot| snapshot.version)
-        });
+        let version = version
+            .or_else(|| self.latest_version_sent_to_server(buffer.read(cx).remote_id(), server_id));
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
 
         let edits_since_save = std::cell::LazyCell::new(|| {
@@ -3237,6 +3254,31 @@ impl LocalLspStore {
                 }
             }
         });
+    }
+
+    /// The document version this server was last told about, which is the version its
+    /// responses are framed in. Coordinates travelling in either direction between Zed and a
+    /// language server belong in this version, not in whatever the buffer happens to hold now.
+    fn latest_version_sent_to_server(
+        &self,
+        buffer_id: BufferId,
+        server_id: LanguageServerId,
+    ) -> Option<i32> {
+        Some(
+            self.latest_snapshot_sent_to_server(buffer_id, server_id)?
+                .version,
+        )
+    }
+
+    fn latest_snapshot_sent_to_server(
+        &self,
+        buffer_id: BufferId,
+        server_id: LanguageServerId,
+    ) -> Option<&LspBufferSnapshot> {
+        self.buffer_snapshots
+            .get(&buffer_id)
+            .and_then(|snapshots| snapshots.get(&server_id))
+            .and_then(|snapshots| snapshots.last())
     }
 
     fn buffer_snapshot_for_lsp_version(
