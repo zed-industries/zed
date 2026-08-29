@@ -5337,6 +5337,7 @@ mod tests {
         )
     }
 
+    #[test]
     fn test_rename_folder_icons_to_folder_indicator_in_all_panels() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
