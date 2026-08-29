@@ -83,6 +83,15 @@ pub(crate) struct ImeMirror {
     selection_import_rejected: Cell<bool>,
 }
 
+/// Whether the device's primary pointer is coarse (a touch screen). The
+/// distinction drives virtual-keyboard policy: touch-first browsers summon
+/// the keyboard for any focused editable element on a user gesture.
+fn primary_pointer_is_coarse() -> bool {
+    web_sys::window()
+        .and_then(|window| window.match_media("(pointer: coarse)").ok().flatten())
+        .is_some_and(|media_query_list| media_query_list.matches())
+}
+
 impl ImeMirror {
     pub(crate) fn new(
         document: &web_sys::Document,
@@ -110,6 +119,14 @@ impl ImeMirror {
         body.append_child(&element)
             .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
         element.focus().ok();
+        // The element must stay focused to receive hardware-key and IME
+        // events, but on touch-first devices a focused *editable* element
+        // invites the browser to summon the virtual keyboard on the next
+        // user gesture — including a scroll. Start read-only there; only a
+        // recognized tap on text input lifts it (`sync_virtual_keyboard`).
+        if primary_pointer_is_coarse() {
+            element.set_read_only(true);
+        }
 
         let this = Self {
             element,

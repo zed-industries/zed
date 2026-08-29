@@ -5254,15 +5254,17 @@ impl LspStore {
                     }
 
                     this.update(cx, |this, cx| {
-                        let mut plain_text_buffers = Vec::new();
+                        let mut buffers_to_detect = Vec::new();
                         let mut buffers_with_language = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for handle in this.buffer_store.read(cx).buffers() {
                             let buffer = handle.read(cx);
                             if buffer.language().is_none()
                                 || buffer.language() == Some(&*language::PLAIN_TEXT)
+                                || (buffer.file().is_some()
+                                    && buffer.content_language_detection_enabled())
                             {
-                                plain_text_buffers.push(handle);
+                                buffers_to_detect.push(handle);
                             } else {
                                 if buffer.contains_unknown_injections() {
                                     buffers_with_unknown_injections.push(handle.clone());
@@ -5273,14 +5275,14 @@ impl LspStore {
 
                         // Deprioritize the invisible worktrees so main worktrees' language servers can be started first,
                         // and reused later in the invisible worktrees.
-                        plain_text_buffers.sort_by_key(|buffer| {
+                        buffers_to_detect.sort_by_key(|buffer| {
                             Reverse(
                                 File::from_dyn(buffer.read(cx).file())
                                     .map(|file| file.worktree.read(cx).is_visible()),
                             )
                         });
 
-                        for buffer in plain_text_buffers {
+                        for buffer in buffers_to_detect {
                             this.detect_language_for_buffer(&buffer, cx);
                             let stopped_language_servers = &this.stopped_language_servers;
                             if let LspStoreMode::Local(local) = &mut this.mode {
@@ -5406,6 +5408,9 @@ impl LspStore {
             if let Some(Ok(Ok(new_language))) =
                 self.languages.load_language(language_id).now_or_never()
             {
+                buffer_handle.update(cx, |buffer, _| {
+                    buffer.set_content_language_detection_enabled(false);
+                });
                 self.set_language_for_buffer(buffer_handle, new_language, cx);
             }
         } else {
