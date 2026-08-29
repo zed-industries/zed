@@ -398,25 +398,25 @@ pub enum DiskState {
     New,
     /// File present on the filesystem.
     ///
-    /// `inode` is the file's identity as reported by the filesystem, and is part of this
-    /// state because `{mtime, size}` alone cannot see an external write: a tool that rewrites
-    /// a file to the same length within one mtime tick - formatters, build steps, `git`
-    /// operations and sync clients all do - would otherwise compare equal to the previous
-    /// state, so no reload is requested and the buffer stays stale indefinitely. Most such
-    /// tools replace the file by renaming a new one over it, which changes its identity even
-    /// when neither timestamp nor length moved.
+    /// `size` and `inode` accompany `mtime` because the timestamp alone cannot see an external
+    /// write: a tool that rewrites a file within one mtime tick - formatters, build steps,
+    /// `git` operations and sync clients all do - would otherwise compare equal to the
+    /// previous state, so no reload is requested and the buffer stays stale indefinitely. A
+    /// rewrite that changes the file's length is caught by `size`, and one that keeps it is
+    /// usually caught by `inode`, since most such tools replace the file by renaming a new one
+    /// over it.
     ///
-    /// Identity does not close that gap entirely: a tool that rewrites the file *in place* to
-    /// the same length within one mtime tick keeps all three fields and is still invisible
-    /// here. Only hashing the contents would catch it, and that would mean reading every file
-    /// on every scan.
+    /// A gap remains: a tool that rewrites the file *in place* to the same length within one
+    /// mtime tick keeps all three fields and is invisible here. Only hashing the contents
+    /// would catch it, and that would mean reading every file on every scan.
     ///
-    /// `None` where identity is unknown, which is the case for files described over the wire.
-    /// Compare two states with [`DiskState::differs_from`] rather than `==`, so that an
-    /// unknown identity is not itself read as a change.
+    /// Either field is `None` where that observation could not establish it, which is the case
+    /// for a file described over the wire whose worktree entry has not arrived yet. Compare
+    /// two states with [`DiskState::differs_from`] rather than `==`, so that a field one side
+    /// could not see is not itself read as a change.
     Present {
         mtime: MTime,
-        size: u64,
+        size: Option<u64>,
         inode: Option<u64>,
     },
     /// Deleted file that was previously present.
@@ -429,11 +429,15 @@ pub enum DiskState {
 impl DiskState {
     /// Whether these two observations of a file describe contents that may differ.
     ///
-    /// This is deliberately not `!=`. Identity is compared only when both observations know
-    /// it, so a state that arrived over the wire - which carries none - is judged on the
-    /// fields the two have in common rather than being reported as changed for that reason
-    /// alone.
+    /// This is deliberately not `!=`. Size and identity are compared only where both
+    /// observations established them, so a state assembled from a worktree that has not fully
+    /// arrived is judged on the fields the two have in common, rather than being reported as
+    /// changed for what one of them could not see.
     pub fn differs_from(self, other: Self) -> bool {
+        fn known_and_different(one: Option<u64>, other: Option<u64>) -> bool {
+            matches!((one, other), (Some(one), Some(other)) if one != other)
+        }
+
         match (self, other) {
             (
                 DiskState::Present { mtime, size, inode },
@@ -444,11 +448,8 @@ impl DiskState {
                 },
             ) => {
                 mtime != other_mtime
-                    || size != other_size
-                    || match (inode, other_inode) {
-                        (Some(inode), Some(other_inode)) => inode != other_inode,
-                        _ => false,
-                    }
+                    || known_and_different(size, other_size)
+                    || known_and_different(inode, other_inode)
             }
             _ => self != other,
         }
@@ -464,11 +465,12 @@ impl DiskState {
         }
     }
 
-    /// Returns the file's size on disk in bytes.
+    /// Returns the file's size on disk in bytes, where the file is present and the observation
+    /// established its size.
     pub fn size(self) -> Option<u64> {
         match self {
             DiskState::New => None,
-            DiskState::Present { size, .. } => Some(size),
+            DiskState::Present { size, .. } => size,
             DiskState::Deleted => None,
             DiskState::Historic { .. } => None,
         }

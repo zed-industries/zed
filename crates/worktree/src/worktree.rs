@@ -1683,7 +1683,7 @@ impl LocalWorktree {
                         path,
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
-                            size: metadata.len,
+                            size: Some(metadata.len),
                             inode: Some(metadata.inode),
                         },
                         is_local: true,
@@ -1742,7 +1742,7 @@ impl LocalWorktree {
                         path,
                         disk_state: DiskState::Present {
                             mtime: metadata.mtime,
-                            size: metadata.len,
+                            size: Some(metadata.len),
                             inode: Some(metadata.inode),
                         },
                         is_local: true,
@@ -1903,7 +1903,7 @@ impl LocalWorktree {
                     path,
                     disk_state: DiskState::Present {
                         mtime: metadata.mtime,
-                        size: metadata.len,
+                        size: Some(metadata.len),
                         inode: Some(metadata.inode),
                     },
                     entry_id: None,
@@ -3885,7 +3885,7 @@ impl File {
             disk_state: if let Some(mtime) = entry.mtime {
                 DiskState::Present {
                     mtime,
-                    size: entry.size,
+                    size: Some(entry.size),
                     inode: Some(entry.inode),
                 }
             } else {
@@ -3916,10 +3916,19 @@ impl File {
         } else if proto.is_deleted {
             DiskState::Deleted
         } else if let Some(mtime) = proto.mtime.map(&Into::into) {
+            // `proto::File` carries no size or identity, but `proto::Entry` carries both and
+            // the worktree they belong to is already here, so recover them from the entry
+            // rather than leaving this observation blind to every same-mtime rewrite. The
+            // entry is missing when its worktree update has not arrived yet, and both fields
+            // stay unknown until it does.
+            let entry = proto
+                .entry_id
+                .map(ProjectEntryId::from_proto)
+                .and_then(|entry_id| worktree.read(cx).entry_for_id(entry_id));
             DiskState::Present {
                 mtime,
-                size: 0,
-                inode: None,
+                size: entry.map(|entry| entry.size),
+                inode: entry.map(|entry| entry.inode),
             }
         } else {
             DiskState::New

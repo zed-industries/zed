@@ -7032,6 +7032,74 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     });
 }
 
+/// `proto::File` carries neither size nor identity, so a guest reconstructing one has to
+/// recover both from the worktree entry the host already sent it. Without that, every remote
+/// file's disk state disagrees with the host's and is blind to any rewrite that leaves the
+/// mtime alone.
+#[gpui::test]
+async fn test_remote_file_recovers_size_and_inode_from_its_entry(cx: &mut gpui::TestAppContext) {
+    use language::File as _;
+    use worktree::File;
+
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({ "a": { "file1": "some contents" } }));
+    let project = Project::test(Arc::new(RealFs::new(None, cx.executor())), [dir.path()], cx).await;
+    let tree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+
+    let metadata = tree.update(cx, |tree, _| tree.metadata_proto());
+    let updates = Arc::new(Mutex::new(Vec::new()));
+    tree.update(cx, |tree, cx| {
+        let updates = updates.clone();
+        tree.observe_updates(0, cx, move |update| {
+            updates.lock().push(update);
+            async { true }
+        });
+    });
+
+    let remote = cx.update(|cx| {
+        Worktree::remote(
+            0,
+            ReplicaId::REMOTE_SERVER,
+            metadata,
+            project.read(cx).client().into(),
+            project.read(cx).path_style(cx),
+            cx,
+        )
+    });
+    cx.executor().run_until_parked();
+    remote.update(cx, |remote, _| {
+        for update in updates.lock().drain(..) {
+            remote.as_remote_mut().unwrap().update_from_remote(update);
+        }
+    });
+    cx.executor().run_until_parked();
+
+    let host_file = cx.update(|cx| {
+        let entry = tree
+            .read(cx)
+            .entry_for_path(rel_path("a/file1"))
+            .expect("no entry for a/file1")
+            .clone();
+        File::for_entry(entry, tree.clone())
+    });
+
+    let host_state = host_file.disk_state();
+    assert_eq!(host_state.size(), Some("some contents".len() as u64));
+
+    let guest_file = cx.update(|cx| {
+        let proto = host_file.to_proto(cx);
+        File::from_proto(proto, remote.clone(), cx).unwrap()
+    });
+
+    // The guest sees exactly what the host does, so comparing the two is meaningful and a
+    // same-length rewrite on the host is still visible to it.
+    assert_eq!(guest_file.disk_state(), host_state);
+    assert!(!guest_file.disk_state().differs_from(host_state));
+}
+
 #[cfg(target_os = "linux")]
 #[gpui::test(retries = 5)]
 async fn test_recreated_directory_receives_child_events(cx: &mut gpui::TestAppContext) {
