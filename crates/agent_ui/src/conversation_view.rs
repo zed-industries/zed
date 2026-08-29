@@ -1185,6 +1185,13 @@ impl ConversationView {
             this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(thread) => {
+                        // A load that replayed no history leaves the user in
+                        // the same place as a resume (e.g. a freshly forked
+                        // session whose transcript the agent hasn't written
+                        // yet), so show the same notice.
+                        if resume_session_id.is_some() && thread.read(cx).entries().is_empty() {
+                            resumed_without_history = true;
+                        }
                         this.clear_resolved_request_elicitations_for_connection(&connection, cx);
                         let root_session_id = thread.read(cx).session_id().clone();
 

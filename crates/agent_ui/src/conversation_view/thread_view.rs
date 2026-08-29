@@ -11484,7 +11484,7 @@ impl ThreadView {
     }
 
     fn render_resume_notice(_cx: &Context<Self>) -> AnyElement {
-        let description = "This agent does not support viewing previous messages. However, your session will still continue from where you last left off.";
+        let description = "Previous messages can't be displayed right now. However, your session will still continue from where you last left off.";
 
         Callout::new()
             .border_position(CalloutBorderPosition::Bottom)

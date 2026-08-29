@@ -216,6 +216,12 @@ pub trait AgentConnection {
         None
     }
 
+    /// Returns a capability for creating a new session that shares the given
+    /// session's conversation history, if this agent supports forking.
+    fn fork(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionFork>> {
+        None
+    }
+
     fn set_title(
         &self,
         _session_id: &acp::SessionId,
@@ -267,6 +273,12 @@ impl dyn AgentConnection {
 
 pub trait AgentSessionTruncate {
     fn run(&self, client_user_message_id: ClientUserMessageId, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentSessionFork {
+    /// Creates a new session sharing the source session's conversation history
+    /// and returns its id. The forked session is not opened as a thread.
+    fn run(&self, work_dirs: PathList, cx: &mut App) -> Task<Result<acp::SessionId>>;
 }
 
 pub trait AgentSessionClientUserMessageIds {

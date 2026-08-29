@@ -1659,6 +1659,36 @@ impl AgentPanel {
         &self.connection_store
     }
 
+    /// Creates a new session for the given agent that shares the source
+    /// session's conversation history, connecting to the agent first if
+    /// necessary. Returns the forked session's id without opening it.
+    pub fn fork_thread(
+        &mut self,
+        agent_id: AgentId,
+        session_id: acp::SessionId,
+        work_dirs: PathList,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::SessionId>> {
+        let agent = Agent::from(agent_id);
+        let agent_label = agent.label();
+        let server = agent.server(self.fs.clone(), self.thread_store.clone());
+        let connection_entry = self
+            .connection_store
+            .update(cx, |store, cx| store.request_connection(agent, server, cx));
+        let connect_task = connection_entry.read(cx).wait_for_connection();
+        cx.spawn(async move |_this, cx| {
+            let connected = connect_task.await?;
+            let fork_task = cx.update(|cx| {
+                connected
+                    .connection
+                    .fork(&session_id, cx)
+                    .map(|fork| fork.run(work_dirs, cx))
+                    .ok_or_else(|| anyhow!("Forking threads is not supported by {agent_label}"))
+            })?;
+            fork_task.await
+        })
+    }
+
     pub fn selected_agent(&self, cx: &App) -> Agent {
         if self.project.read(cx).is_via_collab() {
             Agent::NativeAgent

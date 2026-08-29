@@ -1279,8 +1279,17 @@ impl ThreadMetadataStore {
         if thread_ref.project().read(cx).is_via_collab() {
             return;
         }
-        let is_draft = thread_ref.is_draft_thread();
         let existing_thread = self.entry(thread_id);
+        // An empty thread re-hosting the session its row already recorded
+        // (e.g. a fork, or a session loaded without history replay) is not a
+        // draft: demoting it would drop the session id and let the row be
+        // discarded as an empty draft when deactivated. An empty thread with
+        // a *different* session id is still a draft, so an ephemeral draft
+        // session id never overwrites a recorded one.
+        let is_draft = thread_ref.is_draft_thread()
+            && existing_thread.map_or(true, |thread| {
+                thread.session_id.as_ref() != Some(thread_ref.session_id())
+            });
 
         // Draft session IDs may change on reload, so let's not save them until they're valid
         let session_id = if is_draft {
