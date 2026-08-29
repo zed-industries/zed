@@ -28,12 +28,14 @@ use rustc_span::Span;
 
 mod blocking_io_on_foreground;
 mod entity_update_in_render;
+mod map_lookup_then_insert;
 mod notify_in_render;
 mod owned_string_into_shared;
 mod render_helpers;
 
 use blocking_io_on_foreground::BLOCKING_IO_ON_FOREGROUND;
 use entity_update_in_render::ENTITY_UPDATE_IN_RENDER;
+use map_lookup_then_insert::MAP_LOOKUP_THEN_INSERT;
 use notify_in_render::NOTIFY_IN_RENDER;
 use owned_string_into_shared::OWNED_STRING_INTO_SHARED;
 
@@ -54,6 +56,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
         ASYNC_BLOCK_WITHOUT_AWAIT,
         BLOCKING_IO_ON_FOREGROUND,
         ENTITY_UPDATE_IN_RENDER,
+        MAP_LOOKUP_THEN_INSERT,
         NOTIFY_IN_RENDER,
         OWNED_STRING_INTO_SHARED,
     ]);
@@ -61,6 +64,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
     lint_store.register_late_pass(|_| Box::new(AsyncBlockWithoutAwait));
     lint_store.register_late_pass(|_| Box::new(blocking_io_on_foreground::BlockingIoOnForeground));
     lint_store.register_late_pass(|_| Box::new(entity_update_in_render::EntityUpdateInRender));
+    lint_store.register_late_pass(|_| Box::new(map_lookup_then_insert::MapLookupThenInsert));
     lint_store.register_late_pass(|_| Box::new(notify_in_render::NotifyInRender));
     lint_store.register_late_pass(|_| Box::new(owned_string_into_shared::OwnedStringIntoShared));
 }
