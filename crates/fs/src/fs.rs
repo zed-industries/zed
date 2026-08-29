@@ -2991,6 +2991,14 @@ impl Fs for FakeFs {
             }
         })?;
 
+        // POSIX `rename` succeeds without doing anything when both names resolve
+        // to the same file. Falling through would assign the entry onto itself
+        // and then remove it, destroying the file. The lookup above has already
+        // reported a missing source, so only an existing one reaches here.
+        if old_path == new_path {
+            return Ok(());
+        }
+
         let inode = match moved_entry {
             FakeFsEntry::File { inode, .. } => inode,
             FakeFsEntry::Dir { inode, .. } => inode,
