@@ -836,14 +836,19 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
 }
 
 pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
-    format!(
-        "{} ({}:{})",
-        path.and_then(|path| path.file_name())
-            .unwrap_or("Untitled".as_ref())
-            .display(),
-        *line_range.start() + 1,
-        *line_range.end() + 1
-    )
+    let start = *line_range.start() + 1;
+    let end = *line_range.end() + 1;
+
+    let file_name = path
+        .and_then(|path| path.file_name())
+        .unwrap_or("Untitled".as_ref())
+        .display();
+
+    if start == end {
+        format!("{file_name} ({start})")
+    } else {
+        format!("{file_name} ({start}:{end})")
+    }
 }
 
 /// Formats a 0-based, inclusive line range as a 1-based path suffix: `:5` for a

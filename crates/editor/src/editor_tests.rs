@@ -10568,9 +10568,75 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
     let selection = &selections[0];
     assert_eq!(
         selection.line_range,
-        Some(2..=5),
-        "line range should be from original file (rows 2-5), not multibuffer rows (0-2)"
+        Some(2..=4),
+        "line range should be from original file (rows 2-4), not multibuffer rows (0-2)"
     );
+}
+
+#[gpui::test]
+async fn test_clipboard_line_numbers_for_whole_line_copy(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(
+        path!("/file.txt"),
+        "first line\nsecond line\nthird line\nfourth line\nfifth line\n".into(),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), multibuffer, window, cx)
+    });
+
+    let line_range_after_copy = |cx: &mut VisualTestContext| {
+        let clipboard_selections: Option<Vec<ClipboardSelection>> = cx
+            .read_from_clipboard()
+            .and_then(|item| item.entries().first().cloned())
+            .and_then(|entry| match entry {
+                gpui::ClipboardEntry::String(text) => text.metadata_json(),
+                _ => None,
+            });
+        let selections = clipboard_selections.expect("should have clipboard selections");
+        assert_eq!(selections.len(), 1);
+        selections[0].line_range.clone()
+    };
+
+    // Copying with an empty selection copies the whole line, which extends to the
+    // start of the next line. Only the line the cursor is on should be reported.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 3)..Point::new(1, 3)]);
+        });
+        editor.copy(&Copy, window, cx);
+    });
+    assert_eq!(line_range_after_copy(cx), Some(1..=1));
+
+    // A selection that ends at the start of a later line doesn't include that line.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(3, 0)]);
+        });
+        editor.copy(&Copy, window, cx);
+    });
+    assert_eq!(line_range_after_copy(cx), Some(1..=2));
+
+    // A selection ending mid-line still includes that line.
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(Default::default(), window, cx, |s| {
+            s.select_ranges([Point::new(1, 0)..Point::new(3, 4)]);
+        });
+        editor.copy(&Copy, window, cx);
+    });
+    assert_eq!(line_range_after_copy(cx), Some(1..=3));
 }
 
 #[gpui::test]
