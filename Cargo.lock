@@ -9528,6 +9528,7 @@ dependencies = [
  "tracing",
  "tree-sitter",
  "tree-sitter-c",
+ "tree-sitter-cpp",
  "tree-sitter-elixir",
  "tree-sitter-embedded-template",
  "tree-sitter-heex",

@@ -103,6 +103,7 @@ struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
     captures: QueryCaptures<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     next_capture: Option<QueryCapture<'a>>,
+    query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
 }
@@ -1161,6 +1162,7 @@ impl<'a> SyntaxMapCaptures<'a> {
                 grammar_index,
                 next_capture: None,
                 captures,
+                query,
                 _query_cursor: query_cursor,
             };
 
@@ -1388,7 +1390,17 @@ impl<'a> SyntaxMapMatches<'a> {
 
 impl SyntaxMapCapturesLayer<'_> {
     fn advance(&mut self) {
-        self.next_capture = self.captures.next().map(|(mat, ix)| mat.captures[*ix]);
+        loop {
+            let Some((mat, capture_index)) = self.captures.next() else {
+                self.next_capture = None;
+                return;
+            };
+
+            if satisfies_custom_predicates(self.query, mat) {
+                self.next_capture = Some(mat.captures[*capture_index]);
+                return;
+            }
+        }
     }
 
     fn sort_key(&self) -> (usize, Reverse<usize>, usize) {
@@ -1450,6 +1462,8 @@ fn satisfies_custom_predicates(query: &Query, mat: &QueryMatch) -> bool {
         let satisfied = match predicate.operator.as_ref() {
             "has-parent?" => has_parent(&predicate.args, mat),
             "not-has-parent?" => !has_parent(&predicate.args, mat),
+            "has-parent-chain?" => has_parent_chain(&predicate.args, mat),
+            "not-has-parent-chain?" => !has_parent_chain(&predicate.args, mat),
             _ => true,
         };
         if !satisfied {
@@ -1476,6 +1490,33 @@ fn has_parent(args: &[QueryPredicateArg], mat: &QueryMatch) -> bool {
         .node
         .parent()
         .is_some_and(|p| p.kind() == parent_kind.as_ref())
+}
+
+fn has_parent_chain(args: &[QueryPredicateArg], mat: &QueryMatch) -> bool {
+    let Some(QueryPredicateArg::Capture(capture_ix)) = args.first() else {
+        return false;
+    };
+
+    let Some(capture) = mat.captures.iter().find(|c| c.index == *capture_ix) else {
+        return false;
+    };
+
+    let mut node = capture.node;
+    for parent_kind in &args[1..] {
+        let QueryPredicateArg::String(parent_kind) = parent_kind else {
+            return false;
+        };
+
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        if parent.kind() != parent_kind.as_ref() {
+            return false;
+        }
+        node = parent;
+    }
+
+    true
 }
 
 fn join_ranges(

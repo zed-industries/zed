@@ -400,6 +400,115 @@ fn test_rust_json_macro_empty_string_highlighting(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_highlight_captures_filter_custom_predicates(cx: &mut App) {
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
+            }
+            .into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )
+    .with_queries(LanguageQueries {
+        highlights: Some(Cow::from(
+            "((closure_expression) @function (#not-has-parent-chain? @function arguments call_expression))",
+        )),
+        ..Default::default()
+    })
+    .expect("Could not parse queries"));
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    registry.add(language.clone());
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "fn main() { let standalone = || {}; foo(|| {}); }",
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(language, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["function"],
+        "fn main() { let standalone = «|| {}»; foo(|| {}); }",
+    );
+}
+
+#[gpui::test]
+fn test_cpp_direct_initialization_highlights(cx: &mut App) {
+    // `Application app(appInfo);` inside a function body is direct
+    // initialization, not a function declaration (zed#61494). The identifier
+    // must not be captured as `@function` and the argument type must not be
+    // captured as `@type`.
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: LanguageName::new_static("C++"),
+                matcher: Arc::new(LanguageMatcher {
+                    path_suffixes: vec!["cpp".to_string()],
+                    ..Default::default()
+                }),
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter::Language::new(tree_sitter_cpp::LANGUAGE)),
+        )
+        .with_queries(LanguageQueries {
+            highlights: Some(Cow::from(include_str!(
+                "../../../grammars/src/cpp/highlights.scm"
+            ))),
+            ..Default::default()
+        })
+        .expect("Could not parse queries"),
+    );
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    registry.add(language.clone());
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "int main() {\n    Application app(appInfo);\n}\n",
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(language, &buffer);
+
+    // Only `main` may be a function; the direct-initialization variable `app`
+    // must not be captured as `@function`.
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["function"],
+        "int «main»() {\n    Application app(appInfo);\n}\n",
+    );
+
+    // Only the declaration type stays a type; the parameter type `appInfo`
+    // must not be captured as `@type`.
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["type"],
+        "int main() {\n    «Application» app(appInfo);\n}\n",
+    );
+
+    // Both the variable and its initializer argument are captured as
+    // variables.
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["variable"],
+        "int «main»() {\n    Application «app»(«appInfo»);\n}\n",
+    );
+}
+
+#[gpui::test]
 fn test_typing_multiple_new_injections(cx: &mut App) {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
