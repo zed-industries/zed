@@ -999,7 +999,18 @@ async fn download_remote_server_binary(
         "failed to download remote server release: {:?}",
         response.status()
     );
-    smol::io::copy(response.body_mut(), &mut temp_file).await?;
+    let expected_bytes = content_length(&response);
+    let downloaded_bytes = smol::io::copy(response.body_mut(), &mut temp_file).await?;
+    // A body that ends early reads as a clean EOF, so without this a truncated download is
+    // indistinguishable from a complete one and gets renamed into place as if whole.
+    if let Some(expected_bytes) = expected_bytes {
+        anyhow::ensure!(
+            downloaded_bytes == expected_bytes,
+            "remote server download is incomplete: got {downloaded_bytes} of {expected_bytes} bytes"
+        );
+    }
+    temp_file.flush().await?;
+    temp_file.sync_all().await?;
     smol::fs::rename(&temp, &target_path).await?;
 
     Ok(())
@@ -1062,13 +1073,30 @@ async fn cleanup_remote_server_cache(
     Ok(())
 }
 
+fn content_length<T>(response: &http_client::Response<T>) -> Option<u64> {
+    response
+        .headers()
+        .get(http_client::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|total_bytes| *total_bytes > 0)
+}
+
 async fn download_release(
     target_path: &Path,
     release: ReleaseAsset,
     client: Arc<HttpClientWithUrl>,
     mut on_progress: impl FnMut(Option<f32>),
 ) -> Result<()> {
-    let mut target_file = File::create(&target_path).await?;
+    // Stage through a sibling temp file rather than streaming the response straight into the
+    // destination, so an interrupted download cannot leave a partial archive sitting at the
+    // path the installer then reads. This is what `download_remote_server_binary` above
+    // already does for the less consequential of the two downloads.
+    let parent = target_path
+        .parent()
+        .context("download target has no parent directory")?;
+    let temp = tempfile::Builder::new().tempfile_in(parent)?;
+    let mut target_file = File::create(temp.path()).await?;
 
     let mut response = client.get(&release.url, Default::default(), true).await?;
     anyhow::ensure!(
@@ -1077,12 +1105,7 @@ async fn download_release(
         response.status()
     );
 
-    let total_bytes = response
-        .headers()
-        .get(http_client::http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|total_bytes| *total_bytes > 0);
+    let total_bytes = content_length(&response);
 
     let mut downloaded_bytes: u64 = 0;
     let mut last_reported_percent: Option<u8> = None;
@@ -1106,7 +1129,22 @@ async fn download_release(
             }
         }
     }
+    // A body that ends early reads as a clean EOF, so an incomplete update would otherwise be
+    // installed as if it had downloaded whole.
+    if let Some(total_bytes) = total_bytes {
+        anyhow::ensure!(
+            downloaded_bytes == total_bytes,
+            "update download is incomplete: got {downloaded_bytes} of {total_bytes} bytes"
+        );
+    }
     target_file.flush().await?;
+    target_file.sync_all().await?;
+    drop(target_file);
+    smol::fs::rename(temp.path(), &target_path).await?;
+    // `persist` is not used here: the file has already been renamed away, and dropping the
+    // handle afterwards must not try to remove the destination.
+    temp.keep()?;
+
     if total_bytes.is_some() && last_reported_percent != Some(100) {
         on_progress(Some(1.0));
     }
