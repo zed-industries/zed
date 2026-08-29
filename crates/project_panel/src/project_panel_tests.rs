@@ -12116,6 +12116,7 @@ async fn test_saves_collapse_state_when_toggled(cx: &mut TestAppContext) {
     // Drive the debounced save to completion.
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
 
     let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
     let saved = panel_db.expanded_entries(workspace_id).unwrap();
@@ -12189,6 +12190,7 @@ async fn test_skips_persistence_when_disabled(cx: &mut TestAppContext) {
     toggle_expand_dir(&panel, "root/a", cx);
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
 
     let after = panel_db.expanded_entries(workspace_id).unwrap();
     let mut after_paths = after
@@ -12282,6 +12284,7 @@ async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
     toggle_expand_dir(&panel, "root/old_name", cx);
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
 
     let panel_db = cx.update(|_, cx| crate::persistence::ProjectPanelDb::global(cx));
     let saved = panel_db.expanded_entries(workspace_id).unwrap();
@@ -12308,6 +12311,7 @@ async fn test_collapse_state_save_follows_rename(cx: &mut TestAppContext) {
     cx.run_until_parked();
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
 
     let saved = panel_db.expanded_entries(workspace_id).unwrap();
     let mut after = saved
@@ -12398,6 +12402,7 @@ async fn test_restores_saved_collapse_state_inside_gitignored_dir(cx: &mut TestA
 
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
 
     let saved = panel_db.expanded_entries(workspace_id).unwrap();
     let mut saved_paths = saved
@@ -12413,6 +12418,71 @@ async fn test_restores_saved_collapse_state_inside_gitignored_dir(cx: &mut TestA
             "ignored/nested".to_string()
         ],
         "restoring must not save a truncated set back over the state it just read",
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_all_drops_unresolved_pending_paths(cx: &mut TestAppContext) {
+    init_test_with_editor(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::default());
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            ".gitignore": "/ignored\n",
+            "ignored": {
+                "nested": { "deep.txt": "" },
+            },
+        }),
+    )
+    .await;
+
+    let workspace_db = cx.update(|cx| workspace::WorkspaceDb::global(cx));
+    let workspace_id = workspace_db.next_id().await.unwrap();
+
+    let panel_db = cx.update(|cx| crate::persistence::ProjectPanelDb::global(cx));
+    let mut entries: collections::HashMap<Arc<Path>, Vec<String>> = Default::default();
+    entries.insert(
+        Arc::from(Path::new(path!("/root"))),
+        vec![
+            "".to_string(),
+            "ignored".to_string(),
+            "ignored/nested".to_string(),
+        ],
+    );
+    panel_db
+        .save_expanded_entries(workspace_id, entries)
+        .await
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    workspace.update(cx, |w, _| w.set_database_id(workspace_id));
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+
+    // Collapse everything while `ignored` is still being loaded on behalf of
+    // the saved paths, so they are still pending rather than resolved.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v root", "    > .git", "    > ignored", "      .gitignore"],
+        "collapse all must not be undone by saved paths that were still pending",
     );
 }
 
@@ -12515,6 +12585,7 @@ async fn test_collapse_state_is_not_truncated_while_worktree_is_scanning(cx: &mu
 
     cx.executor().advance_clock(Duration::from_millis(200));
     cx.run_until_parked();
+    await_collapse_state_save(&panel, cx).await;
 
     let saved = panel_db.expanded_entries(workspace_id).unwrap();
     let mut saved_paths = saved
