@@ -170,6 +170,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
         let url = http_client
             .build_zed_llm_url(path, &[])
             .map_err(LanguageModelCompletionError::Other)?;
+        let host = url.host_str().unwrap_or(url.as_str()).to_owned();
         let body = serde_json::to_string(&body).map_err(|error| {
             LanguageModelCompletionError::SerializeRequest {
                 provider: PROVIDER_NAME,
@@ -196,6 +197,7 @@ impl<TP: CloudLlmTokenProvider> CloudLanguageModel<TP> {
             .await
             .map_err(|error| LanguageModelCompletionError::HttpSend {
                 provider: PROVIDER_NAME,
+                host,
                 error,
             })?;
 
@@ -1681,6 +1683,27 @@ mod tests {
                 completion_error
             ),
         }
+    }
+
+    #[gpui::test]
+    async fn cloud_transport_errors_include_hostname(cx: &mut gpui::TestAppContext) {
+        let http_client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+        let model = cloud_test_model(http_client);
+
+        let error = model
+            .compact(compact_test_request(), &cx.to_async())
+            .await
+            .expect_err("request should fail");
+
+        assert!(matches!(
+            error,
+            LanguageModelCompletionError::HttpSend {
+                host,
+                error,
+                ..
+            } if host == "test.example" && error.to_string() == "DNS lookup failed"
+        ));
     }
 
     #[test]

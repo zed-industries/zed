@@ -297,6 +297,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     fn can_save_as(&self, _: &App) -> bool {
         false
     }
+
     fn save(
         &mut self,
         _options: SaveOptions,
@@ -1437,6 +1438,7 @@ pub mod test {
         InteractiveElement, IntoElement, ParentElement, Render, SharedString, Task, WeakEntity,
         Window,
     };
+    use language::Capability;
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, sync::Arc};
     use util::rel_path::rel_path;
@@ -1458,6 +1460,7 @@ pub mod test {
         pub buffer_kind: ItemBufferKind,
         pub has_conflict: bool,
         pub has_deleted_file: bool,
+        pub capability: Capability,
         pub project_items: Vec<Entity<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
@@ -1548,6 +1551,7 @@ pub mod test {
                 is_dirty: false,
                 has_conflict: false,
                 has_deleted_file: false,
+                capability: Capability::ReadWrite,
                 project_items: Vec::new(),
                 buffer_kind: ItemBufferKind::Singleton,
                 nav_history: None,
@@ -1587,6 +1591,11 @@ pub mod test {
 
         pub fn with_conflict(mut self, has_conflict: bool) -> Self {
             self.has_conflict = has_conflict;
+            self
+        }
+
+        pub fn with_capability(mut self, capability: Capability) -> Self {
+            self.capability = capability;
             self
         }
 
@@ -1737,6 +1746,7 @@ pub mod test {
                     buffer_kind: self.buffer_kind,
                     has_conflict: self.has_conflict,
                     has_deleted_file: self.has_deleted_file,
+                    capability: self.capability,
                     project_items: self.project_items.clone(),
                     nav_history: None,
                     tab_descriptions: None,
@@ -1775,6 +1785,10 @@ pub mod test {
 
         fn can_save_as(&self, _cx: &App) -> bool {
             self.buffer_kind == ItemBufferKind::Singleton
+        }
+
+        fn capability(&self, _: &App) -> Capability {
+            self.capability
         }
 
         fn save(

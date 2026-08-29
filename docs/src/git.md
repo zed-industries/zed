@@ -339,7 +339,8 @@ Zed currently supports links to the hosted versions of
 [GitHub](https://github.com),
 [GitLab](https://gitlab.com),
 [Bitbucket](https://bitbucket.org),
-[SourceHut](https://sr.ht) and
+[SourceHut](https://sr.ht),
+[Tangled](https://tangled.org) and
 [Codeberg](https://codeberg.org).
 
 ### Self-Hosted Instances
@@ -360,7 +361,7 @@ However, if your self-hosted Git instance URL doesn't contain identifying keywor
 }
 ```
 
-The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, and `sourcehut`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
+The `provider` field specifies which type of hosting service you're using. Supported `provider` values are `github`, `gitlab`, `bitbucket`, `gitea`, `forgejo`, `sourcehut`, and `tangled`. The `name` is optional and used as a display name for your instance, and `base_url` is the root URL of your self-hosted server.
 
 You can configure multiple custom providers if you work with several self-hosted instances.
 

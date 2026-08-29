@@ -803,9 +803,10 @@ pub enum RequestError {
         #[source]
         error: http_client::http::Error,
     },
-    #[error("error sending HTTP request to {provider}'s API")]
+    #[error("error sending HTTP request to {host} for {provider}")]
     HttpSend {
         provider: String,
+        host: String,
         #[source]
         error: anyhow::Error,
     },
@@ -877,11 +878,13 @@ where
     RequestBody: Serialize + ?Sized,
 {
     let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_string(),
+            host,
             error,
         })?;
     if !response.status().is_success() {
@@ -945,11 +948,13 @@ where
     RequestBody: Serialize + ?Sized,
 {
     let request = chat_completion_request(provider_name, api_url, api_key, extra_headers, request)?;
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
         .map_err(|error| RequestError::HttpSend {
             provider: provider_name.to_string(),
+            host,
             error,
         })?;
     if !response.status().is_success() {
@@ -1185,8 +1190,13 @@ impl From<RequestError> for language_model_core::LanguageModelCompletionError {
                 provider: provider.into(),
                 error,
             },
-            RequestError::HttpSend { provider, error } => Self::HttpSend {
+            RequestError::HttpSend {
+                provider,
+                host,
+                error,
+            } => Self::HttpSend {
                 provider: provider.into(),
+                host,
                 error,
             },
             RequestError::ReadResponse { provider, error } => Self::ApiReadResponseError {
