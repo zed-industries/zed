@@ -218,6 +218,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Started,
                     position,
+                    predicted_position: None,
                     force: None,
                 }));
                 // Keyboard and IME focus intentionally do not change here:
@@ -287,6 +288,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Ended,
                     position,
+                    predicted_position: None,
                     force: None,
                 }));
 
@@ -394,6 +396,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Cancelled,
                     position: pointer_position_in_element(&event),
+                    predicted_position: None,
                     force: None,
                 }));
             } else {
@@ -523,6 +526,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Moved,
                     position,
+                    predicted_position: predicted_pointer_position(&event, position),
                     force: None,
                 }));
                 return;
@@ -1297,6 +1301,32 @@ fn compute_key_char(
 fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
     let mouse_event: &web_sys::MouseEvent = event.as_ref();
     mouse_position_in_element(mouse_event)
+}
+
+/// The position of the last event from `getPredictedEvents()`, or `None`
+/// when the browser offers no prediction (Safari lacks the method, Firefox
+/// returns an empty array).
+///
+/// Accessed through `Reflect` because calling a missing method through the
+/// web-sys binding would throw, and predicted events' `offsetX`/`offsetY`
+/// are unreliable across browsers (their target may be detached), so the
+/// position is derived from the client-coordinate delta against the parent
+/// event, anchored to the parent's element-relative `position`.
+fn predicted_pointer_position(
+    event: &web_sys::PointerEvent,
+    position: Point<Pixels>,
+) -> Option<Point<Pixels>> {
+    let method = js_sys::Reflect::get(event, &JsValue::from_str("getPredictedEvents")).ok()?;
+    let method = method.dyn_ref::<js_sys::Function>()?;
+    let predicted_events: js_sys::Array = method.call0(event).ok()?.dyn_into().ok()?;
+    let last_index = predicted_events.length().checked_sub(1)?;
+    let predicted: web_sys::PointerEvent = predicted_events.get(last_index).dyn_into().ok()?;
+    let event: &web_sys::MouseEvent = event.as_ref();
+    let predicted: &web_sys::MouseEvent = predicted.as_ref();
+    Some(point(
+        position.x + px((predicted.client_x() - event.client_x()) as f32),
+        position.y + px((predicted.client_y() - event.client_y()) as f32),
+    ))
 }
 
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
