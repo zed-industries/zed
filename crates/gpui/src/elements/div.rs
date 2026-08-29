@@ -3443,7 +3443,7 @@ impl Interactivity {
                     element_state
                         .style_transitions
                         .get_or_insert_with(Default::default),
-                    bounds.map(|bounds| StyleTransitionContext::new(bounds, window.rem_size())),
+                    StyleTransitionContext::new(bounds, window.rem_size()),
                     cx.background_executor().now(),
                     cx.reduce_motion(),
                 ) {

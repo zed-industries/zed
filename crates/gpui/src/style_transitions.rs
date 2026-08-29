@@ -1,4 +1,4 @@
-use std::time::Instant;
+use scheduler::Instant;
 
 use crate::{
     AbsoluteLength, Bounds, DefiniteLength, Fill, Hsla, Interpolate, Length, Motion, Pixels,
@@ -6,12 +6,12 @@ use crate::{
 
 #[derive(Clone, Copy)]
 pub(crate) struct StyleTransitionContext {
-    pub(crate) bounds: Bounds<Pixels>,
+    pub(crate) bounds: Option<Bounds<Pixels>>,
     pub(crate) rem_size: Pixels,
 }
 
 impl StyleTransitionContext {
-    pub(crate) fn new(bounds: Bounds<Pixels>, rem_size: Pixels) -> Self {
+    pub(crate) fn new(bounds: Option<Bounds<Pixels>>, rem_size: Pixels) -> Self {
         Self { bounds, rem_size }
     }
 }
@@ -20,11 +20,32 @@ pub(crate) struct StyleTransitionPropertyState<T> {
     start: Option<T>,
     target: Option<T>,
     started_at: Option<Instant>,
+    motion: Option<Motion>,
 }
 
 struct SizeTransitionState<T> {
     width: Option<StyleTransitionPropertyState<T>>,
     height: Option<StyleTransitionPropertyState<T>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum StyleTransitionAxis {
+    Width,
+    Height,
+}
+
+#[derive(Default)]
+struct AutoSizeTransitionPropertyState {
+    authored_goal: Option<Length>,
+    resolved_auto: Option<Pixels>,
+    pending_auto_capture: bool,
+    transition: Option<StyleTransitionPropertyState<Pixels>>,
+}
+
+#[derive(Default)]
+struct AutoSizeTransitionState {
+    width: Option<AutoSizeTransitionPropertyState>,
+    height: Option<AutoSizeTransitionPropertyState>,
 }
 
 impl<T> Default for SizeTransitionState<T> {
@@ -84,7 +105,7 @@ struct TextStyleTransitionState {
 #[derive(Default)]
 pub(crate) struct StyleTransitionState {
     inset: EdgesTransitionState<Length>,
-    size: SizeTransitionState<Length>,
+    size: AutoSizeTransitionState,
     min_size: SizeTransitionState<Length>,
     max_size: SizeTransitionState<Length>,
     margin: EdgesTransitionState<Length>,
@@ -103,6 +124,100 @@ pub(crate) struct StyleTransitionState {
     opacity: Option<StyleTransitionPropertyState<f32>>,
 }
 
+fn apply_auto_size(
+    state: &mut Option<AutoSizeTransitionPropertyState>,
+    value: &mut Length,
+    axis: StyleTransitionAxis,
+    motion: Option<&Motion>,
+    context: StyleTransitionContext,
+    now: Instant,
+    reduce_motion: bool,
+) -> bool {
+    let Some(motion) = motion else {
+        *state = None;
+        return false;
+    };
+
+    let authored_goal = *value;
+    let state = state.get_or_insert_with(Default::default);
+    let bounds_value = context.bounds.map(|bounds| match axis {
+        StyleTransitionAxis::Width => bounds.size.width,
+        StyleTransitionAxis::Height => bounds.size.height,
+    });
+    let endpoint = match authored_goal {
+        Length::Definite(DefiniteLength::Absolute(length)) => {
+            Some(length.to_pixels(context.rem_size))
+        }
+        Length::Definite(DefiniteLength::Fraction(_)) => None,
+        Length::Auto => state.resolved_auto,
+    };
+
+    let Some(endpoint) = endpoint else {
+        if authored_goal == Length::Auto {
+            if let Some(bounds_value) = bounds_value {
+                state.resolved_auto = Some(bounds_value);
+                state.pending_auto_capture = false;
+                match state.transition.as_mut() {
+                    Some(transition) => transition.jump_to(Some(bounds_value)),
+                    None => {
+                        state.transition = Some(StyleTransitionPropertyState::new(
+                            Some(bounds_value),
+                            motion,
+                        ));
+                    }
+                }
+            } else {
+                state.pending_auto_capture = true;
+            }
+        } else {
+            state.transition = None;
+            state.pending_auto_capture = false;
+        }
+        state.authored_goal = Some(authored_goal);
+        return false;
+    };
+
+    if state.pending_auto_capture {
+        if let Some(bounds_value) = bounds_value {
+            state.resolved_auto = Some(bounds_value);
+            state.pending_auto_capture = false;
+            match state.transition.as_mut() {
+                Some(transition) => transition.jump_to(Some(bounds_value)),
+                None => {
+                    state.transition = Some(StyleTransitionPropertyState::new(
+                        Some(bounds_value),
+                        motion,
+                    ));
+                }
+            }
+        }
+        state.authored_goal = Some(authored_goal);
+        return false;
+    }
+
+    let transition = state
+        .transition
+        .get_or_insert_with(|| StyleTransitionPropertyState::new(Some(endpoint), motion));
+    let (in_progress, evaluated_value) =
+        transition.evaluate(Some(endpoint), motion, now, reduce_motion);
+    state.authored_goal = Some(authored_goal);
+
+    if in_progress {
+        if let Some(evaluated_value) = evaluated_value {
+            *value = Length::Definite(DefiniteLength::Absolute(AbsoluteLength::Pixels(
+                evaluated_value,
+            )));
+        }
+    } else if authored_goal == Length::Auto
+        && let Some(bounds_value) = bounds_value
+    {
+        state.resolved_auto = Some(bounds_value);
+        transition.jump_to(Some(bounds_value));
+    }
+
+    in_progress
+}
+
 fn evaluate<T>(
     state: &mut Option<StyleTransitionPropertyState<T>>,
     target: Option<T>,
@@ -114,7 +229,7 @@ where
     T: Interpolate + Clone + PartialEq,
 {
     state
-        .get_or_insert_with(|| StyleTransitionPropertyState::new(target.clone()))
+        .get_or_insert_with(|| StyleTransitionPropertyState::new(target.clone(), motion))
         .evaluate(target, motion, now, reduce_motion)
 }
 
@@ -166,47 +281,31 @@ fn apply_optional<T>(
     reduce_motion: bool,
 ) -> bool
 where
-    T: Interpolate + Clone + PartialEq,
+    T: Interpolate + Clone + Default + PartialEq,
 {
     let Some(motion) = motion else {
         *state = None;
         return false;
     };
 
-    let target = value.clone();
-    let (in_progress, evaluated_value) = evaluate(state, target, motion, now, reduce_motion);
-    *value = evaluated_value;
-    in_progress
-}
-
-fn apply_optional_with_default<T>(
-    state: &mut Option<StyleTransitionPropertyState<T>>,
-    value: &mut Option<T>,
-    default: T,
-    motion: Option<&Motion>,
-    now: Instant,
-    reduce_motion: bool,
-) -> bool
-where
-    T: Interpolate + Clone + PartialEq,
-{
-    let Some(motion) = motion else {
-        *state = None;
-        return false;
-    };
-
-    let target = value.clone().unwrap_or(default);
+    let restore_none = value.is_none();
+    let target = value.clone().unwrap_or_default();
     let (in_progress, evaluated_value) = evaluate(state, Some(target), motion, now, reduce_motion);
-    *value = evaluated_value;
+    *value = if restore_none && !in_progress {
+        None
+    } else {
+        evaluated_value
+    };
     in_progress
 }
 
 impl<T> StyleTransitionPropertyState<T> {
-    fn new(initial_target: Option<T>) -> Self {
+    fn new(initial_target: Option<T>, motion: &Motion) -> Self {
         Self {
             start: None,
             target: initial_target,
             started_at: None,
+            motion: Some(motion.clone()),
         }
     }
 }
@@ -228,7 +327,7 @@ where
         }
 
         if self.target != target {
-            let current = self.value_at(motion, now).1;
+            let current = self.value_at(now).1;
             self.start = current;
             self.target = target;
 
@@ -237,14 +336,18 @@ where
                 self.started_at = None;
             } else {
                 self.started_at = Some(now);
+                self.motion = Some(motion.clone());
             }
         }
 
-        self.value_at(motion, now)
+        self.value_at(now)
     }
 
-    fn value_at(&mut self, motion: &Motion, now: Instant) -> (bool, Option<T>) {
+    fn value_at(&mut self, now: Instant) -> (bool, Option<T>) {
         let Some(started_at) = self.started_at else {
+            return (false, self.target.clone());
+        };
+        let Some(motion) = self.motion.as_ref() else {
             return (false, self.target.clone());
         };
 
@@ -266,6 +369,7 @@ where
         self.start = target.clone();
         self.target = target;
         self.started_at = None;
+        self.motion = None;
     }
 }
 
@@ -309,14 +413,15 @@ mod tests {
             ..Style::default()
         };
 
-        assert!(!transitions.apply(&mut style, &mut state, None, started_at, false));
+        let context = StyleTransitionContext::new(None, px(16.0));
+        assert!(!transitions.apply(&mut style, &mut state, context, started_at, false));
 
         style.size = size(length(20.0), length(20.0));
-        assert!(transitions.apply(&mut style, &mut state, None, started_at, false));
+        assert!(transitions.apply(&mut style, &mut state, context, started_at, false));
 
         style.size = size(length(20.0), length(20.0));
         let in_progress =
-            transitions.apply(&mut style, &mut state, None, started_at + elapsed, false);
+            transitions.apply(&mut style, &mut state, context, started_at + elapsed, false);
 
         (in_progress, style, state)
     }
@@ -325,7 +430,7 @@ mod tests {
     fn property_transitions_follow_motion_and_retarget() {
         let motion = Motion::new(Duration::from_secs(1));
         let started_at = Instant::now();
-        let mut state = StyleTransitionPropertyState::new(Some(0.0_f32));
+        let mut state = StyleTransitionPropertyState::new(Some(0.0_f32), &motion);
 
         assert_eq!(
             state.evaluate(Some(10.0), &motion, started_at, false),
@@ -368,13 +473,13 @@ mod tests {
             (false, Some(20.0))
         );
 
-        let mut optional_state = StyleTransitionPropertyState::new(None::<f32>);
+        let mut optional_state = StyleTransitionPropertyState::new(None::<f32>, &motion);
         assert_eq!(
             optional_state.evaluate(Some(10.0), &motion, started_at, false),
             (false, Some(10.0))
         );
 
-        let mut immediate_state = StyleTransitionPropertyState::new(Some(0.0_f32));
+        let mut immediate_state = StyleTransitionPropertyState::new(Some(0.0_f32), &motion);
         assert_eq!(
             immediate_state.evaluate(Some(10.0), &Motion::new(Duration::ZERO), started_at, false,),
             (false, Some(10.0))
@@ -383,6 +488,210 @@ mod tests {
             immediate_state.evaluate(Some(20.0), &motion, started_at, true),
             (false, Some(20.0))
         );
+    }
+
+    #[test]
+    fn property_transition_keeps_the_motion_that_started_each_run() {
+        let one_second = Motion::new(Duration::from_secs(1));
+        let two_seconds = Motion::new(Duration::from_secs(2));
+        let started_at = Instant::now();
+        let mut state = StyleTransitionPropertyState::new(Some(0.0_f32), &one_second);
+
+        assert_eq!(
+            state.evaluate(Some(10.0), &one_second, started_at, false),
+            (true, Some(0.0))
+        );
+        assert_eq!(
+            state.evaluate(
+                Some(10.0),
+                &two_seconds,
+                started_at + Duration::from_millis(500),
+                false,
+            ),
+            (true, Some(5.0))
+        );
+        assert_eq!(
+            state.evaluate(
+                Some(20.0),
+                &two_seconds,
+                started_at + Duration::from_millis(500),
+                false,
+            ),
+            (true, Some(5.0))
+        );
+        assert_eq!(
+            state.evaluate(
+                Some(20.0),
+                &one_second,
+                started_at + Duration::from_millis(1_500),
+                false,
+            ),
+            (true, Some(12.5))
+        );
+    }
+
+    #[test]
+    fn optional_transitions_interpolate_through_default_then_restore_none() {
+        let motion = Motion::new(Duration::from_secs(1));
+        let started_at = Instant::now();
+        let mut state = None;
+        let mut value = None::<f32>;
+
+        assert!(!apply_optional(
+            &mut state,
+            &mut value,
+            Some(&motion),
+            started_at,
+            false,
+        ));
+        assert_eq!(value, None);
+
+        value = Some(1.0);
+        assert!(apply_optional(
+            &mut state,
+            &mut value,
+            Some(&motion),
+            started_at,
+            false,
+        ));
+        assert_eq!(value, Some(0.0));
+
+        value = Some(1.0);
+        assert!(apply_optional(
+            &mut state,
+            &mut value,
+            Some(&motion),
+            started_at + Duration::from_millis(500),
+            false,
+        ));
+        assert_eq!(value, Some(0.5));
+
+        value = None;
+        assert!(apply_optional(
+            &mut state,
+            &mut value,
+            Some(&motion),
+            started_at + Duration::from_millis(500),
+            false,
+        ));
+        assert_eq!(value, Some(0.5));
+
+        value = None;
+        assert!(!apply_optional(
+            &mut state,
+            &mut value,
+            Some(&motion),
+            started_at + Duration::from_millis(1_500),
+            false,
+        ));
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn auto_size_transitions_use_stable_prepaint_bounds() {
+        let motion = Motion::new(Duration::from_secs(1));
+        let started_at = Instant::now();
+        let layout_context = StyleTransitionContext::new(None, px(16.0));
+        let prepaint_context = |width| {
+            StyleTransitionContext::new(
+                Some(Bounds {
+                    origin: point(px(0.0), px(0.0)),
+                    size: size(px(width), px(40.0)),
+                }),
+                px(16.0),
+            )
+        };
+        let mut state = None;
+        let mut width = Length::Auto;
+
+        assert!(!apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            layout_context,
+            started_at,
+            false,
+        ));
+        assert!(!apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            prepaint_context(120.0),
+            started_at,
+            false,
+        ));
+
+        width = length(220.0);
+        assert!(apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            layout_context,
+            started_at,
+            false,
+        ));
+        assert_eq!(width, length(120.0));
+
+        width = length(220.0);
+        assert!(apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            layout_context,
+            started_at + Duration::from_millis(500),
+            false,
+        ));
+        assert_eq!(width, length(170.0));
+
+        width = length(220.0);
+        assert!(!apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            layout_context,
+            started_at + Duration::from_secs(1),
+            false,
+        ));
+
+        width = Length::Auto;
+        assert!(apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            layout_context,
+            started_at + Duration::from_secs(1),
+            false,
+        ));
+        assert_eq!(width, length(220.0));
+
+        width = Length::Auto;
+        assert!(!apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            layout_context,
+            started_at + Duration::from_secs(2),
+            false,
+        ));
+        assert_eq!(width, Length::Auto);
+
+        assert!(!apply_auto_size(
+            &mut state,
+            &mut width,
+            StyleTransitionAxis::Width,
+            Some(&motion),
+            prepaint_context(140.0),
+            started_at + Duration::from_secs(2),
+            false,
+        ));
+        assert_eq!(state.and_then(|state| state.resolved_auto), Some(px(140.0)));
     }
 
     #[test]
@@ -420,10 +729,10 @@ mod tests {
             .opacity(Duration::from_secs(1))
             .rounded(Duration::from_secs(1));
         let context = StyleTransitionContext::new(
-            Bounds {
+            Some(Bounds {
                 origin: point(px(0.0), px(0.0)),
                 size: size(px(100.0), px(60.0)),
-            },
+            }),
             px(16.0),
         );
         let mut style = Style {
@@ -431,24 +740,24 @@ mod tests {
             ..Style::default()
         };
 
-        assert!(!transitions.apply(&mut style, &mut state, Some(context), started_at, false,));
-        assert_eq!(style.opacity, Some(1.0));
+        assert!(!transitions.apply(&mut style, &mut state, context, started_at, false,));
+        assert_eq!(style.opacity, None);
         assert_eq!(style.corner_radii, corners(30.0));
 
         style.opacity = Some(0.5);
         style.corner_radii = corners(0.0);
-        assert!(transitions.apply(&mut style, &mut state, Some(context), started_at, false,));
+        assert!(transitions.apply(&mut style, &mut state, context, started_at, false,));
 
         style.opacity = Some(0.5);
         style.corner_radii = corners(0.0);
         assert!(transitions.apply(
             &mut style,
             &mut state,
-            Some(context),
+            context,
             started_at + Duration::from_millis(500),
             false,
         ));
-        assert_eq!(style.opacity, Some(0.75));
+        assert_eq!(style.opacity, Some(0.25));
         assert_eq!(style.corner_radii, corners(15.0));
 
         let pixels = AbsoluteLength::Pixels(px(10.0));

@@ -67,7 +67,8 @@ struct CanonicalStyleTransitionField {
 enum StyleTransitionFieldKind {
     Required,
     Optional,
-    OptionalOpacity,
+    AutoSizeWidth,
+    AutoSizeHeight,
     CornerRadius,
 }
 
@@ -84,6 +85,15 @@ impl StyleTransitionField {
             path,
             kind: StyleTransitionFieldKind::Optional,
         }
+    }
+
+    fn required_or_auto_size(path: TokenStream2) -> Self {
+        let kind = match style_transition_key(&path).as_str() {
+            "size.width" => StyleTransitionFieldKind::AutoSizeWidth,
+            "size.height" => StyleTransitionFieldKind::AutoSizeHeight,
+            _ => StyleTransitionFieldKind::Required,
+        };
+        Self { path, kind }
     }
 
     fn corner_radius(path: TokenStream2) -> Self {
@@ -193,8 +203,8 @@ pub fn style_transitions(input: TokenStream) -> TokenStream {
                 &self,
                 style: &mut crate::Style,
                 state: &mut StyleTransitionState,
-                context: Option<StyleTransitionContext>,
-                now: std::time::Instant,
+                context: StyleTransitionContext,
+                now: scheduler::Instant,
                 reduce_motion: bool,
             ) -> bool {
                 let mut in_progress = false;
@@ -230,21 +240,33 @@ fn generate_transition_application(field: &CanonicalStyleTransitionField) -> Tok
                 reduce_motion,
             );
         },
-        StyleTransitionFieldKind::OptionalOpacity => quote! {
-            in_progress |= apply_optional_with_default(
+        StyleTransitionFieldKind::AutoSizeWidth => quote! {
+            in_progress |= apply_auto_size(
                 &mut state.#path,
                 &mut style.#path,
-                1.0,
+                StyleTransitionAxis::Width,
                 self.#motion_name.as_ref(),
+                context,
+                now,
+                reduce_motion,
+            );
+        },
+        StyleTransitionFieldKind::AutoSizeHeight => quote! {
+            in_progress |= apply_auto_size(
+                &mut state.#path,
+                &mut style.#path,
+                StyleTransitionAxis::Height,
+                self.#motion_name.as_ref(),
+                context,
                 now,
                 reduce_motion,
             );
         },
         StyleTransitionFieldKind::CornerRadius => quote! {
-            let target = context.map(|context| {
+            let target = context.bounds.map(|bounds| {
                 let max_corner_radius = std::cmp::min(
-                    context.bounds.size.width,
-                    context.bounds.size.height,
+                    bounds.size.width,
+                    bounds.size.height,
                 ) / 2.0;
 
                 crate::AbsoluteLength::Pixels(std::cmp::min(
@@ -279,7 +301,7 @@ fn style_transition_specs() -> Vec<StyleTransitionSpec> {
             fields: prefix
                 .fields
                 .into_iter()
-                .map(StyleTransitionField::required)
+                .map(StyleTransitionField::required_or_auto_size)
                 .collect(),
         });
     }
@@ -359,10 +381,7 @@ fn style_transition_specs() -> Vec<StyleTransitionSpec> {
         },
         StyleTransitionSpec {
             name: "opacity",
-            fields: vec![StyleTransitionField {
-                path: quote! { opacity },
-                kind: StyleTransitionFieldKind::OptionalOpacity,
-            }],
+            fields: vec![StyleTransitionField::optional(quote! { opacity })],
         },
     ]);
 
