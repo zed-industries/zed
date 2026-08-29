@@ -5873,7 +5873,10 @@ impl ProjectPanel {
             .id(id.clone())
             .relative()
             .group(GROUP_NAME)
-            .when_some(tooltip_path, |this, path| this.tooltip(Tooltip::text(path)))
+            .when_some(tooltip_path, |this, path| {
+                this.tooltip_show_delay(Duration::from_millis(1500))
+                    .tooltip(Tooltip::text(path))
+            })
             .cursor_pointer()
             .rounded_none()
             .bg(bg_color)
