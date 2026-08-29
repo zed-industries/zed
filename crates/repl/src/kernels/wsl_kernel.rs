@@ -25,18 +25,28 @@ use std::{
 
 use uuid::Uuid;
 
-// Find a set of open ports. This creates a listener with port set to 0. The listener will be closed at the end when it goes out of scope.
-// There's a race condition between closing the ports and usage by a kernel, but it's inherent to the Jupyter protocol.
-async fn peek_ports(ip: IpAddr) -> Result<[u16; 5]> {
-    let mut addr_zeroport: SocketAddr = SocketAddr::new(ip, 0);
-    addr_zeroport.set_port(0);
+/// Reserves five free ports by binding port 0 five times and reading back what the OS chose.
+///
+/// The listeners are returned rather than dropped here, and must be held until immediately
+/// before the kernel is spawned. Releasing each one at the end of its own loop iteration -
+/// which is what this did, despite a comment claiming they were closed "at the end" - frees
+/// port N before port N+1 is chosen, so the OS is free to hand the same port back and the
+/// five "distinct" ports can collide. It also left the ports unclaimed across the connection
+/// file write and the whole kernel startup, rather than across the spawn alone.
+///
+/// The window cannot be closed entirely below Jupyter protocol 5.6, which added kernel-side
+/// handshaking so the kernel picks its own ports and reports them back; holding the
+/// reservations until spawn is the mitigation available to a client speaking the older flow.
+async fn peek_ports(ip: IpAddr) -> Result<(Vec<TcpListener>, [u16; 5])> {
+    let addr_zeroport: SocketAddr = SocketAddr::new(ip, 0);
+    let mut listeners = Vec::with_capacity(5);
     let mut ports: [u16; 5] = [0; 5];
-    for i in 0..5 {
+    for port in &mut ports {
         let listener = TcpListener::bind(addr_zeroport).await?;
-        let addr = listener.local_addr()?;
-        ports[i] = addr.port();
+        *port = listener.local_addr()?.port();
+        listeners.push(listener);
     }
-    Ok(ports)
+    Ok((listeners, ports))
 }
 
 pub struct WslRunningKernel {
@@ -88,7 +98,7 @@ impl WslRunningKernel {
             // This avoids issues where the VM IP is unreachable or binding fails on Windows.
             let connect_ip = "127.0.0.1".to_string();
 
-            let ports = peek_ports(bind_ip).await?;
+            let (port_reservations, ports) = peek_ports(bind_ip).await?;
 
             let connection_info = ConnectionInfo {
                 transport: Transport::TCP,
@@ -270,6 +280,10 @@ impl WslRunningKernel {
                 .arg("-l")
                 .arg("-c")
                 .arg(&shell_command);
+
+            // Release the reserved ports as late as possible. The kernel binds them itself
+            // moments after starting, and until this point nothing else can take them.
+            drop(port_reservations);
 
             let mut process = cmd
                 .stdout(util::command::Stdio::piped())
