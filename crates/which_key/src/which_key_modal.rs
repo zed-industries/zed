@@ -14,7 +14,7 @@ use ui::{
 };
 use workspace::{ModalView, Workspace};
 
-use crate::FILTERED_KEYSTROKES;
+use crate::bindings_for_pending_input;
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
@@ -65,27 +65,9 @@ impl WhichKeyModal {
             cx.emit(DismissEvent);
             return;
         };
-        let bindings = window.possible_bindings_for_input(pending_keys);
-
-        let mut binding_data = bindings
-            .iter()
-            .map(|binding| (binding.keystrokes().to_vec(), binding.action()))
-            .filter(|(keystrokes, _action)| {
-                // Check if this binding matches any filtered keystroke pattern
-                !FILTERED_KEYSTROKES.iter().any(|filtered| {
-                    keystrokes.len() >= filtered.len()
-                        && keystrokes[..filtered.len()]
-                            .iter()
-                            .map(|keystroke| keystroke.inner())
-                            .eq(filtered.iter())
-                })
-            })
-            .filter_map(|(keystrokes, action)| {
-                let remaining_keystrokes = keystrokes.get(pending_keys.len()..)?.to_vec();
-                let action_name: SharedString =
-                    command_palette::humanize_action_name(action.name()).into();
-                Some((remaining_keystrokes, action_name))
-            })
+        let mut binding_data = bindings_for_pending_input(window, pending_keys)
+            .into_iter()
+            .map(|binding| (binding.remaining_keystrokes, binding.action_name))
             .collect();
 
         binding_data = group_bindings(binding_data);

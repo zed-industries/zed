@@ -1,4 +1,3 @@
-use command_palette::humanize_action_name;
 use gpui::{
     Animation, AnimationExt, App, Context, KeybindingKeystroke, Render, Subscription, Window,
 };
@@ -8,7 +7,7 @@ use ui::{CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keystrokes}
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
-use crate::FILTERED_KEYSTROKES;
+use crate::bindings_for_pending_input;
 
 const MAX_TOOLTIP_BINDINGS: usize = 10;
 
@@ -81,37 +80,22 @@ impl PendingKeystrokesIndicator {
         };
         let keystrokes = pending_input.keystrokes();
 
-        let pending_len = keystrokes.len();
-        let mut bindings = window
-            .possible_bindings_for_input(keystrokes)
-            .iter()
-            .filter_map(|binding| {
-                let binding_keystrokes = binding.keystrokes();
-                if binding_keystrokes.len() <= pending_len {
-                    return None;
-                }
-                if FILTERED_KEYSTROKES.iter().any(|filtered| {
-                    binding_keystrokes.len() >= filtered.len()
-                        && binding_keystrokes[..filtered.len()]
-                            .iter()
-                            .map(|keystroke| keystroke.inner())
-                            .eq(filtered.iter())
-                }) {
-                    return None;
-                }
-                let remaining = &binding_keystrokes[pending_len..];
+        let mut bindings = bindings_for_pending_input(window, keystrokes)
+            .into_iter()
+            .map(|binding| {
                 let remaining_text = text_for_keystrokes(
-                    &remaining
+                    &binding
+                        .remaining_keystrokes
                         .iter()
                         .map(|keystroke| keystroke.inner().clone())
                         .collect::<Vec<_>>(),
                     cx,
                 );
-                Some((
+                (
                     remaining_text,
-                    remaining.to_vec(),
-                    SharedString::from(humanize_action_name(binding.action().name())),
-                ))
+                    binding.remaining_keystrokes,
+                    binding.action_name,
+                )
             })
             .collect::<Vec<_>>();
         bindings.sort_by(|(text_a, keys_a, action_a), (text_b, keys_b, action_b)| {
@@ -271,6 +255,7 @@ impl StatusItemView for PendingKeystrokesIndicator {
 mod tests {
     use std::cell::Cell;
 
+    use command_palette::humanize_action_name;
     use gpui::{
         Action as _, Entity, FocusHandle, KeyBinding, TestAppContext, VisualTestContext, actions,
     };

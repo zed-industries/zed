@@ -4,7 +4,7 @@ mod pending_keystrokes_indicator;
 mod which_key_modal;
 mod which_key_settings;
 
-use gpui::{App, Keystroke};
+use gpui::{App, KeybindingKeystroke, Keystroke, SharedString, Window};
 pub use pending_keystrokes_indicator::PendingKeystrokesIndicator;
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
@@ -12,6 +12,43 @@ use util::ResultExt;
 use which_key_modal::WhichKeyModal;
 use which_key_settings::WhichKeySettings;
 use workspace::Workspace;
+
+pub(crate) struct PendingBinding {
+    pub(crate) remaining_keystrokes: Vec<KeybindingKeystroke>,
+    pub(crate) action_name: SharedString,
+}
+
+pub(crate) fn bindings_for_pending_input(
+    window: &Window,
+    pending_keystrokes: &[Keystroke],
+) -> Vec<PendingBinding> {
+    window
+        .possible_bindings_for_input(pending_keystrokes)
+        .into_iter()
+        .filter(|binding| {
+            let binding_keystrokes = binding.keystrokes();
+            !FILTERED_KEYSTROKES.iter().any(|filtered| {
+                binding_keystrokes.len() >= filtered.len()
+                    && binding_keystrokes[..filtered.len()]
+                        .iter()
+                        .map(|keystroke| keystroke.inner())
+                        .eq(filtered.iter())
+            })
+        })
+        .filter_map(|binding| {
+            let remaining_keystrokes = binding.keystrokes().get(pending_keystrokes.len()..)?;
+            if remaining_keystrokes.is_empty() {
+                return None;
+            }
+            let remaining_keystrokes = remaining_keystrokes.to_vec();
+            let action_name = command_palette::humanize_action_name(binding.action().name()).into();
+            Some(PendingBinding {
+                remaining_keystrokes,
+                action_name,
+            })
+        })
+        .collect()
+}
 
 pub fn init(cx: &mut App) {
     WhichKeySettings::register(cx);
