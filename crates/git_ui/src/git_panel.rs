@@ -27,7 +27,7 @@ use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, 
 use editor::{EditorStyle, RewrapOptions};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
-use futures::channel::oneshot::Canceled;
+use futures::channel::oneshot::{self, Canceled};
 use git::Oid;
 use git::commit::ParsedCommitMessage;
 use git::repository::{
@@ -2368,11 +2368,7 @@ impl GitPanel {
                     .into_owned()
             })
             .collect::<Vec<_>>();
-        if paths.is_empty() {
-            cx.propagate();
-        } else {
-            cx.write_to_clipboard(ClipboardItem::new_string(paths.join("\n")));
-        }
+        Self::write_paths_to_clipboard(paths, cx);
     }
 
     fn copy_relative_path(&mut self, _: &CopyRelativePath, _: &mut Window, cx: &mut Context<Self>) {
@@ -2382,6 +2378,13 @@ impl GitPanel {
             .iter()
             .map(|repo_path| repo_path.display(path_style).into_owned())
             .collect::<Vec<_>>();
+        Self::write_paths_to_clipboard(paths, cx);
+    }
+
+    /// Writes `paths` newline-joined to the clipboard, or propagates the action if
+    /// there's nothing to copy. Shared by `copy_path` and `copy_relative_path`, which
+    /// differ only in how each path is formatted before reaching this point.
+    fn write_paths_to_clipboard(paths: Vec<String>, cx: &mut Context<Self>) {
         if paths.is_empty() {
             cx.propagate();
         } else {
@@ -2549,41 +2552,34 @@ impl GitPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        maybe!({
-            let active_repository = self.active_repository.clone()?;
-            let workspace = self.workspace.clone();
-
-            for entry in self.effective_status_entries() {
-                if !entry.status.is_created() {
-                    continue;
-                }
-
-                let repo_path = entry.repo_path;
-                let receiver = active_repository
-                    .update(cx, |repo, _| repo.add_path_to_gitignore(&repo_path, false));
-                let workspace = workspace.clone();
-
-                cx.spawn(async move |_, cx| {
-                    if let Err(e) = receiver.await? {
-                        if let Some(workspace) = workspace.upgrade() {
-                            cx.update(|cx| {
-                                show_error_toast(workspace, "add to .gitignore", e, cx);
-                            });
-                        }
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
-
-            Some(())
-        });
+        self.add_created_entries_to_exclude_list(
+            "add to .gitignore",
+            |repo, repo_path| repo.add_path_to_gitignore(repo_path, false),
+            cx,
+        );
     }
 
     fn add_to_git_info_exclude(
         &mut self,
         _: &git::AddToGitInfoExclude,
         _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_created_entries_to_exclude_list(
+            "add to .git/info/exclude",
+            |repo, repo_path| repo.add_path_to_git_info_exclude(repo_path, false),
+            cx,
+        );
+    }
+
+    /// Applies `add_path` to every untracked entry in the effective selection, toasting
+    /// `action_label` on failure. Shared by `add_to_gitignore` and `add_to_git_info_exclude`,
+    /// which differ only in which repository method they call and how to describe it.
+    fn add_created_entries_to_exclude_list(
+        &mut self,
+        action_label: &'static str,
+        add_path: impl Fn(&mut Repository, &RepoPath) -> oneshot::Receiver<anyhow::Result<()>>
+        + 'static,
         cx: &mut Context<Self>,
     ) {
         maybe!({
@@ -2596,16 +2592,15 @@ impl GitPanel {
                 }
 
                 let repo_path = entry.repo_path;
-                let receiver = active_repository.update(cx, |repo, _| {
-                    repo.add_path_to_git_info_exclude(&repo_path, false)
-                });
+                let receiver =
+                    active_repository.update(cx, |repo, _| add_path(repo, &repo_path));
                 let workspace = workspace.clone();
 
                 cx.spawn(async move |_, cx| {
                     if let Err(e) = receiver.await? {
                         if let Some(workspace) = workspace.upgrade() {
                             cx.update(|cx| {
-                                show_error_toast(workspace, "add to .git/info/exclude", e, cx);
+                                show_error_toast(workspace, action_label, e, cx);
                             });
                         }
                     }
@@ -10327,36 +10322,15 @@ mod tests {
             panel.select_single_entry(ix_a);
         });
 
-        // Shift-Down extends the range from the fixed anchor (a) without requiring
-        // a mouse gesture, mirroring shift-click.
+        // Shift-Down routes into `mark_range` (whose grow/shrink-from-anchor logic
+        // is covered by `test_mark_range_keeps_fixed_anchor`) without requiring a
+        // mouse gesture, mirroring shift-click.
         cx.simulate_modifiers_change(Modifiers {
             shift: true,
             ..Default::default()
         });
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.select_next(&menu::SelectNext, window, cx);
-        });
-        panel.read_with(&cx, |panel, _| {
-            assert_eq!(panel.selected_entry, Some(ix_b));
-            let mut marked = panel.marked_entries.clone();
-            marked.sort();
-            assert_eq!(marked, vec![ix_a, ix_b]);
-        });
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.select_next(&menu::SelectNext, window, cx);
-        });
-        panel.read_with(&cx, |panel, _| {
-            assert_eq!(panel.selected_entry, Some(ix_c));
-            let mut marked = panel.marked_entries.clone();
-            marked.sort();
-            assert_eq!(marked, vec![ix_a, ix_b, ix_c]);
-        });
-
-        // Shift-Up shrinks the range back toward the anchor instead of only
-        // ever growing it.
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.select_previous(&menu::SelectPrevious, window, cx);
         });
         panel.read_with(&cx, |panel, _| {
             assert_eq!(panel.selected_entry, Some(ix_b));
@@ -10685,64 +10659,20 @@ mod tests {
     async fn test_discard_multiple_marked_entries_shows_combined_prompt(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
-            cx,
-            json!({
-                ".git": {},
-                "a.rs": "a",
-                "b.rs": "b",
-                "c.rs": "c",
-            }),
-            &[
-                ("a.rs", StatusCode::Modified),
-                ("b.rs", StatusCode::Modified),
-                ("c.rs", StatusCode::Modified),
-            ],
-        )
-        .await;
-
-        let (ix_a, ix_b) = panel.read_with(&cx, |panel, _| {
-            (
-                entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
-                entry_index_for_repo_path(panel, &repo_path("b.rs")).unwrap(),
-            )
-        });
-
-        panel.update_in(&mut cx, |panel, window, cx| {
-            panel.selected_entry = Some(ix_a);
-            panel.mark_range(ix_b);
-            panel.revert_selected(&git::RestoreFile::default(), window, cx);
-        });
-
-        let (message, detail) = cx
-            .pending_prompt()
-            .expect("discarding multiple marked files should show one combined prompt");
-        assert_eq!(message, "Discard changes to these files?");
-        assert!(
-            detail.contains("a.rs") && detail.contains("b.rs"),
-            "prompt should list both marked files, got: {detail}"
-        );
-        assert!(
-            !detail.contains("c.rs"),
-            "prompt should not list the unmarked file, got: {detail}"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_discard_mixed_marked_entries_warns_about_permanent_deletion(
-        cx: &mut TestAppContext,
-    ) {
-        init_test(cx);
-
-        // a.rs is a tracked modification (discarding it just reverts the working
-        // copy); new.rs is untracked (discarding it permanently trashes the file).
-        // Marking both together must not silently pick one wording over the other.
+        // a.rs/b.rs are tracked modifications (discarding just reverts the working
+        // copy); new.rs has no head/index entry at all, so it's untracked/created
+        // (discarding it permanently trashes the file). Built by hand rather than
+        // via `setup_git_panel_with_changes`, since that helper's `set_status_for_repo`
+        // can't express "some files tracked, one file untracked" in a single call:
+        // once any status is set, files left out of the list become tracked-clean
+        // rather than untracked.
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             path!("/project"),
             json!({
                 ".git": {},
                 "a.rs": "changed a\n",
+                "b.rs": "changed b\n",
                 "new.rs": "new\n",
             }),
         )
@@ -10750,7 +10680,10 @@ mod tests {
 
         fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[("a.rs", "original a\n".into())],
+            &[
+                ("a.rs", "original a\n".into()),
+                ("b.rs", "original b\n".into()),
+            ],
         );
 
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
@@ -10777,15 +10710,41 @@ mod tests {
         let panel = workspace.update_in(&mut cx, GitPanel::new);
         await_git_panel_entries(&panel, &mut cx).await;
 
-        let (ix_a, ix_new) = panel.read_with(&cx, |panel, _| {
+        let (ix_a, ix_b, ix_new) = panel.read_with(&cx, |panel, _| {
             (
                 entry_index_for_repo_path(panel, &repo_path("a.rs")).unwrap(),
+                entry_index_for_repo_path(panel, &repo_path("b.rs")).unwrap(),
                 entry_index_for_repo_path(panel, &repo_path("new.rs")).unwrap(),
             )
         });
 
+        // A pair of tracked-only marks gets the plain "discard" wording, listing
+        // only the marked files.
         panel.update_in(&mut cx, |panel, window, cx| {
             panel.selected_entry = Some(ix_a);
+            panel.mark_range(ix_b);
+            panel.revert_selected(&git::RestoreFile::default(), window, cx);
+        });
+
+        let (message, detail) = cx
+            .pending_prompt()
+            .expect("discarding multiple marked files should show one combined prompt");
+        assert_eq!(message, "Discard changes to these files?");
+        assert!(
+            detail.contains("a.rs") && detail.contains("b.rs"),
+            "prompt should list both marked files, got: {detail}"
+        );
+        assert!(
+            !detail.contains("new.rs"),
+            "prompt should not list the unmarked file, got: {detail}"
+        );
+        cx.simulate_prompt_answer("Cancel");
+        cx.run_until_parked();
+
+        // Extending the mark to include a created file must not silently pick
+        // one wording over the other: mixing tracked and untracked changes needs
+        // its own "permanently deleted" warning.
+        panel.update_in(&mut cx, |panel, window, cx| {
             panel.marked_entries = vec![ix_a, ix_new];
             panel.revert_selected(&git::RestoreFile::default(), window, cx);
         });
