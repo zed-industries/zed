@@ -1549,11 +1549,12 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     output.smoothing_factors = float4(0.0, 1.0, 0.0, 0.0);
     output.superellipse_power = 0.0;
     if (quad.corner_smoothing > 0.0) {
-        bool has_uniform_border =
-            quad.border_widths.top == quad.border_widths.right &&
-            quad.border_widths.top == quad.border_widths.bottom &&
-            quad.border_widths.top == quad.border_widths.left;
-        if (quad.border_style == 0u && has_uniform_border &&
+        bool has_no_border =
+            quad.border_widths.top == 0.0 &&
+            quad.border_widths.right == 0.0 &&
+            quad.border_widths.bottom == 0.0 &&
+            quad.border_widths.left == 0.0;
+        if (quad.border_style == 0u && has_no_border &&
             can_use_normalized_superellipse(
                 quad.bounds.size,
                 quad.corner_radii,

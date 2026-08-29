@@ -439,7 +439,8 @@ fn can_use_normalized_superellipse(
 
 // This is an inexpensive implicit-distance approximation. Its zero contour is
 // the exact normalized superellipse; only the magnitude away from the contour
-// is approximate, which is sufficient for the existing one-pixel coverage.
+// is approximate, which is sufficient for one-pixel coverage but not for
+// offsetting an inner border edge.
 fn normalized_superellipse_sdf_impl(
     corner_to_point: vec2<f32>,
     corner_radius: f32,
@@ -1457,11 +1458,12 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     out.smoothing_factors = vec4<f32>(0.0, 1.0, 0.0, 0.0);
     out.superellipse_power = 0.0;
     if (quad.corner_smoothing > 0.0) {
-        let has_uniform_border =
-            quad.border_widths.top == quad.border_widths.right &&
-            quad.border_widths.top == quad.border_widths.bottom &&
-            quad.border_widths.top == quad.border_widths.left;
-        if (quad.border_style == 0u && has_uniform_border &&
+        let has_no_border =
+            quad.border_widths.top == 0.0 &&
+            quad.border_widths.right == 0.0 &&
+            quad.border_widths.bottom == 0.0 &&
+            quad.border_widths.left == 0.0;
+        if (quad.border_style == 0u && has_no_border &&
                 can_use_normalized_superellipse(
                     quad.bounds.size,
                     quad.corner_radii,

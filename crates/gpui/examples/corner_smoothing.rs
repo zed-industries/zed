@@ -49,6 +49,9 @@ impl Render for CornerSmoothingExample {
                             .h(px(self.height))
                             .rounded(px(self.corner_radius))
                             .rounded_smoothing(self.corner_smoothing)
+                            .border_color(gpui::white())
+                            .border_8()
+                            .border_t_0()
                             .bg(rgba(0x663399b8).alpha(0.5)),
                     ),
             )

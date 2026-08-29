@@ -221,11 +221,12 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
   float4 smoothing_factors = float4(0.0, 1.0, 0.0, 0.0);
   float superellipse_power = 0.0;
   if (quad.corner_smoothing > 0.0) {
-    bool has_uniform_border =
-      quad.border_widths.top == quad.border_widths.right &&
-      quad.border_widths.top == quad.border_widths.bottom &&
-      quad.border_widths.top == quad.border_widths.left;
-    if (quad.border_style == 0 && has_uniform_border &&
+    bool has_no_border =
+      quad.border_widths.top == 0.0 &&
+      quad.border_widths.right == 0.0 &&
+      quad.border_widths.bottom == 0.0 &&
+      quad.border_widths.left == 0.0;
+    if (quad.border_style == 0 && has_no_border &&
         can_use_normalized_superellipse(
           quad_size, quad.corner_radii, quad.corner_smoothing)) {
       float4 reaches = normalized_superellipse_reaches(
