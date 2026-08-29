@@ -783,6 +783,7 @@ impl VsCodeSettings {
         skip_default(PreviewTabsSettingsContent {
             enabled: self.read_bool("workbench.editor.enablePreview"),
             enable_preview_from_project_panel: None,
+            enable_preview_from_git_panel: None,
             enable_preview_from_file_finder: self
                 .read_bool("workbench.editor.enablePreviewFromQuickOpen"),
             enable_preview_from_multibuffer: None,

@@ -54,6 +54,7 @@ impl SoloDiffView {
         entry: GitStatusEntry,
         repository: Entity<Repository>,
         workspace: WeakEntity<Workspace>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
@@ -67,7 +68,14 @@ impl SoloDiffView {
             .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
-                workspace.activate_item(&existing, true, true, window, cx);
+                crate::activate_or_add_with_preview(
+                    workspace,
+                    Some(existing.clone()),
+                    allow_preview,
+                    window,
+                    cx,
+                    |_, _, _| existing.clone(),
+                );
             });
             existing.focus_handle(cx).focus(window, cx);
             return Task::ready(Ok(existing));
@@ -112,7 +120,14 @@ impl SoloDiffView {
                     )
                 });
 
-                workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
+                crate::activate_or_add_with_preview(
+                    workspace,
+                    None,
+                    allow_preview,
+                    window,
+                    cx,
+                    |_, _, _| view.clone(),
+                );
                 view
             })
         })

@@ -1594,7 +1594,7 @@ import { AiPaneTabContext } from 'context';
     // Create and add the ProjectDiff using the public deploy_at method
     workspace_window
         .update(cx, |workspace, window, cx| {
-            ProjectDiff::deploy_at(workspace, None, window, cx);
+            ProjectDiff::deploy_at(workspace, None, false, window, cx);
         })
         .log_err();
 

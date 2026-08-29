@@ -4710,7 +4710,7 @@ fn window_and_layout_page() -> SettingsPage {
         ]
     }
 
-    fn preview_tabs_section() -> [SettingsPageItem; 8] {
+    fn preview_tabs_section() -> [SettingsPageItem; 9] {
         [
             SettingsPageItem::SectionHeader("Preview Tabs"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -4750,6 +4750,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .preview_tabs
                             .get_or_insert_default()
                             .enable_preview_from_project_panel = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Enable Preview From Git Panel",
+                description: "Whether to open tabs in preview mode when opened from the git panel with a single click.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("preview_tabs.enable_preview_from_git_panel"),
+                    pick: |settings_content| {
+                        settings_content
+                            .preview_tabs
+                            .as_ref()?
+                            .enable_preview_from_git_panel
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .preview_tabs
+                            .get_or_insert_default()
+                            .enable_preview_from_git_panel = value;
                     },
                 }),
                 metadata: None,

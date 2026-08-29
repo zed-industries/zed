@@ -192,6 +192,10 @@ pub struct PreviewTabsSettingsContent {
     ///
     /// Default: true
     pub enable_preview_from_project_panel: Option<bool>,
+    /// Whether to open tabs in preview mode when opened from the git panel with a single click.
+    ///
+    /// Default: true
+    pub enable_preview_from_git_panel: Option<bool>,
     /// Whether to open tabs in preview mode when selected from the file finder.
     ///
     /// Default: false

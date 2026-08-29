@@ -31,7 +31,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IntoElement, Label, LabelCommon};
+use ui::{Color, FluentBuilder as _, Icon, IntoElement, Label, LabelCommon};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -67,6 +67,7 @@ pub struct ItemSettings {
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_project_panel: bool,
+    pub enable_preview_from_git_panel: bool,
     pub enable_preview_from_file_finder: bool,
     pub enable_preview_from_multibuffer: bool,
     pub enable_preview_multibuffer_from_code_navigation: bool,
@@ -103,6 +104,7 @@ impl Settings for PreviewTabsSettings {
             enable_preview_from_project_panel: preview_tabs
                 .enable_preview_from_project_panel
                 .unwrap(),
+            enable_preview_from_git_panel: preview_tabs.enable_preview_from_git_panel.unwrap(),
             enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
             enable_preview_from_multibuffer: preview_tabs.enable_preview_from_multibuffer.unwrap(),
             enable_preview_multibuffer_from_code_navigation: preview_tabs
@@ -180,6 +182,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         Label::new(text)
             .single_line()
             .color(params.text_color())
+            .when(params.preview, |this| this.italic())
             .into_any_element()
     }
 

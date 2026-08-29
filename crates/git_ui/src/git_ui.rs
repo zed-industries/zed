@@ -21,7 +21,7 @@ use project_diff::ProjectDiff;
 use time::OffsetDateTime;
 use ui::{ButtonLike, ContextMenu, ElevationIndex, PopoverMenuHandle, TintColor, prelude::*};
 use workspace::{
-    ModalView, OpenMode, Workspace,
+    Item, ModalView, OpenMode, Workspace,
     notifications::{DetachAndPromptErr, NotifyTaskExt},
 };
 use zed_actions;
@@ -59,6 +59,47 @@ pub mod unstaged_diff;
 
 pub use blame_ui::GitBlameStatus;
 pub use conflict_view::MergeConflictIndicator;
+
+/// Activates `existing`, or builds a new item and adds it to the active pane.
+/// With `allow_preview`, a new item takes over the pane's preview tab slot,
+/// while opening an existing item permanently promotes it out of preview.
+pub(crate) fn activate_or_add_with_preview<T: Item>(
+    workspace: &mut Workspace,
+    existing: Option<Entity<T>>,
+    allow_preview: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+    build: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) -> Entity<T>,
+) -> Entity<T> {
+    if let Some(existing) = existing {
+        workspace.activate_item(&existing, true, true, window, cx);
+        if !allow_preview && let Some(pane) = workspace.pane_for(&existing) {
+            pane.update(cx, |pane, _| {
+                pane.unpreview_item_if_preview(existing.entity_id());
+            });
+        }
+        existing
+    } else {
+        let item = build(workspace, window, cx);
+        if allow_preview {
+            let pane = workspace.active_pane().clone();
+            pane.update(cx, |pane, cx| {
+                let destination_index = pane.replace_preview_item_id(item.entity_id(), window, cx);
+                pane.add_item(
+                    Box::new(item.clone()),
+                    false,
+                    true,
+                    destination_index,
+                    window,
+                    cx,
+                );
+            });
+        } else {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        }
+        item
+    }
+}
 
 pub fn init(cx: &mut App) {
     editor::set_blame_renderer(blame_ui::GitBlameRenderer, cx);
@@ -374,7 +415,7 @@ fn open_file_diff(
     cx: &mut App,
 ) {
     window.defer(cx, move |window, cx| {
-        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), window, cx)
+        SoloDiffView::open_or_focus(entry, repository, workspace.clone(), false, window, cx)
             .detach_and_notify_err(workspace, window, cx);
     });
 }

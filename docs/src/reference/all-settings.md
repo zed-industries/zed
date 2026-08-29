@@ -3511,6 +3511,7 @@ Examples:
   "preview_tabs": {
     "enabled": true,
     "enable_preview_from_project_panel": true,
+    "enable_preview_from_git_panel": true,
     "enable_preview_from_file_finder": false,
     "enable_preview_from_multibuffer": true,
     "enable_preview_multibuffer_from_code_navigation": false,
@@ -3524,6 +3525,16 @@ Examples:
 
 - Description: Determines whether to open files in preview mode when opened from the project panel with a single click.
 - Setting: `enable_preview_from_project_panel`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+### Enable preview from git panel
+
+- Description: Determines whether to open files and diffs in preview mode when opened from the git panel with a single click.
+- Setting: `enable_preview_from_git_panel`
 - Default: `true`
 
 **Options**

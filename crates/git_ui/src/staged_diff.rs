@@ -150,6 +150,7 @@ impl StagedDiff {
     pub fn deploy_at(
         workspace: &mut Workspace,
         entry: Option<GitStatusEntry>,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -163,22 +164,17 @@ impl StagedDiff {
         );
         let intended_repo = workspace.project().read(cx).active_repository(cx);
         let existing = workspace.items_of_type::<Self>(cx).next();
-        let staged_diff = if let Some(existing) = existing {
-            workspace.activate_item(&existing, true, true, window, cx);
-            existing
-        } else {
-            let workspace_handle = cx.entity();
-            let staged_diff =
-                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
-            workspace.add_item_to_active_pane(
-                Box::new(staged_diff.clone()),
-                None,
-                true,
-                window,
-                cx,
-            );
-            staged_diff
-        };
+        let staged_diff = crate::activate_or_add_with_preview(
+            workspace,
+            existing,
+            allow_preview,
+            window,
+            cx,
+            |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx))
+            },
+        );
 
         if let Some(intended) = &intended_repo {
             let needs_switch = staged_diff
@@ -819,7 +815,7 @@ mod tests {
         });
 
         workspace.update_in(cx, |workspace, window, cx| {
-            StagedDiff::deploy_at(workspace, None, window, cx);
+            StagedDiff::deploy_at(workspace, None, false, window, cx);
         });
         cx.run_until_parked();
 
@@ -910,7 +906,7 @@ mod tests {
         cx.run_until_parked();
 
         workspace.update_in(cx, |workspace, window, cx| {
-            StagedDiff::deploy_at(workspace, None, window, cx);
+            StagedDiff::deploy_at(workspace, None, false, window, cx);
         });
         cx.run_until_parked();
 
