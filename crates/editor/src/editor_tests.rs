@@ -84,6 +84,108 @@ fn display_ranges(editor: &Editor, cx: &mut Context<'_, Editor>) -> Vec<Range<Di
         .display_ranges(&editor.display_snapshot(cx))
 }
 
+#[gpui::test]
+fn test_highlighted_display_rows_in_range(cx: &mut TestAppContext) {
+    struct FirstHighlight;
+    struct SecondHighlight;
+
+    init_test(cx, |_| {});
+    let buffer = cx.new(|cx| language::Buffer::local(sample_text(8, 3, 'a'), cx));
+    let editor = cx.add_window(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+    assert!(
+        editor
+            .update(cx, |editor, window, cx| {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                editor.highlight_rows::<FirstHighlight>(
+                    buffer.anchor_before(Point::new(0, 0))..buffer.anchor_before(Point::new(6, 0)),
+                    |cx| cx.theme().colors().editor_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                editor.highlight_rows::<SecondHighlight>(
+                    buffer.anchor_before(Point::new(0, 0))..buffer.anchor_before(Point::new(1, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                editor.highlight_rows::<SecondHighlight>(
+                    buffer.anchor_before(Point::new(3, 0))..buffer.anchor_before(Point::new(4, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                editor.highlight_rows::<SecondHighlight>(
+                    buffer.anchor_before(Point::new(6, 0))..buffer.anchor_before(Point::new(7, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+
+                let display_row_range = DisplayRow(2)..DisplayRow(5);
+                let expected = editor
+                    .highlighted_display_rows(window, cx)
+                    .into_iter()
+                    .filter(|(row, _)| display_row_range.contains(row))
+                    .collect::<BTreeMap<_, _>>();
+                let snapshot = editor.snapshot(window, cx);
+                let actual = editor.highlighted_display_rows_in_range(
+                    buffer.anchor_before(Point::new(2, 0))..buffer.anchor_before(Point::new(5, 0)),
+                    display_row_range,
+                    &snapshot.display_snapshot,
+                    cx,
+                );
+
+                assert_eq!(actual, expected);
+
+                let highlight_start = buffer.anchor_before(Point::new(2, 0));
+                let Some(block_id) = editor
+                    .insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Fixed,
+                            placement: BlockPlacement::Above(highlight_start),
+                            height: Some(1),
+                            render: Arc::new(|_| div().into_any()),
+                            priority: 0,
+                        }],
+                        None,
+                        cx,
+                    )
+                    .into_iter()
+                    .next()
+                else {
+                    panic!("expected an inserted block");
+                };
+                editor.highlight_rows::<SecondHighlight>(
+                    highlight_start..buffer.anchor_before(Point::new(4, 0)),
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+                let Some(block_row) = editor.row_for_block(block_id, cx) else {
+                    panic!("expected an inserted block row");
+                };
+                let display_row_range = block_row..block_row.next_row();
+                let expected = editor
+                    .highlighted_display_rows(window, cx)
+                    .into_iter()
+                    .filter(|(row, _)| display_row_range.contains(row))
+                    .collect::<BTreeMap<_, _>>();
+                let snapshot = editor.snapshot(window, cx);
+                let actual = editor.highlighted_display_rows_in_range(
+                    buffer.anchor_before(Point::new(1, 0))..highlight_start,
+                    display_row_range,
+                    &snapshot.display_snapshot,
+                    cx,
+                );
+
+                assert!(!expected.is_empty());
+                assert_eq!(actual, expected);
+            })
+            .is_ok()
+    );
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod property_test;
 
