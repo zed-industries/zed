@@ -1166,6 +1166,76 @@ fn test_remove_excerpts_for_paths(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_ordered_buffer_anchor_ranges_to_anchor_ranges(cx: &mut App) {
+    let buffer = cx.new(|cx| Buffer::local(sample_text(12, 3, 'a'), cx));
+    let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_excerpts_for_path(
+            PathKey::for_buffer(&buffer, cx),
+            buffer.clone(),
+            [
+                Point::new(1, 0)..Point::new(1, 3),
+                Point::new(5, 0)..Point::new(5, 3),
+                Point::new(9, 0)..Point::new(9, 3),
+            ],
+            0,
+            cx,
+        );
+    });
+
+    let buffer_snapshot = buffer.read(cx).snapshot();
+    let ranges = [
+        buffer_snapshot.anchor_before(Point::new(1, 0))
+            ..buffer_snapshot.anchor_before(Point::new(1, 0)),
+        buffer_snapshot.anchor_before(Point::new(1, 1))
+            ..buffer_snapshot.anchor_after(Point::new(1, 2)),
+        buffer_snapshot.anchor_before(Point::new(3, 0))
+            ..buffer_snapshot.anchor_after(Point::new(3, 2)),
+        buffer_snapshot.anchor_before(Point::new(5, 0))
+            ..buffer_snapshot.anchor_after(Point::new(5, 3)),
+        buffer_snapshot.anchor_before(Point::new(9, 1))
+            ..buffer_snapshot.anchor_after(Point::new(9, 2)),
+    ];
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let expected = ranges
+        .iter()
+        .cloned()
+        .map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshot.ordered_buffer_anchor_ranges_to_anchor_ranges(ranges.clone()),
+        expected
+    );
+
+    let unordered_ranges = ranges.clone().into_iter().rev().collect::<Vec<_>>();
+    let expected = unordered_ranges
+        .iter()
+        .cloned()
+        .map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshot.ordered_buffer_anchor_ranges_to_anchor_ranges(unordered_ranges),
+        expected
+    );
+
+    let other_buffer = cx.new(|cx| Buffer::local("other", cx));
+    let other_snapshot = other_buffer.read(cx).snapshot();
+    let mixed_buffer_ranges = vec![
+        other_snapshot.anchor_before(Point::zero())..other_snapshot.anchor_after(Point::new(0, 5)),
+        ranges[0].clone(),
+    ];
+    let expected = mixed_buffer_ranges
+        .iter()
+        .cloned()
+        .map(|range| snapshot.buffer_anchor_range_to_anchor_range(range))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        snapshot.ordered_buffer_anchor_ranges_to_anchor_ranges(mixed_buffer_ranges),
+        expected
+    );
+}
+
+#[gpui::test]
 fn test_expand_excerpts(cx: &mut App) {
     let buffer = cx.new(|cx| Buffer::local(sample_text(20, 3, 'a'), cx));
     let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadWrite));
