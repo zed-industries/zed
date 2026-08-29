@@ -355,6 +355,27 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             && first_char
                 .is_none_or(|ch| !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch));
 
+        if let Some(digit) = ansi_keypad_digit(native_event.keyCode()) {
+            if !control && !command && !function && !alt {
+                let mut mods = NO_MOD;
+                if shift {
+                    mods |= SHIFT_MOD;
+                }
+                key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
+            }
+            return Keystroke {
+                modifiers: Modifiers {
+                    control,
+                    alt,
+                    shift,
+                    platform: command,
+                    function,
+                },
+                key: format!("kp{digit}"),
+                key_char,
+            };
+        }
+
         #[allow(non_upper_case_globals)]
         let key = match first_char {
             Some(SPACE_KEY) => {
@@ -571,4 +592,20 @@ fn chars_for_modified_key(code: CGKeyCode, modifiers: u32) -> String {
         let _: () = msg_send![keyboard, release];
     }
     String::from_utf16(&buffer[..buffer_size]).unwrap_or_default()
+}
+
+const fn ansi_keypad_digit(key_code: u16) -> Option<u8> {
+    match key_code {
+        0x52 => Some(0),
+        0x53 => Some(1),
+        0x54 => Some(2),
+        0x55 => Some(3),
+        0x56 => Some(4),
+        0x57 => Some(5),
+        0x58 => Some(6),
+        0x59 => Some(7),
+        0x5b => Some(8),
+        0x5c => Some(9),
+        _ => None,
+    }
 }
