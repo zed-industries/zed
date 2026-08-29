@@ -354,33 +354,52 @@ impl SettingFieldRenderer {
         ) -> Stateful<Div>
         + 'static,
     ) -> &mut Self {
-        let key = TypeId::of::<T>();
-        let renderer = Box::new(
-            move |settings_window: &SettingsWindow,
-                  item: &SettingItem,
-                  settings_file: SettingsUiFile,
-                  metadata: Option<&SettingsFieldMetadata>,
-                  sub_field: bool,
-                  window: &mut Window,
-                  cx: &mut Context<SettingsWindow>| {
-                let field = *item
-                    .field
-                    .as_ref()
-                    .as_any()
-                    .downcast_ref::<SettingField<T>>()
-                    .unwrap();
-                renderer(
-                    settings_window,
-                    item,
-                    field,
-                    settings_file,
-                    metadata,
-                    sub_field,
-                    window,
-                    cx,
-                )
-            },
-        );
+        self.add_renderer_erased(
+            TypeId::of::<T>(),
+            Box::new(
+                move |settings_window: &SettingsWindow,
+                      item: &SettingItem,
+                      settings_file: SettingsUiFile,
+                      metadata: Option<&SettingsFieldMetadata>,
+                      sub_field: bool,
+                      window: &mut Window,
+                      cx: &mut Context<SettingsWindow>| {
+                    let field = *item
+                        .field
+                        .as_ref()
+                        .as_any()
+                        .downcast_ref::<SettingField<T>>()
+                        .unwrap();
+                    renderer(
+                        settings_window,
+                        item,
+                        field,
+                        settings_file,
+                        metadata,
+                        sub_field,
+                        window,
+                        cx,
+                    )
+                },
+            ),
+        )
+    }
+
+    fn add_renderer_erased(
+        &mut self,
+        key: TypeId,
+        renderer: Box<
+            dyn Fn(
+                &SettingsWindow,
+                &SettingItem,
+                SettingsUiFile,
+                Option<&SettingsFieldMetadata>,
+                bool,
+                &mut Window,
+                &mut Context<SettingsWindow>,
+            ) -> Stateful<Div>,
+        >,
+    ) -> &mut Self {
         self.renderers.borrow_mut().insert(key, renderer);
         self
     }
