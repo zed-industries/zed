@@ -634,6 +634,111 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     }
 }
 
+/// The checkout that produced this binary, resolved at runtime by walking up to
+/// the first ancestor that contains a `.git` entry (a directory in a normal
+/// clone, a file in a git worktree or submodule). Cargo and corgi both place
+/// built binaries under `<repo>/target/<profile>/`, so the repository root is
+/// always an ancestor of the executable.
+///
+/// Dev-only affordances use this instead of baking a build-time path into the
+/// artifact: such a path points at the wrong checkout from any other worktree
+/// and, under corgi, is rejected because artifacts must be checkout-independent
+/// to be shared across worktrees.
+///
+/// The executable's launch path is tried first, then its canonical form, then
+/// the working directory. In CI, `target/` (or the checkout root) can be a
+/// symlink onto another volume, so canonicalizing the executable alone can walk
+/// off the checkout and miss `.git`; the launch path and the test runner's cwd
+/// (a crate dir under the checkout) stay inside it.
+pub fn dev_repo_root() -> Option<&'static std::path::Path> {
+    use std::path::PathBuf;
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let exe = std::env::current_exe().ok();
+        let candidates = [
+            exe.clone(),
+            exe.and_then(|exe| exe.canonicalize().ok()),
+            std::env::current_dir().ok(),
+        ];
+        candidates.into_iter().flatten().find_map(|start| {
+            Some(
+                start
+                    .ancestors()
+                    .find(|dir| dir.join(".git").exists())?
+                    .to_path_buf(),
+            )
+        })
+    })
+    .as_deref()
+}
+
+/// All files under a repo-relative directory, as sorted dir-relative paths with
+/// forward slashes. Backs the dev implementations of `rust_embed` asset sources.
+pub fn dev_embedded_file_names(repo_rel: &str) -> Vec<std::borrow::Cow<'static, str>> {
+    use std::borrow::Cow;
+    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<Cow<'static, str>>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, root, out);
+            } else if path.file_name().is_some_and(|name| name != ".DS_Store") {
+                if let Ok(rel) = path.strip_prefix(root) {
+                    out.push(Cow::Owned(
+                        rel.components()
+                            .map(|component| component.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/"),
+                    ));
+                }
+            }
+        }
+    }
+    let Some(root) = dev_repo_root().map(|root| root.join(repo_rel)) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    walk(&root, &root, &mut names);
+    names.sort();
+    names
+}
+
+/// A `rust_embed`-compatible asset source for dev builds: reads the checkout's
+/// files at runtime (live reload) instead of embedding them, and bakes no
+/// build-time path into the artifact. Pair it with the release `#[derive(RustEmbed)]`
+/// under `#[cfg(not(debug_assertions))]`; the two share one `impl AssetSource`.
+///
+/// `exclude_suffixes` drops files whose path ends with any of the given
+/// suffixes, mirroring the release `#[exclude = "*.ext"]` globs.
+#[macro_export]
+macro_rules! dev_fs_embed {
+    ($vis:vis struct $name:ident, $repo_rel:literal) => {
+        $crate::dev_fs_embed!($vis struct $name, $repo_rel, exclude_suffixes = []);
+    };
+    ($vis:vis struct $name:ident, $repo_rel:literal, exclude_suffixes = [$($suffix:literal),*]) => {
+        $vis struct $name;
+
+        impl ::rust_embed::RustEmbed for $name {
+            fn get(file_path: &str) -> ::core::option::Option<::rust_embed::EmbeddedFile> {
+                let root = $crate::dev_repo_root()
+                    .expect("dev asset loading requires running from within the checkout")
+                    .join($repo_rel);
+                ::rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
+            }
+
+            fn iter() -> ::rust_embed::Filenames {
+                ::rust_embed::Filenames::Dynamic(::std::boxed::Box::new(
+                    $crate::dev_embedded_file_names($repo_rel)
+                        .into_iter()
+                        .filter(|path| true $(&& !path.ends_with($suffix))*),
+                ))
+            }
+        }
+    };
+}
+
 pub trait RangeExt<T> {
     fn sorted(&self) -> Self;
     fn to_inclusive(&self) -> RangeInclusive<T>;

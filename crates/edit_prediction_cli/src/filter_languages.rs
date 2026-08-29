@@ -24,7 +24,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-#[cfg(not(feature = "dynamic_prompts"))]
+#[cfg(all(not(feature = "dynamic_prompts"), not(debug_assertions)))]
 mod language_configs_embedded {
     use rust_embed::RustEmbed;
 
@@ -34,8 +34,15 @@ mod language_configs_embedded {
     pub struct LanguageConfigs;
 }
 
-#[cfg(not(feature = "dynamic_prompts"))]
+#[cfg(all(not(feature = "dynamic_prompts"), not(debug_assertions)))]
 use language_configs_embedded::LanguageConfigs;
+
+// Dev builds read grammars' language configs from the checkout at runtime
+// instead of embedding them, so no build-time path is baked into the binary.
+#[cfg(all(not(feature = "dynamic_prompts"), debug_assertions))]
+util::dev_fs_embed!(struct LanguageConfigs, "crates/grammars/src");
+#[cfg(all(not(feature = "dynamic_prompts"), debug_assertions))]
+use rust_embed::RustEmbed as _;
 
 #[derive(Debug, Deserialize)]
 struct LanguageConfig {
@@ -100,7 +107,7 @@ pub struct FilterLanguagesArgs {
 fn build_extension_to_language_map() -> HashMap<String, String> {
     let mut map = HashMap::default();
 
-    for file_path in LanguageConfigs::iter() {
+    for file_path in LanguageConfigs::iter().filter(|path| path.ends_with("config.toml")) {
         if let Some(content) = LanguageConfigs::get(&file_path) {
             let content_str = match std::str::from_utf8(&content.data) {
                 Ok(s) => s,
