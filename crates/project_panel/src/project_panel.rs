@@ -1495,6 +1495,10 @@ impl ProjectPanel {
         cx: &App,
     ) {
         let single_worktree = self.project.read(cx).visible_worktrees(cx).count() == 1;
+        if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
+            let abs_path = worktree.read(cx).abs_path();
+            self.forget_pending_expanded_paths(&abs_path, None);
+        }
         if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
             if single_worktree {
                 expanded_dir_ids.retain(|id| id == &root_id);
@@ -1735,6 +1739,13 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut Context<Self>,
     ) {
+        if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
+            let worktree = worktree.read(cx);
+            if let Some(entry) = worktree.entry_for_id(entry_id) {
+                let (abs_path, path) = (worktree.abs_path(), entry.path.clone());
+                self.forget_pending_expanded_paths(&abs_path, Some(&path));
+            }
+        }
         self.project.update(cx, |project, cx| {
             if let Some((worktree, expanded_dir_ids)) = project
                 .worktree_for_id(worktree_id, cx)
@@ -4819,6 +4830,34 @@ impl ProjectPanel {
                 resolved.dedup();
                 e.insert(resolved);
             }
+        }
+    }
+
+    /// Drops saved paths that haven't resolved yet under a directory the user
+    /// just collapsed recursively. They would otherwise resolve back into
+    /// `expanded_dir_ids` on a later update and undo the collapse.
+    fn forget_pending_expanded_paths(
+        &mut self,
+        worktree_abs_path: &Arc<Path>,
+        under: Option<&RelPath>,
+    ) {
+        let hash_map::Entry::Occupied(mut pending) = self
+            .state
+            .pending_expanded_paths
+            .entry(worktree_abs_path.clone())
+        else {
+            return;
+        };
+        match under {
+            Some(prefix) => pending.get_mut().retain(|saved_path| {
+                RelPath::from_unix_str(saved_path)
+                    .map(|path| !path.starts_with(prefix))
+                    .unwrap_or(true)
+            }),
+            None => pending.get_mut().clear(),
+        }
+        if pending.get().is_empty() {
+            pending.remove();
         }
     }
 
