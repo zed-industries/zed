@@ -2843,6 +2843,17 @@ impl LocalLspStore {
                 .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
         });
 
+        // The LSP spec makes `PublishDiagnosticsParams.version` optional and many servers
+        // omit it. Such a server analyzed the last text we sent it, which is not
+        // necessarily the buffer's current text, so resolve against that version instead
+        // of clipping the ranges onto whatever is on screen now.
+        let version = version.or_else(|| {
+            self.buffer_snapshots
+                .get(&buffer.read(cx).remote_id())
+                .and_then(|snapshots| snapshots.get(&server_id))
+                .and_then(|snapshots| snapshots.last())
+                .map(|snapshot| snapshot.version)
+        });
         let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
 
         let edits_since_save = std::cell::LazyCell::new(|| {
@@ -3253,12 +3264,26 @@ impl LocalLspStore {
                 anyhow::bail!("no snapshots found for buffer {buffer_id} and server {server_id}");
             };
 
+            // A server that publishes for a version the user has already typed past is
+            // ordinary, not exceptional: only `OLD_VERSIONS_TO_RETAIN` versions are kept.
+            // Coordinates are turned into anchors against whatever snapshot is returned
+            // here, and the buffer transforms anchors forward on its own, so resolving
+            // against the closest older snapshot keeps the positions the server meant.
+            // Requiring an exact match instead turns every lag spike into a dropped
+            // update, which leaves the previously applied diagnostics on screen.
+            let index = match snapshots.binary_search_by_key(&version, |e| e.version) {
+                Ok(index) => index,
+                Err(insertion_index) => insertion_index.saturating_sub(1),
+            };
             let found_snapshot = snapshots
-                    .binary_search_by_key(&version, |e| e.version)
-                    .map(|ix| snapshots[ix].snapshot.clone())
-                    .map_err(|_| {
-                        anyhow!("snapshot not found for buffer {buffer_id} server {server_id} at version {version}")
-                    })?;
+                .get(index)
+                .with_context(|| {
+                    format!(
+                        "no snapshot retained for buffer {buffer_id} server {server_id} at version {version}"
+                    )
+                })?
+                .snapshot
+                .clone();
 
             snapshots.retain(|snapshot| snapshot.version + OLD_VERSIONS_TO_RETAIN >= version);
             Ok(found_snapshot)
@@ -8855,12 +8880,20 @@ impl LspStore {
         for language_server in language_servers {
             let language_server = language_server.clone();
 
-            let buffer_snapshots = self
-                .as_local_mut()?
-                .buffer_snapshots
-                .get_mut(&buffer.remote_id())
-                .and_then(|m| m.get_mut(&language_server.server_id()))?;
-            let previous_snapshot = buffer_snapshots.last()?;
+            // `?` here would return from the whole function, so a server that has not
+            // been sent `didOpen` yet would also starve every remaining server of this
+            // edit. Such a server has no state to update: its `didOpen` carries the
+            // current text.
+            let Some(buffer_snapshots) = self
+                .as_local_mut()
+                .and_then(|local| local.buffer_snapshots.get_mut(&buffer.remote_id()))
+                .and_then(|snapshots| snapshots.get_mut(&language_server.server_id()))
+            else {
+                continue;
+            };
+            let Some(previous_snapshot) = buffer_snapshots.last() else {
+                continue;
+            };
 
             // If the line ending differs from what this server was last sent, the LF-normalized
             // rope is byte-identical so `edits_since` yields no diffs. We must resync the whole
@@ -8932,22 +8965,31 @@ impl LspStore {
             };
 
             let next_version = previous_snapshot.version + 1;
+            // Record the version only after the server has actually been told about it.
+            // Advancing the ledger on a failed send would make every later `didChange` a
+            // delta on top of text the server never received, and nothing resyncs it.
+            // Leaving the version behind instead makes the next edit send a delta that
+            // covers this one too.
+            if let Err(error) = language_server.notify::<lsp::notification::DidChangeTextDocument>(
+                lsp::DidChangeTextDocumentParams {
+                    text_document: lsp::VersionedTextDocumentIdentifier::new(
+                        uri.clone(),
+                        next_version,
+                    ),
+                    content_changes,
+                },
+            ) {
+                log::error!(
+                    "failed to send didChange to language server {}: {error:#}",
+                    language_server.server_id()
+                );
+                continue;
+            }
+
             buffer_snapshots.push(LspBufferSnapshot {
                 version: next_version,
                 snapshot: next_snapshot.clone(),
             });
-
-            language_server
-                .notify::<lsp::notification::DidChangeTextDocument>(
-                    lsp::DidChangeTextDocumentParams {
-                        text_document: lsp::VersionedTextDocumentIdentifier::new(
-                            uri.clone(),
-                            next_version,
-                        ),
-                        content_changes,
-                    },
-                )
-                .ok();
             self.pull_workspace_diagnostics(language_server.server_id());
         }
 
@@ -9395,7 +9437,7 @@ impl LspStore {
                 self.worktree_store.read(cx).find_worktree(abs_path, cx)
             else {
                 log::warn!("skipping diagnostics update, no worktree found for path {abs_path:?}");
-                return Ok(());
+                continue;
             };
 
             let worktree_id = worktree.read(cx).id();
@@ -9404,8 +9446,12 @@ impl LspStore {
                 path: relative_path,
             };
 
-            let document_uri = lsp::Uri::from_file_path(abs_path)
-                .map_err(|()| anyhow!("Failed to convert buffer path {abs_path:?} to lsp Uri"))?;
+            let Ok(document_uri) = lsp::Uri::from_file_path(abs_path) else {
+                log::warn!(
+                    "skipping diagnostics update, failed to convert buffer path {abs_path:?} to lsp Uri"
+                );
+                continue;
+            };
             if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
                 let snapshot = buffer_handle.read(cx).snapshot();
                 let buffer = buffer_handle.read(cx);
@@ -9421,7 +9467,8 @@ impl LspStore {
                     })
                     .collect::<Vec<_>>();
 
-                self.as_local_mut()
+                let updated_buffer_diagnostics = self
+                    .as_local_mut()
                     .context("cannot merge diagnostics on a remote LspStore")?
                     .update_buffer_diagnostics(
                         &buffer_handle,
@@ -9432,7 +9479,15 @@ impl LspStore {
                         update.diagnostics.diagnostics.clone(),
                         reused_diagnostics.clone(),
                         cx,
-                    )?;
+                    );
+                // Failing one document must not discard the updates batched alongside it,
+                // each of which would otherwise keep rendering its previous set.
+                if let Err(error) = updated_buffer_diagnostics {
+                    log::error!(
+                        "failed to update diagnostics for {abs_path:?} from language server {server_id}: {error:#}"
+                    );
+                    continue;
+                }
 
                 update.diagnostics.diagnostics.extend(reused_diagnostics);
             } else if let Some(local) = self.as_local() {
