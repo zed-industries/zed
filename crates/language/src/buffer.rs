@@ -1657,6 +1657,9 @@ impl Buffer {
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();
+        if self.saved_version == self.version {
+            self.compact_history();
+        }
         cx.emit(BufferEvent::Saved);
         cx.notify();
     }

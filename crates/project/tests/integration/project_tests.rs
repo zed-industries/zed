@@ -7558,6 +7558,52 @@ async fn test_external_reload_churn_is_compacted(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_save_compacts_evicted_undo_history(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "file.txt": "one two three" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_max_undo_entries(1);
+        buffer.edit([(0..3, "1")], None, cx);
+        buffer.finalize_last_transaction();
+        buffer.edit([(0..1, "ONE")], None, cx);
+        buffer.finalize_last_transaction();
+        assert_eq!(buffer.text(), "ONE two three");
+        assert_eq!(buffer.retained_history().undo_stack_entries, 1);
+        assert_eq!(buffer.retained_history().deleted_text_bytes, 4);
+    });
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        let retained = buffer.retained_history();
+        assert_eq!(
+            retained.deleted_text_bytes, 1,
+            "saving should strip tombstones of evicted undo entries, keeping the byte pinned by the remaining one"
+        );
+        assert_eq!(retained.undo_stack_entries, 1);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "1 two three");
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
