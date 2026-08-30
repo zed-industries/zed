@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, env_var,
+    ProviderSettingsView, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
@@ -401,10 +401,6 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
         self.model.capabilities.tools
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
-    }
-
     fn supports_images(&self) -> bool {
         self.model.capabilities.images
     }
@@ -465,9 +461,13 @@ impl LanguageModel for VercelAiGatewayLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let completions = self.stream_open_ai(request, cx);
+        let executor = cx.background_executor().clone();
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
