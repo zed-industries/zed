@@ -35,13 +35,20 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     <dyn fs::Fs>::set_global(fs.clone(), cx);
 
     settings::init(cx);
-    // iOS has no system open/save dialogs, so route path prompts through
-    // Zed's built-in picker registered by `file_finder::init`.
     use gpui::UpdateGlobal as _;
+    let user_settings = std::fs::read_to_string(paths::settings_file()).unwrap_or_default();
     settings::SettingsStore::update_global(cx, |store, cx| {
-        let result = store.set_user_settings(r#"{"use_system_path_prompts": false, "telemetry": {"diagnostics": false, "metrics": false}, "autosave": {"after_delay": {"milliseconds": 1000}}}"#, cx);
+        // Baseline for touch devices, kept in the global layer so the user's
+        // own settings file can override it without erasing it.
+        let result = store.set_global_settings(IOS_BASELINE_SETTINGS, cx);
         if let settings::ParseStatus::Failed { error } = &result.parse_status {
-            log::error!("failed to apply iOS default settings: {error}");
+            log::error!("failed to apply the iOS baseline settings: {error}");
+        }
+        if !user_settings.is_empty() {
+            let result = store.set_user_settings(&user_settings, cx);
+            if let settings::ParseStatus::Failed { error } = &result.parse_status {
+                log::error!("failed to apply the user settings: {error}");
+            }
         }
     });
     theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
@@ -78,6 +85,25 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     command_palette::init(cx);
     project_panel::init(cx);
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
+    menu::init();
+    language_model::init(cx);
+    zed_actions::init();
+    theme_selector::init(cx);
+    outline::init(cx);
+    outline_panel::init(cx);
+    tab_switcher::init(cx);
+    search::init(cx);
+    go_to_line::init(cx);
+    markdown_preview::init(cx);
+    git_ui::init(cx);
+
+    // Not every action referenced by the bundled keymap is registered in this
+    // trimmed-down app, so tolerate individual binding failures.
+    match settings::KeymapFile::load_asset_allow_partial_failure(settings::DEFAULT_KEYMAP_PATH, cx)
+    {
+        Ok(key_bindings) => cx.bind_keys(key_bindings),
+        Err(error) => log::error!("failed to load the default keymap: {error:#}"),
+    }
 
     {
         use theme::ActiveTheme as _;
@@ -93,20 +119,54 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     .detach();
 
     cx.observe_new(
-        |_: &mut Workspace, window, cx: &mut gpui::Context<Workspace>| {
+        |workspace: &mut Workspace, window, cx: &mut gpui::Context<Workspace>| {
+            workspace.register_action(open_settings_file);
+            workspace.register_action(
+                |workspace, _: &zed_actions::OpenSettings, window, cx| {
+                    open_settings_file(workspace, &zed_actions::OpenSettingsFile, window, cx);
+                },
+            );
+
             let Some(window) = window else { return };
-            cx.spawn_in(window, async move |workspace_handle, cx| {
-                match project_panel::ProjectPanel::load(workspace_handle.clone(), cx.clone()).await
-                {
+
+            let center_pane = workspace.active_pane().clone();
+            initialize_pane(workspace, &center_pane, window, cx);
+            cx.subscribe_in(&cx.entity(), window, |workspace, _, event, window, cx| {
+                if let workspace::Event::PaneAdded(pane) = event {
+                    initialize_pane(workspace, &pane.clone(), window, cx);
+                }
+            })
+            .detach();
+
+            async fn add_panel_when_ready(
+                panel_task: impl Future<Output = anyhow::Result<gpui::Entity<impl workspace::Panel>>>
+                + 'static,
+                workspace_handle: gpui::WeakEntity<Workspace>,
+                mut cx: gpui::AsyncWindowContext,
+            ) {
+                match panel_task.await {
                     Ok(panel) => {
                         workspace_handle
-                            .update_in(cx, |workspace, window, cx| {
+                            .update_in(&mut cx, |workspace, window, cx| {
                                 workspace.add_panel(panel, window, cx);
                             })
                             .ok();
                     }
-                    Err(error) => log::error!("failed to load project panel: {error:#}"),
+                    Err(error) => log::error!("failed to load panel: {error:#}"),
                 }
+            }
+
+            cx.spawn_in(window, async move |workspace_handle, cx| {
+                let project_panel =
+                    project_panel::ProjectPanel::load(workspace_handle.clone(), cx.clone());
+                let outline_panel =
+                    outline_panel::OutlinePanel::load(workspace_handle.clone(), cx.clone());
+                let git_panel = git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone());
+                futures::join!(
+                    add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
+                    add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
+                    add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
+                );
             })
             .detach();
         },
@@ -130,6 +190,68 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     })
     .detach();
     Ok(())
+}
+
+fn initialize_pane(
+    workspace: &Workspace,
+    pane: &gpui::Entity<workspace::Pane>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    pane.update(cx, |pane, cx| {
+        pane.toolbar().update(cx, |toolbar, cx| {
+            let breadcrumbs = cx.new(|_| breadcrumbs::Breadcrumbs::new());
+            toolbar.add_item(breadcrumbs, window, cx);
+            let buffer_search_bar = cx.new(|cx| {
+                search::BufferSearchBar::new(
+                    Some(workspace.project().read(cx).languages().clone()),
+                    window,
+                    cx,
+                )
+            });
+            toolbar.add_item(buffer_search_bar, window, cx);
+        });
+    });
+}
+
+// Baseline suited to a touch device: no system file dialogs, no telemetry,
+// and autosave because there is no cmd-s on the on-screen keyboard.
+const IOS_BASELINE_SETTINGS: &str = r#"{
+  "use_system_path_prompts": false,
+  "telemetry": { "diagnostics": false, "metrics": false },
+  "autosave": { "after_delay": { "milliseconds": 1000 } }
+}
+"#;
+
+fn open_settings_file(
+    workspace: &mut Workspace,
+    _: &zed_actions::OpenSettingsFile,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let settings_path = paths::settings_file().clone();
+    if !settings_path.exists() {
+        if let Some(parent) = settings_path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            log::error!("failed to create the settings directory: {error}");
+            return;
+        }
+        if let Err(error) = std::fs::write(
+            &settings_path,
+            settings::initial_user_settings_content().as_bytes(),
+        ) {
+            log::error!("failed to create the settings file: {error}");
+            return;
+        }
+    }
+    let open_task = workspace.open_abs_path(settings_path, Default::default(), window, cx);
+    cx.spawn(async move |_, _| {
+        if let Err(error) = open_task.await {
+            log::error!("failed to open the settings file: {error:#}");
+        }
+    })
+    .detach();
 }
 
 #[unsafe(no_mangle)]
