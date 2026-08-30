@@ -12,6 +12,7 @@ targets:
     platform: iOS
     sources:
       - main.m
+      - Assets.xcassets
     info:
       path: Info.plist
       properties:
@@ -32,6 +33,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.zed.zed-ios
         PRODUCT_NAME: ZedIos
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug"
         "OTHER_LDFLAGS[sdk=iphonesimulator*]":
