@@ -1090,6 +1090,7 @@ mod tests {
     use fs::{FakeFs, Fs as _};
     use gpui::{TestAppContext, VisualTestContext};
     use settings::SettingsStore;
+    use std::any::TypeId;
     use util::rel_path::rel_path;
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1346,6 +1347,53 @@ mod tests {
         cx.draw(point(px(0.), px(0.)), size(px(1.), px(1.)), |_, _| {
             split_image_view.clone().into_any_element()
         });
+    }
+
+    #[gpui::test]
+    async fn test_non_image_file_with_image_extension_opens_in_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            editor::init(cx);
+            crate::init(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(Path::new("/root"))
+            .await
+            .expect("test root should be created");
+        fs.insert_file("/root/test.pam", b"hello".to_vec()).await;
+
+        let project = Project::test(fs, [Path::new("/root")], cx).await;
+        let worktree_id = cx.update(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("test project should contain a worktree")
+                .read(cx)
+                .id()
+        });
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let handle = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("test.pam").into(),
+                    },
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(handle.to_any_view().entity_type(), TypeId::of::<Editor>());
     }
 }
 

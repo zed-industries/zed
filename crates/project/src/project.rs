@@ -201,6 +201,17 @@ pub trait ProjectItem: 'static {
     fn is_dirty(&self) -> bool;
 }
 
+/// Returned by a [`ProjectItem::try_open`] task when async inspection shows the path is not
+/// applicable after all, so the next registered opener should be tried.
+#[derive(Debug)]
+pub struct ProjectItemNotApplicable;
+
+impl std::fmt::Display for ProjectItemNotApplicable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "project item not applicable")
+    }
+}
+
 #[derive(Clone)]
 pub enum OpenedBufferEvent {
     Disconnected,

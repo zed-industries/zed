@@ -97,8 +97,8 @@ pub use persistence::{
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    WorktreeSettings,
+    DirectoryLister, Project, ProjectEntryId, ProjectItemNotApplicable, ProjectPath, ResolvedPath,
+    Worktree, WorktreeId, WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -964,6 +964,9 @@ impl ProjectItemRegistry {
                             Ok((project_entry_id, build_workspace_item))
                         }
                         Err(e) => {
+                            if e.is::<ProjectItemNotApplicable>() {
+                                return Err(e);
+                            }
                             log::warn!("Failed to open a project item: {e:#}");
                             if e.error_code() == ErrorCode::Internal {
                                 if let Some(abs_path) =
@@ -1000,15 +1003,21 @@ impl ProjectItemRegistry {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<(Option<ProjectEntryId>, WorkspaceItemBuilder)>> {
-        let Some(open_project_item) = self
-            .build_project_item_for_path_fns
-            .iter()
-            .rev()
-            .find_map(|open_project_item| open_project_item(project, path, window, cx))
-        else {
-            return Task::ready(Err(anyhow!("cannot open file {:?}", path.path)));
-        };
-        open_project_item
+        let builders = self.build_project_item_for_path_fns.clone();
+        let project = project.clone();
+        let path = path.clone();
+        window.spawn(cx, async move |cx| {
+            for build in builders.iter().rev() {
+                let Some(open) = cx.update(|window, cx| build(&project, &path, window, cx))? else {
+                    continue;
+                };
+                match open.await {
+                    Err(e) if e.is::<ProjectItemNotApplicable>() => continue,
+                    result => return result,
+                }
+            }
+            Err(anyhow!("cannot open file {:?}", path.path))
+        })
     }
 
     fn build_item<T: project::ProjectItem>(

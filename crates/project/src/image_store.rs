@@ -1,5 +1,5 @@
 use crate::{
-    Project, ProjectEntryId, ProjectItem, ProjectPath,
+    Project, ProjectEntryId, ProjectItem, ProjectItemNotApplicable, ProjectPath,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result};
@@ -462,7 +462,13 @@ impl ImageStore {
         cx.background_spawn(async move {
             Self::wait_for_loading_image(loading_watch)
                 .await
-                .map_err(|e| e.cloned())
+                .map_err(|e| {
+                    if e.is::<ProjectItemNotApplicable>() {
+                        anyhow::anyhow!(ProjectItemNotApplicable)
+                    } else {
+                        e.cloned()
+                    }
+                })
         })
     }
 
@@ -932,7 +938,9 @@ impl LocalImageStore {
 }
 
 fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
-    let format = image::guess_format(&content)?;
+    let Ok(format) = image::guess_format(&content) else {
+        anyhow::bail!(ProjectItemNotApplicable);
+    };
 
     Ok(Arc::new(gpui::Image::from_bytes(
         match format {
