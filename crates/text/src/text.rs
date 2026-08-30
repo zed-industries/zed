@@ -27,7 +27,7 @@ use smallvec::SmallVec;
 use std::{
     borrow::Cow,
     cmp::{self, Ordering, Reverse},
-    fmt::Display,
+    fmt::{self, Display},
     future::Future,
     iter::Iterator,
     num::NonZeroU64,
@@ -109,7 +109,6 @@ impl From<BufferId> for u64 {
     }
 }
 
-#[derive(Clone)]
 pub struct BufferSnapshot {
     visible_text: Rope,
     deleted_text: Rope,
@@ -121,6 +120,47 @@ pub struct BufferSnapshot {
     remote_id: BufferId,
     replica_id: ReplicaId,
     line_ending: LineEnding,
+    _lease: Option<Arc<clock::Global>>,
+    lease_registry: Arc<parking_lot::Mutex<Vec<std::sync::Weak<clock::Global>>>>,
+}
+
+const LEASE_REGISTRY_CLEANUP_THRESHOLD: usize = 4096;
+
+impl Clone for BufferSnapshot {
+    fn clone(&self) -> Self {
+        let lease = Arc::new(self.version.clone());
+        {
+            let mut lease_registry = self.lease_registry.lock();
+            if lease_registry.len() > LEASE_REGISTRY_CLEANUP_THRESHOLD {
+                lease_registry.retain(|lease| lease.strong_count() > 0);
+            }
+            lease_registry.push(Arc::downgrade(&lease));
+        }
+        Self {
+            visible_text: self.visible_text.clone(),
+            deleted_text: self.deleted_text.clone(),
+            fragments: self.fragments.clone(),
+            insertions: self.insertions.clone(),
+            insertion_slices: self.insertion_slices.clone(),
+            undo_map: self.undo_map.clone(),
+            version: self.version.clone(),
+            remote_id: self.remote_id,
+            replica_id: self.replica_id,
+            line_ending: self.line_ending,
+            _lease: Some(lease),
+            lease_registry: self.lease_registry.clone(),
+        }
+    }
+}
+
+impl fmt::Debug for BufferSnapshot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BufferSnapshot")
+            .field("remote_id", &self.remote_id)
+            .field("replica_id", &self.replica_id)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -169,8 +209,10 @@ pub struct FragmentState {
     pub insertion_offset: u32,
     pub len: u32,
     pub visible: bool,
+    pub stripped: bool,
     pub deletions: Vec<clock::Lamport>,
 }
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetainedHistory {
     pub operation_count: usize,
@@ -705,6 +747,7 @@ struct Fragment {
     insertion_offset: u32,
     len: u32,
     visible: bool,
+    stripped: bool,
     deletions: SmallVec<[clock::Lamport; 2]>,
     max_undos: clock::Global,
 }
@@ -722,6 +765,7 @@ struct FragmentSummary {
 struct FragmentTextSummary {
     visible: usize,
     deleted: usize,
+    stripped: usize,
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
@@ -732,6 +776,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
     fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
         self.visible += summary.text.visible;
         self.deleted += summary.text.deleted;
+        self.stripped += summary.text.stripped;
     }
 }
 
@@ -924,6 +969,7 @@ impl Buffer {
                     insertion_offset,
                     len: chunk_len as u32,
                     visible: true,
+                    stripped: false,
                     deletions: Default::default(),
                     max_undos: Default::default(),
                 };
@@ -948,6 +994,8 @@ impl Buffer {
                 version,
                 undo_map: Default::default(),
                 insertion_slices: Default::default(),
+                _lease: None,
+                lease_registry: Default::default(),
             },
             history,
             deferred_ops: OperationQueue::new(),
@@ -956,19 +1004,6 @@ impl Buffer {
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
-        }
-    }
-
-    pub fn truncate_transaction_edits(
-        &mut self,
-        transaction_id: TransactionId,
-        max_edit_count: usize,
-    ) {
-        if let Some(transaction) = self.history.transaction_mut(transaction_id)
-            && transaction.edit_ids.len() > max_edit_count
-        {
-            let excess = transaction.edit_ids.len() - max_edit_count;
-            transaction.edit_ids.drain(..excess);
         }
     }
 
@@ -1012,12 +1047,13 @@ impl Buffer {
                 insertion_offset: state.insertion_offset,
                 len: state.len,
                 visible: state.visible,
+                stripped: state.stripped && !state.visible,
                 deletions: state.deletions.iter().copied().collect(),
                 max_undos,
             };
             if fragment.visible {
                 visible_len += fragment.len as usize;
-            } else {
+            } else if !fragment.stripped {
                 deleted_len += fragment.len as usize;
             }
             insertion_edits.push(InsertionFragment::insert_new(&fragment));
@@ -1062,6 +1098,8 @@ impl Buffer {
                 version,
                 undo_map: UndoMap::from_entries(undo_map_entries),
                 insertion_slices: slices,
+                _lease: None,
+                lease_registry: Default::default(),
             },
             history,
             deferred_ops: OperationQueue::new(),
@@ -1071,6 +1109,100 @@ impl Buffer {
             edit_id_resolvers: Default::default(),
             wait_for_version_txs: Default::default(),
         })
+    }
+
+    pub fn compaction_horizon(&self) -> clock::Global {
+        let mut horizon = self.snapshot.version.clone();
+        let mut lease_registry = self.snapshot.lease_registry.lock();
+        lease_registry.retain(|lease| {
+            if let Some(lease) = lease.upgrade() {
+                let mut constrained = clock::Global::new();
+                for timestamp in horizon.iter() {
+                    let observed = timestamp.value.min(lease.get(timestamp.replica_id));
+                    if observed > 0 {
+                        constrained.observe(clock::Lamport {
+                            replica_id: timestamp.replica_id,
+                            value: observed,
+                        });
+                    }
+                }
+                horizon = constrained;
+                true
+            } else {
+                false
+            }
+        });
+        horizon
+    }
+
+    pub fn compact_history(&mut self) -> usize {
+        if self.history.retain_operations || !self.deferred_ops.is_empty() {
+            return 0;
+        }
+        let horizon = self.compaction_horizon();
+        let mut pinned_edit_ids = HashSet::<clock::Lamport>::default();
+        for entry in self
+            .history
+            .undo_stack
+            .iter()
+            .chain(&self.history.redo_stack)
+        {
+            pinned_edit_ids.extend(entry.transaction.edit_ids.iter().copied());
+        }
+        let strippable = |fragment: &Fragment| {
+            !fragment.visible
+                && !fragment.stripped
+                && horizon.observed(fragment.timestamp)
+                && horizon.observed_all(&fragment.max_undos)
+                && !pinned_edit_ids.contains(&fragment.timestamp)
+                && fragment.deletions.iter().all(|deletion| {
+                    horizon.observed(*deletion) && !pinned_edit_ids.contains(deletion)
+                })
+        };
+
+        let mut stripped_bytes = 0;
+        let mut new_fragments = SumTree::new(&None);
+        let mut new_deleted_text = Rope::new();
+        let mut deleted_cursor = self.snapshot.deleted_text.cursor(0);
+        let mut deleted_offset = 0;
+        for fragment in self.snapshot.fragments.iter() {
+            if fragment.visible || fragment.stripped {
+                new_fragments.push(fragment.clone(), &None);
+            } else {
+                let fragment_deleted_end = deleted_offset + fragment.len as usize;
+                if strippable(fragment) {
+                    let mut stripped_fragment = fragment.clone();
+                    stripped_fragment.stripped = true;
+                    stripped_bytes += fragment.len as usize;
+                    deleted_cursor.seek_forward(fragment_deleted_end);
+                    new_fragments.push(stripped_fragment, &None);
+                } else {
+                    new_deleted_text.append(deleted_cursor.slice(fragment_deleted_end));
+                    new_fragments.push(fragment.clone(), &None);
+                }
+                deleted_offset = fragment_deleted_end;
+            }
+        }
+        drop(deleted_cursor);
+
+        if stripped_bytes > 0 {
+            self.snapshot.fragments = new_fragments;
+            self.snapshot.deleted_text = new_deleted_text;
+        }
+        stripped_bytes
+    }
+
+    pub fn truncate_transaction_edits(
+        &mut self,
+        transaction_id: TransactionId,
+        max_edit_count: usize,
+    ) {
+        if let Some(transaction) = self.history.transaction_mut(transaction_id)
+            && transaction.edit_ids.len() > max_edit_count
+        {
+            let excess = transaction.edit_ids.len() - max_edit_count;
+            transaction.edit_ids.drain(..excess);
+        }
     }
 
     pub fn set_retain_operations(&mut self, retain_operations: bool) {
@@ -1425,7 +1557,7 @@ impl Buffer {
                 cursor.seek_forward(&Some(fragment_id), Bias::Left);
                 cursor.item()
             })
-            .filter(|fragment| !fragment.visible)
+            .filter(|fragment| !fragment.visible && !fragment.stripped)
             .map(|fragment| fragment.len as usize)
             .sum()
     }
@@ -2222,6 +2354,7 @@ fn push_fragments_for_insertion(
             deletions: Default::default(),
             max_undos: Default::default(),
             visible: true,
+            stripped: false,
         };
         insertion_slices.push(InsertionSlice::from_fragment(edit_timestamp, &fragment));
         new_insertions.push(InsertionFragment::insert_new(&fragment));
@@ -2296,7 +2429,9 @@ impl BufferSnapshot {
                 fragment_start = old_fragments.start().visible;
             }
 
-            let full_range_start = FullOffset(range.start + old_fragments.start().deleted);
+            let full_range_start = FullOffset(
+                range.start + old_fragments.start().deleted + old_fragments.start().stripped,
+            );
 
             if fragment_start < range.start {
                 let mut prefix = old_fragments.item().unwrap().clone();
@@ -2366,7 +2501,9 @@ impl BufferSnapshot {
                 }
             }
 
-            let full_range_end = FullOffset(range.end + old_fragments.start().deleted);
+            let full_range_end = FullOffset(
+                range.end + old_fragments.start().deleted + old_fragments.start().stripped,
+            );
             edit_op.ranges.push(full_range_start..full_range_end);
             edit_op.new_text.push(new_text);
         }
@@ -2541,6 +2678,7 @@ impl BufferSnapshot {
             insertion_offset: fragment.insertion_offset,
             len: fragment.len,
             visible: fragment.visible,
+            stripped: fragment.stripped,
             deletions: fragment.deletions.iter().copied().collect(),
         })
     }
@@ -3100,7 +3238,7 @@ impl BufferSnapshot {
             let overshoot = (range.start.offset - fragment.insertion_offset) as usize;
             if fragment.visible {
                 visible_start += overshoot;
-            } else {
+            } else if !fragment.stripped {
                 deleted_start += overshoot;
             }
         }
@@ -3319,6 +3457,9 @@ impl<'a> RopeBuilder<'a> {
 
     fn push_fragment(&mut self, fragment: &Fragment, was_visible: bool) {
         debug_assert!(fragment.len > 0);
+        if fragment.stripped {
+            return;
+        }
         self.push(fragment.len as usize, was_visible, fragment.visible)
     }
 
@@ -3487,11 +3628,19 @@ impl sum_tree::Item for Fragment {
             FragmentTextSummary {
                 visible: self.len as usize,
                 deleted: 0,
+                stripped: 0,
+            }
+        } else if self.stripped {
+            FragmentTextSummary {
+                visible: 0,
+                deleted: 0,
+                stripped: self.len as usize,
             }
         } else {
             FragmentTextSummary {
                 visible: 0,
                 deleted: self.len as usize,
+                stripped: 0,
             }
         };
         FragmentSummary {
@@ -3515,6 +3664,7 @@ impl sum_tree::Summary for FragmentSummary {
         self.max_id.assign(&other.max_id);
         self.text.visible += &other.text.visible;
         self.text.deleted += &other.text.deleted;
+        self.text.stripped += &other.text.stripped;
         self.max_version.join(&other.max_version);
         self.min_insertion_version
             .meet(&other.min_insertion_version);
@@ -3623,7 +3773,7 @@ impl sum_tree::Dimension<'_, FragmentSummary> for FullOffset {
     }
 
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
-        self.0 += summary.text.visible + summary.text.deleted;
+        self.0 += summary.text.visible + summary.text.deleted + summary.text.stripped;
     }
 }
 
@@ -3678,7 +3828,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();
             if version.observed_all(&summary.max_insertion_version) {
-                *offset += summary.text.visible + summary.text.deleted;
+                *offset += summary.text.visible + summary.text.deleted + summary.text.stripped;
             } else if version.observed_any(&summary.min_insertion_version) {
                 *self = Self::Invalid;
             }

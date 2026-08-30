@@ -95,6 +95,62 @@ fn test_pushed_transactions_are_bounded() {
 }
 
 #[test]
+fn test_from_state_round_trip() {
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "the quick brown fox",
+    );
+    buffer.edit([(4..9, "slow")]);
+    buffer.edit([(9..15, "")]);
+    buffer.edit([(0..0, "and then ")]);
+    buffer.undo();
+    buffer.edit([(3..3, "!")]);
+
+    let snapshot = buffer.snapshot();
+    let copy = Buffer::from_state(
+        ReplicaId::new(1),
+        buffer.remote_id(),
+        snapshot.line_ending(),
+        snapshot.as_rope().clone(),
+        Rope::from(snapshot.deleted_text().as_str()),
+        snapshot.fragment_states().collect(),
+        snapshot.undo_map_entries(),
+        buffer.version(),
+    )
+    .unwrap();
+
+    assert_eq!(copy.text(), buffer.text());
+    assert_eq!(copy.version(), buffer.version());
+    copy.check_invariants();
+
+    for offset in 0..=buffer.len() {
+        let anchor_before = buffer.anchor_before(offset);
+        let anchor_after = buffer.anchor_after(offset);
+        assert_eq!(
+            anchor_before.to_offset(&copy),
+            offset,
+            "anchor_before({offset}) resolved differently on the copy"
+        );
+        assert_eq!(
+            anchor_after.to_offset(&copy),
+            offset,
+            "anchor_after({offset}) resolved differently on the copy"
+        );
+    }
+
+    let mut buffer = buffer;
+    let mut copy = copy;
+    let original_op = buffer.edit([(2..5, "X")]);
+    let copy_op = copy.edit([(7..8, "Y")]);
+    buffer.apply_ops([copy_op]);
+    copy.apply_ops([original_op]);
+    assert_eq!(copy.text(), buffer.text());
+    buffer.check_invariants();
+    copy.check_invariants();
+}
+
+#[test]
 fn test_pushed_transaction_bytes_count_shared_fragments_once() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     buffer.start_transaction_at(Instant::now());
@@ -175,6 +231,103 @@ fn test_redo_bytes_do_not_evict_undo_entries() {
 }
 
 #[test]
+fn test_compact_history_strips_unreachable_deleted_text() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "one two three");
+    buffer.set_retain_operations(false);
+    let anchor_in_deleted_text = buffer.anchor_before(5);
+    buffer.edit([(4..7, "2")]);
+    buffer.edit([(0..0, "x ")]);
+    assert_eq!(buffer.text(), "x one 2 three");
+    assert_eq!(buffer.retained_history().deleted_text_bytes, 3);
+
+    assert_eq!(
+        buffer.compact_history(),
+        0,
+        "edits referenced by the undo stack must not be stripped"
+    );
+
+    buffer.set_max_undo_entries(0);
+    buffer.edit([(0..0, "y ")]);
+    let offset_before_compaction = anchor_in_deleted_text.to_offset(&buffer);
+
+    assert_eq!(buffer.compact_history(), 3);
+    assert_eq!(buffer.retained_history().deleted_text_bytes, 0);
+    assert_eq!(
+        anchor_in_deleted_text.to_offset(&buffer),
+        offset_before_compaction,
+        "anchors into stripped regions must keep resolving to the collapse point"
+    );
+    buffer.check_invariants();
+
+    let old_snapshot = buffer.snapshot().clone();
+    buffer.edit([(0..2, "")]);
+    let deletion_transaction = buffer.peek_undo_stack().unwrap().transaction_id();
+    buffer.forget_transaction(deletion_transaction);
+    assert_eq!(
+        buffer.compact_history(),
+        0,
+        "deletions unobserved by a live snapshot lease must not be stripped"
+    );
+    drop(old_snapshot);
+
+    assert_eq!(buffer.compact_history(), 2);
+    assert_eq!(buffer.retained_history().deleted_text_bytes, 0);
+    assert_eq!(buffer.text(), "x one 2 three");
+    buffer.check_invariants();
+
+    assert_eq!(
+        anchor_in_deleted_text.to_offset(&buffer),
+        offset_before_compaction.saturating_sub(2)
+    );
+
+    buffer.edit([(0..0, "z ")]);
+    assert_eq!(buffer.text(), "z x one 2 three");
+    buffer.check_invariants();
+
+    let snapshot = buffer.snapshot();
+    let copy = Buffer::from_state(
+        ReplicaId::new(1),
+        buffer.remote_id,
+        snapshot.line_ending(),
+        snapshot.as_rope().clone(),
+        Rope::from(snapshot.deleted_text().as_str()),
+        snapshot.fragment_states().collect(),
+        snapshot.undo_map_entries(),
+        buffer.version(),
+    )
+    .unwrap();
+    assert_eq!(copy.text(), buffer.text());
+    copy.check_invariants();
+    assert_eq!(
+        anchor_in_deleted_text.to_offset(&copy),
+        anchor_in_deleted_text.to_offset(&buffer)
+    );
+}
+
+#[test]
+fn test_compaction_horizon_tracks_snapshot_leases() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "abc");
+    buffer.edit([(0..0, "x")]);
+    assert_eq!(buffer.compaction_horizon(), buffer.version());
+
+    let old_snapshot = buffer.snapshot().clone();
+    let old_version = buffer.version();
+    buffer.edit([(0..0, "y")]);
+    buffer.edit([(0..0, "z")]);
+    assert_eq!(buffer.compaction_horizon(), old_version);
+
+    let newer_snapshot = buffer.snapshot().clone();
+    buffer.edit([(0..0, "w")]);
+    assert_eq!(buffer.compaction_horizon(), old_version);
+
+    drop(old_snapshot);
+    assert_eq!(buffer.compaction_horizon(), newer_snapshot.version);
+
+    drop(newer_snapshot);
+    assert_eq!(buffer.compaction_horizon(), buffer.version());
+}
+
+#[test]
 fn test_truncate_transaction_edits() {
     let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
     buffer.start_transaction_at(Instant::now());
@@ -200,62 +353,6 @@ fn test_truncate_transaction_edits() {
     buffer.undo();
     assert_eq!(buffer.text(), "xxxxxx");
     assert_eq!(transaction.edit_ids.len(), 4);
-}
-
-#[test]
-fn test_from_state_round_trip() {
-    let mut buffer = Buffer::new(
-        ReplicaId::LOCAL,
-        BufferId::new(1).unwrap(),
-        "the quick brown fox",
-    );
-    buffer.edit([(4..9, "slow")]);
-    buffer.edit([(9..15, "")]);
-    buffer.edit([(0..0, "and then ")]);
-    buffer.undo();
-    buffer.edit([(3..3, "!")]);
-
-    let snapshot = buffer.snapshot();
-    let copy = Buffer::from_state(
-        ReplicaId::new(1),
-        buffer.remote_id(),
-        snapshot.line_ending(),
-        snapshot.as_rope().clone(),
-        Rope::from(snapshot.deleted_text().as_str()),
-        snapshot.fragment_states().collect(),
-        snapshot.undo_map_entries(),
-        buffer.version(),
-    )
-    .unwrap();
-
-    assert_eq!(copy.text(), buffer.text());
-    assert_eq!(copy.version(), buffer.version());
-    copy.check_invariants();
-
-    for offset in 0..=buffer.len() {
-        let anchor_before = buffer.anchor_before(offset);
-        let anchor_after = buffer.anchor_after(offset);
-        assert_eq!(
-            anchor_before.to_offset(&copy),
-            offset,
-            "anchor_before({offset}) resolved differently on the copy"
-        );
-        assert_eq!(
-            anchor_after.to_offset(&copy),
-            offset,
-            "anchor_after({offset}) resolved differently on the copy"
-        );
-    }
-
-    let mut buffer = buffer;
-    let mut copy = copy;
-    let original_op = buffer.edit([(2..5, "X")]);
-    let copy_op = copy.edit([(7..8, "Y")]);
-    buffer.apply_ops([copy_op]);
-    copy.apply_ops([original_op]);
-    assert_eq!(copy.text(), buffer.text());
-    buffer.check_invariants();
-    copy.check_invariants();
 }
 
 #[test]
@@ -294,6 +391,10 @@ fn test_random_edits(mut rng: StdRng) {
     LineEnding::normalize(&mut reference_string);
 
     buffer.set_group_interval(Duration::from_millis(rng.random_range(0..=200)));
+    if rng.random_bool(0.5) {
+        buffer.set_retain_operations(false);
+        buffer.set_max_undo_entries(rng.random_range(0..=5));
+    }
     let mut buffer_versions = Vec::new();
     log::info!(
         "buffer text {:?}, version: {:?}",
@@ -331,6 +432,13 @@ fn test_random_edits(mut rng: StdRng) {
         );
 
         buffer.check_invariants();
+
+        if rng.random_bool(0.2) {
+            let stripped_bytes = buffer.compact_history();
+            log::info!("compacted history, stripped {stripped_bytes} bytes");
+            assert_eq!(buffer.text(), reference_string);
+            buffer.check_invariants();
+        }
 
         if rng.random_bool(0.3) {
             buffer_versions.push((buffer.clone(), buffer.subscribe()));

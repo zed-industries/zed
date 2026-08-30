@@ -1085,6 +1085,7 @@ impl BufferStore {
         let max_undo_steps = ProjectSettings::get_global(cx).max_undo_steps;
         buffer_entity.update(cx, |buffer, _| {
             buffer.set_retain_operations(retain_operations);
+            buffer.set_history_compaction_enabled(!is_remote && self.downstream_client.is_none());
             buffer.set_max_undo_entries(max_undo_steps);
         });
 
@@ -1190,6 +1191,7 @@ impl BufferStore {
         for buffer in self.buffers().collect::<Vec<_>>() {
             buffer.update(cx, |buffer, _| {
                 buffer.set_retain_operations(retain_operations);
+                buffer.set_history_compaction_enabled(false);
             });
         }
     }
@@ -1207,6 +1209,7 @@ impl BufferStore {
                     buffer.set_retain_operations(retain_remote_operations);
                 } else {
                     buffer.set_retain_operations(false);
+                    buffer.set_history_compaction_enabled(true);
                 }
             });
         }

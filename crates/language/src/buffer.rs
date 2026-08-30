@@ -144,6 +144,8 @@ pub struct Buffer {
     has_bom: bool,
     reload_with_encoding_txns: HashMap<TransactionId, (&'static Encoding, bool)>,
     last_reload_transaction: Option<TransactionId>,
+    last_unproductive_compaction_horizon: Option<clock::Global>,
+    history_compaction_enabled: bool,
     reload_coalesce_interval: Duration,
 }
 
@@ -573,7 +575,7 @@ pub struct Chunk<'a> {
 /// A set of edits to a given version of a buffer, computed asynchronously.
 #[derive(Debug, Clone)]
 pub struct Diff {
-    pub base_version: clock::Global,
+    pub base_snapshot: text::BufferSnapshot,
     pub line_ending: LineEnding,
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
@@ -1233,6 +1235,8 @@ impl Buffer {
             has_bom: false,
             reload_with_encoding_txns: HashMap::default(),
             last_reload_transaction: None,
+            last_unproductive_compaction_horizon: None,
+            history_compaction_enabled: false,
             reload_coalesce_interval: RELOAD_COALESCE_INTERVAL,
         }
     }
@@ -1729,7 +1733,7 @@ impl Buffer {
 
             let diff = this.update(cx, |this, cx| this.diff(new_text, cx))?.await;
             this.update(cx, |this, cx| {
-                if this.version() == diff.base_version {
+                if this.version() == diff.base_snapshot.version {
                     this.finalize_last_transaction();
                     let old_encoding = this.encoding;
                     let old_has_bom = this.has_bom;
@@ -1771,10 +1775,11 @@ impl Buffer {
                     tx.send(transaction).ok();
                     this.has_conflict = false;
                     this.did_reload(this.version(), this.line_ending(), new_mtime, cx);
+                    this.compact_history();
                 } else {
                     if !diff.edits.is_empty()
                         || this
-                            .edits_since::<usize>(&diff.base_version)
+                            .edits_since::<usize>(&diff.base_snapshot.version)
                             .next()
                             .is_some()
                     {
@@ -2387,16 +2392,15 @@ impl Buffer {
     where
         T: AsRef<str> + Send + 'static,
     {
-        let old_text = self.as_rope().clone();
-        let base_version = self.version();
+        let base_snapshot = self.text_snapshot();
         cx.background_spawn(async move {
-            let old_text = old_text.to_string();
+            let old_text = base_snapshot.as_rope().to_string();
             let mut new_text = new_text.as_ref().to_owned();
             let line_ending = LineEnding::detect(&new_text);
             LineEnding::normalize(&mut new_text);
             let edits = text_diff(&old_text, &new_text);
             Diff {
-                base_version,
+                base_snapshot,
                 line_ending,
                 edits,
             }
@@ -2414,13 +2418,13 @@ impl Buffer {
     ) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
-        let base_version = self.version();
+        let base_snapshot = self.text_snapshot();
         let modified_rows = modified_rows.map(|rows| rows.to_vec());
         cx.background_spawn(async move {
             let ranges = trailing_whitespace_ranges(&old_text, modified_rows.as_deref());
             let empty = Arc::<str>::from("");
             Diff {
-                base_version,
+                base_snapshot,
                 line_ending,
                 edits: ranges
                     .into_iter()
@@ -2442,7 +2446,7 @@ impl Buffer {
     pub fn ensure_final_newline(&self, modified_rows: Option<&[Range<u32>]>) -> Diff {
         let len = self.len();
         let line_ending = self.line_ending();
-        let base_version = self.version();
+        let base_snapshot = self.text_snapshot();
         let newline = Arc::<str>::from("\n");
 
         let edits = if len == 0 {
@@ -2480,7 +2484,7 @@ impl Buffer {
             }
         };
         Diff {
-            base_version,
+            base_snapshot,
             line_ending,
             edits,
         }
@@ -2491,7 +2495,9 @@ impl Buffer {
     /// parts of the diff that conflict with those changes.
     pub fn apply_diff(&mut self, diff: Diff, cx: &mut Context<Self>) -> Option<TransactionId> {
         let snapshot = self.snapshot();
-        let mut edits_since = snapshot.edits_since::<usize>(&diff.base_version).peekable();
+        let mut edits_since = snapshot
+            .edits_since::<usize>(&diff.base_snapshot.version)
+            .peekable();
         let mut delta = 0;
         let adjusted_edits = diff.edits.into_iter().filter_map(|(range, new_text)| {
             while let Some(edit_since) = edits_since.peek() {
@@ -2724,6 +2730,10 @@ impl Buffer {
         self.text.set_retain_operations(retain_operations);
     }
 
+    pub fn set_history_compaction_enabled(&mut self, enabled: bool) {
+        self.history_compaction_enabled = enabled;
+    }
+
     pub fn set_max_undo_entries(&mut self, max_undo_entries: usize) {
         self.text.set_max_undo_entries(max_undo_entries);
     }
@@ -2731,6 +2741,45 @@ impl Buffer {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_reload_coalesce_interval(&mut self, interval: Duration) {
         self.reload_coalesce_interval = interval;
+    }
+
+    pub fn compact_history(&mut self) -> usize {
+        if !self.history_compaction_enabled {
+            return 0;
+        }
+        if self.is_dirty()
+            || self.reparse.is_some()
+            || self.pending_autoindent.is_some()
+            || !self.autoindent_requests.is_empty()
+            || self.branch_state.is_some()
+        {
+            return 0;
+        }
+        let version = self.text.version();
+        if !self.syntax_map.lock().observed_all_edits_up_to(&version) {
+            return 0;
+        }
+        let horizon = self.text.compaction_horizon();
+        if self
+            .last_unproductive_compaction_horizon
+            .as_ref()
+            .is_some_and(|last_horizon| *last_horizon == horizon)
+        {
+            return 0;
+        }
+        let stripped_bytes = self.text.compact_history();
+        if stripped_bytes > 0 {
+            log::debug!(
+                "compacted history of buffer {:?}, stripped {stripped_bytes} bytes",
+                self.remote_id()
+            );
+        }
+        self.last_unproductive_compaction_horizon = if stripped_bytes == 0 {
+            Some(horizon)
+        } else {
+            None
+        };
+        stripped_bytes
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.

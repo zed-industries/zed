@@ -2208,7 +2208,9 @@ impl BufferDiff {
             let base_text_diff = base_text_diff.await;
             let Some(edited_base_text) = this
                 .update(cx, |this, cx| {
-                    if this.base_text_buffer.read(cx).version() != base_text_diff.base_version {
+                    if this.base_text_buffer.read(cx).version()
+                        != base_text_diff.base_snapshot.version
+                    {
                         log::warn!("dropping concurrent diff update");
                         debug_panic!("incorrect concurrent call to set_base_text");
                         return None;
@@ -2216,7 +2218,9 @@ impl BufferDiff {
                     let edited_base_text =
                         this.base_text_buffer.update(cx, |base_text_buffer, cx| {
                             base_text_buffer.set_line_ending(base_text_diff.line_ending, cx);
-                            assert!(base_text_buffer.version() == base_text_diff.base_version);
+                            assert!(
+                                base_text_buffer.version() == base_text_diff.base_snapshot.version
+                            );
                             base_text_buffer.snapshot_with_edits(base_text_diff.edits, cx)
                         });
                     Some(edited_base_text)

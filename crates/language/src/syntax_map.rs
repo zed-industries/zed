@@ -288,6 +288,10 @@ impl SyntaxMap {
         self.language_registry.clone()
     }
 
+    pub fn observed_all_edits_up_to(&self, version: &clock::Global) -> bool {
+        self.snapshot.observed_all_edits_up_to(version)
+    }
+
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
         self.snapshot.interpolate(text);
     }
@@ -333,6 +337,12 @@ impl SyntaxSnapshot {
 
     pub fn update_count(&self) -> usize {
         self.update_count
+    }
+
+    pub fn observed_all_edits_up_to(&self, version: &clock::Global) -> bool {
+        let never_parsed = clock::Global::default();
+        (self.interpolated_version == *version || self.interpolated_version == never_parsed)
+            && (self.parsed_version == *version || self.parsed_version == never_parsed)
     }
 
     #[ztracing::instrument(skip_all)]

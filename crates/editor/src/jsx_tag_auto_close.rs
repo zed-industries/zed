@@ -335,20 +335,20 @@ pub(crate) fn refresh_enabled_in_any_buffer(
     };
 }
 
-pub(crate) type InitialBufferVersionsMap = HashMap<language::BufferId, clock::Global>;
+pub(crate) type InitialBufferSnapshotsMap = HashMap<language::BufferId, text::BufferSnapshot>;
 
-pub(crate) fn construct_initial_buffer_versions_map<
+pub(crate) fn construct_initial_buffer_snapshots_map<
     D: ToOffset + Copy,
     _S: Into<std::sync::Arc<str>>,
 >(
     editor: &Editor,
     edits: &[(Range<D>, _S)],
     cx: &Context<Editor>,
-) -> InitialBufferVersionsMap {
-    let mut initial_buffer_versions = InitialBufferVersionsMap::default();
+) -> InitialBufferSnapshotsMap {
+    let mut initial_buffer_snapshots = InitialBufferSnapshotsMap::default();
 
     if !editor.jsx_tag_auto_close_enabled_in_any_buffer {
-        return initial_buffer_versions;
+        return initial_buffer_snapshots;
     }
 
     for (edit_range, _) in edits {
@@ -359,17 +359,17 @@ pub(crate) fn construct_initial_buffer_versions_map<
             .anchor_to_buffer_anchor(anchor)
             .and_then(|(text_anchor, _)| multibuffer.buffer(text_anchor.buffer_id));
         if let Some(buffer) = edit_range_buffer {
-            let (buffer_id, buffer_version) =
-                buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.version.clone()));
-            initial_buffer_versions.insert(buffer_id, buffer_version);
+            let (buffer_id, buffer_snapshot) =
+                buffer.read_with(cx, |buffer, _| (buffer.remote_id(), buffer.text_snapshot()));
+            initial_buffer_snapshots.insert(buffer_id, buffer_snapshot);
         }
     }
-    initial_buffer_versions
+    initial_buffer_snapshots
 }
 
 pub(crate) fn handle_from(
     editor: &Editor,
-    initial_buffer_versions: InitialBufferVersionsMap,
+    initial_buffer_snapshots: InitialBufferSnapshotsMap,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
@@ -386,14 +386,14 @@ pub(crate) fn handle_from(
     let mut edit_contexts =
         HashMap::<(language::BufferId, language::LanguageId), JsxAutoCloseEditContext>::default();
 
-    for (buffer_id, buffer_version_initial) in initial_buffer_versions {
+    for (buffer_id, buffer_snapshot_initial) in initial_buffer_snapshots {
         let Some(buffer) = editor.buffer.read(cx).buffer(buffer_id) else {
             continue;
         };
         let snapshot = buffer.read(cx).snapshot();
         for (edit, range) in buffer
             .read(cx)
-            .anchored_edits_since::<usize>(&buffer_version_initial)
+            .anchored_edits_since::<usize>(&buffer_snapshot_initial.version)
         {
             let Some(language) = snapshot.language_at(edit.new.end) else {
                 continue;
@@ -427,8 +427,10 @@ pub(crate) fn handle_from(
             edits: edited_ranges,
         } = auto_close_context;
 
-        let (buffer_version_initial, mut buffer_parse_status_rx) =
-            buffer.read_with(cx, |buffer, _| (buffer.version(), buffer.parse_status()));
+        let (buffer_snapshot_initial, mut buffer_parse_status_rx) = buffer
+            .read_with(cx, |buffer, _| {
+                (buffer.text_snapshot(), buffer.parse_status())
+            });
 
         cx.spawn_in(window, async move |this, cx| {
             let Some(buffer_parse_status) = buffer_parse_status_rx.recv().await.ok() else {
@@ -453,7 +455,9 @@ pub(crate) fn handle_from(
                 let has_edits_since_start = this
                     .read_with(cx, |this, cx| {
                         this.buffer.read(cx).buffer(buffer_id).is_none_or(|buffer| {
-                            buffer.read(cx).has_edits_since(&buffer_version_initial)
+                            buffer
+                                .read(cx)
+                                .has_edits_since(&buffer_snapshot_initial.version)
                         })
                     })
                     .ok()?;

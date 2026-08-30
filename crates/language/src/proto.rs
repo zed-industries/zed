@@ -147,6 +147,7 @@ pub fn serialize_fragment(fragment: &text::FragmentState) -> proto::BufferFragme
         insertion_offset: fragment.insertion_offset,
         len: fragment.len,
         visible: fragment.visible,
+        stripped: fragment.stripped,
         deletions: fragment
             .deletions
             .iter()
@@ -167,6 +168,7 @@ pub fn deserialize_fragment(fragment: proto::BufferFragment) -> text::FragmentSt
         insertion_offset: fragment.insertion_offset,
         len: fragment.len,
         visible: fragment.visible,
+        stripped: fragment.stripped,
         deletions: fragment
             .deletions
             .into_iter()

@@ -7510,6 +7510,54 @@ async fn test_spaced_external_reloads_do_not_coalesce(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
+async fn test_external_reload_churn_is_compacted(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "version 0",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| buffer.set_max_undo_entries(1));
+
+    for version in 1..=5 {
+        fs.save(
+            path!("/dir/file.txt").as_ref(),
+            &format!("version {version}").into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 5");
+        let retained = buffer.retained_history();
+        assert_eq!(retained.operation_count, 0);
+        assert_eq!(
+            retained.deleted_text_bytes, 1,
+            "reloads should compact evicted churn tombstones, keeping only the byte deleted by the last reload, which can still be undone"
+        );
+        assert_eq!(retained.undo_stack_entries, 1);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 4");
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

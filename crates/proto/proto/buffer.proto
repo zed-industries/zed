@@ -122,6 +122,7 @@ message BufferFragment {
   uint32 len = 4;
   bool visible = 5;
   repeated LamportTimestamp deletions = 6;
+  bool stripped = 7;
 }
 
 message BufferChunk {

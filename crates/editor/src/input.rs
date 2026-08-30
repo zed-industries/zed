@@ -413,8 +413,8 @@ impl Editor {
             if clear_linked_edit_ranges {
                 this.linked_edit_ranges.clear();
             }
-            let initial_buffer_versions =
-                jsx_tag_auto_close::construct_initial_buffer_versions_map(this, &edits, cx);
+            let initial_buffer_snapshots =
+                jsx_tag_auto_close::construct_initial_buffer_snapshots_map(this, &edits, cx);
 
             this.buffer.update(cx, |buffer, cx| {
                 if has_adjacent_edits {
@@ -527,7 +527,7 @@ impl Editor {
                 window,
                 cx,
             );
-            jsx_tag_auto_close::handle_from(this, initial_buffer_versions, window, cx);
+            jsx_tag_auto_close::handle_from(this, initial_buffer_snapshots, window, cx);
         });
     }
 
