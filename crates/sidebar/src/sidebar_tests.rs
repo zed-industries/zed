@@ -212,6 +212,50 @@ async fn init_test_project(
     project::Project::test(fs, [worktree_path.as_ref()], cx).await
 }
 
+#[gpui::test]
+async fn test_workspace_menu_uses_bare_repository_worktree_name(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/zed/.bare",
+        serde_json::json!({
+            "worktrees": {
+                "glossy-walrus": {
+                    "commondir": "../..",
+                    "HEAD": "ref: refs/heads/glossy-walrus",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktrees/zed/glossy-walrus/zed",
+        serde_json::json!({
+            ".git": "gitdir: /zed/.bare/worktrees/glossy-walrus",
+            "src": {},
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project =
+        project::Project::test(fs, [Path::new("/worktrees/zed/glossy-walrus/zed")], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let labels = cx.update(|_window, cx| workspace_menu_worktree_labels(&workspace, cx));
+
+    assert_eq!(labels.len(), 1);
+    assert_eq!(labels[0].primary_name.as_ref(), "glossy-walrus");
+    assert_eq!(labels[0].secondary_name, None);
+}
+
 fn setup_sidebar(
     multi_workspace: &Entity<MultiWorkspace>,
     cx: &mut gpui::VisualTestContext,
@@ -1455,8 +1499,8 @@ async fn test_keyboard_focus_in_does_not_set_selection(cx: &mut TestAppContext) 
         sidebar.selection = Some(0);
     });
 
-    cx.update(|window, _cx| {
-        window.blur();
+    cx.update(|window, cx| {
+        window.blur(cx);
     });
     cx.run_until_parked();
 

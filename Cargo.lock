@@ -2155,6 +2155,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "betlang"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f89b0929539eaee70109704ae4e345df438be6ab02e4dc8ac060e05098ad1b7"
+dependencies = [
+ "fearless_simd",
+]
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2666,6 +2675,32 @@ dependencies = [
  "telemetry",
  "util",
  "workspace",
+]
+
+[[package]]
+name = "call_hierarchy"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "futures 0.3.32",
+ "fuzzy",
+ "gpui",
+ "language",
+ "log",
+ "lsp",
+ "menu",
+ "picker",
+ "project",
+ "proto",
+ "serde_json",
+ "settings",
+ "theme",
+ "theme_settings",
+ "tree-sitter-rust",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -5576,6 +5611,7 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "language_detection",
  "languages",
  "linkify",
  "log",
@@ -5961,7 +5997,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
- "log",
  "net",
  "serde",
  "serde_json",
@@ -6328,6 +6363,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fearless_simd"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
+
+[[package]]
 name = "feature_flags"
 version = "0.1.0"
 dependencies = [
@@ -6412,6 +6453,7 @@ name = "file_icons"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "settings_content",
  "theme",
  "util",
 ]
@@ -9216,6 +9258,7 @@ dependencies = [
  "dap",
  "extension",
  "feature_flags",
+ "fs",
  "gpui",
  "language",
  "parking_lot",
@@ -9522,6 +9565,15 @@ dependencies = [
  "strum 0.28.0",
  "toml 0.8.23",
  "tree-sitter",
+]
+
+[[package]]
+name = "language_detection"
+version = "0.1.0"
+dependencies = [
+ "betlang",
+ "gpui",
+ "language",
 ]
 
 [[package]]
@@ -9958,7 +10010,6 @@ dependencies = [
  "picker",
  "project",
  "ui",
- "util",
  "workspace",
 ]
 
@@ -10357,7 +10408,7 @@ dependencies = [
 [[package]]
 name = "lsp-types"
 version = "0.95.1"
-source = "git+https://github.com/zed-industries/lsp-types?rev=f4dfa89a21ca35cd929b70354b1583fabae325f8#f4dfa89a21ca35cd929b70354b1583fabae325f8"
+source = "git+https://github.com/zed-industries/lsp-types?rev=f1783e63a7f4eb4397bf51d4148b4895a1f7ab16#f1783e63a7f4eb4397bf51d4148b4895a1f7ab16"
 dependencies = [
  "bitflags 1.3.2",
  "serde",
@@ -10873,6 +10924,7 @@ dependencies = [
  "anyhow",
  "collections",
  "convert_case 0.11.0",
+ "indoc",
  "log",
  "pretty_assertions",
  "serde_json",
@@ -11101,6 +11153,8 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
+ "proptest",
+ "proptest-derive",
  "rand 0.9.4",
  "rope",
  "serde",
@@ -12169,7 +12223,6 @@ dependencies = [
  "gpui",
  "picker",
  "project",
- "schemars 1.0.4",
  "serde",
  "serde_json",
  "settings",
@@ -12378,7 +12431,6 @@ dependencies = [
  "serde_json",
  "settings",
  "theme",
- "theme_settings",
  "ui",
  "util",
  "workspace",
@@ -16059,6 +16111,7 @@ dependencies = [
  "picker_preview",
  "pretty_assertions",
  "project",
+ "proto",
  "regex",
  "serde_json",
  "settings",
@@ -22720,6 +22773,7 @@ dependencies = [
  "auto_update_ui",
  "breadcrumbs",
  "call",
+ "call_hierarchy",
  "channel",
  "chrono",
  "clap",

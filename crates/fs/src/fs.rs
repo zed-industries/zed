@@ -2527,6 +2527,13 @@ impl FakeFs {
             .insert(Self::remove_dir_error_key(path.as_ref()), message);
     }
 
+    pub fn clear_remove_dir_error(&self, path: impl AsRef<Path>) {
+        self.state
+            .lock()
+            .remove_dir_errors
+            .remove(&Self::remove_dir_error_key(path.as_ref()));
+    }
+
     /// Entry resolution in `try_entry` ignores drive prefixes, so the error
     /// injection map must too.
     /// Otherwise, on Windows, a key like `C:\workspace\dir` would never match a
@@ -2991,20 +2998,32 @@ impl Fs for FakeFs {
             }
         })?;
 
+        // POSIX `rename` succeeds without doing anything when both names resolve
+        // to the same file. Falling through would assign the entry onto itself
+        // and then remove it, destroying the file. The lookup above has already
+        // reported a missing source, so only an existing one reaches here.
+        if old_path == new_path {
+            return Ok(());
+        }
+
         let inode = match moved_entry {
             FakeFsEntry::File { inode, .. } => inode,
             FakeFsEntry::Dir { inode, .. } => inode,
             _ => 0,
         };
 
-        state.moves.insert(inode, new_path.clone());
-
+        let mut moved = true;
         state.write_path(&new_path, |e| {
             match e {
                 btree_map::Entry::Occupied(mut e) => {
                     if options.overwrite {
                         *e.get_mut() = moved_entry;
-                    } else if !options.ignore_if_exists {
+                    } else if options.ignore_if_exists {
+                        // `RealFs` reports success without moving anything here,
+                        // leaving the source in place. Removing it instead would
+                        // destroy a file the caller still expects to find.
+                        moved = false;
+                    } else {
                         anyhow::bail!("path already exists: {new_path:?}");
                     }
                 }
@@ -3014,6 +3033,12 @@ impl Fs for FakeFs {
             }
             Ok(())
         })?;
+
+        if !moved {
+            return Ok(());
+        }
+
+        state.moves.insert(inode, new_path.clone());
 
         state
             .write_path(&old_path, |e| {

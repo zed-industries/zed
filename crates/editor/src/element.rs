@@ -10679,9 +10679,24 @@ pub fn register_action<T: Action>(
     window: &mut Window,
     listener: impl Fn(&mut Editor, &T, &mut Window, &mut Context<Editor>) + 'static,
 ) {
+    register_action_erased(
+        editor,
+        window,
+        TypeId::of::<T>(),
+        Box::new(move |editor, action, window, cx| {
+            listener(editor, action.downcast_ref().unwrap(), window, cx)
+        }),
+    )
+}
+
+fn register_action_erased(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    action_type: TypeId,
+    listener: Box<dyn Fn(&mut Editor, &dyn std::any::Any, &mut Window, &mut Context<Editor>)>,
+) {
     let editor = editor.clone();
-    window.on_action(TypeId::of::<T>(), move |action, phase, window, cx| {
-        let action = action.downcast_ref().unwrap();
+    window.on_action(action_type, move |action, phase, window, cx| {
         if phase == DispatchPhase::Bubble {
             editor.update(cx, |editor, cx| {
                 listener(editor, action, window, cx);
@@ -11833,7 +11848,7 @@ mod tests {
                 );
 
                 // Blur the editor so that it displays placeholder text.
-                window.blur();
+                window.blur(cx);
             })
             .unwrap();
 

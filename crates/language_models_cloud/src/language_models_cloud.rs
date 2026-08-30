@@ -23,9 +23,9 @@ use language_model::{
     CompactionResult, DisabledReason, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, ProviderErrorCategory, RateLimiter,
-    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
+    ProviderErrorCategory, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -274,6 +274,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
         let http_client = self.http_client.clone();
         let token_provider = self.token_provider.clone();
         let auth_context = token_provider.auth_context(cx);
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.run(async move {
             let PerformLlmCompletionResponse {
                 response,
@@ -305,6 +306,7 @@ impl<TP: CloudLlmTokenProvider + 'static> CloudLanguageModel<TP> {
                 &ANTHROPIC_PROVIDER_NAME,
                 move |event| mapper.map_event(event),
             );
+            let stream = language_model::stream_in_background(stream.boxed(), executor);
             let (context, usage) =
                 collect_compaction_result(stream, ANTHROPIC_PROVIDER_NAME).await?;
             Ok(CompactionResult { context, usage })
@@ -678,20 +680,6 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         format!("zed.dev/{}", self.model.id)
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic
-            | cloud_llm_client::LanguageModelProvider::Baseten
-            | cloud_llm_client::LanguageModelProvider::OpenAi => {
-                LanguageModelToolSchemaFormat::JsonSchema
-            }
-            cloud_llm_client::LanguageModelProvider::Google
-            | cloud_llm_client::LanguageModelProvider::XAi => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
-        }
-    }
-
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count as u64
     }
@@ -768,6 +756,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 let http_client = self.http_client.clone();
                 let token_provider = self.token_provider.clone();
                 let auth_context = token_provider.auth_context(cx);
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -794,10 +783,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
 
                     let mut mapper =
                         AnthropicEventMapper::new(provider_name.clone(), ANTHROPIC_PROVIDER_ID);
-                    Ok(map_cloud_completion_events(
+                    let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
                         move |event| mapper.map_event(event),
+                    );
+                    Ok(language_model::stream_in_background(
+                        events.boxed(),
+                        executor,
                     ))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
@@ -838,6 +831,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                 }
 
                 let auth_context = token_provider.auth_context(cx);
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -863,10 +857,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .await?;
 
                     let mut mapper = OpenAiResponseEventMapper::new(OPEN_AI_PROVIDER_ID);
-                    Ok(map_cloud_completion_events(
+                    let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
                         move |event| mapper.map_event(event),
+                    );
+                    Ok(language_model::stream_in_background(
+                        events.boxed(),
+                        executor,
                     ))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
@@ -889,6 +887,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     Err(error) => return async move { Err(error.into()) }.boxed(),
                 };
                 let auth_context = token_provider.auth_context(cx);
+                let executor = cx.background_executor().clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
                         response,
@@ -914,10 +913,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     .await?;
 
                     let mut mapper = OpenAiEventMapper::new();
-                    Ok(map_cloud_completion_events(
+                    let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,
                         move |event| mapper.map_event(event),
+                    );
+                    Ok(language_model::stream_in_background(
+                        events.boxed(),
+                        executor,
                     ))
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()

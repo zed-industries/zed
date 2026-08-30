@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
 use gpui::{
-    Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, Image,
-    ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
+    Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, GestureTuning,
+    Image, ImageFormat, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent,
     MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection,
-    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchPhase, point, px,
+    Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, TouchEvent, TouchId, TouchPhase,
+    point, px,
 };
 use wasm_bindgen::prelude::*;
 
@@ -123,6 +124,7 @@ impl WebWindowInner {
         let mut handles = vec![
             self.register_pointer_down(),
             self.register_pointer_up(),
+            self.register_pointer_cancel(),
             self.register_touch_end(),
             self.register_pointer_move(),
             self.register_pointer_leave(),
@@ -142,6 +144,7 @@ impl WebWindowInner {
             self.register_blur(),
             self.register_pointer_enter(),
         ];
+        handles.extend(self.register_selection_change());
         handles.extend(self.register_visibility_change());
         handles.extend(self.register_appearance_change());
         handles.extend(self.register_fullscreen_change());
@@ -196,18 +199,34 @@ impl WebWindowInner {
 
             let pointer_type = event.pointer_type();
             let position = pointer_position_in_element(&event);
-            if pointer_type != "touch" || this.pointer_targets_text_input(position) {
-                if pointer_type == "touch" {
-                    this.ime_mirror.set_read_only(false);
-                }
-                this.ime_mirror.focus();
-            }
+            this.gesture_start_visual_viewport_height
+                .set(this.visual_viewport_height());
 
             // Capture the pointer so drags that leave the canvas keep
             // delivering pointermove/pointerup here; otherwise a release
             // outside the canvas is never seen and `pressed_button` stays
             // stuck. The capture is released implicitly on pointerup.
             this.canvas.set_pointer_capture(event.pointer_id()).ok();
+
+            if pointer_type == "touch" {
+                this.state.borrow_mut().mouse_position = position;
+                if this.touch_tap_candidate.get().is_none() {
+                    this.touch_tap_candidate
+                        .set(Some((event.pointer_id(), position)));
+                }
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Started,
+                    position,
+                    force: None,
+                }));
+                // Keyboard and IME focus intentionally do not change here:
+                // whether this touch is a tap or a pan is only known at
+                // release, and only a tap may affect them (see
+                // `touch_tap_candidate`). The release handler still runs
+                // within a user gesture, as keyboard summoning requires.
+                return;
+            }
 
             let button = dom_mouse_button_to_gpui(event.button());
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
@@ -229,6 +248,8 @@ impl WebWindowInner {
                 click_count,
                 first_mouse: false,
             }));
+
+            this.ime_mirror.focus();
         })
     }
 
@@ -248,8 +269,44 @@ impl WebWindowInner {
             let event: web_sys::PointerEvent = event.unchecked_into();
             event.prevent_default();
 
-            let button = dom_mouse_button_to_gpui(event.button());
             let position = pointer_position_in_element(&event);
+
+            if event.pointer_type() == "touch" {
+                this.state.borrow_mut().mouse_position = position;
+                let completes_tap = match this.touch_tap_candidate.get() {
+                    Some((pointer_id, _)) if pointer_id == event.pointer_id() => {
+                        this.touch_tap_candidate.set(None);
+                        true
+                    }
+                    _ => false,
+                };
+                // A recognized tap is dispatched synchronously inside this
+                // call, so the text-input check below sees the state the tap
+                // produced.
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Ended,
+                    position,
+                    force: None,
+                }));
+
+                // A keyboard opening or closing mid-gesture reflows the
+                // layout, so the release position no longer refers to the
+                // content the user aimed at (a tap that summoned the keyboard
+                // often ends up below the shrunken layout, which would
+                // immediately dismiss it again). Skip the sync then, and for
+                // anything that wasn't a tap: pans and flings must not move
+                // keyboard or IME focus at all.
+                let viewport_stable = this.gesture_start_visual_viewport_height.get()
+                    == this.visual_viewport_height();
+                if completes_tap && viewport_stable {
+                    this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                }
+                this.schedule_ime_mirror_sync();
+                return;
+            }
+
+            let button = dom_mouse_button_to_gpui(event.button());
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
 
             this.pressed_button.set(None);
@@ -268,10 +325,80 @@ impl WebWindowInner {
                 click_count,
             }));
 
-            if event.pointer_type() == "touch" {
-                this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
-            }
             this.schedule_ime_mirror_sync();
+        })
+    }
+
+    /// The visual viewport's current height in layout pixels, or zero when
+    /// the API is unavailable.
+    fn visual_viewport_height(&self) -> f64 {
+        self.browser_window
+            .visual_viewport()
+            .map_or(0.0, |viewport| viewport.height() * viewport.scale())
+    }
+
+    /// Whether the software keyboard is likely hidden — a heuristic, since
+    /// no cross-browser keyboard-visibility signal exists. It infers from
+    /// the visual viewport: a shown keyboard shrinks its height well below
+    /// the greatest height seen at the current width (the width only changes
+    /// on rotation, which restarts the calibration). `window.innerHeight`
+    /// can't serve as the reference because Android shrinks it along with
+    /// the keyboard. Unknown states err toward "visible" so ordinary
+    /// editable taps don't gratuitously restart the IME session.
+    ///
+    /// Restricted to coarse-pointer environments: elsewhere (desktop
+    /// browsers, including touchscreen laptops) viewport height tracks
+    /// user window resizes rather than a software keyboard, so the
+    /// calibration would misfire. Split-screen resizes on mobile can still
+    /// fool it; tracking `visualViewport` resize events around focus
+    /// transitions would be sturdier.
+    fn keyboard_likely_dismissed(&self) -> bool {
+        let coarse_pointer = self
+            .browser_window
+            .match_media("(pointer: coarse)")
+            .ok()
+            .flatten()
+            .is_some_and(|media_query_list| media_query_list.matches());
+        if !coarse_pointer {
+            return false;
+        }
+        let Some(viewport) = self.browser_window.visual_viewport() else {
+            return false;
+        };
+        let width = viewport.width() * viewport.scale();
+        let height = viewport.height() * viewport.scale();
+        let (probe_width, probe_height) = self.visual_viewport_probe.get();
+        let max_height = if width == probe_width {
+            probe_height.max(height)
+        } else {
+            height
+        };
+        self.visual_viewport_probe.set((width, max_height));
+        height >= max_height * 0.85
+    }
+
+    /// The browser or OS took over the pointer (native scrolling, a system
+    /// gesture, the pointer being removed): no pointerup will follow, so the
+    /// gesture must unwind rather than complete.
+    fn register_pointer_cancel(self: &Rc<Self>) -> EventListenerHandle {
+        let this = Rc::clone(self);
+        self.listen("pointercancel", move |event: JsValue| {
+            let event: web_sys::PointerEvent = event.unchecked_into();
+            if event.pointer_type() == "touch" {
+                if let Some((pointer_id, _)) = this.touch_tap_candidate.get()
+                    && pointer_id == event.pointer_id()
+                {
+                    this.touch_tap_candidate.set(None);
+                }
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Cancelled,
+                    position: pointer_position_in_element(&event),
+                    force: None,
+                }));
+            } else {
+                this.pressed_button.set(None);
+            }
         })
     }
 
@@ -306,12 +433,24 @@ impl WebWindowInner {
     fn sync_virtual_keyboard(self: &Rc<Self>, editable: bool) {
         let was_editable = !self.ime_mirror.read_only();
         self.ime_mirror.set_read_only(!editable);
-        // Cycle only on an actual editability transition. Cycling on every
-        // tap would restart the IME connection right as the keyboard reads
-        // the tapped caret's context, racing its word segmentation.
-        if editable != was_editable {
+        // Trigger a focus event only when the keyboard actually needs
+        // summoning. Cycling focus on every tap would restart the IME
+        // connection right as the keyboard reads the tapped caret's context,
+        // racing its word segmentation. But `focus()` on an already-focused
+        // element is a no-op, so a dismissed keyboard would otherwise never
+        // return for taps that stay within editable content: detect that
+        // through the visual viewport and force a fresh focus event.
+        let editable_needs_focus_event = editable
+            && (!was_editable || !self.ime_mirror.is_focused() || self.keyboard_likely_dismissed());
+        if editable_needs_focus_event || (!editable && was_editable) {
             self.suppress_focus_status_events.set(true);
             if editable {
+                // A same-task blur/focus cycle may be coalesced by iOS, but
+                // this branch only runs when the keyboard is already gone,
+                // so a coalesced cycle loses nothing.
+                if self.ime_mirror.is_focused() {
+                    self.ime_mirror.blur();
+                }
                 self.ime_mirror.focus();
             } else {
                 self.ime_mirror.blur();
@@ -364,6 +503,31 @@ impl WebWindowInner {
             event.prevent_default();
 
             let position = pointer_position_in_element(&event);
+
+            if event.pointer_type() == "touch" {
+                this.state.borrow_mut().mouse_position = position;
+                // Mirror the slop rule of gpui's tap recognizer: once the
+                // touch travels beyond it, its release must not affect the
+                // keyboard. Only gpui knows what the gesture truly resolved
+                // to; this platform-side shadow exists because the keyboard
+                // decision must be made synchronously inside the browser's
+                // pointerup handler.
+                if let Some((pointer_id, start_position)) = this.touch_tap_candidate.get()
+                    && pointer_id == event.pointer_id()
+                    && (position - start_position).magnitude()
+                        > f64::from(GestureTuning::default().touch_slop)
+                {
+                    this.touch_tap_candidate.set(None);
+                }
+                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                    id: TouchId(event.pointer_id() as u64),
+                    phase: TouchPhase::Moved,
+                    position,
+                    force: None,
+                }));
+                return;
+            }
+
             let modifiers = modifiers_from_mouse_event(&event, this.is_mac);
             let current_pressed = this.pressed_button.get();
 
@@ -682,6 +846,83 @@ impl WebWindowInner {
 
             this.ime_mirror.adopt_element_state();
         })
+    }
+
+    /// Imports IME-driven selection moves on the mirror element into the app.
+    ///
+    /// Some IME gestures preview their effect by moving the field's
+    /// selection before committing an edit — Android's slide-on-backspace
+    /// grows a selection over the text it will delete. A native field
+    /// renders that selection itself; this import gives the app the same
+    /// chance. Like edit imports, the move is expressed relative to the
+    /// element's stored selection and applied to the app selection queried
+    /// in the same synchronous callback, never through document coordinates,
+    /// which go stale in a collaborative document.
+    ///
+    /// Self-inflicted events are filtered by state, not by suppression
+    /// flags: `selectionchange` dispatches asynchronously, after the sync or
+    /// import that caused it has already adopted the element's selection, so
+    /// a stored-state match means there is nothing to import.
+    ///
+    /// Registered on the document: Chrome dispatches text-control selection
+    /// changes there, not on the element.
+    fn register_selection_change(self: &Rc<Self>) -> Option<EventListenerHandle> {
+        let document = self.browser_window.document()?;
+        let this = Rc::clone(self);
+        Some(EventListenerHandle::add(
+            document.as_ref(),
+            "selectionchange",
+            move |_event: JsValue| {
+                if this.is_composing.get() || !this.ime_mirror.is_focused() {
+                    return;
+                }
+                // An in-flight edit owns the selection; its import adopts it.
+                if this.ime_mirror.value() != this.ime_mirror.stored_text() {
+                    return;
+                }
+                let Some(element_start) = this.ime_mirror.selection_start() else {
+                    return;
+                };
+                let element_end = this
+                    .ime_mirror
+                    .element_selection_end()
+                    .unwrap_or(element_start);
+                let (stored_start, stored_end) = this.ime_mirror.stored_selection();
+                if (element_start, element_end) == (stored_start, stored_end) {
+                    return;
+                }
+                let applied = this.with_input_handler(|handler| {
+                    let Some(selection) = handler.selected_text_range(false) else {
+                        return false;
+                    };
+                    // The app range corresponding to the stored element
+                    // selection is exactly `selection`; a single consistent
+                    // alignment between the two maps the moved endpoints.
+                    // Disagreeing alignments mean the app selection changed
+                    // underneath and the pending resync owns the element.
+                    let alignment = selection.range.start.checked_sub(stored_start as usize);
+                    if alignment.is_none()
+                        || alignment != selection.range.end.checked_sub(stored_end as usize)
+                    {
+                        return false;
+                    }
+                    let alignment = alignment.unwrap();
+                    handler.set_selected_text_range(
+                        alignment + element_start as usize..alignment + element_end as usize,
+                    );
+                    true
+                });
+                if applied == Some(true) {
+                    this.ime_mirror.adopt_element_state();
+                } else {
+                    // No import is coming for this move; without a forced
+                    // sync the mirror would keep deferring to it and show
+                    // the IME a selection the app never adopted.
+                    this.ime_mirror.reject_selection_import();
+                    this.schedule_ime_mirror_sync();
+                }
+            },
+        ))
     }
 
     /// Software keyboards (IMEs) express editing through `beforeinput`

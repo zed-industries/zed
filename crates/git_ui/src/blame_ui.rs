@@ -570,7 +570,7 @@ fn deploy_blame_entry_context_menu(
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open Permalink", None, move |_, cx| {
+                    this.entry("Open Commit Permalink", None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })
                 },

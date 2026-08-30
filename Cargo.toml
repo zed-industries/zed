@@ -24,6 +24,7 @@ members = [
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",
+    "crates/call_hierarchy",
     "crates/channel",
     "crates/cli",
     "crates/client",
@@ -115,6 +116,7 @@ members = [
     "crates/keymap_editor",
     "crates/language",
     "crates/language_core",
+    "crates/language_detection",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
@@ -295,6 +297,7 @@ bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
+call_hierarchy = { path = "crates/call_hierarchy" }
 channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
@@ -381,6 +384,7 @@ json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
+language_detection = { path = "crates/language_detection" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
@@ -450,7 +454,7 @@ search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_content = { path = "crates/settings_content" }
-settings_json = { path = "crates/settings_json" }
+settings_json = { path = "crates/settings_json", default-features = false }
 settings_macros = { path = "crates/settings_macros" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 settings_ui = { path = "crates/settings_ui" }
@@ -558,6 +562,7 @@ aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
+betlang = "0.1.1"
 bitflags = "2.6.0"
 block = "0.1"
 block2 = "0.6"
@@ -672,7 +677,7 @@ linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lru = "0.16"
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f4dfa89a21ca35cd929b70354b1583fabae325f8" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
 mach2 = "0.5"
 markup5ever_rcdom = "0.39"
 metal = "0.33"

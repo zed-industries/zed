@@ -9,8 +9,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter,
-    env_var,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -384,14 +383,6 @@ impl LanguageModel for XAiLanguageModel {
         supported_thinking_effort_levels(&self.model)
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        if self.model.requires_json_schema_subset() {
-            LanguageModelToolSchemaFormat::JsonSchemaSubset
-        } else {
-            LanguageModelToolSchemaFormat::JsonSchema
-        }
-    }
-
     fn telemetry_id(&self) -> String {
         format!("x_ai/{}", self.model.id())
     }
@@ -437,9 +428,13 @@ impl LanguageModel for XAiLanguageModel {
             Err(error) => return async move { Err(error.into()) }.boxed(),
         };
         let completions = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
         async move {
             let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(completions.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
