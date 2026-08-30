@@ -977,6 +977,21 @@ impl RemoteClient {
         connection.build_command(program, args, env, working_dir, port_forward, interactive)
     }
 
+    /// See [`RemoteConnection::open_remote_pty`].
+    #[cfg(unix)]
+    pub fn open_remote_pty(
+        &self,
+        command: Option<(String, Vec<String>)>,
+        env: HashMap<String, String>,
+        working_directory: Option<String>,
+        cx: &App,
+    ) -> Task<Result<RemotePtyHandle>> {
+        let Some(connection) = self.remote_connection() else {
+            return Task::ready(Err(anyhow!("no remote connection")));
+        };
+        connection.open_remote_pty(command, env, working_directory, cx)
+    }
+
     pub fn build_forward_ports_command(
         &self,
         forwards: Vec<(u16, String, u16)>,
@@ -1604,6 +1619,20 @@ pub struct OpenWslPath {
     pub paths: Vec<PathBuf>,
 }
 
+/// IO endpoints for a PTY opened directly over the remote transport, for
+/// platforms that cannot spawn a local `ssh` process.
+#[cfg(unix)]
+pub struct RemotePtyHandle {
+    /// Carries terminal bytes in both directions.
+    pub data: std::os::unix::net::UnixStream,
+    /// Becomes readable (or reaches EOF) once the remote command exits.
+    pub exit_notice: std::os::unix::net::UnixStream,
+    /// The remote exit code, set before `exit_notice` is signalled.
+    pub exit_status: Arc<std::sync::Mutex<Option<i32>>>,
+    /// Receives `(cols, rows)` on resize.
+    pub resize_tx: UnboundedSender<(u16, u16)>,
+}
+
 #[async_trait(?Send)]
 pub trait RemoteConnection: Send + Sync {
     fn start_proxy(
@@ -1640,6 +1669,21 @@ pub trait RemoteConnection: Send + Sync {
         &self,
         forwards: Vec<(u16, String, u16)>,
     ) -> Result<CommandTemplate>;
+
+    /// Opens an interactive PTY over the transport itself, without spawning a
+    /// local process. Only in-process transports implement this.
+    #[cfg(unix)]
+    fn open_remote_pty(
+        &self,
+        _command: Option<(String, Vec<String>)>,
+        _env: HashMap<String, String>,
+        _working_directory: Option<String>,
+        _cx: &App,
+    ) -> Task<Result<RemotePtyHandle>> {
+        Task::ready(Err(anyhow!(
+            "this remote transport does not support in-process PTYs"
+        )))
+    }
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
     /// The remote platform (OS and architecture), detected during connection setup.

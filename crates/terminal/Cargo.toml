@@ -25,6 +25,7 @@ alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 futures.workspace = true
+polling = "3.8"
 futures-lite.workspace = true
 gpui.workspace = true
 itertools.workspace = true

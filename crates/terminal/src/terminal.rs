@@ -2,6 +2,8 @@ mod mappings;
 
 mod alacritty;
 mod pty_info;
+#[cfg(unix)]
+pub mod remote_pty;
 pub mod terminal_settings;
 
 #[cfg(not(windows))]
@@ -1092,6 +1094,8 @@ impl TerminalBuilder {
         cx: &App,
         activation_script: Vec<String>,
         path_style: PathStyle,
+        #[cfg(unix)] remote_pty: Option<Task<Result<remote_pty::RemotePtyChannels>>>,
+        #[cfg(not(unix))] remote_pty: Option<()>,
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
@@ -1216,10 +1220,39 @@ impl TerminalBuilder {
                 alternate_scroll,
             );
 
+            #[cfg(not(unix))]
+            let _ = remote_pty;
             // When `no_pty` is set (headless hosts), run the task as a plain
             // subprocess and pump its piped output into the same emulator the
             // PTY path would feed.
-            let (terminal_type, subprocess) = if no_pty {
+            #[cfg(unix)]
+            let remote_adapter = match remote_pty {
+                Some(remote_pty) => Some(
+                    remote_pty::RemotePtyAdapter::new(
+                        remote_pty.await.context("opening the remote PTY")?,
+                    )
+                    .context("adapting the remote PTY")?,
+                ),
+                None => None,
+            };
+            #[cfg(not(unix))]
+            let remote_adapter: Option<std::convert::Infallible> = None;
+
+            let (terminal_type, subprocess) = if let Some(remote_adapter) = remote_adapter {
+                #[cfg(unix)]
+                {
+                    let pty_tx = spawn_event_loop(term.clone(), events_tx, remote_adapter, false)?;
+                    (
+                        TerminalType::Pty {
+                            resources: PtyResources::Active(pty_tx),
+                            info: Arc::new(PtyProcessInfo::new(ProcessIdGetter::new(-1, 0))),
+                        },
+                        None,
+                    )
+                }
+                #[cfg(not(unix))]
+                match remote_adapter {}
+            } else if no_pty {
                 let (program, args) = match &shell_params {
                     Some(params) => (
                         params.program.clone(),
@@ -3201,6 +3234,7 @@ impl Terminal {
             cx,
             self.activation_script.clone(),
             self.path_style,
+            None,
         )
     }
 }
@@ -3738,6 +3772,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -3782,6 +3817,7 @@ mod tests {
                     cx,
                     vec![],
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -4173,6 +4209,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -4240,6 +4277,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await
@@ -4305,6 +4343,7 @@ mod tests {
                     cx,
                     Vec::new(),
                     PathStyle::local(),
+                    None,
                 )
             })
             .await

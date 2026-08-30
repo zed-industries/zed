@@ -252,6 +252,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        None,
                     ))
                 })??
                 .await?;
@@ -398,14 +399,43 @@ impl Project {
 
             let builder = project
                 .update(cx, move |_, cx| {
+                    let mut remote_pty = None;
                     let (shell, env) = {
                         match remote_client {
                             Some(remote_client) => {
-                                create_remote_shell(None, env, path, remote_client, cx)?
+                                // In-process transports (iOS) cannot spawn a
+                                // local ssh; open the PTY over the transport.
+                                #[cfg(target_os = "ios")]
+                                {
+                                    let working_directory =
+                                        path.as_ref().map(|path| path.display().to_string());
+                                    let handle_task = remote_client.read(cx).open_remote_pty(
+                                        None,
+                                        env.clone(),
+                                        working_directory,
+                                        cx,
+                                    );
+                                    remote_pty = Some(cx.background_spawn(async move {
+                                        let handle = handle_task.await?;
+                                        anyhow::Ok(terminal::remote_pty::RemotePtyChannels {
+                                            data: handle.data,
+                                            exit_notice: handle.exit_notice,
+                                            exit_status: handle.exit_status,
+                                            resize_tx: handle.resize_tx,
+                                        })
+                                    }));
+                                    (Shell::System, env)
+                                }
+                                #[cfg(not(target_os = "ios"))]
+                                {
+                                    create_remote_shell(None, env, path, remote_client, cx)?
+                                }
                             }
                             None => (settings.shell, env),
                         }
                     };
+                    #[cfg(not(unix))]
+                    let remote_pty: Option<()> = remote_pty;
                     anyhow::Ok(TerminalBuilder::new(
                         local_path.map(|path| path.to_path_buf()),
                         TerminalMode::interactive(),
@@ -421,6 +451,7 @@ impl Project {
                         cx,
                         activation_script,
                         path_style,
+                        remote_pty,
                     ))
                 })??
                 .await?;

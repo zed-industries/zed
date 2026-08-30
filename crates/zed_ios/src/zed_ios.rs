@@ -105,6 +105,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     go_to_line::init(cx);
     markdown_preview::init(cx);
     git_ui::init(cx);
+    terminal_view::init(cx);
     recent_projects::init(cx);
 
     // Not every action referenced by the bundled keymap is registered in this
@@ -172,10 +173,15 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
                 let outline_panel =
                     outline_panel::OutlinePanel::load(workspace_handle.clone(), cx.clone());
                 let git_panel = git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone());
+                let terminal_panel = terminal_view::terminal_panel::TerminalPanel::load(
+                    workspace_handle.clone(),
+                    cx.clone(),
+                );
                 futures::join!(
                     add_panel_when_ready(project_panel, workspace_handle.clone(), cx.clone()),
                     add_panel_when_ready(outline_panel, workspace_handle.clone(), cx.clone()),
                     add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
+                    add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
                 );
             })
             .detach();

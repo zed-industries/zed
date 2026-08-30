@@ -200,12 +200,15 @@ pub(super) fn new_term(
     Arc::new(FairMutex::new(term))
 }
 
-pub(super) fn spawn_event_loop(
+pub(super) fn spawn_event_loop<T>(
     term: Arc<AlacrittyTermLock>,
     events_tx: UnboundedSender<PtyEvent>,
-    pty: AlacrittyPty,
+    pty: T,
     drain_on_exit: bool,
-) -> Result<PtySender> {
+) -> Result<PtySender>
+where
+    T: alacritty_terminal::tty::EventedPty + alacritty_terminal::event::OnResize + Send + 'static,
+{
     let event_loop = EventLoop::new(term, ZedListener(events_tx), pty, drain_on_exit, false)
         .context("failed to create event loop")?;
     let pty_tx = event_loop.channel();

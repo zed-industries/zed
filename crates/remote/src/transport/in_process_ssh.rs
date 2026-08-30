@@ -284,6 +284,110 @@ impl RemoteConnection for InProcessSshConnection {
         anyhow::bail!("port forwards are not supported by the in-process SSH transport")
     }
 
+    fn open_remote_pty(
+        &self,
+        command: Option<(String, Vec<String>)>,
+        env: HashMap<String, String>,
+        working_directory: Option<String>,
+        cx: &App,
+    ) -> Task<Result<crate::remote_client::RemotePtyHandle>> {
+        let handle = self.handle.clone();
+
+        let mut script = String::new();
+        if let Some(working_directory) = working_directory {
+            script.push_str(&format!(
+                "cd {} 2>/dev/null; ",
+                shell_quote(&working_directory)
+            ));
+        }
+        for (key, value) in &env {
+            if key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                script.push_str(&format!("export {}={}; ", key, shell_quote(value)));
+            }
+        }
+        match command {
+            Some((program, args)) => {
+                script.push_str("exec ");
+                script.push_str(&shell_quote(&program));
+                for arg in &args {
+                    script.push(' ');
+                    script.push_str(&shell_quote(arg));
+                }
+            }
+            None => script.push_str(r#"exec "${SHELL:-/bin/sh}" -l"#),
+        }
+        let full_command = format!("sh -c {}", shell_quote(&script));
+
+        let (resize_tx, mut resize_rx) = futures::channel::mpsc::unbounded::<(u16, u16)>();
+        let exit_status = Arc::new(std::sync::Mutex::new(None));
+        let exit_status_for_bridge = exit_status.clone();
+
+        Tokio::spawn_result(cx, async move {
+            let (terminal_data, mut bridge_data) = tokio::net::UnixStream::pair()?;
+            let (terminal_exit, bridge_exit) = tokio::net::UnixStream::pair()?;
+            let terminal_data = terminal_data.into_std()?;
+            let terminal_exit = terminal_exit.into_std()?;
+
+            let mut channel = handle.channel_open_session().await?;
+            channel
+                .request_pty(false, "xterm-256color", 80, 24, 0, 0, &[])
+                .await?;
+            channel.exec(true, full_command.as_bytes()).await?;
+
+            tokio::spawn(async move {
+                use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+                let mut bridge_exit = bridge_exit;
+                let mut read_buffer = [0u8; 8192];
+                loop {
+                    tokio::select! {
+                        message = channel.wait() => {
+                            let Some(message) = message else { break };
+                            match message {
+                                ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                                    if bridge_data.write_all(&data).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                ChannelMsg::ExitStatus { exit_status } => {
+                                    *exit_status_for_bridge.lock().unwrap() = Some(exit_status as i32);
+                                }
+                                _ => {}
+                            }
+                        }
+                        read = bridge_data.read(&mut read_buffer) => {
+                            match read {
+                                Ok(0) | Err(_) => break,
+                                Ok(bytes_read) => {
+                                    if channel.data(&read_buffer[..bytes_read]).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        resize = resize_rx.next() => {
+                            if let Some((cols, rows)) = resize {
+                                channel
+                                    .window_change(cols as u32, rows as u32, 0, 0)
+                                    .await
+                                    .ok();
+                            }
+                        }
+                    }
+                }
+                bridge_exit.write_all(&[0]).await.ok();
+                bridge_exit.shutdown().await.ok();
+            });
+
+            anyhow::Ok(crate::remote_client::RemotePtyHandle {
+                data: terminal_data,
+                exit_notice: terminal_exit,
+                exit_status,
+                resize_tx,
+            })
+        })
+    }
+
     fn connection_options(&self) -> RemoteConnectionOptions {
         RemoteConnectionOptions::Ssh(self.connection_options.clone())
     }
