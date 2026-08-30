@@ -506,8 +506,12 @@ pub fn register(workspace: &mut Workspace) {
         workspace.toggle_panel_focus::<GitPanel>(window, cx);
     });
     workspace.register_action(|workspace, _: &Toggle, window, cx| {
-        if !workspace.toggle_panel_focus::<GitPanel>(window, cx) {
-            workspace.close_panel::<GitPanel>(window, cx);
+        if workspace.is_panel_open::<GitPanel>(cx) {
+            workspace.close_panel(window, cx);
+        } else {
+            if !workspace.toggle_panel_focus::<GitPanel>(window, cx) {
+                workspace.close_panel::<GitPanel>(window, cx);
+            }
         }
     });
     workspace.register_action(|workspace, _: &ExpandCommitEditor, window, cx| {
