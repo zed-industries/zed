@@ -18,6 +18,7 @@ targets:
     info:
       path: Info.plist
       properties:
+        CFBundleDisplayName: Zed
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
           UISceneConfigurations:
