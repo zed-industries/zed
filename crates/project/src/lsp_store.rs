@@ -3238,13 +3238,23 @@ impl LocalLspStore {
         buffer.update(cx, |buffer, cx| {
             let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
 
+            let mut detached_servers = Vec::new();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
+                let server_id = language_server.server_id();
                 if snapshots
                     .as_mut()
-                    .is_some_and(|map| map.remove(&language_server.server_id()).is_some())
+                    .is_some_and(|map| map.remove(&server_id).is_some())
                 {
                     language_server.unregister_buffer(file_url.clone());
+                    detached_servers.push(server_id);
                 }
+            }
+
+            // A server that has been sent `didClose` publishes nothing further for this buffer,
+            // so whatever it said last would otherwise outlive the detachment.
+            for server_id in detached_servers {
+                buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
+                buffer.set_completion_triggers(server_id, Default::default(), cx);
             }
         });
     }

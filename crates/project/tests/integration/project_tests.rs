@@ -3218,6 +3218,68 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 }
 
 #[gpui::test]
+async fn test_selecting_a_language_clears_the_old_servers_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "const A: i32 = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(rust_lang());
+    language_registry.add(js_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+        uri: lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap(),
+        version: None,
+        diagnostics: vec![lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 7)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: lsp::DiagnosticMessage::String("unused constant".to_string()),
+            ..Default::default()
+        }],
+    });
+    cx.executor().run_until_parked();
+
+    let diagnostic_messages = |buffer: &Buffer| {
+        buffer
+            .snapshot()
+            .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+            .map(|entry| entry.diagnostic.message.to_string())
+            .collect::<Vec<_>>()
+    };
+
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(diagnostic_messages(buffer), vec!["unused constant"]);
+    });
+
+    // Selecting a language the server does not serve closes the document on it, and it will
+    // never revise what it published. Leaving that behind shows a verdict on a file the
+    // server is no longer looking at.
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, js_lang(), cx);
+    });
+    cx.executor().run_until_parked();
+
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(diagnostic_messages(buffer), Vec::<String>::new());
+    });
+}
+
+#[gpui::test]
 async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
