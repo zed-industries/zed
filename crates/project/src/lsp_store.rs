@@ -76,12 +76,12 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, BinaryStatusUpdate, Buffer, BufferRow, BufferSnapshot, CachedLspAdapter,
-    Capability, CodeLabel, CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSet,
-    DiagnosticSourceKind, Diff, File as _, Language, LanguageAwareStyling, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
-    ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16, RelatedInformation,
-    RelatedLocation, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16, Toolchain,
-    Transaction, Unclipped,
+    Capability, CodeLabel, CodeLabelExt, Diagnostic, DiagnosticEntry, DiagnosticMessage,
+    DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageAwareStyling,
+    LanguageName, LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller,
+    ManifestDelegate, ManifestName, ModelineSettings, OffsetUtf16, Patch, PointUtf16,
+    RelatedInformation, RelatedLocation, TextBufferSnapshot, ToOffset, ToOffsetUtf16, ToPointUtf16,
+    Toolchain, Transaction, Unclipped,
     language_settings::{
         AllLanguageSettings, FormatOnSave, Formatter, LanguageSettings, LineEndingSetting,
         all_language_settings,
@@ -10780,7 +10780,7 @@ impl LspStore {
                         && let Some(proto::status_update::Status::Binary(binary_status)) =
                             status_update.status
                         && let Some(binary_status) =
-                            proto::ServerBinaryStatus::from_i32(binary_status)
+                            proto::ServerBinaryStatus::try_from(binary_status).ok()
                     {
                         let binary_status = match binary_status {
                             proto::ServerBinaryStatus::None => Some(BinaryStatus::None),
