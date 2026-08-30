@@ -203,6 +203,62 @@ fn test_truncate_transaction_edits() {
 }
 
 #[test]
+fn test_from_state_round_trip() {
+    let mut buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        "the quick brown fox",
+    );
+    buffer.edit([(4..9, "slow")]);
+    buffer.edit([(9..15, "")]);
+    buffer.edit([(0..0, "and then ")]);
+    buffer.undo();
+    buffer.edit([(3..3, "!")]);
+
+    let snapshot = buffer.snapshot();
+    let copy = Buffer::from_state(
+        ReplicaId::new(1),
+        buffer.remote_id(),
+        snapshot.line_ending(),
+        snapshot.as_rope().clone(),
+        Rope::from(snapshot.deleted_text().as_str()),
+        snapshot.fragment_states().collect(),
+        snapshot.undo_map_entries(),
+        buffer.version(),
+    )
+    .unwrap();
+
+    assert_eq!(copy.text(), buffer.text());
+    assert_eq!(copy.version(), buffer.version());
+    copy.check_invariants();
+
+    for offset in 0..=buffer.len() {
+        let anchor_before = buffer.anchor_before(offset);
+        let anchor_after = buffer.anchor_after(offset);
+        assert_eq!(
+            anchor_before.to_offset(&copy),
+            offset,
+            "anchor_before({offset}) resolved differently on the copy"
+        );
+        assert_eq!(
+            anchor_after.to_offset(&copy),
+            offset,
+            "anchor_after({offset}) resolved differently on the copy"
+        );
+    }
+
+    let mut buffer = buffer;
+    let mut copy = copy;
+    let original_op = buffer.edit([(2..5, "X")]);
+    let copy_op = copy.edit([(7..8, "Y")]);
+    buffer.apply_ops([copy_op]);
+    copy.apply_ops([original_op]);
+    assert_eq!(copy.text(), buffer.text());
+    buffer.check_invariants();
+    copy.check_invariants();
+}
+
+#[test]
 fn test_point_for_row_and_column_from_external_source() {
     let buffer = Buffer::new(
         ReplicaId::LOCAL,
@@ -994,12 +1050,52 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
 
     log::info!("initial text: {:?}", base_text);
 
+    let mut next_replica_id = peers as u16;
     let mut mutation_count = operations;
     loop {
-        let replica_index = rng.random_range(0..peers);
+        let replica_index = rng.random_range(0..replica_ids.len());
         let replica_id = replica_ids[replica_index];
+        let action = rng.random_range(0..=100);
+        match action {
+            71..=75 if mutation_count != 0 && replica_ids.len() < peers + 3 => {
+                let buffer = &buffers[replica_index];
+                let new_replica_id = ReplicaId::new(next_replica_id);
+                next_replica_id += 1;
+                log::info!(
+                    "adding new replica {:?} from the state of {:?}",
+                    new_replica_id,
+                    replica_id,
+                );
+                let snapshot = buffer.snapshot();
+                let mut new_buffer = Buffer::from_state(
+                    new_replica_id,
+                    buffer.remote_id,
+                    snapshot.line_ending(),
+                    snapshot.as_rope().clone(),
+                    Rope::from(snapshot.deleted_text().as_str()),
+                    snapshot.fragment_states().collect(),
+                    snapshot.undo_map_entries(),
+                    buffer.version(),
+                )
+                .unwrap();
+                new_buffer.history.group_interval =
+                    Duration::from_millis(rng.random_range(0..=200));
+                new_buffer.check_invariants();
+                let deferred_operations = buffer.deferred_operations();
+                network.replicate(replica_id, new_replica_id);
+                if !deferred_operations.is_empty() {
+                    new_buffer.apply_ops(deferred_operations);
+                }
+                new_buffer.check_invariants();
+                buffers.push(new_buffer);
+                replica_ids.push(new_replica_id);
+                mutation_count -= 1;
+                continue;
+            }
+            _ => {}
+        }
         let buffer = &mut buffers[replica_index];
-        match rng.random_range(0..=100) {
+        match action {
             0..=50 if mutation_count != 0 => {
                 let op = buffer.randomly_edit(&mut rng, 5).1;
                 network.broadcast(buffer.replica_id, vec![op]);
@@ -1011,7 +1107,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
                 network.broadcast(buffer.replica_id, ops);
                 mutation_count -= 1;
             }
-            71..=100 if network.has_unreceived(replica_id) => {
+            76..=100 if network.has_unreceived(replica_id) => {
                 let ops = network.receive(replica_id);
                 if !ops.is_empty() {
                     log::info!(

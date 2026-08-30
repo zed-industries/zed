@@ -198,6 +198,84 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_remote_buffers_do_not_retain_operations(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..2, "pub fn")], None, cx);
+        buffer.edit([(0..3, "")], None, cx);
+    });
+    cx.executor().run_until_parked();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), " fn one() -> usize { 1 }");
+        assert_eq!(
+            buffer.retained_history().operation_count,
+            0,
+            "buffers opened over a remote server connection should not retain operations client-side"
+        );
+    });
+
+    let server_buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let server_buffer = headless.update(server_cx, |headless, cx| {
+        headless
+            .buffer_store
+            .read(cx)
+            .get(server_buffer_id)
+            .unwrap()
+    });
+    server_buffer.read_with(server_cx, |buffer, _| {
+        assert_eq!(buffer.text(), " fn one() -> usize { 1 }");
+        assert_eq!(
+            buffer.retained_history().operation_count,
+            0,
+            "buffers opened over a remote server connection should not retain operations server-side"
+        );
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
+    });
+    cx.executor().run_until_parked();
+    server_buffer.read_with(server_cx, |buffer, _| {
+        assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
+    });
+}
+
+#[gpui::test]
 async fn test_remote_telemetry_event_forwarding(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

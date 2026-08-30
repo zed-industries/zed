@@ -163,6 +163,14 @@ pub const MAX_UNDO_STACK_ENTRIES: usize = 100_000;
 
 pub const MAX_PINNED_HISTORY_BYTES: usize = 32 * 1024 * 1024;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FragmentState {
+    pub insertion_id: clock::Lamport,
+    pub insertion_offset: u32,
+    pub len: u32,
+    pub visible: bool,
+    pub deletions: Vec<clock::Lamport>,
+}
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RetainedHistory {
     pub operation_count: usize,
@@ -176,6 +184,8 @@ pub struct RetainedHistory {
 struct History {
     base_text: Rope,
     operations: TreeMap<clock::Lamport, Operation>,
+    retain_operations: bool,
+    operations_pruned: bool,
     undo_stack: Vec<HistoryEntry>,
     redo_stack: Vec<HistoryEntry>,
     transaction_depth: usize,
@@ -245,6 +255,8 @@ impl History {
         Self {
             base_text,
             operations: Default::default(),
+            retain_operations: true,
+            operations_pruned: false,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
@@ -261,7 +273,11 @@ impl History {
     }
 
     fn push(&mut self, op: Operation) {
-        self.operations.insert(op.timestamp(), op);
+        if self.retain_operations {
+            self.operations.insert(op.timestamp(), op);
+        } else {
+            self.operations_pruned = true;
+        }
     }
 
     fn start_transaction(
@@ -476,12 +492,10 @@ impl History {
         }
     }
 
-    fn push_undo(&mut self, op_id: clock::Lamport) {
+    fn push_undo(&mut self, edit_id: clock::Lamport) {
         assert_ne!(self.transaction_depth, 0);
-        if let Some(Operation::Edit(_)) = self.operations.get(&op_id) {
-            let last_transaction = self.undo_stack.last_mut().unwrap();
-            last_transaction.transaction.edit_ids.push(op_id);
-        }
+        let last_transaction = self.undo_stack.last_mut().unwrap();
+        last_transaction.transaction.edit_ids.push(edit_id);
     }
 
     fn pop_undo(&mut self) -> Option<&HistoryEntry> {
@@ -956,6 +970,119 @@ impl Buffer {
             let excess = transaction.edit_ids.len() - max_edit_count;
             transaction.edit_ids.drain(..excess);
         }
+    }
+
+    pub fn from_state(
+        replica_id: ReplicaId,
+        remote_id: BufferId,
+        line_ending: LineEnding,
+        visible_text: Rope,
+        deleted_text: Rope,
+        fragment_states: Vec<FragmentState>,
+        undo_map_entries: Vec<(clock::Lamport, Vec<(clock::Lamport, u32)>)>,
+        version: clock::Global,
+    ) -> anyhow::Result<Buffer> {
+        let mut undos_by_edit = HashMap::<clock::Lamport, Vec<clock::Lamport>>::default();
+        for (edit_id, counts) in &undo_map_entries {
+            undos_by_edit
+                .entry(*edit_id)
+                .or_default()
+                .extend(counts.iter().map(|(undo_id, _)| *undo_id));
+        }
+
+        let mut visible_len = 0;
+        let mut deleted_len = 0;
+        let mut fragments = SumTree::new(&None);
+        let mut insertion_edits = Vec::new();
+        let mut insertion_slices = Vec::new();
+        let mut prev_locator = Locator::min();
+        for state in fragment_states {
+            let fragment_id = Locator::between(&prev_locator, &Locator::max());
+            let mut max_undos = clock::Global::new();
+            for edit_id in [state.insertion_id].iter().chain(&state.deletions) {
+                if let Some(undo_ids) = undos_by_edit.get(edit_id) {
+                    for undo_id in undo_ids {
+                        max_undos.observe(*undo_id);
+                    }
+                }
+            }
+            let fragment = Fragment {
+                id: fragment_id.clone(),
+                timestamp: state.insertion_id,
+                insertion_offset: state.insertion_offset,
+                len: state.len,
+                visible: state.visible,
+                deletions: state.deletions.iter().copied().collect(),
+                max_undos,
+            };
+            if fragment.visible {
+                visible_len += fragment.len as usize;
+            } else {
+                deleted_len += fragment.len as usize;
+            }
+            insertion_edits.push(InsertionFragment::insert_new(&fragment));
+            insertion_slices.push(InsertionSlice::from_fragment(fragment.timestamp, &fragment));
+            for deletion in &fragment.deletions {
+                insertion_slices.push(InsertionSlice::from_fragment(*deletion, &fragment));
+            }
+            fragments.push(fragment, &None);
+            prev_locator = fragment_id;
+        }
+        anyhow::ensure!(
+            visible_len == visible_text.len(),
+            "visible fragments cover {visible_len} bytes but visible text is {} bytes",
+            visible_text.len()
+        );
+        anyhow::ensure!(
+            deleted_len == deleted_text.len(),
+            "deleted fragments cover {deleted_len} bytes but deleted text is {} bytes",
+            deleted_text.len()
+        );
+
+        let mut insertions = SumTree::default();
+        insertions.edit(insertion_edits, ());
+        let mut slices = TreeSet::default();
+        slices.extend(insertion_slices);
+        let mut lamport_clock = clock::Lamport::new(replica_id);
+        for timestamp in version.iter() {
+            lamport_clock.observe(timestamp);
+        }
+        let mut history = History::new(visible_text.clone());
+        history.operations_pruned = true;
+
+        Ok(Buffer {
+            snapshot: BufferSnapshot {
+                replica_id,
+                remote_id,
+                visible_text,
+                deleted_text,
+                line_ending,
+                fragments,
+                insertions,
+                version,
+                undo_map: UndoMap::from_entries(undo_map_entries),
+                insertion_slices: slices,
+            },
+            history,
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: HashSet::default(),
+            lamport_clock,
+            subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
+            wait_for_version_txs: Default::default(),
+        })
+    }
+
+    pub fn set_retain_operations(&mut self, retain_operations: bool) {
+        self.history.retain_operations = retain_operations;
+        if !retain_operations && !self.history.operations.is_empty() {
+            self.history.operations = TreeMap::default();
+            self.history.operations_pruned = true;
+        }
+    }
+
+    pub fn has_complete_operation_log(&self) -> bool {
+        !self.history.operations_pruned
     }
 
     pub fn version(&self) -> clock::Global {
@@ -1454,6 +1581,10 @@ impl Buffer {
 
     pub fn has_deferred_ops(&self) -> bool {
         !self.deferred_ops.is_empty()
+    }
+
+    pub fn deferred_operations(&self) -> Vec<Operation> {
+        self.deferred_ops.iter().cloned().collect()
     }
 
     pub fn set_max_undo_entries(&mut self, max_undo_entries: usize) {
@@ -2402,6 +2533,20 @@ impl BufferSnapshot {
 
     pub fn deleted_text(&self) -> String {
         self.deleted_text.to_string()
+    }
+
+    pub fn fragment_states(&self) -> impl Iterator<Item = FragmentState> + '_ {
+        self.fragments.iter().map(|fragment| FragmentState {
+            insertion_id: fragment.timestamp,
+            insertion_offset: fragment.insertion_offset,
+            len: fragment.len,
+            visible: fragment.visible,
+            deletions: fragment.deletions.iter().copied().collect(),
+        })
+    }
+
+    pub fn undo_map_entries(&self) -> Vec<(clock::Lamport, Vec<(clock::Lamport, u32)>)> {
+        self.undo_map.entries()
     }
 
     pub fn text_summary(&self) -> TextSummary {

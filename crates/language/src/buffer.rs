@@ -161,6 +161,8 @@ const MAX_COALESCED_RELOAD_BYTES: usize = 8 * 1024 * 1024;
 
 const RELOAD_COALESCE_INTERVAL: Duration = Duration::from_secs(5);
 
+const STATE_TRANSFER_LINE_ENDING_POISON: i32 = i32::MAX;
+
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
         self.chunks = RowChunks::new(snapshot, MAX_ROWS_IN_A_CHUNK);
@@ -1024,13 +1026,40 @@ impl Buffer {
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
         let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
-        let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
-        let mut this = Self::build(buffer, file, capability);
-        this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc::proto::LineEnding::try_from(message.line_ending)
+        let line_ending_field = if message.is_state_transfer {
+            message.state_line_ending
+        } else {
+            message.line_ending
+        };
+        let line_ending = proto::deserialize_line_ending(
+            rpc::proto::LineEnding::try_from(line_ending_field)
                 .ok()
                 .context("missing line_ending")?,
-        ));
+        );
+        let buffer = if message.is_state_transfer {
+            TextBuffer::from_state(
+                replica_id,
+                buffer_id,
+                line_ending,
+                Rope::from(message.base_text.as_str()),
+                Rope::from(message.deleted_text.as_str()),
+                message
+                    .fragments
+                    .into_iter()
+                    .map(proto::deserialize_fragment)
+                    .collect(),
+                message
+                    .undo_map
+                    .into_iter()
+                    .map(proto::deserialize_undo_map_entry)
+                    .collect(),
+                proto::deserialize_version(&message.version),
+            )?
+        } else {
+            TextBuffer::new(replica_id, buffer_id, message.base_text)
+        };
+        let mut this = Self::build(buffer, file, capability);
+        this.text.set_line_ending(line_ending);
         this.saved_version = proto::deserialize_version(&message.saved_version);
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
         Ok(this)
@@ -1038,14 +1067,39 @@ impl Buffer {
 
     /// Serialize the buffer's state to a protobuf message.
     pub fn to_proto(&self, cx: &App) -> proto::BufferState {
-        proto::BufferState {
+        let line_ending = proto::serialize_line_ending(self.line_ending()) as i32;
+        let mut state = proto::BufferState {
             id: self.remote_id().into(),
             file: self.file.as_ref().map(|f| f.to_proto(cx)),
             base_text: self.base_text().to_string(),
-            line_ending: proto::serialize_line_ending(self.line_ending()) as i32,
+            line_ending,
             saved_version: proto::serialize_version(&self.saved_version),
             saved_mtime: self.saved_mtime.map(|time| time.into()),
+            deleted_text: String::new(),
+            fragments: Vec::new(),
+            undo_map: Vec::new(),
+            version: Vec::new(),
+            is_state_transfer: false,
+            state_line_ending: line_ending,
+        };
+        if !self.text.has_complete_operation_log() {
+            let snapshot = self.text.snapshot();
+            state.base_text = snapshot.text();
+            state.deleted_text = snapshot.deleted_text();
+            state.fragments = snapshot
+                .fragment_states()
+                .map(|fragment| proto::serialize_fragment(&fragment))
+                .collect();
+            state.undo_map = snapshot
+                .undo_map_entries()
+                .iter()
+                .map(|(edit_id, counts)| proto::serialize_undo_map_entry((edit_id, counts)))
+                .collect();
+            state.version = proto::serialize_version(&snapshot.version);
+            state.is_state_transfer = true;
+            state.line_ending = STATE_TRANSFER_LINE_ENDING_POISON;
         }
+        state
     }
 
     /// Serialize as protobufs all of the changes to the buffer since the given version.
@@ -1085,6 +1139,7 @@ impl Buffer {
         }
 
         let text_operations = self.text.operations().clone();
+        let deferred_text_operations = self.text.deferred_operations();
         cx.background_spawn(async move {
             let since = since.unwrap_or_default();
             operations.extend(
@@ -1092,6 +1147,15 @@ impl Buffer {
                     .iter()
                     .filter(|(_, op)| !since.observed(op.timestamp()))
                     .map(|(_, op)| proto::serialize_operation(&Operation::Buffer(op.clone()))),
+            );
+            operations.extend(
+                deferred_text_operations
+                    .iter()
+                    .filter(|op| {
+                        !since.observed(op.timestamp())
+                            && text_operations.get(&op.timestamp()).is_none()
+                    })
+                    .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone()))),
             );
             operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
             operations
@@ -2654,6 +2718,10 @@ impl Buffer {
     /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
+    }
+
+    pub fn set_retain_operations(&mut self, retain_operations: bool) {
+        self.text.set_retain_operations(retain_operations);
     }
 
     pub fn set_max_undo_entries(&mut self, max_undo_entries: usize) {

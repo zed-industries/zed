@@ -20,7 +20,7 @@ use gpui::{
 };
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, FakeLspAdapter, Language,
-    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope, ToOffset,
     language_settings::{Formatter, FormatterList},
     rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
@@ -3918,6 +3918,90 @@ async fn test_editing_while_guest_opens_buffer(
     executor.run_until_parked();
 
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), text));
+}
+
+#[gpui::test]
+async fn test_sharing_buffer_with_pruned_operation_log(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree(path!("/dir"), json!({ "a.txt": "one two three" }))
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+
+    let buffer_a = project_a
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    buffer_a.update(cx_a, |buffer, cx| {
+        buffer.edit([(4..7, "2")], None, cx);
+        buffer.edit([(0..3, "1")], None, cx);
+        buffer.edit([(4..9, "3")], None, cx);
+        buffer.undo(cx);
+    });
+    buffer_a.read_with(cx_a, |buffer, _| {
+        assert_eq!(buffer.text(), "1 2 three");
+        assert_eq!(
+            buffer.retained_history().operation_count,
+            0,
+            "unshared local buffers should not retain operations"
+        );
+    });
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    buffer_b.read_with(cx_b, |buffer, _| {
+        assert_eq!(buffer.text(), "1 2 three");
+    });
+
+    let anchor_a = buffer_a.read_with(cx_a, |buffer, _| buffer.anchor_before(4));
+    assert_eq!(
+        buffer_b.read_with(cx_b, |buffer, _| anchor_a
+            .to_offset(&buffer.text_snapshot())),
+        4
+    );
+
+    buffer_a.update(cx_a, |buffer, cx| buffer.edit([(0..1, "ONE")], None, cx));
+    buffer_b.update(cx_b, |buffer, cx| buffer.edit([(4..9, "THREE")], None, cx));
+    executor.run_until_parked();
+
+    let text_a = buffer_a.read_with(cx_a, |buffer, _| buffer.text());
+    let text_b = buffer_b.read_with(cx_b, |buffer, _| buffer.text());
+    assert_eq!(text_a, text_b);
+    assert_eq!(text_a, "ONE 2 THREE");
+
+    buffer_a.update(cx_a, |buffer, cx| {
+        buffer.undo(cx);
+    });
+    executor.run_until_parked();
+    let text_a = buffer_a.read_with(cx_a, |buffer, _| buffer.text());
+    let text_b = buffer_b.read_with(cx_b, |buffer, _| buffer.text());
+    assert_eq!(text_a, text_b);
 }
 
 #[gpui::test(iterations = 10)]

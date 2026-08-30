@@ -140,6 +140,44 @@ pub fn serialize_undo_map_entry(
     }
 }
 
+pub fn serialize_fragment(fragment: &text::FragmentState) -> proto::BufferFragment {
+    proto::BufferFragment {
+        insertion_replica_id: fragment.insertion_id.replica_id.as_u16() as u32,
+        insertion_timestamp: fragment.insertion_id.value,
+        insertion_offset: fragment.insertion_offset,
+        len: fragment.len,
+        visible: fragment.visible,
+        deletions: fragment
+            .deletions
+            .iter()
+            .map(|deletion| proto::LamportTimestamp {
+                replica_id: deletion.replica_id.as_u16() as u32,
+                value: deletion.value,
+            })
+            .collect(),
+    }
+}
+
+pub fn deserialize_fragment(fragment: proto::BufferFragment) -> text::FragmentState {
+    text::FragmentState {
+        insertion_id: clock::Lamport {
+            replica_id: ReplicaId::new(fragment.insertion_replica_id as u16),
+            value: fragment.insertion_timestamp,
+        },
+        insertion_offset: fragment.insertion_offset,
+        len: fragment.len,
+        visible: fragment.visible,
+        deletions: fragment
+            .deletions
+            .into_iter()
+            .map(|deletion| clock::Lamport {
+                replica_id: ReplicaId::new(deletion.replica_id as u16),
+                value: deletion.value,
+            })
+            .collect(),
+    }
+}
+
 /// Splits the given list of operations into chunks.
 pub fn split_operations(
     mut operations: Vec<proto::Operation>,

@@ -1073,8 +1073,20 @@ impl BufferStore {
             self.path_to_buffer_id.insert(path, remote_id);
         }
 
+        let shared_via_collab = self
+            .downstream_client
+            .as_ref()
+            .is_some_and(|(client, _)| client.is_via_collab());
+        let retain_operations = shared_via_collab
+            || match &self.state {
+                BufferStoreState::Local(_) => false,
+                BufferStoreState::Remote(remote) => remote.upstream_client.is_via_collab(),
+            };
         let max_undo_steps = ProjectSettings::get_global(cx).max_undo_steps;
-        buffer_entity.update(cx, |buffer, _| buffer.set_max_undo_entries(max_undo_steps));
+        buffer_entity.update(cx, |buffer, _| {
+            buffer.set_retain_operations(retain_operations);
+            buffer.set_max_undo_entries(max_undo_steps);
+        });
 
         cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
         cx.emit(BufferStoreEvent::BufferAdded(buffer_entity));
@@ -1172,13 +1184,32 @@ impl BufferStore {
         }
     }
 
-    pub fn shared(&mut self, remote_id: u64, downstream_client: AnyProtoClient, _cx: &mut App) {
+    pub fn shared(&mut self, remote_id: u64, downstream_client: AnyProtoClient, cx: &mut App) {
+        let retain_operations = downstream_client.is_via_collab();
         self.downstream_client = Some((downstream_client, remote_id));
+        for buffer in self.buffers().collect::<Vec<_>>() {
+            buffer.update(cx, |buffer, _| {
+                buffer.set_retain_operations(retain_operations);
+            });
+        }
     }
 
-    pub fn unshared(&mut self, _cx: &mut Context<Self>) {
+    pub fn unshared(&mut self, cx: &mut Context<Self>) {
         self.downstream_client.take();
         self.forget_shared_buffers();
+        let retain_remote_operations = match &self.state {
+            BufferStoreState::Local(_) => false,
+            BufferStoreState::Remote(remote) => remote.upstream_client.is_via_collab(),
+        };
+        for buffer in self.buffers().collect::<Vec<_>>() {
+            buffer.update(cx, |buffer, _| {
+                if buffer.replica_id().is_remote() {
+                    buffer.set_retain_operations(retain_remote_operations);
+                } else {
+                    buffer.set_retain_operations(false);
+                }
+            });
+        }
     }
 
     pub fn discard_incomplete(&mut self) {
@@ -1643,9 +1674,13 @@ impl BufferStore {
                 return anyhow::Ok(());
             };
 
-            let operations = buffer.update(cx, |b, cx| b.serialize_ops(None, cx));
+            let (state, operations) = buffer.update(cx, |buffer, cx| {
+                let state = buffer.to_proto(cx);
+                let state_version = language::proto::deserialize_version(&state.version);
+                let operations = buffer.serialize_ops(Some(state_version), cx);
+                (state, operations)
+            });
             let operations = operations.await;
-            let state = buffer.update(cx, |buffer, cx| buffer.to_proto(cx));
 
             let initial_state = proto::CreateBufferForPeer {
                 project_id,

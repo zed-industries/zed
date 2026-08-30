@@ -106,6 +106,22 @@ message BufferState {
 
   reserved 7;
   reserved 4;
+
+  string deleted_text = 9;
+  repeated BufferFragment fragments = 10;
+  repeated UndoMapEntry undo_map = 11;
+  repeated VectorClockEntry version = 12;
+  bool is_state_transfer = 13;
+  LineEnding state_line_ending = 14;
+}
+
+message BufferFragment {
+  uint32 insertion_replica_id = 1;
+  uint32 insertion_timestamp = 2;
+  uint32 insertion_offset = 3;
+  uint32 len = 4;
+  bool visible = 5;
+  repeated LamportTimestamp deletions = 6;
 }
 
 message BufferChunk {

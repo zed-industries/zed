@@ -7390,6 +7390,8 @@ async fn test_repeated_external_reloads_coalesce_undo_history(cx: &mut gpui::Tes
     buffer.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "version 20");
         assert_eq!(buffer.retained_history().undo_stack_entries, 1);
+        assert_eq!(buffer.retained_history().operation_count, 0);
+        assert_eq!(buffer.retained_history().operation_new_text_bytes, 0);
     });
 
     buffer.update(cx, |buffer, cx| {

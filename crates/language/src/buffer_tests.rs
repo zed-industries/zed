@@ -4291,6 +4291,16 @@ fn test_random_collaboration(cx: &mut App, mut rng: StdRng) {
                 mutation_count -= 1;
             }
             50..=59 if replica_ids.len() < max_peers => {
+                if rng.random() {
+                    log::info!(
+                        "pruning operation log of {:?} before replication",
+                        replica_id
+                    );
+                    buffer.update(cx, |buffer, _| {
+                        buffer.set_retain_operations(false);
+                        buffer.set_retain_operations(true);
+                    });
+                }
                 let old_buffer_state = buffer.read(cx).to_proto(cx);
                 let old_buffer_ops = cx
                     .foreground_executor()
@@ -5181,6 +5191,79 @@ fn test_autoindent_typescript_braceless_control_flow(cx: &mut App) {
         }
         Buffer::local("", cx)
     });
+}
+
+#[gpui::test]
+fn test_replicating_buffer_with_pruned_operations(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let buffer = cx.new(|cx| Buffer::local("one two three four", cx));
+    buffer.update(cx, |buffer, cx| {
+        buffer.set_retain_operations(false);
+        buffer.edit([(4..7, "2")], None, cx);
+        buffer.edit([(6..12, "")], None, cx);
+        buffer.undo(cx);
+        buffer.edit([(0..0, "zero ")], None, cx);
+    });
+
+    let state = buffer.read_with(cx, |buffer, cx| buffer.to_proto(cx));
+    assert!(state.is_state_transfer);
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.retained_history().operation_count),
+        0
+    );
+
+    let replica = cx.new(|_| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    });
+    replica.read_with(cx, |replica, _| {
+        assert_eq!(replica.text(), "zero one 2 three four");
+        assert_eq!(replica.version(), buffer.read_with(cx, |b, _| b.version()));
+    });
+
+    let anchor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(9));
+    assert_eq!(
+        replica.read_with(cx, |replica, _| anchor.to_offset(&replica.text_snapshot())),
+        9
+    );
+
+    replica.update(cx, |_, cx| {
+        cx.subscribe(&buffer, |replica, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                let operation = proto::serialize_operation(operation);
+                replica.apply_ops([proto::deserialize_operation(operation).unwrap()], cx);
+            }
+        })
+        .detach();
+    });
+    buffer.update(cx, |_, cx| {
+        cx.subscribe(&replica, |buffer, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                let operation = proto::serialize_operation(operation);
+                buffer.apply_ops([proto::deserialize_operation(operation).unwrap()], cx);
+            }
+        })
+        .detach();
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..4, "0")], None, cx);
+    });
+    replica.update(cx, |replica, cx| {
+        replica.edit([(18..18, "!")], None, cx);
+    });
+    let host_text = buffer.read_with(cx, |buffer, _| buffer.text());
+    let replica_text = replica.read_with(cx, |replica, _| replica.text());
+    assert_eq!(host_text, replica_text);
+    assert_eq!(host_text, "0 one 2 three four!");
 }
 
 #[gpui::test]

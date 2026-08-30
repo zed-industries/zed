@@ -48,6 +48,41 @@ impl sum_tree::ContextLessSummary for UndoMapKey {
 pub struct UndoMap(SumTree<UndoMapEntry>);
 
 impl UndoMap {
+    pub fn entries(&self) -> Vec<(Lamport, Vec<(Lamport, u32)>)> {
+        let mut entries = Vec::<(Lamport, Vec<(Lamport, u32)>)>::new();
+        for entry in self.0.iter() {
+            match entries.last_mut() {
+                Some((edit_id, counts)) if *edit_id == entry.key.edit_id => {
+                    counts.push((entry.key.undo_id, entry.undo_count));
+                }
+                _ => {
+                    entries.push((
+                        entry.key.edit_id,
+                        vec![(entry.key.undo_id, entry.undo_count)],
+                    ));
+                }
+            }
+        }
+        entries
+    }
+
+    pub fn from_entries(entries: impl IntoIterator<Item = (Lamport, Vec<(Lamport, u32)>)>) -> Self {
+        let edits = entries
+            .into_iter()
+            .flat_map(|(edit_id, counts)| {
+                counts.into_iter().map(move |(undo_id, undo_count)| {
+                    sum_tree::Edit::Insert(UndoMapEntry {
+                        key: UndoMapKey { edit_id, undo_id },
+                        undo_count,
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut this = Self::default();
+        this.0.edit(edits, ());
+        this
+    }
+
     pub fn insert(&mut self, undo: &UndoOperation) {
         let edits = undo
             .counts
