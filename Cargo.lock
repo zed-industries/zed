@@ -23144,6 +23144,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_ios"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "client",
+ "db",
+ "editor",
+ "file_finder",
+ "fs",
+ "gpui",
+ "gpui_ios",
+ "language",
+ "log",
+ "node_runtime",
+ "project",
+ "release_channel",
+ "reqwest_client",
+ "session",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+ "uuid",
+ "workspace",
+ "zlog",
+]
+
+[[package]]
 name = "zed_proto"
 version = "0.3.3"
 dependencies = [

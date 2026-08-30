@@ -16,13 +16,13 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use gpui::SharedString;
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "ios")))]
 use std::ffi::CString;
 use util::command::new_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "ios")))]
 use std::os::unix::ffi::OsStrExt;
 
 #[cfg(unix)]

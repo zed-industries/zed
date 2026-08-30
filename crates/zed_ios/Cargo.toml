@@ -1,0 +1,38 @@
+[package]
+name = "zed_ios"
+version = "0.1.0"
+edition.workspace = true
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zed_ios.rs"
+crate-type = ["staticlib"]
+
+[target.'cfg(target_os = "ios")'.dependencies]
+anyhow.workspace = true
+assets.workspace = true
+client.workspace = true
+db.workspace = true
+editor.workspace = true
+file_finder.workspace = true
+fs.workspace = true
+gpui.workspace = true
+gpui_ios.workspace = true
+language.workspace = true
+log.workspace = true
+node_runtime.workspace = true
+project.workspace = true
+release_channel.workspace = true
+reqwest_client.workspace = true
+session.workspace = true
+settings.workspace = true
+theme.workspace = true
+theme_settings.workspace = true
+ui.workspace = true
+uuid.workspace = true
+workspace.workspace = true
+zlog.workspace = true

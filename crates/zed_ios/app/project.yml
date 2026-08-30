@@ -1,0 +1,62 @@
+name: ZedIos
+options:
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+targets:
+  ZedIos:
+    type: application
+    platform: iOS
+    sources:
+      - main.m
+    info:
+      path: Info.plist
+      properties:
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default Configuration
+                UISceneDelegateClassName: ZedSceneDelegate
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.zed.zed-ios
+        PRODUCT_NAME: ZedIos
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
+          - "$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug"
+        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
+          - "-ObjC"
+          - "-lc++"
+          - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug/libzed_ios.a"
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(SRCROOT)/../../../target/aarch64-apple-ios/debug"
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - "-ObjC"
+          - "-lc++"
+          - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios/debug/libzed_ios.a"
+    dependencies:
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: CoreFoundation.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreMedia.framework
+      - sdk: CoreText.framework
+      - sdk: CoreVideo.framework
+      - sdk: Foundation.framework
+      - sdk: Metal.framework
+      - sdk: Network.framework
+      - sdk: QuartzCore.framework
+      - sdk: SafariServices.framework
+      - sdk: Security.framework
+      - sdk: SystemConfiguration.framework
+      - sdk: UIKit.framework
+      - sdk: VideoToolbox.framework
