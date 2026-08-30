@@ -3983,6 +3983,19 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_vim_jump_to_word_end_includes_last_buffer_character(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word_end(&mut cx, "g shift-w");
+        cx.set_state("ˇone final", Mode::Normal);
+
+        cx.simulate_keystrokes("g shift-w");
+
+        assert_eq!(active_helix_jump_overlay_prefixes(&mut cx), ["al"]);
+    }
+
+    #[gpui::test]
     async fn test_helix_jump_consumes_label_keystrokes_before_ime(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         bind_vim_jump_to_word(&mut cx, "s");
