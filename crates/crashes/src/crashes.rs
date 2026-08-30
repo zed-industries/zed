@@ -182,6 +182,7 @@ pub struct CrashServer {
     active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
     user_info: Mutex<Option<UserInfo>>,
     abort_message_location: Mutex<Option<AbortMessageLocation>>,
+    shutdown: Arc<AtomicBool>,
     has_connection: Arc<AtomicBool>,
     logs_dir: PathBuf,
 }
@@ -255,6 +256,11 @@ pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
     send_crash_server_message(crash_client, CrashServerMessage::UserInfo(info));
 }
 
+/// Requests an orderly exit from the crash-handler sidecar.
+pub fn shutdown_crash_handler(crash_client: &Arc<Client>) {
+    send_crash_server_message(crash_client, CrashServerMessage::Shutdown);
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 enum CrashServerMessage {
     Init(InitCrashHandler),
@@ -262,6 +268,7 @@ enum CrashServerMessage {
     GPUInfo(GpuSpecs),
     UserInfo(UserInfo),
     AbortMessageLocation(AbortMessageLocation),
+    Shutdown,
 }
 
 /// glibc records the diagnostic it prints just before aborting (malloc integrity
@@ -464,6 +471,9 @@ impl minidumper::ServerHandler for CrashServer {
             CrashServerMessage::AbortMessageLocation(location) => {
                 self.abort_message_location.lock().replace(location);
             }
+            CrashServerMessage::Shutdown => {
+                self.shutdown.store(true, Ordering::SeqCst);
+            }
         }
     }
 
@@ -529,10 +539,7 @@ pub fn panic_hook(crash_client: Arc<Client>, message: &str, location: Option<&Lo
         // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
         CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::process::abort();
-    }
+    std::process::abort();
 }
 
 #[cfg(target_os = "macos")]
@@ -668,6 +675,7 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
                 panic_info: Mutex::default(),
                 user_info: Mutex::default(),
                 abort_message_location: Mutex::default(),
+                shutdown: shutdown.clone(),
                 has_connection,
                 active_gpu: Mutex::default(),
                 logs_dir,

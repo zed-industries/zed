@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.18.0"
+version = "1.19.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -86,6 +86,7 @@ auto_update.workspace = true
 auto_update_ui.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
+call_hierarchy.workspace = true
 channel.workspace = true
 chrono.workspace = true
 clap.workspace = true
@@ -124,7 +125,7 @@ git_hosting_providers.workspace = true
 git_ui = { workspace = true, features = ["call"] }
 git_ui_core.workspace = true
 go_to_line.workspace = true
-gpui = { workspace = true, features = ["profiler"] }
+gpui = { workspace = true, features = ["profiler", "stacker"] }
 gpui_platform = { workspace = true, features = [
     "screen-capture",
     "font-kit",

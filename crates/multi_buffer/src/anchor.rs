@@ -38,6 +38,7 @@ pub(crate) enum AnchorSeekTarget<'a> {
     // buffer no longer exists at its original path key in the multibuffer
     Missing {
         path_key: &'a PathKey,
+        buffer_id: BufferId,
     },
     // we have excerpts for the buffer at the expected path key
     Excerpt {
@@ -63,9 +64,13 @@ impl std::fmt::Debug for AnchorSeekTarget<'_> {
                 .field("path_key", path_key)
                 .field("anchor", anchor)
                 .finish(),
-            Self::Missing { path_key } => f
+            Self::Missing {
+                path_key,
+                buffer_id,
+            } => f
                 .debug_struct("Missing")
                 .field("path_key", path_key)
+                .field("buffer_id", buffer_id)
                 .finish(),
             Self::Empty => f.debug_struct("Empty").finish(),
         }
@@ -144,10 +149,14 @@ impl ExcerptAnchor {
             && let Some(base_text) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
                 .map(|diff| diff.base_text())
         {
-            let self_anchor = self.diff_base_anchor.filter(|a| a.is_valid(base_text));
-            let other_anchor = other.diff_base_anchor.filter(|a| a.is_valid(base_text));
-            return match (self_anchor, other_anchor) {
-                (Some(a), Some(b)) => a.cmp(&b, base_text),
+            return match (self.diff_base_anchor, other.diff_base_anchor) {
+                (Some(self_anchor), Some(other_anchor)) => {
+                    if base_text.can_resolve(&self_anchor) && base_text.can_resolve(&other_anchor) {
+                        self_anchor.cmp(&other_anchor, base_text)
+                    } else {
+                        self_anchor.buffer_id.cmp(&other_anchor.buffer_id)
+                    }
+                }
                 (Some(_), None) => match other.text_anchor().bias {
                     Bias::Left => Ordering::Greater,
                     Bias::Right => Ordering::Less,
@@ -174,7 +183,7 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor.is_valid(&diff.base_text())
+                && diff.base_text().can_resolve(&diff_base_anchor)
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_left(diff.base_text()))
             } else {
@@ -196,7 +205,7 @@ impl ExcerptAnchor {
         let ret = Self::in_buffer(self.path, text_anchor);
         if let Some(diff_base_anchor) = self.diff_base_anchor {
             if let Some(diff) = find_diff_state(&snapshot.diffs, self.text_anchor.buffer_id)
-                && diff_base_anchor.is_valid(&diff.base_text())
+                && diff.base_text().can_resolve(&diff_base_anchor)
             {
                 ret.with_diff_base_anchor(diff_base_anchor.bias_right(diff.base_text()))
             } else {
@@ -272,7 +281,10 @@ impl ExcerptAnchor {
             .get(&self.buffer_id())
             .filter(|state| &state.path_key == path_key)
         else {
-            return Some(AnchorSeekTarget::Missing { path_key });
+            return Some(AnchorSeekTarget::Missing {
+                path_key,
+                buffer_id: self.buffer_id(),
+            });
         };
 
         Some(AnchorSeekTarget::Excerpt {

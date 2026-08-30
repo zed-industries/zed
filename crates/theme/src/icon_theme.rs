@@ -66,7 +66,7 @@ pub struct IconDefinition {
 }
 
 const FILE_STEMS_BY_ICON_KEY: &[(&str, &[&str])] = &[
-    ("docker", &["Containerfile", "Dockerfile"]),
+    ("docker", &["Containerfile", "Dockerfile", ".dockerignore"]),
     ("ruby", &["Podfile"]),
     ("heroku", &["Procfile"]),
 ];

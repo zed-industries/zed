@@ -829,7 +829,7 @@ mod tests {
                     peer.respond(receipt, proto::Ack {})?
                 } else if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Test>>()
                 {
-                    peer.respond(envelope.receipt(), envelope.payload.clone())?
+                    peer.respond(envelope.receipt(), envelope.payload)?
                 } else {
                     panic!("unknown message type");
                 }
