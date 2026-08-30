@@ -17,9 +17,10 @@ use agent_ui::threads_archive_view::{
 };
 use agent_ui::{
     AcpThreadImportOnboarding, Agent, AgentPanel, AgentPanelEvent, AgentThreadSource,
-    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewTerminalThread,
-    NewThread, RenameSelectedThread, TerminalId, ThreadId, ThreadImportModal,
-    ThreadTitleRegenerationResult, channels_with_threads, import_threads_from_other_channels,
+    ArchiveSelectedThread, CrossChannelImportOnboarding, DEFAULT_THREAD_TITLE, NewEntryIcon,
+    NewEntryKind, NewTerminalThread, NewThread, RenameSelectedThread, SplitParent, TerminalId,
+    ThreadId, ThreadImportModal, ThreadTitleRegenerationResult, channels_with_threads,
+    import_threads_from_other_channels,
 };
 use agent_ui::{MessageEditorEvent, StateChange, thread_worktree_archive};
 use chrono::{DateTime, Utc};
@@ -67,8 +68,9 @@ use util::path_list::PathList;
 use workspace::{
     CloseWindow, FocusWorkspaceSidebar, MoveProjectDown, MoveProjectUp, MultiWorkspace,
     MultiWorkspaceEvent, NextProject, NextThread, Open, OpenMode, PreviousProject, PreviousThread,
-    ProjectGroupKey, RemovalIntent, SaveIntent, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
-    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
+    ProjectGroupKey, RemovalIntent, SaveIntent, Sidebar as WorkspaceSidebar, SidebarSide,
+    SplitDirection, Toast, ToggleWorkspaceSidebar, Workspace, notifications::NotificationId,
+    sidebar_side_context_menu,
 };
 
 use git_ui_core::worktree_service::{RemoteBranchName, worktree_create_targets};
@@ -208,6 +210,77 @@ struct ActiveThreadInfo {
     is_background: bool,
     is_title_generating: bool,
     diff_stats: DiffStats,
+}
+
+#[derive(Clone)]
+enum SplitOrigin {
+    Thread(ThreadMetadata),
+    Terminal(TerminalThreadMetadata),
+}
+
+impl SplitOrigin {
+    fn split_key(&self) -> SplitParent {
+        match self {
+            SplitOrigin::Thread(metadata) => SplitParent::Thread(metadata.thread_id),
+            SplitOrigin::Terminal(metadata) => SplitParent::Terminal(metadata.terminal_id),
+        }
+    }
+
+    fn active_entry(&self, workspace: &Entity<Workspace>) -> ActiveEntry {
+        match self {
+            SplitOrigin::Thread(metadata) => ActiveEntry::Thread {
+                thread_id: metadata.thread_id,
+                session_id: metadata.session_id.clone(),
+                workspace: workspace.clone(),
+            },
+            SplitOrigin::Terminal(metadata) => ActiveEntry::Terminal {
+                terminal_id: metadata.terminal_id,
+                workspace: workspace.clone(),
+            },
+        }
+    }
+
+    fn open_in_center(
+        &self,
+        panel: &mut AgentPanel,
+        workspace: Option<&Workspace>,
+        window: &mut Window,
+        cx: &mut Context<AgentPanel>,
+    ) {
+        match self {
+            SplitOrigin::Thread(metadata) => {
+                if panel
+                    .conversation_view_for_id(&metadata.thread_id, cx)
+                    .is_none()
+                {
+                    panel.load_agent_thread(
+                        Agent::from(metadata.agent_id.clone()),
+                        metadata.thread_id,
+                        Some(metadata.folder_paths().clone()),
+                        metadata.title.clone(),
+                        false,
+                        AgentThreadSource::Sidebar,
+                        window,
+                        cx,
+                    );
+                }
+                panel.open_thread_in_center(metadata.thread_id, None, window, cx);
+            }
+            SplitOrigin::Terminal(metadata) => {
+                if !panel.has_terminal(metadata.terminal_id) {
+                    panel.restore_terminal(
+                        metadata.clone(),
+                        false,
+                        AgentThreadSource::Sidebar,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                }
+                panel.open_terminal_in_center(metadata.terminal_id, None, window, cx);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -361,6 +434,8 @@ struct ThreadEntry {
     highlight_positions: Vec<usize>,
     worktrees: Vec<ThreadItemWorktreeInfo>,
     diff_stats: DiffStats,
+    depth: usize,
+    has_split_children: bool,
 }
 
 #[derive(Clone)]
@@ -370,6 +445,8 @@ struct TerminalEntry {
     worktrees: Vec<ThreadItemWorktreeInfo>,
     has_notification: bool,
     highlight_positions: Vec<usize>,
+    depth: usize,
+    has_split_children: bool,
 }
 
 impl ThreadEntry {
@@ -496,8 +573,8 @@ enum EntryShape {
         // `!is_collapsed && !has_threads`).
         is_collapsed: bool,
     },
-    Thread(ThreadId),
-    Terminal(TerminalId),
+    Thread(ThreadId, usize),
+    Terminal(TerminalId, usize),
 }
 
 impl SidebarContents {
@@ -769,6 +846,9 @@ pub struct Sidebar {
     thread_switcher: Option<Entity<ThreadSwitcher>>,
     _thread_switcher_subscriptions: Vec<gpui::Subscription>,
     pending_thread_activation: Option<agent_ui::ThreadId>,
+    /// Split parents whose nested children are hidden. Session-only: the
+    /// `split_parent` links themselves are persisted, this collapse state is not.
+    collapsed_splits: HashSet<SplitParent>,
     /// Persists live thread statuses across rebuilds so that Running→Completed
     /// transitions can be detected even when the group is collapsed (and
     /// thread entries are not present in the list).
@@ -913,6 +993,7 @@ impl Sidebar {
             thread_switcher: None,
             _thread_switcher_subscriptions: Vec::new(),
             pending_thread_activation: None,
+            collapsed_splits: HashSet::new(),
             live_thread_statuses: HashMap::new(),
             draft_kinds: HashMap::new(),
             view: SidebarView::default(),
@@ -932,6 +1013,13 @@ impl Sidebar {
 
     fn serialize(&mut self, cx: &mut Context<Self>) {
         cx.emit(workspace::SidebarEvent::SerializeNeeded);
+    }
+
+    fn toggle_split_collapsed(&mut self, key: SplitParent, cx: &mut Context<Self>) {
+        if !self.collapsed_splits.remove(&key) {
+            self.collapsed_splits.insert(key);
+        }
+        self.update_entries(cx);
     }
 
     fn is_group_collapsed(&self, key: &ProjectGroupKey, cx: &App) -> bool {
@@ -1014,13 +1102,28 @@ impl Sidebar {
         cx.subscribe_in(
             workspace,
             window,
-            move |this, workspace, event: &workspace::Event, window, cx| {
-                if let workspace::Event::PanelAdded(view) = event {
+            move |this, workspace, event: &workspace::Event, window, cx| match event {
+                workspace::Event::PanelAdded(view) => {
                     if let Ok(agent_panel) = view.clone().downcast::<AgentPanel>() {
                         this.subscribe_to_agent_panel(workspace, &agent_panel, window, cx);
                         this.schedule_update_entries(false, cx);
                     }
                 }
+                workspace::Event::ActiveItemChanged => {
+                    let workspace = workspace.clone();
+                    cx.defer_in(window, move |this, _window, cx| {
+                        if !this.is_active_workspace(&workspace, cx) {
+                            return;
+                        }
+                        if !this.sync_active_entry_from_center(&workspace, cx)
+                            && let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx)
+                        {
+                            this.sync_active_entry_from_panel(&panel, cx);
+                        }
+                        this.schedule_update_entries(false, cx);
+                    });
+                }
+                _ => {}
             },
         )
         .detach();
@@ -1128,12 +1231,49 @@ impl Sidebar {
     }
 
     fn sync_active_entry_from_active_workspace(&mut self, cx: &App) {
-        let panel = self
-            .active_workspace(cx)
-            .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx));
+        let Some(workspace) = self.active_workspace(cx) else {
+            return;
+        };
+        if self.sync_active_entry_from_center(&workspace, cx) {
+            return;
+        }
+        let panel = workspace.read(cx).panel::<AgentPanel>(cx);
         if let Some(panel) = panel {
             self.sync_active_entry_from_panel(&panel, cx);
         }
+    }
+
+    fn sync_active_entry_from_center(&mut self, workspace: &Entity<Workspace>, cx: &App) -> bool {
+        let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return false;
+        };
+        let panel = panel.read(cx);
+
+        if let Some(thread_id) = panel.active_center_thread_id(cx) {
+            let session_id = ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(thread_id)
+                .and_then(|metadata| metadata.session_id.clone());
+            self.active_entry = Some(ActiveEntry::Thread {
+                thread_id,
+                session_id,
+                workspace: workspace.clone(),
+            });
+            if self.pending_thread_activation == Some(thread_id) {
+                self.pending_thread_activation = None;
+            }
+            return true;
+        }
+
+        if let Some(terminal_id) = panel.active_center_terminal_id(cx) {
+            self.active_entry = Some(ActiveEntry::Terminal {
+                terminal_id,
+                workspace: workspace.clone(),
+            });
+            return true;
+        }
+
+        false
     }
 
     /// When switching workspaces, the active panel may still be showing
@@ -1474,6 +1614,8 @@ impl Sidebar {
                         worktrees,
                         has_notification,
                         highlight_positions: Vec::new(),
+                        depth: 0,
+                        has_split_children: false,
                     }
                 };
 
@@ -1589,6 +1731,8 @@ impl Sidebar {
                             highlight_positions: Vec::new(),
                             worktrees,
                             diff_stats: DiffStats::default(),
+                            depth: 0,
+                            has_split_children: false,
                         })
                     };
 
@@ -1906,6 +2050,7 @@ impl Sidebar {
                     matched_threads,
                     &mut current_session_ids,
                     &mut current_thread_ids,
+                    &self.collapsed_splits,
                 );
             } else {
                 let has_terminal_notifications = terminals
@@ -1956,6 +2101,7 @@ impl Sidebar {
                     threads,
                     &mut current_session_ids,
                     &mut current_thread_ids,
+                    &self.collapsed_splits,
                 );
             }
         }
@@ -2072,8 +2218,12 @@ impl Sidebar {
                     .map(|state| !state.expanded)
                     .unwrap_or(false),
             },
-            ListEntry::Thread(thread) => EntryShape::Thread(thread.metadata.thread_id),
-            ListEntry::Terminal(terminal) => EntryShape::Terminal(terminal.metadata.terminal_id),
+            ListEntry::Thread(thread) => {
+                EntryShape::Thread(thread.metadata.thread_id, thread.depth)
+            }
+            ListEntry::Terminal(terminal) => {
+                EntryShape::Terminal(terminal.metadata.terminal_id, terminal.depth)
+            }
         })
     }
 
@@ -3670,6 +3820,172 @@ impl Sidebar {
         .detach_and_log_err(cx);
     }
 
+    fn add_split_submenu(
+        menu: ContextMenu,
+        sidebar: &WeakEntity<Self>,
+        origin: SplitOrigin,
+        workspace: ThreadEntryWorkspace,
+        cx: &App,
+    ) -> ContextMenu {
+        let Some(panel_workspace) = (match &workspace {
+            ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
+            ThreadEntryWorkspace::Closed { .. } => sidebar
+                .upgrade()
+                .and_then(|sidebar| sidebar.read(cx).multi_workspace.upgrade())
+                .map(|multi_workspace| multi_workspace.read(cx).workspace().clone()),
+        }) else {
+            return menu;
+        };
+        let Some(panel) = panel_workspace.read(cx).panel::<AgentPanel>(cx) else {
+            return menu;
+        };
+        let options = panel.read(cx).new_entry_options(cx);
+        if options.is_empty() {
+            return menu;
+        }
+
+        let sidebar = sidebar.clone();
+        menu.submenu("Split", move |mut submenu, _window, _cx| {
+            for option in &options {
+                let mut entry = ContextMenuEntry::new(option.label.clone());
+                entry = match &option.icon {
+                    NewEntryIcon::Named(icon) => entry.icon(*icon),
+                    NewEntryIcon::CustomSvg(path) => entry.custom_icon_svg(path.clone()),
+                };
+                entry = entry.icon_color(Color::Muted).handler({
+                    let sidebar = sidebar.clone();
+                    let origin = origin.clone();
+                    let workspace = workspace.clone();
+                    let kind = option.kind.clone();
+                    move |window, cx| {
+                        sidebar
+                            .update(cx, |sidebar, cx| {
+                                sidebar.split_entry(
+                                    origin.clone(),
+                                    workspace.clone(),
+                                    kind.clone(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    }
+                });
+                submenu = submenu.item(entry);
+            }
+            submenu
+        })
+    }
+
+    fn split_entry(
+        &mut self,
+        origin: SplitOrigin,
+        workspace: ThreadEntryWorkspace,
+        kind: NewEntryKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match workspace {
+            ThreadEntryWorkspace::Open(workspace) => {
+                self.split_entry_in_workspace(&workspace, origin, kind, window, cx)
+            }
+            ThreadEntryWorkspace::Closed {
+                folder_paths,
+                project_group_key,
+            } => {
+                let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+                    return;
+                };
+                let host = project_group_key.host();
+                let active_workspace = multi_workspace.read(cx).workspace().clone();
+                let modal_workspace = active_workspace.clone();
+                let open_task = multi_workspace.update(cx, |multi_workspace, cx| {
+                    multi_workspace.find_or_create_workspace(
+                        folder_paths,
+                        host,
+                        Some(project_group_key),
+                        |options, window, cx| connect_remote(active_workspace, options, window, cx),
+                        None,
+                        OpenMode::Activate,
+                        None,
+                        window,
+                        cx,
+                    )
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = open_task.await;
+                    remote_connection::dismiss_connection_modal(&modal_workspace, cx);
+                    let workspace = result?;
+                    this.update_in(cx, |this, window, cx| {
+                        this.split_entry_in_workspace(&workspace, origin, kind, window, cx);
+                    })?;
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+
+    fn split_entry_in_workspace(
+        &mut self,
+        workspace: &Entity<Workspace>,
+        origin: SplitOrigin,
+        kind: NewEntryKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(multi_workspace) = self.multi_workspace.upgrade() else {
+            return;
+        };
+
+        self.active_entry = Some(origin.active_entry(workspace));
+        if let SplitOrigin::Terminal(metadata) = &origin {
+            self.record_terminal_access(metadata.terminal_id);
+        }
+        multi_workspace.update(cx, |multi_workspace, cx| {
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+        });
+
+        let split = move |panel: Entity<AgentPanel>,
+                          workspace: Option<&Workspace>,
+                          window: &mut Window,
+                          cx: &mut App| {
+            panel.update(cx, |panel, cx| {
+                let split_parent = origin.split_key();
+                origin.open_in_center(panel, workspace, window, cx);
+                panel.create_entry_in_center(
+                    kind,
+                    workspace,
+                    Some(SplitDirection::Right),
+                    Some(split_parent),
+                    window,
+                    cx,
+                );
+            });
+        };
+
+        if let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) {
+            split(panel, None, window, cx);
+        } else {
+            let workspace = workspace.downgrade();
+            let mut async_window_cx = window.to_async(cx);
+            cx.spawn(async move |_this, _cx| {
+                let panel = AgentPanel::load(workspace.clone(), async_window_cx.clone()).await?;
+                workspace.update_in(&mut async_window_cx, |workspace, window, cx| {
+                    let panel = workspace.panel::<AgentPanel>(cx).unwrap_or_else(|| {
+                        workspace.add_panel(panel.clone(), window, cx);
+                        panel.clone()
+                    });
+                    split(panel, Some(workspace), window, cx);
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+        }
+
+        self.update_entries(cx);
+    }
+
     fn open_closed_native_thread_as_markdown(
         session_id: &acp::SessionId,
         title: Option<SharedString>,
@@ -3860,9 +4176,19 @@ impl Sidebar {
         };
 
         if self.is_thread_active_in_workspace(&metadata.thread_id, workspace, cx) {
-            workspace.update(cx, |workspace, cx| {
-                workspace.focus_panel::<AgentPanel>(window, cx);
-            });
+            let focused_center = workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|panel| {
+                    panel.update(cx, |panel, cx| {
+                        panel.focus_thread_in_center(metadata.thread_id, window, cx)
+                    })
+                });
+            if !focused_center {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.focus_panel::<AgentPanel>(window, cx);
+                });
+            }
             return;
         }
 
@@ -3883,6 +4209,20 @@ impl Sidebar {
                 multi_workspace.retain_active_workspace(cx);
             }
         });
+
+        let focused_center = workspace
+            .read(cx)
+            .panel::<AgentPanel>(cx)
+            .is_some_and(|panel| {
+                panel.update(cx, |panel, cx| {
+                    panel.focus_thread_in_center(metadata.thread_id, window, cx)
+                })
+            });
+        if focused_center {
+            self.pending_thread_activation = None;
+            self.update_entries(cx);
+            return;
+        }
 
         Self::load_agent_thread_in_workspace(workspace, metadata, true, window, cx);
 
@@ -4590,6 +4930,19 @@ impl Sidebar {
                 multi_workspace.retain_active_workspace(cx);
             }
         });
+
+        let focused_center = workspace
+            .read(cx)
+            .panel::<AgentPanel>(cx)
+            .is_some_and(|panel| {
+                panel.update(cx, |panel, cx| {
+                    panel.focus_terminal_in_center(terminal_id, window, cx)
+                })
+            });
+        if focused_center {
+            self.update_entries(cx);
+            return;
+        }
 
         Self::load_agent_terminal_in_workspace(workspace, &metadata, true, window, cx);
 
@@ -5711,12 +6064,125 @@ impl Sidebar {
         metadata.interacted_at.unwrap_or(metadata.updated_at)
     }
 
+    /// Reorders a group's rows so that an entry created by splitting sits
+    /// directly beneath the entry it was split from, indented one level. Rows
+    /// whose parent is not in this group stay at the top level, and a parent
+    /// chain that loops back on itself is left flat rather than recursed into.
+    fn nest_split_children(
+        entries: Vec<ListEntry>,
+        collapsed: &HashSet<SplitParent>,
+    ) -> Vec<ListEntry> {
+        fn key_of(entry: &ListEntry) -> Option<SplitParent> {
+            match entry {
+                ListEntry::Thread(thread) => Some(SplitParent::Thread(thread.metadata.thread_id)),
+                ListEntry::Terminal(terminal) => {
+                    Some(SplitParent::Terminal(terminal.metadata.terminal_id))
+                }
+                ListEntry::ProjectHeader { .. } => None,
+            }
+        }
+
+        fn parent_of(entry: &ListEntry) -> Option<SplitParent> {
+            match entry {
+                ListEntry::Thread(thread) => thread.metadata.split_parent,
+                ListEntry::Terminal(terminal) => terminal.metadata.split_parent,
+                ListEntry::ProjectHeader { .. } => None,
+            }
+        }
+
+        fn set_nesting(entry: &mut ListEntry, depth: usize, has_children: bool) {
+            match entry {
+                ListEntry::Thread(thread) => {
+                    let thread = Arc::make_mut(thread);
+                    thread.depth = depth;
+                    thread.has_split_children = has_children;
+                }
+                ListEntry::Terminal(terminal) => {
+                    terminal.depth = depth;
+                    terminal.has_split_children = has_children;
+                }
+                ListEntry::ProjectHeader { .. } => {}
+            }
+        }
+
+        let present: HashSet<SplitParent> = entries.iter().filter_map(key_of).collect();
+        let mut children: HashMap<SplitParent, Vec<usize>> = HashMap::default();
+        let mut roots: Vec<usize> = Vec::new();
+        for (ix, entry) in entries.iter().enumerate() {
+            match parent_of(entry).filter(|parent| present.contains(parent)) {
+                Some(parent) => children.entry(parent).or_default().push(ix),
+                None => roots.push(ix),
+            }
+        }
+
+        let child_indices = |entry: &ListEntry| -> &[usize] {
+            key_of(entry)
+                .and_then(|key| children.get(&key))
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+        };
+
+        let mut hidden: HashSet<usize> = HashSet::new();
+        for (collapsed_ix, entry) in entries.iter().enumerate() {
+            if !key_of(entry).is_some_and(|key| collapsed.contains(&key)) {
+                continue;
+            }
+
+            let mut visited = HashSet::from([collapsed_ix]);
+            let mut stack = child_indices(entry).to_vec();
+            while let Some(ix) = stack.pop() {
+                if !visited.insert(ix) {
+                    continue;
+                }
+                hidden.insert(ix);
+                if let Some(entry) = entries.get(ix) {
+                    stack.extend(child_indices(entry).iter().copied());
+                }
+            }
+        }
+
+        let mut entries: Vec<Option<ListEntry>> = entries.into_iter().map(Some).collect();
+        let mut ordered = Vec::with_capacity(entries.len());
+        let mut stack: Vec<(usize, usize)> = roots.into_iter().rev().map(|ix| (ix, 0)).collect();
+        while let Some((ix, depth)) = stack.pop() {
+            // `take` doubles as the cycle guard: an entry reachable twice
+            // through a parent loop is emitted once and never revisited.
+            let Some(mut entry) = entries.get_mut(ix).and_then(Option::take) else {
+                continue;
+            };
+            let key = key_of(&entry);
+            let child_indices: Vec<usize> = key
+                .as_ref()
+                .and_then(|key| children.get(key))
+                .cloned()
+                .unwrap_or_default();
+            set_nesting(&mut entry, depth, !child_indices.is_empty());
+            ordered.push(entry);
+            if key.is_some_and(|key| collapsed.contains(&key)) {
+                continue;
+            }
+            stack.extend(child_indices.iter().rev().map(|ix| (*ix, depth + 1)));
+        }
+
+        // Whatever is left sat in a parent cycle, so no root ever reached it.
+        // Keep those rows visible rather than dropping them from the sidebar.
+        for (ix, entry) in entries.into_iter().enumerate() {
+            if let Some(entry) = entry
+                && !hidden.contains(&ix)
+            {
+                ordered.push(entry);
+            }
+        }
+        ordered
+    }
+
     fn push_entries_by_display_time(
         entries: &mut Vec<ListEntry>,
         terminals: Vec<TerminalEntry>,
         threads: Vec<Arc<ThreadEntry>>,
         current_session_ids: &mut HashSet<acp::SessionId>,
         current_thread_ids: &mut HashSet<agent_ui::ThreadId>,
+        collapsed_splits: &HashSet<SplitParent>,
     ) {
         fn display_time(entry: &ListEntry) -> DateTime<Utc> {
             match entry {
@@ -5733,9 +6199,10 @@ impl Sidebar {
             .into_iter()
             .map(ListEntry::Terminal)
             .chain(threads.into_iter().map(ListEntry::Thread))
-            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)));
+            .sorted_by_key(|right| std::cmp::Reverse(display_time(right)))
+            .collect::<Vec<_>>();
 
-        for entry in row_entries {
+        for entry in Sidebar::nest_split_children(row_entries, collapsed_splits) {
             if let ListEntry::Thread(thread) = &entry {
                 if let Some(session_id) = &thread.metadata.session_id {
                     current_session_ids.insert(session_id.clone());
@@ -6120,6 +6587,7 @@ impl Sidebar {
         let title: SharedString = thread.metadata.display_title();
         let metadata = thread.metadata.clone();
         let thread_workspace = thread.workspace.clone();
+        let center_workspace = thread.workspace.clone();
 
         let is_hovered = self.hovered_thread_index == Some(ix);
         let is_selected = is_active;
@@ -6167,7 +6635,17 @@ impl Sidebar {
                 .regenerating_titles
                 .contains(&thread.metadata.thread_id);
 
+        let split_key = SplitParent::Thread(thread.metadata.thread_id);
         let thread_item = ThreadItem::new(id, title.clone())
+            .indent_level(thread.depth)
+            .when(thread.has_split_children, |this| {
+                this.split_toggle(
+                    !self.collapsed_splits.contains(&split_key),
+                    cx.listener(move |this, _, _window, cx| {
+                        this.toggle_split_collapsed(split_key, cx);
+                    }),
+                )
+            })
             .base_bg(sidebar_bg)
             .icon(icon)
             .when(is_draft, |this| {
@@ -6359,6 +6837,7 @@ impl Sidebar {
         let is_zed_thread = thread.metadata.agent_id.as_ref() == ZED_AGENT_ID.as_ref();
         let can_open_as_markdown = thread.is_live || is_zed_thread;
         let folder_paths = thread.metadata.folder_paths().clone();
+        let center_metadata = thread.metadata.clone();
 
         right_click_menu(context_menu_id)
             .trigger(move |_, _, _| thread_item)
@@ -6374,6 +6853,8 @@ impl Sidebar {
                     let markdown_title = markdown_title.clone();
                     let rename_title = rename_title.clone();
                     let folder_paths = folder_paths.clone();
+                    let center_metadata = center_metadata.clone();
+                    let center_workspace = center_workspace.clone();
                     ContextMenu::build(_window, cx, move |mut menu, _window, _cx| {
                         menu = menu.entry("Rename Title", None, {
                             let sidebar = sidebar.clone();
@@ -6414,6 +6895,14 @@ impl Sidebar {
                                 }
                             });
                         }
+
+                        menu = Self::add_split_submenu(
+                            menu,
+                            &sidebar,
+                            SplitOrigin::Thread(center_metadata.clone()),
+                            center_workspace.clone(),
+                            _cx,
+                        );
 
                         if can_open_as_markdown {
                             menu = menu.entry("Open Thread as Markdown", None, {
@@ -6486,6 +6975,8 @@ impl Sidebar {
             .blend(color.panel_background.opacity(0.25));
         let metadata = terminal.metadata.clone();
         let workspace = terminal.workspace.clone();
+        let center_metadata = terminal.metadata.clone();
+        let center_workspace = terminal.workspace.clone();
         let focus_handle = self.focus_handle.clone();
         let worktrees = apply_worktree_label_mode(
             terminal.worktrees.clone(),
@@ -6500,7 +6991,17 @@ impl Sidebar {
                 None => (None, display_title, terminal.highlight_positions.clone()),
             };
 
-        ThreadItem::new(id, title)
+        let split_key = SplitParent::Terminal(terminal.metadata.terminal_id);
+        let terminal_item = ThreadItem::new(id, title)
+            .indent_level(terminal.depth)
+            .when(terminal.has_split_children, |this| {
+                this.split_toggle(
+                    !self.collapsed_splits.contains(&split_key),
+                    cx.listener(move |this, _, _window, cx| {
+                        this.toggle_split_collapsed(split_key, cx);
+                    }),
+                )
+            })
             .base_bg(sidebar_bg)
             .icon(IconName::Terminal)
             .when_some(icon_char, |this, icon_char| this.icon_char(icon_char))
@@ -6553,7 +7054,25 @@ impl Sidebar {
                         cx,
                     );
                 }
-            }))
+            }));
+
+        let sidebar = cx.weak_entity();
+        right_click_menu(SharedString::from(format!("terminal-context-menu-{ix}")))
+            .trigger(move |_, _, _| terminal_item)
+            .menu(move |window, cx| {
+                let sidebar = sidebar.clone();
+                let workspace = center_workspace.clone();
+                let metadata = center_metadata.clone();
+                ContextMenu::build(window, cx, move |menu, _window, cx| {
+                    Self::add_split_submenu(
+                        menu,
+                        &sidebar,
+                        SplitOrigin::Terminal(metadata.clone()),
+                        workspace.clone(),
+                        cx,
+                    )
+                })
+            })
             .into_any_element()
     }
 

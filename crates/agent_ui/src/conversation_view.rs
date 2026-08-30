@@ -71,7 +71,8 @@ use util::{
     time::duration_alt_display,
 };
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Workspace, path_link::sanitize_path_text,
+    CollaboratorId, Item, MultiWorkspace, NewTerminal, PathList, Workspace,
+    path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
 
@@ -113,6 +114,58 @@ mod thread_search_bar;
 mod thread_view;
 pub use message_queue::*;
 pub use thread_view::*;
+
+/// Adapts an agent conversation so it can live in a workspace pane.
+///
+/// The agent panel and workspace pane share the same `ConversationView` entity. The panel moves
+/// that entity into this item instead of creating a second view for the same thread.
+pub struct ConversationPane {
+    conversation_view: Entity<ConversationView>,
+    thread_id: ThreadId,
+}
+
+impl ConversationPane {
+    pub fn new(conversation_view: Entity<ConversationView>, thread_id: ThreadId) -> Self {
+        Self {
+            conversation_view,
+            thread_id,
+        }
+    }
+
+    pub fn thread_id(&self) -> ThreadId {
+        self.thread_id
+    }
+
+    pub fn conversation_view(&self) -> &Entity<ConversationView> {
+        &self.conversation_view
+    }
+}
+
+impl Item for ConversationPane {
+    type Event = ();
+
+    fn include_in_nav_history() -> bool {
+        false
+    }
+
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        self.conversation_view.read(cx).title(cx)
+    }
+}
+
+impl EventEmitter<()> for ConversationPane {}
+
+impl Focusable for ConversationPane {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.conversation_view.read(cx).focus_handle(cx)
+    }
+}
+
+impl Render for ConversationPane {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().size_full().child(self.conversation_view.clone())
+    }
+}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -2861,7 +2914,8 @@ impl ConversationView {
         let multi_workspace = multi_workspace.read(cx);
         multi_workspace.sidebar_open() && multi_workspace.is_threads_list_view_active(cx)
             || multi_workspace.workspace() == &workspace
-                && self.is_visible_in_agent_panel(&workspace, cx)
+                && (self.is_visible_in_agent_panel(&workspace, cx)
+                    || self.is_visible_in_center(&workspace, cx))
     }
 
     fn is_visible_in_agent_panel(&self, workspace: &Entity<Workspace>, cx: &Context<Self>) -> bool {
@@ -2878,6 +2932,15 @@ impl ConversationView {
                 })
     }
 
+    fn is_visible_in_center(&self, workspace: &Entity<Workspace>, cx: &Context<Self>) -> bool {
+        workspace.read(cx).panes().iter().any(|pane| {
+            pane.read(cx)
+                .active_item()
+                .and_then(|item| item.to_any_view().downcast::<ConversationPane>().ok())
+                .is_some_and(|item| item.read(cx).conversation_view().entity_id() == cx.entity_id())
+        })
+    }
+
     fn agent_status_visible(&self, window: &Window, cx: &Context<Self>) -> bool {
         if !window.is_window_active() {
             return false;
@@ -2886,9 +2949,10 @@ impl ConversationView {
         if let Some(multi_workspace) = window.root::<MultiWorkspace>().flatten() {
             self.is_visible(&multi_workspace, cx)
         } else {
-            self.workspace
-                .upgrade()
-                .is_some_and(|workspace| self.is_visible_in_agent_panel(&workspace, cx))
+            self.workspace.upgrade().is_some_and(|workspace| {
+                self.is_visible_in_agent_panel(&workspace, cx)
+                    || self.is_visible_in_center(&workspace, cx)
+            })
         }
     }
 
@@ -2898,9 +2962,10 @@ impl ConversationView {
             && if let Some(mw) = window.root::<MultiWorkspace>().flatten() {
                 self.is_visible(&mw, cx)
             } else {
-                self.workspace
-                    .upgrade()
-                    .is_some_and(|workspace| self.is_visible_in_agent_panel(&workspace, cx))
+                self.workspace.upgrade().is_some_and(|workspace| {
+                    self.is_visible_in_agent_panel(&workspace, cx)
+                        || self.is_visible_in_center(&workspace, cx)
+                })
             };
         let settings = AgentSettings::get_global(cx);
         if settings.play_sound_when_agent_done.should_play(visible) {
@@ -4714,6 +4779,7 @@ pub(crate) mod tests {
                         worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
                         remote_connection: None,
                         archived: false,
+                        split_parent: None,
                     },
                     cx,
                 );

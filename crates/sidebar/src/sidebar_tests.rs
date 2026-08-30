@@ -458,6 +458,7 @@ fn save_thread_metadata(
             worktree_paths,
             archived: false,
             remote_connection,
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
@@ -494,6 +495,7 @@ fn save_thread_metadata_with_main_paths(
         worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
         archived: false,
         remote_connection: None,
+        split_parent: None,
     };
     cx.update(|cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
@@ -521,6 +523,7 @@ fn save_draft_metadata_with_main_paths(
         worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, folder_paths).unwrap(),
         archived: false,
         remote_connection: None,
+        split_parent: None,
     };
     cx.update(|cx| {
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
@@ -1095,6 +1098,182 @@ async fn test_collapse_state_survives_worktree_key_change(cx: &mut TestAppContex
 }
 
 #[gpui::test]
+async fn test_split_children_nest_under_their_origin(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let root_thread_id = ThreadId::new();
+    let child_terminal_id = TerminalId::new();
+
+    let thread = |title: &str, thread_id: ThreadId, split_parent: Option<SplitParent>| {
+        ListEntry::Thread(Arc::new(ThreadEntry {
+            metadata: ThreadMetadata {
+                thread_id,
+                session_id: Some(acp::SessionId::new(Arc::from(title))),
+                agent_id: AgentId::new("zed-agent"),
+                worktree_paths: WorktreePaths::default(),
+                title: Some(title.to_string().into()),
+                title_override: None,
+                updated_at: Utc::now(),
+                created_at: Some(Utc::now()),
+                interacted_at: None,
+                archived: false,
+                remote_connection: None,
+                split_parent,
+            },
+            icon: IconName::ZedAgent,
+            icon_from_external_svg: None,
+            status: AgentThreadStatus::Completed,
+            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+            is_live: false,
+            is_background: false,
+            is_title_generating: false,
+            draft: None,
+            highlight_positions: Vec::new(),
+            worktrees: Vec::new(),
+            diff_stats: DiffStats::default(),
+            depth: 0,
+            has_split_children: false,
+        }))
+    };
+    let terminal = |title: &str, terminal_id: TerminalId, split_parent: Option<SplitParent>| {
+        ListEntry::Terminal(TerminalEntry {
+            metadata: TerminalThreadMetadata {
+                terminal_id,
+                title: title.to_string().into(),
+                custom_title: None,
+                created_at: Utc::now(),
+                worktree_paths: WorktreePaths::default(),
+                remote_connection: None,
+                working_directory: None,
+                split_parent,
+            },
+            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+            worktrees: Vec::new(),
+            has_notification: false,
+            highlight_positions: Vec::new(),
+            depth: 0,
+            has_split_children: false,
+        })
+    };
+
+    let describe = |entries: &[ListEntry]| -> Vec<(String, usize, bool)> {
+        entries
+            .iter()
+            .map(|entry| match entry {
+                ListEntry::Thread(thread) => (
+                    thread.metadata.display_title().to_string(),
+                    thread.depth,
+                    thread.has_split_children,
+                ),
+                ListEntry::Terminal(terminal) => (
+                    terminal.metadata.display_title().to_string(),
+                    terminal.depth,
+                    terminal.has_split_children,
+                ),
+                ListEntry::ProjectHeader { label, .. } => (label.to_string(), 0, false),
+            })
+            .collect()
+    };
+
+    // Deliberately out of tree order: an unrelated row sits between the root
+    // and the rows split off from it.
+    let entries = vec![
+        thread("root", root_thread_id, None),
+        thread("unrelated", ThreadId::new(), None),
+        terminal(
+            "child",
+            child_terminal_id,
+            Some(SplitParent::Thread(root_thread_id)),
+        ),
+        thread(
+            "grandchild",
+            ThreadId::new(),
+            Some(SplitParent::Terminal(child_terminal_id)),
+        ),
+    ];
+
+    let nested = Sidebar::nest_split_children(entries.clone(), &HashSet::new());
+    assert_eq!(
+        describe(&nested),
+        vec![
+            ("root".to_string(), 0, true),
+            ("child".to_string(), 1, true),
+            ("grandchild".to_string(), 2, false),
+            ("unrelated".to_string(), 0, false),
+        ]
+    );
+
+    // Collapsing the root hides its whole subtree, not just its direct child.
+    let collapsed = HashSet::from([SplitParent::Thread(root_thread_id)]);
+    let nested = Sidebar::nest_split_children(entries, &collapsed);
+    assert_eq!(
+        describe(&nested),
+        vec![
+            ("root".to_string(), 0, true),
+            ("unrelated".to_string(), 0, false),
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_split_parent_cycle_leaves_rows_visible(cx: &mut TestAppContext) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let first_id = TerminalId::new();
+    let second_id = TerminalId::new();
+    let terminal = |title: &str, terminal_id: TerminalId, split_parent: Option<SplitParent>| {
+        ListEntry::Terminal(TerminalEntry {
+            metadata: TerminalThreadMetadata {
+                terminal_id,
+                title: title.to_string().into(),
+                custom_title: None,
+                created_at: Utc::now(),
+                worktree_paths: WorktreePaths::default(),
+                remote_connection: None,
+                working_directory: None,
+                split_parent,
+            },
+            workspace: ThreadEntryWorkspace::Open(workspace.clone()),
+            worktrees: Vec::new(),
+            has_notification: false,
+            highlight_positions: Vec::new(),
+            depth: 0,
+            has_split_children: false,
+        })
+    };
+
+    let entries = vec![
+        terminal("first", first_id, Some(SplitParent::Terminal(second_id))),
+        terminal("second", second_id, Some(SplitParent::Terminal(first_id))),
+    ];
+
+    let nested = Sidebar::nest_split_children(entries.clone(), &HashSet::new());
+    assert_eq!(
+        nested.len(),
+        2,
+        "rows in a split-parent cycle must stay visible rather than vanish"
+    );
+
+    let collapsed = HashSet::from([SplitParent::Terminal(first_id)]);
+    let nested = Sidebar::nest_split_children(entries, &collapsed);
+    assert_eq!(
+        nested.len(),
+        1,
+        "a collapsed row in a cycle must remain visible"
+    );
+    assert!(matches!(
+        &nested[0],
+        ListEntry::Terminal(terminal) if terminal.metadata.terminal_id == first_id
+    ));
+}
+
+#[gpui::test]
 async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -1126,6 +1305,7 @@ async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAp
                 interacted_at: None,
                 archived: false,
                 remote_connection: None,
+                split_parent: None,
             },
             icon: IconName::ZedAgent,
             icon_from_external_svg: None,
@@ -1138,6 +1318,8 @@ async fn test_neighboring_activatable_entry_stays_within_project(cx: &mut TestAp
             highlight_positions: Vec::new(),
             worktrees: Vec::new(),
             diff_stats: DiffStats::default(),
+            depth: 0,
+            has_split_children: false,
         }))
     };
 
@@ -1218,6 +1400,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     interacted_at: None,
                     archived: false,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -1230,6 +1413,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                depth: 0,
+                has_split_children: false,
             })),
             // Active thread with Running status
             ListEntry::Thread(Arc::new(ThreadEntry {
@@ -1245,6 +1430,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     interacted_at: None,
                     archived: false,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -1257,6 +1443,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                depth: 0,
+                has_split_children: false,
             })),
             // Active thread with Error status
             ListEntry::Thread(Arc::new(ThreadEntry {
@@ -1272,6 +1460,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     interacted_at: None,
                     archived: false,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -1284,6 +1473,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                depth: 0,
+                has_split_children: false,
             })),
             // Thread with WaitingForConfirmation status, not active
             // remote_connection: None,
@@ -1300,6 +1491,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     interacted_at: None,
                     archived: false,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -1312,6 +1504,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                depth: 0,
+                has_split_children: false,
             })),
             // Background thread that completed (should show notification)
             // remote_connection: None,
@@ -1328,6 +1522,7 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                     interacted_at: None,
                     archived: false,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 icon: IconName::ZedAgent,
                 icon_from_external_svg: None,
@@ -1340,6 +1535,8 @@ async fn test_visible_entries_as_strings(cx: &mut TestAppContext) {
                 highlight_positions: Vec::new(),
                 worktrees: Vec::new(),
                 diff_stats: DiffStats::default(),
+                depth: 0,
+                has_split_children: false,
             })),
             // Collapsed project header
             ListEntry::ProjectHeader {
@@ -1803,6 +2000,35 @@ fn setup_sidebar_with_agent_panel(
 }
 
 #[gpui::test]
+async fn test_center_thread_updates_sidebar_active_entry(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    open_thread_with_connection(&panel, StubAgentConnection::new(), cx);
+    let thread_id = active_thread_id(&panel, cx);
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.open_thread_in_center(thread_id, None, window, cx));
+    });
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        assert!(matches!(
+            &sidebar.active_entry,
+            Some(ActiveEntry::Thread {
+                thread_id: active_thread_id,
+                workspace: active_workspace,
+                ..
+            }) if *active_thread_id == thread_id && active_workspace == &workspace
+        ));
+    });
+}
+
+#[gpui::test]
 async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -2027,6 +2253,7 @@ async fn test_terminal_metadata_is_deduped_across_project_groups(cx: &mut TestAp
         .unwrap(),
         remote_connection: None,
         working_directory: None,
+        split_parent: None,
     };
 
     cx.update(|_, cx| {
@@ -3258,6 +3485,7 @@ async fn test_thread_switcher_includes_terminal_metadata_for_open_project_group(
         .unwrap(),
         remote_connection: None,
         working_directory: None,
+        split_parent: None,
     };
     cx.update(|_, cx| {
         TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
@@ -3365,6 +3593,7 @@ async fn test_thread_switcher_preserves_closed_terminal_linked_worktree_workspac
         .unwrap(),
         remote_connection: None,
         working_directory: None,
+        split_parent: None,
     };
     cx.update(|_, cx| {
         TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
@@ -3513,6 +3742,7 @@ async fn test_archive_selected_terminal_archives_closed_linked_worktree(cx: &mut
         .unwrap(),
         remote_connection: None,
         working_directory: None,
+        split_parent: None,
     };
     cx.update(|_, cx| {
         TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
@@ -7578,6 +7808,7 @@ async fn test_sidebar_keeps_multi_root_thread_with_stale_main_paths(cx: &mut Tes
                     worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
                     archived: false,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 cx,
             )
@@ -7661,6 +7892,7 @@ async fn test_activate_archived_thread_with_saved_paths_activates_matching_works
                 )])),
                 archived: false,
                 remote_connection: None,
+                split_parent: None,
             },
             window,
             cx,
@@ -7731,6 +7963,7 @@ async fn test_activate_archived_thread_cwd_fallback_with_matching_workspace(
                 ])),
                 archived: false,
                 remote_connection: None,
+                split_parent: None,
             },
             window,
             cx,
@@ -7797,6 +8030,7 @@ async fn test_activate_archived_thread_no_paths_no_cwd_uses_active_workspace(
                 worktree_paths: WorktreePaths::default(),
                 archived: false,
                 remote_connection: None,
+                split_parent: None,
             },
             window,
             cx,
@@ -7855,6 +8089,7 @@ async fn test_activate_archived_thread_saved_paths_opens_new_workspace(cx: &mut 
                 worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                 archived: false,
                 remote_connection: None,
+                split_parent: None,
             },
             window,
             cx,
@@ -7914,6 +8149,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window(cx: &m
                 )])),
                 archived: false,
                 remote_connection: None,
+                split_parent: None,
             },
             window,
             cx,
@@ -7993,6 +8229,7 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
         )])),
         archived: false,
         remote_connection: None,
+        split_parent: None,
     };
     seed_thread_metadata(metadata.clone(), cx_a);
 
@@ -8076,6 +8313,7 @@ async fn test_activate_archived_thread_prefers_current_window_for_matching_paths
         )])),
         archived: false,
         remote_connection: None,
+        split_parent: None,
     };
     seed_thread_metadata(metadata.clone(), cx_a);
 
@@ -8406,6 +8644,7 @@ async fn test_archive_last_worktree_thread_removes_workspace(cx: &mut TestAppCon
             )])),
             archived: false,
             remote_connection: Some(remote_host),
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
@@ -9060,6 +9299,7 @@ async fn test_archive_last_worktree_thread_not_blocked_by_remote_thread_at_same_
             )])),
             archived: false,
             remote_connection: Some(remote_host),
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.save(metadata, cx);
@@ -9873,6 +10113,7 @@ async fn test_unarchive_first_thread_in_group_does_not_create_spurious_draft(
                     worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                     archived: true,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 cx,
             )
@@ -9967,6 +10208,7 @@ async fn test_unarchive_into_new_workspace_does_not_create_duplicate_real_thread
                     worktree_paths: WorktreePaths::from_folder_paths(&path_list_b),
                     archived: true,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 cx,
             )
@@ -10196,6 +10438,7 @@ async fn test_unarchive_into_inactive_existing_workspace_does_not_leave_active_d
                     ])),
                     archived: true,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 cx,
             )
@@ -11049,6 +11292,7 @@ async fn test_unarchive_linked_worktree_thread_into_project_group_shows_only_res
                     .expect("main and folder paths should be well-formed"),
                     archived: true,
                     remote_connection: None,
+                    split_parent: None,
                 },
                 cx,
             )
@@ -11598,6 +11842,7 @@ async fn test_legacy_thread_with_canonical_path_opens_main_repo_workspace(cx: &m
             )])),
             archived: false,
             remote_connection: None,
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
@@ -12586,6 +12831,7 @@ mod property_test {
             worktree_paths: WorktreePaths::from_path_lists(main_worktree_paths, path_list).unwrap(),
             archived: false,
             remote_connection: None,
+            split_parent: None,
         };
         cx.update(|_, cx| {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx))
@@ -12659,6 +12905,7 @@ mod property_test {
                         worktree_paths: project.read(cx).worktree_paths(cx),
                         archived: false,
                         remote_connection: project.read(cx).remote_connection_options(cx),
+                        split_parent: None,
                     });
                     cx.update(|_, cx| {
                         ThreadMetadataStore::global(cx)
@@ -13527,6 +13774,7 @@ async fn test_remote_project_integration_does_not_briefly_render_as_separate_pro
             .unwrap(),
             archived: false,
             remote_connection,
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
@@ -14492,6 +14740,7 @@ async fn test_remote_archive_thread_with_active_connection(
             .unwrap(),
             archived: false,
             remote_connection,
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });
@@ -14633,6 +14882,7 @@ async fn test_remote_linked_worktree_workspace_to_remove_uses_remote_connection(
             .unwrap(),
             archived: false,
             remote_connection: Some(remote_connection.clone()),
+            split_parent: None,
         };
         ThreadMetadataStore::global(cx).update(cx, |store, cx| store.save(metadata, cx));
     });

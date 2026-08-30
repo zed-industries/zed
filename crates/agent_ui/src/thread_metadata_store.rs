@@ -57,6 +57,34 @@ impl Column for ThreadId {
     }
 }
 
+/// The sidebar entry a thread or terminal was split off from, so the sidebar
+/// can nest it under its origin.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum SplitParent {
+    Thread(ThreadId),
+    Terminal(crate::TerminalId),
+}
+
+impl SplitParent {
+    pub fn to_key_string(&self) -> String {
+        match self {
+            Self::Thread(thread_id) => format!("thread:{}", thread_id.to_key_string()),
+            Self::Terminal(terminal_id) => format!("terminal:{}", terminal_id.to_key_string()),
+        }
+    }
+
+    pub fn from_key_string(value: &str) -> anyhow::Result<Self> {
+        let (kind, id) = value
+            .split_once(':')
+            .with_context(|| format!("split parent key {value:?} is missing a kind prefix"))?;
+        match kind {
+            "thread" => Ok(Self::Thread(ThreadId(uuid::Uuid::parse_str(id)?))),
+            "terminal" => Ok(Self::Terminal(crate::TerminalId::from_key_string(id)?)),
+            _ => anyhow::bail!("unknown split parent kind {kind:?} in key {value:?}"),
+        }
+    }
+}
+
 const THREAD_REMOTE_CONNECTION_MIGRATION_KEY: &str = "thread-metadata-remote-connection-backfill";
 const THREAD_ID_MIGRATION_KEY: &str = "thread-metadata-thread-id-backfill";
 
@@ -142,6 +170,7 @@ fn migrate_thread_metadata(cx: &mut App) -> Task<anyhow::Result<()>> {
                         worktree_paths: WorktreePaths::from_folder_paths(&entry.folder_paths),
                         remote_connection: None,
                         archived: true,
+                        split_parent: None,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -323,6 +352,7 @@ pub struct ThreadMetadata {
     pub worktree_paths: WorktreePaths,
     pub remote_connection: Option<RemoteConnectionOptions>,
     pub archived: bool,
+    pub split_parent: Option<SplitParent>,
 }
 
 impl ThreadMetadata {
@@ -507,6 +537,9 @@ pub struct ThreadMetadataStore {
     conversation_subscriptions: HashMap<gpui::EntityId, Subscription>,
     pending_thread_ops_tx: async_channel::Sender<DbOperation>,
     in_flight_archives: HashMap<ThreadId, (Task<()>, async_channel::Sender<()>)>,
+    /// Split links recorded before their thread had a metadata row, applied by
+    /// [`Self::handle_conversation_event`] when that row is first written.
+    pending_split_parents: HashMap<ThreadId, SplitParent>,
     _db_operations_task: Task<()>,
 }
 
@@ -855,6 +888,26 @@ impl ThreadMetadataStore {
         };
     }
 
+    /// Records which entry `thread_id` was split off from. A brand-new draft
+    /// has no metadata row until its first conversation event, so the link is
+    /// held here until that row is written.
+    pub fn set_split_parent(
+        &mut self,
+        thread_id: ThreadId,
+        parent: SplitParent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(thread) = self.threads.get(&thread_id) else {
+            self.pending_split_parents.insert(thread_id, parent);
+            return;
+        };
+        self.save_internal(ThreadMetadata {
+            split_parent: Some(parent),
+            ..thread.clone()
+        });
+        cx.notify();
+    }
+
     pub fn archive(
         &mut self,
         thread_id: ThreadId,
@@ -1155,6 +1208,7 @@ impl ThreadMetadataStore {
             }
         }
         self.threads.remove(&thread_id);
+        self.pending_split_parents.remove(&thread_id);
         self.pending_thread_ops_tx
             .try_send(DbOperation::Delete(thread_id))
             .log_err();
@@ -1245,6 +1299,7 @@ impl ThreadMetadataStore {
             conversation_subscriptions: HashMap::default(),
             pending_thread_ops_tx: tx,
             in_flight_archives: HashMap::default(),
+            pending_split_parents: HashMap::default(),
             _db_operations_task,
         };
         let _ = this.reload(cx);
@@ -1350,6 +1405,9 @@ impl ThreadMetadataStore {
             worktree_paths,
             remote_connection,
             archived,
+            split_parent: existing_thread
+                .and_then(|thread| thread.split_parent)
+                .or_else(|| self.pending_split_parents.remove(&thread_id)),
         };
 
         self.save(metadata, cx);
@@ -1462,6 +1520,9 @@ impl Domain for ThreadMetadataDb {
         sql!(
             ALTER TABLE sidebar_threads ADD COLUMN title_override TEXT;
         ),
+        sql!(
+            ALTER TABLE sidebar_threads ADD COLUMN split_parent TEXT;
+        ),
     ];
 }
 
@@ -1478,7 +1539,7 @@ impl ThreadMetadataDb {
 
     const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
         created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
-        main_worktree_paths_order, remote_connection, title_override \
+        main_worktree_paths_order, remote_connection, title_override, split_parent \
         FROM sidebar_threads \
         ORDER BY updated_at DESC";
 
@@ -1529,12 +1590,13 @@ impl ThreadMetadataDb {
             .transpose()
             .context("serialize thread metadata remote connection")?;
         let title_override = row.title_override.as_ref().map(|t| t.to_string());
+        let split_parent = row.split_parent.map(|parent| parent.to_key_string());
         let thread_id = row.thread_id;
         let archived = row.archived;
 
         self.write(move |conn| {
-            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override) \
-                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+            let sql = "INSERT INTO sidebar_threads(thread_id, session_id, agent_id, title, updated_at, created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, main_worktree_paths_order, remote_connection, title_override, split_parent) \
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
                        ON CONFLICT(thread_id) DO UPDATE SET \
                            session_id = excluded.session_id, \
                            agent_id = excluded.agent_id, \
@@ -1548,7 +1610,8 @@ impl ThreadMetadataDb {
                            main_worktree_paths = excluded.main_worktree_paths, \
                            main_worktree_paths_order = excluded.main_worktree_paths_order, \
                            remote_connection = excluded.remote_connection, \
-                           title_override = excluded.title_override";
+                           title_override = excluded.title_override, \
+                           split_parent = excluded.split_parent";
             let mut stmt = Statement::prepare(conn, sql)?;
             let mut i = stmt.bind(&thread_id, 1)?;
             i = stmt.bind(&session_id, i)?;
@@ -1563,7 +1626,8 @@ impl ThreadMetadataDb {
             i = stmt.bind(&main_worktree_paths, i)?;
             i = stmt.bind(&main_worktree_paths_order, i)?;
             i = stmt.bind(&remote_connection, i)?;
-            stmt.bind(&title_override, i)?;
+            i = stmt.bind(&title_override, i)?;
+            stmt.bind(&split_parent, i)?;
             stmt.exec()
         })
         .await
@@ -1721,6 +1785,11 @@ impl Column for ThreadMetadata {
         let (remote_connection_json, next): (Option<String>, i32) =
             Column::column(statement, next)?;
         let (title_override, next): (Option<String>, i32) = Column::column(statement, next)?;
+        let (split_parent, next): (Option<String>, i32) = Column::column(statement, next)?;
+
+        let split_parent = split_parent
+            .as_deref()
+            .and_then(|value| SplitParent::from_key_string(value).log_err());
 
         let agent_id = agent_id
             .map(|id| AgentId::new(id))
@@ -1787,6 +1856,7 @@ impl Column for ThreadMetadata {
                 worktree_paths,
                 remote_connection,
                 archived,
+                split_parent,
             },
             next,
         ))
@@ -1877,6 +1947,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: WorktreePaths::from_folder_paths(&folder_paths),
             remote_connection: None,
+            split_parent: None,
         }
     }
 
@@ -1944,6 +2015,38 @@ mod tests {
         metadata.title_override = None;
         assert_eq!(metadata.title().as_deref(), Some("Agent Generated Title"));
         assert_eq!(metadata.display_title().as_ref(), "Agent Generated Title");
+    }
+
+    #[gpui::test]
+    async fn test_database_round_trips_split_parent(_cx: &mut TestAppContext) {
+        let mut metadata = make_metadata(
+            "session-1",
+            "Split Thread",
+            Utc::now(),
+            PathList::new(&[Path::new("/project-a")]),
+        );
+        let parent = SplitParent::Terminal(crate::TerminalId::new());
+        metadata.split_parent = Some(parent);
+
+        let thread = std::thread::current();
+        let test_name = thread.name().unwrap_or("unknown_test");
+        let db_name = format!("THREAD_METADATA_DB_{}", test_name);
+        let db = ThreadMetadataDb(gpui::block_on(db::open_test_db::<ThreadMetadataDb>(
+            &db_name,
+        )));
+
+        db.save(metadata)
+            .await
+            .expect("split thread metadata should save");
+
+        let rows = db.list().expect("split thread metadata should load");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows.first()
+                .expect("one metadata row should exist")
+                .split_parent,
+            Some(parent)
+        );
     }
 
     #[gpui::test]
@@ -2171,6 +2274,7 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&second_paths),
             remote_connection: None,
             archived: false,
+            split_parent: None,
         };
 
         cx.update(|cx| {
@@ -2256,6 +2360,7 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&project_a_paths),
             remote_connection: None,
             archived: false,
+            split_parent: None,
         };
 
         cx.update(|cx| {
@@ -2382,6 +2487,7 @@ mod tests {
             worktree_paths: WorktreePaths::from_folder_paths(&project_paths),
             remote_connection: None,
             archived: false,
+            split_parent: None,
         };
 
         cx.update(|cx| {
@@ -3126,6 +3232,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: linked_worktree_paths.clone(),
             remote_connection: None,
+            split_parent: None,
         };
 
         let remote_linked_thread = ThreadMetadata {
@@ -3140,6 +3247,7 @@ mod tests {
             interacted_at: None,
             worktree_paths: linked_worktree_paths,
             remote_connection: Some(remote_a.clone()),
+            split_parent: None,
         };
 
         cx.update(|cx| {

@@ -43,7 +43,9 @@ use crate::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, compose_terminal_thread_title,
     terminal_title_without_prefix,
 };
-use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
+use crate::thread_metadata_store::{
+    SplitParent, ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent,
+};
 use crate::{
     Agent, AgentInitialContent, AgentThreadSource, ExternalSourcePrompt, NewExternalAgentThread,
     NewNativeAgentThreadFromSummary,
@@ -98,7 +100,7 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    SplitDirection, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
     item::{ItemEvent, ItemHandle},
 };
@@ -164,7 +166,7 @@ impl MaxIdleRetainedThreads {
 pub struct TerminalId(uuid::Uuid);
 
 impl TerminalId {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self(uuid::Uuid::new_v4())
     }
 
@@ -181,6 +183,23 @@ impl fmt::Display for TerminalId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
     }
+}
+
+pub enum NewEntryIcon {
+    Named(IconName),
+    CustomSvg(SharedString),
+}
+
+#[derive(Clone)]
+pub enum NewEntryKind {
+    Terminal,
+    Thread(Agent),
+}
+
+pub struct NewEntryOption {
+    pub label: SharedString,
+    pub icon: NewEntryIcon,
+    pub kind: NewEntryKind,
 }
 
 #[derive(Clone, Debug)]
@@ -1169,6 +1188,12 @@ pub struct AgentPanel {
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
     terminals: HashMap<TerminalId, AgentTerminal>,
     pending_terminal_spawn: Option<TerminalId>,
+    pending_terminal_center_open: HashMap<TerminalId, Option<SplitDirection>>,
+    /// Split links for terminals created or restored in this session.
+    /// `terminal_metadata` rebuilds metadata from live terminal state on every
+    /// persist, so without this the link would be written away by the first
+    /// title change after a split.
+    terminal_split_parents: HashMap<TerminalId, SplitParent>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     _extension_subscription: Option<Subscription>,
@@ -1582,6 +1607,8 @@ impl AgentPanel {
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
             pending_terminal_spawn: None,
+            pending_terminal_center_open: HashMap::default(),
+            terminal_split_parents: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
 
@@ -2000,14 +2027,18 @@ impl AgentPanel {
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<TerminalId> {
         if !self.supports_terminal(cx) {
-            return;
+            return None;
         }
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Terminal, cx);
         let working_directory = self.terminal_working_directory(workspace, cx);
+        let terminal_id = TerminalId::new();
+        self.pending_terminal_spawn = Some(terminal_id);
+
+        #[cfg(not(test))]
         self.spawn_terminal(
-            TerminalId::new(),
+            terminal_id,
             working_directory,
             None,
             None,
@@ -2019,6 +2050,30 @@ impl AgentPanel {
             window,
             cx,
         );
+
+        #[cfg(test)]
+        if let Err(error) = self.insert_display_only_terminal(
+            terminal_id,
+            working_directory,
+            None,
+            None,
+            None,
+            true,
+            true,
+            true,
+            source,
+            window,
+            cx,
+        ) {
+            log::error!("failed to spawn test agent panel terminal: {error:#}");
+            if self.pending_terminal_spawn == Some(terminal_id) {
+                self.pending_terminal_spawn = None;
+            }
+            cx.notify();
+            return None;
+        }
+
+        Some(terminal_id)
     }
 
     fn terminal_working_directory(
@@ -2093,8 +2148,10 @@ impl AgentPanel {
                     this.update(cx, |this, cx| {
                         if this.pending_terminal_spawn == Some(terminal_id) {
                             this.pending_terminal_spawn = None;
-                            cx.notify();
                         }
+                        this.pending_terminal_center_open.remove(&terminal_id);
+                        this.terminal_split_parents.remove(&terminal_id);
+                        cx.notify();
                     })
                     .log_err();
                     return anyhow::Ok(());
@@ -2273,6 +2330,9 @@ impl AgentPanel {
         if select {
             self.set_base_view(BaseView::Terminal { terminal_id }, focus, window, cx);
         }
+        if let Some(split_direction) = self.pending_terminal_center_open.remove(&terminal_id) {
+            self.open_terminal_in_center(terminal_id, split_direction, window, cx);
+        }
         cx.emit(AgentPanelEvent::EntryChanged);
         cx.notify();
     }
@@ -2333,6 +2393,7 @@ impl AgentPanel {
         if self.terminals.remove(&terminal_id).is_none() {
             return;
         }
+        self.terminal_split_parents.remove(&terminal_id);
         if let Some(store) = TerminalThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| {
                 store.delete(terminal_id, cx);
@@ -2431,6 +2492,18 @@ impl AgentPanel {
             worktree_paths: project.worktree_paths(cx),
             remote_connection: project.remote_connection_options(cx),
             working_directory: terminal.working_directory.clone(),
+            split_parent: self
+                .terminal_split_parents
+                .get(&terminal_id)
+                .copied()
+                .or_else(|| {
+                    TerminalThreadMetadataStore::try_global(cx).and_then(|store| {
+                        store
+                            .read(cx)
+                            .entry(terminal_id)
+                            .and_then(|metadata| metadata.split_parent)
+                    })
+                }),
         })
     }
 
@@ -2453,6 +2526,10 @@ impl AgentPanel {
         }
 
         self.pending_terminal_spawn = Some(metadata.terminal_id);
+        if let Some(parent) = metadata.split_parent {
+            self.terminal_split_parents
+                .insert(metadata.terminal_id, parent);
+        }
         let working_directory = self.terminal_restore_working_directory(&metadata, workspace, cx);
         let initial_title = Self::terminal_restore_initial_title(&metadata);
         self.spawn_terminal(
@@ -2865,7 +2942,9 @@ impl AgentPanel {
         if !window.is_window_active() {
             return false;
         }
-        if !self.terminal_surface_visible(terminal_id) {
+        if !self.terminal_surface_visible(terminal_id)
+            && !self.terminal_center_visible(terminal_id, cx)
+        {
             return false;
         }
         let Some(workspace) = self.workspace.upgrade() else {
@@ -2877,7 +2956,26 @@ impl AgentPanel {
                 return false;
             }
         }
-        AgentPanel::is_visible(&workspace, cx)
+        AgentPanel::is_visible(&workspace, cx) || self.terminal_center_visible(terminal_id, cx)
+    }
+
+    fn terminal_center_visible(&self, terminal_id: TerminalId, cx: &App) -> bool {
+        let Some(terminal_view) = self
+            .terminals
+            .get(&terminal_id)
+            .map(|terminal| &terminal.view)
+        else {
+            return false;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        workspace.read(cx).panes().iter().any(|pane| {
+            pane.read(cx)
+                .active_item()
+                .and_then(|item| item.to_any_view().downcast::<TerminalView>().ok())
+                .is_some_and(|item| item.entity_id() == terminal_view.entity_id())
+        })
     }
 
     fn terminal_surface_visible(&self, terminal_id: TerminalId) -> bool {
@@ -4067,6 +4165,258 @@ impl AgentPanel {
         })
     }
 
+    pub fn new_entry_options(&self, cx: &App) -> Vec<NewEntryOption> {
+        let mut options = Vec::new();
+
+        if self.supports_terminal(cx) {
+            options.push(NewEntryOption {
+                label: "Terminal".into(),
+                icon: NewEntryIcon::Named(IconName::Terminal),
+                kind: NewEntryKind::Terminal,
+            });
+        }
+
+        options.push(NewEntryOption {
+            label: Agent::NativeAgent.label(),
+            icon: NewEntryIcon::Named(IconName::ZedAgent),
+            kind: NewEntryKind::Thread(Agent::NativeAgent),
+        });
+
+        if self.project.read(cx).is_via_collab() {
+            return options;
+        }
+
+        let agent_server_store = self.project.read(cx).agent_server_store().read(cx);
+        let registry_store = project::AgentRegistryStore::try_global(cx);
+        let registry_store = registry_store.as_ref().map(|store| store.read(cx));
+
+        let external_agents = agent_server_store
+            .external_agents()
+            .map(|agent_id| {
+                let display_name = agent_server_store
+                    .agent_display_name(agent_id)
+                    .or_else(|| {
+                        registry_store
+                            .as_ref()
+                            .and_then(|store| store.agent(agent_id))
+                            .map(|agent| agent.name().clone())
+                    })
+                    .unwrap_or_else(|| agent_id.0.clone());
+                let icon_path = agent_server_store.agent_icon(agent_id).or_else(|| {
+                    registry_store
+                        .as_ref()
+                        .and_then(|store| store.agent(agent_id))
+                        .and_then(|agent| agent.icon_path().cloned())
+                });
+                NewEntryOption {
+                    label: display_name,
+                    icon: icon_path
+                        .map(NewEntryIcon::CustomSvg)
+                        .unwrap_or(NewEntryIcon::Named(IconName::Sparkle)),
+                    kind: NewEntryKind::Thread(Agent::Custom {
+                        id: agent_id.clone(),
+                    }),
+                }
+            })
+            .sorted_unstable_by_key(|option| option.label.to_lowercase());
+
+        options.extend(external_agents);
+        options
+    }
+
+    pub fn create_entry_in_center(
+        &mut self,
+        kind: NewEntryKind,
+        workspace: Option<&Workspace>,
+        split_direction: Option<SplitDirection>,
+        split_parent: Option<SplitParent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match kind {
+            NewEntryKind::Terminal => {
+                let Some(terminal_id) =
+                    self.new_terminal(workspace, AgentThreadSource::Sidebar, window, cx)
+                else {
+                    return;
+                };
+                if let Some(parent) = split_parent {
+                    self.terminal_split_parents.insert(terminal_id, parent);
+                    self.persist_terminal_metadata(terminal_id, cx);
+                }
+                self.open_terminal_in_center(terminal_id, split_direction, window, cx);
+            }
+            NewEntryKind::Thread(agent) => {
+                if !self.has_open_project(cx) {
+                    return;
+                }
+                self.selected_agent = agent;
+                self.activate_new_thread(false, AgentThreadSource::Sidebar, window, cx);
+                let Some(thread_id) = self.active_thread_id(cx) else {
+                    return;
+                };
+                if let Some(parent) = split_parent {
+                    ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                        store.set_split_parent(thread_id, parent, cx);
+                    });
+                }
+                self.open_thread_in_center(thread_id, split_direction, window, cx);
+
+                // The draft now lives in the center, so release the panel's
+                // single new-draft slot; otherwise the next split would reuse
+                // it instead of starting a second agent.
+                if let Some(draft) = self.draft_thread.clone()
+                    && draft.read(cx).thread_id == thread_id
+                {
+                    self.draft_thread = None;
+                    self._draft_editor_observation = None;
+                    self.retained_threads.insert(thread_id, draft);
+                }
+            }
+        }
+    }
+
+    pub fn open_thread_in_center(
+        &mut self,
+        thread_id: ThreadId,
+        split_direction: Option<SplitDirection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(conversation_view) = self.conversation_view_for_id(&thread_id, cx).cloned() else {
+            return false;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+
+        if !self.focus_thread_in_center(thread_id, window, cx) {
+            let item = cx.new(|_| crate::ConversationPane::new(conversation_view, thread_id));
+            workspace.update(cx, |workspace, cx| {
+                if let Some(split_direction) = split_direction {
+                    workspace.split_item(split_direction, Box::new(item), window, cx);
+                } else {
+                    workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+                }
+            });
+        }
+
+        if self.active_thread_id(cx) == Some(thread_id) {
+            self.set_base_view(BaseView::Uninitialized, false, window, cx);
+        }
+        true
+    }
+
+    pub fn focus_thread_in_center(
+        &self,
+        thread_id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        let existing = workspace
+            .read(cx)
+            .items_of_type::<crate::ConversationPane>(cx)
+            .find(|item| item.read(cx).thread_id() == thread_id);
+        let Some(existing) = existing else {
+            return false;
+        };
+        workspace.update(cx, |workspace, cx| {
+            workspace.activate_item(&existing, true, true, window, cx)
+        })
+    }
+
+    pub fn active_center_thread_id(&self, cx: &App) -> Option<ThreadId> {
+        let workspace = self.workspace.upgrade()?;
+        workspace
+            .read(cx)
+            .active_item_as::<crate::ConversationPane>(cx)
+            .map(|item| item.read(cx).thread_id())
+    }
+
+    pub fn open_terminal_in_center(
+        &mut self,
+        terminal_id: TerminalId,
+        split_direction: Option<SplitDirection>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(terminal_view) = self
+            .terminals
+            .get(&terminal_id)
+            .map(|terminal| terminal.view.clone())
+        else {
+            if self.pending_terminal_spawn == Some(terminal_id) {
+                self.pending_terminal_center_open
+                    .insert(terminal_id, split_direction);
+                return true;
+            }
+            return false;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+
+        if !self.focus_terminal_in_center(terminal_id, window, cx) {
+            workspace.update(cx, |workspace, cx| {
+                if let Some(split_direction) = split_direction {
+                    workspace.split_item(split_direction, Box::new(terminal_view), window, cx);
+                } else {
+                    workspace.add_item_to_active_pane(
+                        Box::new(terminal_view),
+                        None,
+                        true,
+                        window,
+                        cx,
+                    );
+                }
+            });
+        }
+
+        if self.active_terminal_id() == Some(terminal_id) {
+            self.set_base_view(BaseView::Uninitialized, false, window, cx);
+        }
+        true
+    }
+
+    pub fn focus_terminal_in_center(
+        &self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(terminal_view) = self
+            .terminals
+            .get(&terminal_id)
+            .map(|terminal| terminal.view.clone())
+        else {
+            return false;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return false;
+        };
+        let existing = workspace
+            .read(cx)
+            .items_of_type::<TerminalView>(cx)
+            .find(|item| item.entity_id() == terminal_view.entity_id());
+        let Some(existing) = existing else {
+            return false;
+        };
+        workspace.update(cx, |workspace, cx| {
+            workspace.activate_item(&existing, true, true, window, cx)
+        })
+    }
+
+    pub fn active_center_terminal_id(&self, cx: &App) -> Option<TerminalId> {
+        let workspace = self.workspace.upgrade()?;
+        let terminal_view = workspace.read(cx).active_item_as::<TerminalView>(cx)?;
+        self.terminals.iter().find_map(|(terminal_id, terminal)| {
+            (terminal.view.entity_id() == terminal_view.entity_id()).then_some(*terminal_id)
+        })
+    }
+
     pub fn regenerate_thread_title(
         &mut self,
         thread_id: ThreadId,
@@ -4212,10 +4562,24 @@ impl AgentPanel {
     }
 
     fn cleanup_retained_threads(&mut self, cx: &App) {
+        let center_thread_ids = self
+            .workspace
+            .upgrade()
+            .map(|workspace| {
+                workspace
+                    .read(cx)
+                    .items_of_type::<crate::ConversationPane>(cx)
+                    .map(|item| item.read(cx).thread_id())
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
         let mut potential_removals = self
             .retained_threads
             .iter()
-            .filter(|(_id, view)| {
+            .filter(|(thread_id, view)| {
+                if center_thread_ids.contains(thread_id) {
+                    return false;
+                }
                 let Some(thread_view) = view.read(cx).root_thread_view() else {
                     return true;
                 };
@@ -7585,6 +7949,7 @@ mod tests {
             worktree_paths: project.read_with(cx, |project, cx| project.worktree_paths(cx)),
             remote_connection: None,
             working_directory: None,
+            split_parent: None,
         };
         assert_eq!(metadata.working_directory, None);
 
@@ -7669,6 +8034,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            split_parent: None,
         };
         let terminal_id = metadata.terminal_id;
         panel
@@ -7842,6 +8208,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            split_parent: None,
         };
         panel
             .update_in(&mut cx, |panel, window, cx| {
@@ -8060,6 +8427,7 @@ mod tests {
                         worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
                         remote_connection: None,
                         archived: false,
+                        split_parent: None,
                     },
                     cx,
                 );
@@ -9428,6 +9796,395 @@ mod tests {
         (panel, cx)
     }
 
+    #[gpui::test]
+    async fn test_open_thread_in_center_moves_conversation_out_of_panel(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+
+        let opened = panel.update_in(&mut cx, |panel, window, cx| {
+            panel.open_thread_in_center(thread_id, None, window, cx)
+        });
+
+        assert!(opened, "the active thread should open in the center");
+        let pane_item = workspace
+            .read_with(&cx, |workspace, cx| {
+                workspace.active_item_as::<crate::ConversationPane>(cx)
+            })
+            .expect("the center pane should contain the conversation");
+        assert_eq!(
+            pane_item.read_with(&cx, |item, _cx| item.thread_id()),
+            thread_id
+        );
+        assert!(
+            panel
+                .read_with(&cx, |panel, cx| panel.active_thread_id(cx))
+                .is_none(),
+            "the same conversation must not render in the panel and center simultaneously"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_cleanup_retained_threads_preserves_center_thread(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_window, cx| cx.set_global(MaxIdleRetainedThreads(0)));
+        let connection = StubAgentConnection::new().with_supports_load_session(true);
+        let (session_id, thread_id) =
+            open_generating_thread_with_loadable_connection(&panel, &connection, &mut cx);
+        connection.end_turn(session_id, acp::StopReason::EndTurn);
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(thread_id, None, window, cx));
+        });
+
+        assert!(
+            panel.read_with(&cx, |panel, _cx| {
+                panel.retained_threads.contains_key(&thread_id)
+            }),
+            "center threads must remain owned by the panel even when idle retention is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_open_two_threads_side_by_side(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let first_thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(first_thread_id, None, window, cx));
+        });
+
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+        let second_thread_id = active_thread_id(&panel, &cx);
+        assert_ne!(first_thread_id, second_thread_id);
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(
+                second_thread_id,
+                Some(SplitDirection::Right),
+                window,
+                cx,
+            ));
+        });
+
+        workspace.read_with(&cx, |workspace, cx| {
+            let thread_ids = workspace
+                .items_of_type::<crate::ConversationPane>(cx)
+                .map(|item| item.read(cx).thread_id())
+                .collect::<HashSet<_>>();
+            assert_eq!(thread_ids.len(), 2);
+            assert!(thread_ids.contains(&first_thread_id));
+            assert!(thread_ids.contains(&second_thread_id));
+            assert_eq!(workspace.panes().len(), 2);
+        });
+        assert_eq!(
+            panel.read_with(&cx, |panel, cx| panel.active_center_thread_id(cx)),
+            Some(second_thread_id)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_create_entry_in_center_splits_beside_existing_thread(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let existing_thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(existing_thread_id, None, window, cx));
+            panel.create_entry_in_center(
+                NewEntryKind::Thread(Agent::NativeAgent),
+                None,
+                Some(SplitDirection::Right),
+                Some(SplitParent::Thread(existing_thread_id)),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let thread_ids = workspace.read_with(&cx, |workspace, cx| {
+            workspace
+                .items_of_type::<crate::ConversationPane>(cx)
+                .map(|item| item.read(cx).thread_id())
+                .collect::<HashSet<_>>()
+        });
+        assert_eq!(
+            thread_ids.len(),
+            2,
+            "the new thread should sit beside the thread it was split from"
+        );
+        assert!(thread_ids.contains(&existing_thread_id));
+        workspace.read_with(&cx, |workspace, _cx| assert_eq!(workspace.panes().len(), 2));
+
+        let new_thread_id = thread_ids
+            .into_iter()
+            .find(|id| *id != existing_thread_id)
+            .expect("the split should have created a second thread");
+        let split_parent = cx.read(|cx| {
+            ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(new_thread_id)
+                .and_then(|metadata| metadata.split_parent)
+        });
+        assert_eq!(
+            split_parent,
+            Some(SplitParent::Thread(existing_thread_id)),
+            "the new thread must record the thread it was split from"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_split_terminal_records_its_origin(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_window, cx| TerminalThreadMetadataStore::init_global(cx));
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let existing_thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(existing_thread_id, None, window, cx));
+            panel.create_entry_in_center(
+                NewEntryKind::Terminal,
+                None,
+                Some(SplitDirection::Right),
+                Some(SplitParent::Thread(existing_thread_id)),
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            workspace.read_with(&cx, |workspace, cx| {
+                workspace.items_of_type::<TerminalView>(cx).count()
+            }),
+            1,
+            "the split terminal should open in the center pane"
+        );
+
+        let terminal_id = panel.read_with(&cx, |panel, cx| {
+            panel
+                .terminals(cx)
+                .first()
+                .map(|terminal| terminal.id)
+                .expect("the split should have created a terminal")
+        });
+
+        // A title change re-persists the terminal from live state; the link
+        // must survive that round trip.
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.persist_terminal_metadata(terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        let split_parent = cx.read(|cx| {
+            TerminalThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(terminal_id)
+                .and_then(|metadata| metadata.split_parent)
+        });
+        assert_eq!(
+            split_parent,
+            Some(SplitParent::Thread(existing_thread_id)),
+            "the new terminal must record the thread it was split from"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pending_terminal_opens_in_center_after_spawn(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let thread_id = active_thread_id(&panel, &cx);
+        let terminal_id = TerminalId::new();
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(thread_id, None, window, cx));
+            panel.pending_terminal_spawn = Some(terminal_id);
+            assert!(panel.open_terminal_in_center(
+                terminal_id,
+                Some(SplitDirection::Right),
+                window,
+                cx,
+            ));
+            panel
+                .insert_display_only_terminal(
+                    terminal_id,
+                    None,
+                    Some("Pending terminal".into()),
+                    None,
+                    None,
+                    true,
+                    false,
+                    true,
+                    AgentThreadSource::Sidebar,
+                    window,
+                    cx,
+                )
+                .expect("pending terminal should finish spawning");
+        });
+
+        assert_eq!(
+            workspace.read_with(&cx, |workspace, cx| {
+                workspace.items_of_type::<TerminalView>(cx).count()
+            }),
+            1
+        );
+        assert_eq!(
+            workspace.read_with(&cx, |workspace, _cx| workspace.panes().len()),
+            2
+        );
+    }
+
+    #[gpui::test]
+    async fn test_splitting_twice_creates_two_new_threads(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let existing_thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(existing_thread_id, None, window, cx));
+            for _ in 0..2 {
+                panel.create_entry_in_center(
+                    NewEntryKind::Thread(Agent::NativeAgent),
+                    None,
+                    Some(SplitDirection::Right),
+                    None,
+                    window,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            let thread_ids = workspace
+                .items_of_type::<crate::ConversationPane>(cx)
+                .map(|item| item.read(cx).thread_id())
+                .collect::<HashSet<_>>();
+            assert_eq!(thread_ids.len(), 3, "each split should add its own thread");
+            assert!(thread_ids.contains(&existing_thread_id));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_entry_options_offer_terminal_and_zed_agent(cx: &mut TestAppContext) {
+        let (panel, cx) = setup_panel(cx).await;
+
+        let kinds = panel.read_with(&cx, |panel, cx| {
+            panel
+                .new_entry_options(cx)
+                .into_iter()
+                .map(|option| (option.label, option.kind))
+                .collect::<Vec<_>>()
+        });
+
+        assert!(
+            kinds
+                .iter()
+                .any(|(_, kind)| matches!(kind, NewEntryKind::Terminal)),
+            "expected a terminal option, got {:?}",
+            kinds.iter().map(|(label, _)| label).collect::<Vec<_>>()
+        );
+        assert!(
+            kinds
+                .iter()
+                .any(|(_, kind)| matches!(kind, NewEntryKind::Thread(Agent::NativeAgent))),
+            "expected a Zed agent option, got {:?}",
+            kinds.iter().map(|(label, _)| label).collect::<Vec<_>>()
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reopening_center_thread_focuses_existing_item(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(thread_id, None, window, cx));
+            assert!(panel.open_thread_in_center(
+                thread_id,
+                Some(SplitDirection::Right),
+                window,
+                cx,
+            ));
+        });
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .items_of_type::<crate::ConversationPane>(cx)
+                    .count(),
+                1
+            );
+            assert_eq!(workspace.panes().len(), 1);
+            assert_eq!(
+                workspace
+                    .active_item_as::<crate::ConversationPane>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .thread_id(),
+                thread_id
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_two_terminal_threads_side_by_side(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_terminal_in_center(first_terminal_id, None, window, cx));
+        });
+
+        let second_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_terminal_in_center(
+                second_terminal_id,
+                Some(SplitDirection::Right),
+                window,
+                cx,
+            ));
+        });
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(workspace.items_of_type::<TerminalView>(cx).count(), 2);
+            assert_eq!(workspace.panes().len(), 2);
+        });
+        assert_eq!(
+            panel.read_with(&cx, |panel, cx| panel.active_center_terminal_id(cx)),
+            Some(second_terminal_id)
+        );
+        assert_eq!(panel.read_with(&cx, |panel, _cx| panel.terminals.len()), 2);
+    }
+
     fn expected_terminal_drop_text(paths: &[PathBuf]) -> String {
         let mut text = String::new();
         for path in paths {
@@ -9805,6 +10562,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            split_parent: None,
         };
 
         panel.update_in(&mut cx, |panel, window, cx| {
@@ -9856,6 +10614,7 @@ mod tests {
             )])),
             remote_connection: None,
             working_directory: None,
+            split_parent: None,
         };
 
         panel.update_in(&mut cx, |panel, window, cx| {

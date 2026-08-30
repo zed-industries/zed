@@ -1,4 +1,6 @@
-use crate::{CommonAnimationExt, DiffStat, GradientFade, HighlightedLabel, Tooltip, prelude::*};
+use crate::{
+    CommonAnimationExt, DiffStat, Disclosure, GradientFade, HighlightedLabel, Tooltip, prelude::*,
+};
 
 use gpui::{
     Animation, AnimationExt, ClickEvent, Hsla, MouseButton, SharedString,
@@ -64,6 +66,11 @@ pub struct ThreadItem {
     on_hover: Box<dyn Fn(&bool, &mut Window, &mut App) + 'static>,
     action_slot: Option<AnyElement>,
     base_bg: Option<Hsla>,
+    indent_level: usize,
+    split_toggle: Option<(
+        bool,
+        Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    )>,
 }
 
 impl ThreadItem {
@@ -99,11 +106,27 @@ impl ThreadItem {
             on_hover: Box::new(|_, _, _| {}),
             action_slot: None,
             base_bg: None,
+            indent_level: 0,
+            split_toggle: None,
         }
     }
 
     pub fn timestamp(mut self, timestamp: impl Into<SharedString>) -> Self {
         self.timestamp = timestamp.into();
+        self
+    }
+
+    pub fn indent_level(mut self, level: usize) -> Self {
+        self.indent_level = level;
+        self
+    }
+
+    pub fn split_toggle(
+        mut self,
+        expanded: bool,
+        on_toggle: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.split_toggle = Some((expanded, Box::new(on_toggle)));
         self
     }
 
@@ -297,6 +320,35 @@ impl RenderOnce for ThreadItem {
                 .justify_center()
                 .when(!icon_visible, |this| this.invisible())
         };
+        let indent_level = self.indent_level;
+        let indent_guides = move || {
+            (0..indent_level).map(move |_| {
+                div()
+                    .w_3()
+                    .h_full()
+                    .flex_none()
+                    .border_l_1()
+                    .border_color(color.border_variant)
+            })
+        };
+
+        let toggle_id = format!("split-toggle-{}", self.id);
+        let toggle_slot =
+            |toggle: Option<(bool, Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>)>| {
+                // A fixed-width slot either way, so a parent row's title stays
+                // aligned with the rows around it.
+                h_flex().w_4().flex_none().justify_center().when_some(
+                    toggle,
+                    |this, (expanded, on_toggle)| {
+                        this.child(
+                            Disclosure::new(toggle_id.clone(), expanded)
+                                .on_click(move |event, window, cx| on_toggle(event, window, cx)),
+                        )
+                    },
+                )
+            };
+        let has_split_toggle = self.split_toggle.is_some();
+
         let icon_color = self.icon_color.unwrap_or(Color::Muted);
         let agent_icon = if let Some(icon_char) = self.icon_char {
             Label::new(icon_char)
@@ -448,6 +500,10 @@ impl RenderOnce for ThreadItem {
                     .h_6()
                     .gap_2()
                     .justify_between()
+                    .children(indent_guides())
+                    .when_some(self.split_toggle, |this, toggle| {
+                        this.child(toggle_slot(Some(toggle)))
+                    })
                     .child(
                         h_flex()
                             .id("content")
@@ -487,6 +543,8 @@ impl RenderOnce for ThreadItem {
                 this.child(
                     h_flex()
                         .gap_1p5()
+                        .children(indent_guides())
+                        .when(has_split_toggle, |this| this.child(toggle_slot(None)))
                         .child(icon_container()) // Icon Spacing
                         .when(self.archived, |this| {
                             this.child(
