@@ -1170,7 +1170,9 @@ fn resolve_file_history_target(
         return Some((repository.read(cx).id, LogSource::Path(repo_path)));
     }
 
-    let editor = workspace.active_item_as::<Editor>(cx)?;
+    let editor = workspace
+        .active_item(cx)
+        .and_then(|item| item.act_as::<Editor>(cx))?;
 
     let file = editor
         .read(cx)
