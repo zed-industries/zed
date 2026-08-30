@@ -830,28 +830,70 @@ impl IosWindow {
                 .to_string_lossy()
                 .into_owned();
 
-            if let Some(handler) = self.input_handler.borrow_mut().as_mut() {
-                handler.replace_text_in_range(None, &text_str);
-                return;
-            }
-
+            // The software keyboard reports Return and Tab as inserted text.
+            // Zed's inputs expect them as keystrokes (confirming a picker,
+            // inserting a newline via the editor's action), so split them out.
+            let mut pending = String::new();
             for character in text_str.chars() {
-                let keystroke = gpui::Keystroke {
-                    modifiers: Modifiers::default(),
-                    key: character.to_string(),
-                    key_char: Some(character.to_string()),
+                let key = match character {
+                    '\n' | '\r' => Some("enter"),
+                    '\t' => Some("tab"),
+                    _ => None,
                 };
-
-                let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
-                    keystroke,
-                    is_held: false,
-                    prefer_character_input: true,
-                });
-
-                if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
-                    callback(event);
+                if let Some(key) = key {
+                    self.insert_text_segment(&pending);
+                    pending.clear();
+                    self.dispatch_named_key(key);
+                } else {
+                    pending.push(character);
                 }
             }
+            self.insert_text_segment(&pending);
+        }
+    }
+
+    fn insert_text_segment(&self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+
+        if let Some(handler) = self.input_handler.borrow_mut().as_mut() {
+            handler.replace_text_in_range(None, text);
+            return;
+        }
+
+        for character in text.chars() {
+            let keystroke = gpui::Keystroke {
+                modifiers: Modifiers::default(),
+                key: character.to_string(),
+                key_char: Some(character.to_string()),
+            };
+
+            let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: true,
+            });
+
+            if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+                callback(event);
+            }
+        }
+    }
+
+    fn dispatch_named_key(&self, key: &str) {
+        let keystroke = gpui::Keystroke {
+            modifiers: Modifiers::default(),
+            key: key.to_string(),
+            key_char: None,
+        };
+        let event = PlatformInput::KeyDown(gpui::KeyDownEvent {
+            keystroke,
+            is_held: false,
+            prefer_character_input: false,
+        });
+        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+            callback(event);
         }
     }
 
