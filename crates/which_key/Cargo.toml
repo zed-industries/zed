@@ -23,4 +23,5 @@ vim_mode_setting.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
+collections.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

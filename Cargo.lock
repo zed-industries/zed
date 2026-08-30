@@ -20992,6 +20992,7 @@ dependencies = [
 name = "which_key"
 version = "0.1.0"
 dependencies = [
+ "collections",
  "command_palette",
  "gpui",
  "settings",

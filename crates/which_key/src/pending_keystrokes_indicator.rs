@@ -3,11 +3,11 @@ use gpui::{
 };
 use settings::{Settings, SettingsStore};
 use std::{rc::Rc, time::Duration};
-use ui::{CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keystrokes};
+use ui::{CircularProgress, KeyBinding, Tooltip, prelude::*, text_for_keybinding_keystrokes};
 use vim_mode_setting::{HelixModeSetting, VimModeSetting};
 use workspace::{HideStatusItem, StatusBarSettings, StatusItemView, item::ItemHandle};
 
-use crate::bindings_for_pending_input;
+use crate::{bindings_for_pending_input, map_pending_keystrokes};
 
 const MAX_TOOLTIP_BINDINGS: usize = 10;
 
@@ -83,14 +83,8 @@ impl PendingKeystrokesIndicator {
         let mut bindings = bindings_for_pending_input(window, keystrokes)
             .into_iter()
             .map(|binding| {
-                let remaining_text = text_for_keystrokes(
-                    &binding
-                        .remaining_keystrokes
-                        .iter()
-                        .map(|keystroke| keystroke.inner().clone())
-                        .collect::<Vec<_>>(),
-                    cx,
-                );
+                let remaining_text =
+                    text_for_keybinding_keystrokes(&binding.remaining_keystrokes, cx);
                 (
                     remaining_text,
                     binding.remaining_keystrokes,
@@ -111,10 +105,7 @@ impl PendingKeystrokesIndicator {
 
         self.pending_input_generation = self.pending_input_generation.wrapping_add(1);
         self.pending = Some(Rc::new(PendingKeystrokes {
-            keystrokes: keystrokes
-                .iter()
-                .map(|keystroke| KeybindingKeystroke::from_keystroke(keystroke.clone()))
-                .collect(),
+            keystrokes: map_pending_keystrokes(keystrokes, cx.keyboard_mapper().as_ref()).into(),
             pending_input_generation: self.pending_input_generation,
             bindings: bindings
                 .into_iter()

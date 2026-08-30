@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use theme_settings::ThemeSettings;
 use ui::{
     Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
-    text_for_keybinding_keystrokes, text_for_keystrokes,
+    text_for_keybinding_keystrokes,
 };
 use workspace::{ModalView, Workspace};
 
-use crate::bindings_for_pending_input;
+use crate::{bindings_for_pending_input, map_pending_keystrokes};
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
@@ -101,7 +101,8 @@ impl WhichKeyModal {
             text_a.cmp(&text_b)
         });
         binding_data.dedup();
-        self.pending_keys = text_for_keystrokes(&pending_keys, cx).into();
+        let pending_keys = map_pending_keystrokes(pending_keys, cx.keyboard_mapper().as_ref());
+        self.pending_keys = text_for_keybinding_keystrokes(&pending_keys, cx).into();
         self.bindings = binding_data
             .into_iter()
             .map(|(keystrokes, action)| {

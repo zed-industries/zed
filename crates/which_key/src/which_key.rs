@@ -4,7 +4,7 @@ mod pending_keystrokes_indicator;
 mod which_key_modal;
 mod which_key_settings;
 
-use gpui::{App, KeybindingKeystroke, Keystroke, SharedString, Window};
+use gpui::{App, KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString, Window};
 pub use pending_keystrokes_indicator::PendingKeystrokesIndicator;
 use settings::Settings;
 use std::{sync::LazyLock, time::Duration};
@@ -16,6 +16,17 @@ use workspace::Workspace;
 pub(crate) struct PendingBinding {
     pub(crate) remaining_keystrokes: Vec<KeybindingKeystroke>,
     pub(crate) action_name: SharedString,
+}
+
+pub(crate) fn map_pending_keystrokes(
+    keystrokes: &[Keystroke],
+    keyboard_mapper: &dyn PlatformKeyboardMapper,
+) -> Vec<KeybindingKeystroke> {
+    keystrokes
+        .iter()
+        .cloned()
+        .map(|keystroke| KeybindingKeystroke::new_with_mapper(keystroke, false, keyboard_mapper))
+        .collect()
 }
 
 pub(crate) fn bindings_for_pending_input(
@@ -131,3 +142,67 @@ pub static FILTERED_KEYSTROKES: LazyLock<Vec<Vec<Keystroke>>> = LazyLock::new(||
     })
     .collect()
 });
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use collections::HashMap;
+    use gpui::{InvalidKeystrokeError, PlatformKeyboardMapper};
+
+    use super::*;
+
+    struct TestKeyboardMapper {
+        call_count: Cell<usize>,
+    }
+
+    impl PlatformKeyboardMapper for TestKeyboardMapper {
+        fn map_key_equivalent(
+            &self,
+            keystroke: Keystroke,
+            use_key_equivalents: bool,
+        ) -> KeybindingKeystroke {
+            assert!(!use_key_equivalents);
+            self.call_count.set(self.call_count.get() + 1);
+
+            #[cfg(target_os = "windows")]
+            {
+                KeybindingKeystroke::new(
+                    keystroke,
+                    gpui::Modifiers::control_shift(),
+                    "2".to_owned(),
+                )
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                KeybindingKeystroke::from_keystroke(keystroke)
+            }
+        }
+
+        fn get_key_equivalents(&self) -> Option<&HashMap<char, char>> {
+            None
+        }
+    }
+
+    #[test]
+    fn test_map_pending_keystrokes_uses_platform_mapper() -> Result<(), InvalidKeystrokeError> {
+        let keyboard_mapper = TestKeyboardMapper {
+            call_count: Cell::new(0),
+        };
+        let keystroke = Keystroke::parse("ctrl-@")?;
+
+        let mapped = map_pending_keystrokes(std::slice::from_ref(&keystroke), &keyboard_mapper);
+
+        assert_eq!(keyboard_mapper.call_count.get(), 1);
+        let Some(mapped) = mapped.first() else {
+            panic!("expected mapped pending keystroke");
+        };
+        assert_eq!(mapped.inner(), &keystroke);
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(mapped.modifiers(), &gpui::Modifiers::control_shift());
+            assert_eq!(mapped.key(), "2");
+        }
+        Ok(())
+    }
+}
