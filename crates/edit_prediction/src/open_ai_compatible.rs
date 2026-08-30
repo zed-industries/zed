@@ -65,6 +65,7 @@ pub(crate) async fn send_custom_server_request(
     provider: settings::EditPredictionProvider,
     settings: &OpenAiCompatibleEditPredictionSettings,
     prompt: String,
+    suffix: Option<String>,
     max_tokens: u32,
     stop_tokens: Vec<String>,
     api_key: Option<Arc<str>>,
@@ -91,6 +92,7 @@ pub(crate) async fn send_custom_server_request(
                     .into_iter()
                     .map(std::borrow::Cow::Owned)
                     .collect(),
+                suffix,
                 environment: None,
             };
 
