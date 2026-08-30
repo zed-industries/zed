@@ -370,6 +370,35 @@
   // 2. Display a single-letter badge, colorized based on the active syntax theme:
   //   "symbol"
   "completion_menu_item_kind": "off",
+  // Symbols used to represent LSP item kinds in the completions menu.
+  // Each value must be a single Unicode character.
+  "completion_menu_item_kind_symbols": {
+    "text": "t",
+    "method": "m",
+    "function": "f",
+    "constructor": "C",
+    "field": "f",
+    "variable": "v",
+    "class": "c",
+    "interface": "i",
+    "module": "M",
+    "property": "p",
+    "unit": "u",
+    "value": "v",
+    "enum": "e",
+    "keyword": "k",
+    "snippet": "s",
+    "color": "c",
+    "file": "F",
+    "reference": "r",
+    "folder": "D",
+    "enum_member": "e",
+    "constant": "c",
+    "struct": "S",
+    "event": "E",
+    "operator": "o",
+    "type_parameter": "T"
+  },
   // How to display diffs in the editor.
   //
   // Default: split

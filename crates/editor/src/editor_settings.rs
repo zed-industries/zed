@@ -4,11 +4,11 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DelayMs,
-    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer, GitGutterWidth,
-    GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder,
-    MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine, ScrollbarDiagnostics,
-    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CompletionMenuItemKindSymbols,
+    CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn, DocumentColorsRenderMode,
+    DoubleClickInMultibuffer, GitGutterWidth, GoToDefinitionFallback, GoToDefinitionScrollStrategy,
+    MinimapThumb, MinimapThumbBorder, MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine,
+    ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -68,6 +68,7 @@ pub struct EditorSettings {
     pub completion_menu_scrollbar: ShowScrollbar,
     pub completion_detail_alignment: CompletionDetailAlignment,
     pub completion_menu_item_kind: CompletionMenuItemKind,
+    pub completion_menu_item_kind_symbols: CompletionMenuItemKindSymbols,
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
     pub file_diff: FileDiffSettings,
@@ -328,6 +329,7 @@ impl Settings for EditorSettings {
                 .unwrap(),
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
+            completion_menu_item_kind_symbols: editor.completion_menu_item_kind_symbols.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
             file_diff: FileDiffSettings {

@@ -43,7 +43,10 @@ use crate::{
 };
 use crate::{CodeActionSource, EditorSettings};
 use collections::{HashSet, VecDeque};
-use settings::{CompletionDetailAlignment, CompletionMenuItemKind, Settings, SnippetSortOrder};
+use settings::{
+    CompletionDetailAlignment, CompletionMenuItemKind, CompletionMenuItemKindSymbols, Settings,
+    SnippetSortOrder,
+};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -920,6 +923,7 @@ impl CompletionsMenu {
         let editor_settings = EditorSettings::get_global(cx);
         let completion_detail_alignment = editor_settings.completion_detail_alignment;
         let completion_menu_item_kind = editor_settings.completion_menu_item_kind;
+        let completion_menu_item_kind_symbols = editor_settings.completion_menu_item_kind_symbols;
         let widest_completion_ix = if self.display_options.dynamic_width {
             let completions = self.completions.borrow();
             let widest_completion_ix = self
@@ -1135,6 +1139,7 @@ impl CompletionsMenu {
                                 completion.kind(),
                                 item_ix,
                                 &style,
+                                &completion_menu_item_kind_symbols,
                             )),
                         };
 
@@ -1658,6 +1663,7 @@ fn render_completion_kind_letter(
     kind: Option<CompletionItemKind>,
     item_ix: usize,
     style: &EditorStyle,
+    symbols: &CompletionMenuItemKindSymbols,
 ) -> AnyElement {
     let badge = div()
         .flex_none()
@@ -1669,7 +1675,7 @@ fn render_completion_kind_letter(
     let Some(kind) = kind else {
         return badge.into_any_element();
     };
-    let Some(letter) = completion_kind_letter(kind) else {
+    let Some(letter) = completion_kind_symbol(kind, symbols) else {
         return badge.into_any_element();
     };
 
@@ -1685,7 +1691,7 @@ fn render_completion_kind_letter(
     badge
         .id(("completion-kind", item_ix))
         .tooltip(Tooltip::text(completion_kind_name(kind)))
-        .child(letter)
+        .child(SharedString::from(letter))
         .when_some(color, |element, color| element.text_color(color))
         .into_any_element()
 }
@@ -1721,35 +1727,38 @@ fn completion_kind_name(kind: CompletionItemKind) -> &'static str {
     }
 }
 
-fn completion_kind_letter(kind: CompletionItemKind) -> Option<&'static str> {
-    Some(match kind {
-        CompletionItemKind::TEXT => "t",
-        CompletionItemKind::METHOD => "m",
-        CompletionItemKind::FUNCTION => "f",
-        CompletionItemKind::CONSTRUCTOR => "C",
-        CompletionItemKind::FIELD => "f",
-        CompletionItemKind::VARIABLE => "v",
-        CompletionItemKind::CLASS => "c",
-        CompletionItemKind::INTERFACE => "i",
-        CompletionItemKind::MODULE => "M",
-        CompletionItemKind::PROPERTY => "p",
-        CompletionItemKind::UNIT => "u",
-        CompletionItemKind::VALUE => "v",
-        CompletionItemKind::ENUM => "e",
-        CompletionItemKind::KEYWORD => "k",
-        CompletionItemKind::SNIPPET => "s",
-        CompletionItemKind::COLOR => "c",
-        CompletionItemKind::FILE => "F",
-        CompletionItemKind::REFERENCE => "r",
-        CompletionItemKind::FOLDER => "D",
-        CompletionItemKind::ENUM_MEMBER => "e",
-        CompletionItemKind::CONSTANT => "c",
-        CompletionItemKind::STRUCT => "S",
-        CompletionItemKind::EVENT => "E",
-        CompletionItemKind::OPERATOR => "o",
-        CompletionItemKind::TYPE_PARAMETER => "T",
-        _ => return None,
-    })
+fn completion_kind_symbol(
+    kind: CompletionItemKind,
+    symbols: &CompletionMenuItemKindSymbols,
+) -> Option<char> {
+    match kind {
+        CompletionItemKind::TEXT => symbols.text,
+        CompletionItemKind::METHOD => symbols.method,
+        CompletionItemKind::FUNCTION => symbols.function,
+        CompletionItemKind::CONSTRUCTOR => symbols.constructor,
+        CompletionItemKind::FIELD => symbols.field,
+        CompletionItemKind::VARIABLE => symbols.variable,
+        CompletionItemKind::CLASS => symbols.class,
+        CompletionItemKind::INTERFACE => symbols.interface,
+        CompletionItemKind::MODULE => symbols.module,
+        CompletionItemKind::PROPERTY => symbols.property,
+        CompletionItemKind::UNIT => symbols.unit,
+        CompletionItemKind::VALUE => symbols.value,
+        CompletionItemKind::ENUM => symbols.r#enum,
+        CompletionItemKind::KEYWORD => symbols.keyword,
+        CompletionItemKind::SNIPPET => symbols.snippet,
+        CompletionItemKind::COLOR => symbols.color,
+        CompletionItemKind::FILE => symbols.file,
+        CompletionItemKind::REFERENCE => symbols.reference,
+        CompletionItemKind::FOLDER => symbols.folder,
+        CompletionItemKind::ENUM_MEMBER => symbols.enum_member,
+        CompletionItemKind::CONSTANT => symbols.constant,
+        CompletionItemKind::STRUCT => symbols.r#struct,
+        CompletionItemKind::EVENT => symbols.event,
+        CompletionItemKind::OPERATOR => symbols.operator,
+        CompletionItemKind::TYPE_PARAMETER => symbols.type_parameter,
+        _ => None,
+    }
 }
 
 fn completion_kind_highlight_name(kind: CompletionItemKind) -> Option<&'static str> {
@@ -2172,6 +2181,33 @@ mod tests {
             fade_out: Some(0.5),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn test_completion_kind_symbol_uses_configured_symbols() {
+        let symbols = CompletionMenuItemKindSymbols {
+            function: Some('λ'),
+            r#enum: Some('ε'),
+            type_parameter: Some('τ'),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            completion_kind_symbol(CompletionItemKind::FUNCTION, &symbols),
+            Some('λ')
+        );
+        assert_eq!(
+            completion_kind_symbol(CompletionItemKind::ENUM, &symbols),
+            Some('ε')
+        );
+        assert_eq!(
+            completion_kind_symbol(CompletionItemKind::TYPE_PARAMETER, &symbols),
+            Some('τ')
+        );
+        assert_eq!(
+            completion_kind_symbol(CompletionItemKind::METHOD, &symbols),
+            None
+        );
     }
 
     #[test]
