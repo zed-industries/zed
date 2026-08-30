@@ -1667,9 +1667,7 @@ impl Buffer {
         self.has_conflict = false;
         self.saved_mtime = mtime;
         self.was_changed();
-        if self.saved_version == self.version {
-            self.compact_history();
-        }
+        self.compact_history();
         cx.emit(BufferEvent::Saved);
         cx.notify();
     }
@@ -2773,19 +2771,7 @@ impl Buffer {
     }
 
     pub fn compact_history(&mut self) -> usize {
-        if !self.history_compaction_enabled {
-            return 0;
-        }
-        if self.is_dirty()
-            || self.reparse.is_some()
-            || self.pending_autoindent.is_some()
-            || !self.autoindent_requests.is_empty()
-            || self.branch_state.is_some()
-        {
-            return 0;
-        }
-        let version = self.text.version();
-        if !self.syntax_map.lock().observed_all_edits_up_to(&version) {
+        if !self.history_compaction_enabled || !self.history_compaction_quiescent() {
             return 0;
         }
         let horizon = self.text.compaction_horizon();
@@ -2809,6 +2795,42 @@ impl Buffer {
             None
         };
         stripped_bytes
+    }
+
+    pub fn advertise_history_watermark(
+        &mut self,
+        covers_peer_replicas: bool,
+    ) -> text::HistoryWatermark {
+        self.text.advertise_history_watermark(covers_peer_replicas)
+    }
+
+    pub fn observe_peer_history_watermark(
+        &mut self,
+        peer_watermark: &text::HistoryWatermark,
+    ) -> usize {
+        self.text.observe_peer_history_watermark(peer_watermark);
+        self.last_unproductive_compaction_horizon = None;
+        self.compact_history()
+    }
+
+    pub fn set_history_compaction_requires_peer(&mut self, requires_peer_watermark: bool) {
+        self.text
+            .set_requires_peer_watermark(requires_peer_watermark);
+    }
+
+    fn history_compaction_quiescent(&self) -> bool {
+        if self.is_dirty()
+            || self.saved_version != self.version
+            || self.reparse.is_some()
+            || self.pending_autoindent.is_some()
+            || !self.autoindent_requests.is_empty()
+            || self.branch_state.is_some()
+        {
+            return false;
+        }
+        self.syntax_map
+            .lock()
+            .observed_all_edits_up_to(&self.version)
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.

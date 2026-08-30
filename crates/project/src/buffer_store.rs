@@ -292,6 +292,9 @@ impl RemoteBufferStore {
                         buffer.push_transaction(transaction.clone(), Instant::now());
                         buffer.finalize_last_transaction();
                     });
+                    this.update(cx, |this, cx| {
+                        this.advertise_history_watermark(buffer, cx);
+                    })?;
                 }
             }
 
@@ -827,6 +830,7 @@ impl BufferStore {
         client.add_entity_message_handler(Self::handle_update_buffer_file);
         client.add_entity_request_handler(Self::handle_save_buffer);
         client.add_entity_request_handler(Self::handle_reload_buffers);
+        client.add_entity_message_handler(Self::handle_update_history_watermark);
     }
 
     /// Creates a buffer store, optionally retaining its buffers.
@@ -1082,10 +1086,14 @@ impl BufferStore {
                 BufferStoreState::Local(_) => false,
                 BufferStoreState::Remote(remote) => remote.upstream_client.is_via_collab(),
             };
+        let has_watermark_peer = self.history_watermark_peer().is_some();
         let max_undo_steps = ProjectSettings::get_global(cx).max_undo_steps;
         buffer_entity.update(cx, |buffer, _| {
             buffer.set_retain_operations(retain_operations);
-            buffer.set_history_compaction_enabled(!is_remote && self.downstream_client.is_none());
+            buffer.set_history_compaction_requires_peer(has_watermark_peer || retain_operations);
+            buffer.set_history_compaction_enabled(
+                has_watermark_peer || (!is_remote && self.downstream_client.is_none()),
+            );
             buffer.set_max_undo_entries(max_undo_steps);
         });
 
@@ -1188,10 +1196,12 @@ impl BufferStore {
     pub fn shared(&mut self, remote_id: u64, downstream_client: AnyProtoClient, cx: &mut App) {
         let retain_operations = downstream_client.is_via_collab();
         self.downstream_client = Some((downstream_client, remote_id));
+        let has_watermark_peer = self.history_watermark_peer().is_some();
         for buffer in self.buffers().collect::<Vec<_>>() {
             buffer.update(cx, |buffer, _| {
                 buffer.set_retain_operations(retain_operations);
-                buffer.set_history_compaction_enabled(false);
+                buffer.set_history_compaction_requires_peer(true);
+                buffer.set_history_compaction_enabled(has_watermark_peer);
             });
         }
     }
@@ -1203,12 +1213,16 @@ impl BufferStore {
             BufferStoreState::Local(_) => false,
             BufferStoreState::Remote(remote) => remote.upstream_client.is_via_collab(),
         };
+        let has_watermark_peer = self.history_watermark_peer().is_some();
         for buffer in self.buffers().collect::<Vec<_>>() {
             buffer.update(cx, |buffer, _| {
                 if buffer.replica_id().is_remote() {
                     buffer.set_retain_operations(retain_remote_operations);
+                    buffer.set_history_compaction_requires_peer(true);
+                    buffer.set_history_compaction_enabled(has_watermark_peer);
                 } else {
                     buffer.set_retain_operations(false);
+                    buffer.set_history_compaction_requires_peer(false);
                     buffer.set_history_compaction_enabled(true);
                 }
             });
@@ -1260,6 +1274,7 @@ impl BufferStore {
                 self.buffer_changed_file(buffer, cx);
             }
             BufferEvent::Reloaded => {
+                self.advertise_history_watermark(&buffer, cx);
                 let Some((downstream_client, project_id)) = self.downstream_client.as_ref() else {
                     return;
                 };
@@ -1274,9 +1289,68 @@ impl BufferStore {
                     })
                     .log_err();
             }
+            BufferEvent::Saved => {
+                self.advertise_history_watermark(&buffer, cx);
+            }
             BufferEvent::LanguageChanged(_) => {}
             _ => {}
         }
+    }
+
+    fn history_watermark_peer(&self) -> Option<(AnyProtoClient, u64)> {
+        match &self.state {
+            BufferStoreState::Local(_) => self
+                .downstream_client
+                .clone()
+                .filter(|(client, _)| !client.is_via_collab()),
+            BufferStoreState::Remote(remote) => {
+                if remote.upstream_client.is_via_collab() || self.downstream_client.is_some() {
+                    None
+                } else {
+                    Some((remote.upstream_client.clone(), remote.project_id))
+                }
+            }
+        }
+    }
+
+    pub(crate) fn advertise_history_watermark(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((client, project_id)) = self.history_watermark_peer() else {
+            return;
+        };
+        let covers_peer_replicas = matches!(self.state, BufferStoreState::Local(_));
+        let (buffer_id, watermark) = buffer.update(cx, |buffer, _| {
+            let watermark = buffer.advertise_history_watermark(covers_peer_replicas);
+            buffer.compact_history();
+            (buffer.remote_id(), watermark)
+        });
+        client
+            .send(language::proto::serialize_history_watermark(
+                project_id,
+                buffer_id.into(),
+                &watermark,
+            ))
+            .log_err();
+    }
+
+    pub async fn handle_update_history_watermark(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdateHistoryWatermark>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let watermark = language::proto::deserialize_history_watermark(&envelope.payload);
+        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+        this.update(&mut cx, |this, cx| {
+            if let Some(buffer) = this.get(buffer_id) {
+                buffer.update(cx, |buffer, _| {
+                    buffer.observe_peer_history_watermark(&watermark);
+                });
+            }
+        });
+        Ok(())
     }
 
     pub async fn handle_update_buffer(

@@ -2144,6 +2144,14 @@ impl GitStore {
         else {
             return Task::ready(Err(anyhow!("failed to find a git repository for buffer")));
         };
+        let version = version.filter(|version| {
+            if buffer.can_reconstruct_version(version) {
+                true
+            } else {
+                log::warn!("blaming at the current version: the requested one is compacted away");
+                false
+            }
+        });
         let content = match &version {
             Some(version) => buffer.rope_for_version(version),
             None => buffer.as_rope().clone(),

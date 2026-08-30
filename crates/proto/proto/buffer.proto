@@ -82,6 +82,13 @@ message ReloadBuffersResponse {
   ProjectTransaction transaction = 1;
 }
 
+message UpdateHistoryWatermark {
+  uint64 project_id = 1;
+  uint64 buffer_id = 2;
+  repeated VectorClockEntry horizon = 3;
+  repeated LamportTimestamp min_pinned = 4;
+}
+
 message SynchronizeBuffers {
   uint64 project_id = 1;
   repeated BufferVersion buffers = 2;

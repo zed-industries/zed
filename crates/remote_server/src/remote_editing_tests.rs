@@ -198,6 +198,99 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 }
 
 #[gpui::test]
+async fn test_history_watermarks_compact_tombstones_on_both_sides(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                "file.txt": "version 0"
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, rel_path("file.txt")), cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    let server_buffer = headless.update(server_cx, |headless, cx| {
+        headless.buffer_store.read(cx).get(buffer_id).unwrap()
+    });
+    buffer.update(cx, |buffer, _| buffer.set_max_undo_entries(1));
+
+    for version in 1..=5 {
+        fs.save(
+            path!("/code/project1/file.txt").as_ref(),
+            &format!("version {version}").into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        for _ in 0..3 {
+            server_cx.executor().run_until_parked();
+            cx.executor().run_until_parked();
+        }
+    }
+    for _ in 0..3 {
+        server_cx.executor().run_until_parked();
+        cx.executor().run_until_parked();
+    }
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 5");
+    });
+    server_buffer.read_with(server_cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 5");
+        let retained = buffer.retained_history();
+        assert_eq!(retained.operation_count, 0);
+        assert_eq!(
+            retained.deleted_text_bytes, 1,
+            "the server must keep only the tombstone pinned by the client's watermark"
+        );
+    });
+    buffer.read_with(cx, |buffer, _| {
+        let retained = buffer.retained_history();
+        assert_eq!(retained.operation_count, 0);
+        assert_eq!(retained.undo_stack_entries, 1);
+        assert_eq!(
+            retained.deleted_text_bytes, 1,
+            "the client must keep only the tombstone pinned by its last reload undo entry"
+        );
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 4");
+    });
+    cx.executor().run_until_parked();
+    server_cx.executor().run_until_parked();
+    server_buffer.read_with(server_cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "version 4",
+            "undoing the pinned reload on the client must replicate to the server"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_remote_buffers_do_not_retain_operations(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,

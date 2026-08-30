@@ -61,6 +61,9 @@ pub struct Buffer {
     history: History,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
+    requires_peer_watermark: bool,
+    peer_watermark: Option<HistoryWatermark>,
+    advertised_watermark: Option<HistoryWatermark>,
     pub lamport_clock: clock::Lamport,
     subscriptions: Topic<usize>,
     edit_id_resolvers: HashMap<clock::Lamport, Vec<oneshot::Sender<()>>>,
@@ -120,6 +123,7 @@ pub struct BufferSnapshot {
     remote_id: BufferId,
     replica_id: ReplicaId,
     line_ending: LineEnding,
+    stripped_floor: clock::Global,
     _lease: Option<Arc<clock::Global>>,
     lease_registry: Arc<parking_lot::Mutex<Vec<std::sync::Weak<clock::Global>>>>,
 }
@@ -147,6 +151,7 @@ impl Clone for BufferSnapshot {
             remote_id: self.remote_id,
             replica_id: self.replica_id,
             line_ending: self.line_ending,
+            stripped_floor: self.stripped_floor.clone(),
             _lease: Some(lease),
             lease_registry: self.lease_registry.clone(),
         }
@@ -211,6 +216,36 @@ pub struct FragmentState {
     pub visible: bool,
     pub stripped: bool,
     pub deletions: Vec<clock::Lamport>,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct HistoryWatermark {
+    pub horizon: clock::Global,
+    pub min_pinned: Vec<clock::Lamport>,
+}
+
+impl HistoryWatermark {
+    pub fn allows_stripping(&self, edit_id: clock::Lamport) -> bool {
+        self.horizon.observed(edit_id)
+            && self.min_pinned.iter().any(|pinned| {
+                pinned.replica_id == edit_id.replica_id && edit_id.value < pinned.value
+            })
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.horizon.join(&other.horizon);
+        for other_pinned in &other.min_pinned {
+            if let Some(pinned) = self
+                .min_pinned
+                .iter_mut()
+                .find(|pinned| pinned.replica_id == other_pinned.replica_id)
+            {
+                pinned.value = pinned.value.max(other_pinned.value);
+            } else {
+                self.min_pinned.push(*other_pinned);
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -994,12 +1029,16 @@ impl Buffer {
                 version,
                 undo_map: Default::default(),
                 insertion_slices: Default::default(),
+                stripped_floor: clock::Global::new(),
                 _lease: None,
                 lease_registry: Default::default(),
             },
             history,
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
+            requires_peer_watermark: false,
+            peer_watermark: None,
+            advertised_watermark: None,
             lamport_clock,
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
@@ -1095,6 +1134,7 @@ impl Buffer {
                 line_ending,
                 fragments,
                 insertions,
+                stripped_floor: version.clone(),
                 version,
                 undo_map: UndoMap::from_entries(undo_map_entries),
                 insertion_slices: slices,
@@ -1104,6 +1144,9 @@ impl Buffer {
             history,
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
+            requires_peer_watermark: false,
+            peer_watermark: None,
+            advertised_watermark: None,
             lamport_clock,
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
@@ -1135,10 +1178,73 @@ impl Buffer {
         horizon
     }
 
+    pub fn advertise_history_watermark(&mut self, covers_peer_replicas: bool) -> HistoryWatermark {
+        let mut min_pinned = HashMap::<ReplicaId, u32>::default();
+        for entry in self
+            .history
+            .undo_stack
+            .iter()
+            .chain(&self.history.redo_stack)
+        {
+            for edit_id in &entry.transaction.edit_ids {
+                min_pinned
+                    .entry(edit_id.replica_id)
+                    .and_modify(|min_value| *min_value = (*min_value).min(edit_id.value))
+                    .or_insert(edit_id.value);
+            }
+        }
+        min_pinned
+            .entry(self.lamport_clock.replica_id)
+            .or_insert(self.lamport_clock.value + 1);
+        let horizon = self.compaction_horizon();
+        if covers_peer_replicas {
+            for timestamp in horizon.iter() {
+                min_pinned
+                    .entry(timestamp.replica_id)
+                    .or_insert(timestamp.value + 1);
+            }
+        }
+        let watermark = HistoryWatermark {
+            horizon,
+            min_pinned: min_pinned
+                .into_iter()
+                .map(|(replica_id, value)| clock::Lamport { replica_id, value })
+                .collect(),
+        };
+        match &mut self.advertised_watermark {
+            Some(advertised) => advertised.merge(&watermark),
+            None => self.advertised_watermark = Some(watermark),
+        }
+        self.advertised_watermark.clone().unwrap_or_default()
+    }
+
+    pub fn observe_peer_history_watermark(&mut self, watermark: &HistoryWatermark) {
+        match &mut self.peer_watermark {
+            Some(peer_watermark) => peer_watermark.merge(watermark),
+            None => self.peer_watermark = Some(watermark.clone()),
+        }
+    }
+
+    pub fn set_requires_peer_watermark(&mut self, requires_peer_watermark: bool) {
+        self.requires_peer_watermark = requires_peer_watermark;
+    }
+
+    pub fn requires_peer_watermark(&self) -> bool {
+        self.requires_peer_watermark
+    }
+
     pub fn compact_history(&mut self) -> usize {
         if self.history.retain_operations || !self.deferred_ops.is_empty() {
             return 0;
         }
+        let peer_watermark = if self.requires_peer_watermark {
+            match &self.peer_watermark {
+                Some(peer_watermark) => Some(peer_watermark.clone()),
+                None => return 0,
+            }
+        } else {
+            None
+        };
         let horizon = self.compaction_horizon();
         let mut pinned_edit_ids = HashSet::<clock::Lamport>::default();
         for entry in self
@@ -1149,18 +1255,25 @@ impl Buffer {
         {
             pinned_edit_ids.extend(entry.transaction.edit_ids.iter().copied());
         }
+        let strippable_id = |edit_id: clock::Lamport| {
+            horizon.observed(edit_id)
+                && !pinned_edit_ids.contains(&edit_id)
+                && peer_watermark
+                    .as_ref()
+                    .is_none_or(|peer_watermark| peer_watermark.allows_stripping(edit_id))
+        };
         let strippable = |fragment: &Fragment| {
             !fragment.visible
                 && !fragment.stripped
-                && horizon.observed(fragment.timestamp)
+                && strippable_id(fragment.timestamp)
                 && horizon.observed_all(&fragment.max_undos)
-                && !pinned_edit_ids.contains(&fragment.timestamp)
-                && fragment.deletions.iter().all(|deletion| {
-                    horizon.observed(*deletion) && !pinned_edit_ids.contains(deletion)
-                })
+                && fragment
+                    .deletions
+                    .iter()
+                    .all(|deletion| strippable_id(*deletion))
         };
-
         let mut stripped_bytes = 0;
+        let mut stripped_floor = clock::Global::new();
         let mut new_fragments = SumTree::new(&None);
         let mut new_deleted_text = Rope::new();
         let mut deleted_cursor = self.snapshot.deleted_text.cursor(0);
@@ -1174,6 +1287,11 @@ impl Buffer {
                     let mut stripped_fragment = fragment.clone();
                     stripped_fragment.stripped = true;
                     stripped_bytes += fragment.len as usize;
+                    stripped_floor.observe(fragment.timestamp);
+                    for deletion in &fragment.deletions {
+                        stripped_floor.observe(*deletion);
+                    }
+                    stripped_floor.join(&fragment.max_undos);
                     deleted_cursor.seek_forward(fragment_deleted_end);
                     new_fragments.push(stripped_fragment, &None);
                 } else {
@@ -1188,6 +1306,7 @@ impl Buffer {
         if stripped_bytes > 0 {
             self.snapshot.fragments = new_fragments;
             self.snapshot.deleted_text = new_deleted_text;
+            self.snapshot.stripped_floor.join(&stripped_floor);
         }
         stripped_bytes
     }
@@ -1235,6 +1354,9 @@ impl Buffer {
             history: History::new(self.base_text().clone()),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
+            requires_peer_watermark: false,
+            peer_watermark: None,
+            advertised_watermark: None,
             lamport_clock: clock::Lamport::new(ReplicaId::LOCAL_BRANCH),
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
@@ -1894,6 +2016,18 @@ impl Buffer {
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
+        if let Some(advertised) = &self.advertised_watermark
+            && transaction
+                .edit_ids
+                .iter()
+                .any(|edit_id| advertised.allows_stripping(*edit_id))
+        {
+            log::warn!(
+                "dropping transaction {:?} from the undo history: it pins edits below the advertised history watermark",
+                transaction.id
+            );
+            return;
+        }
         let deleted_bytes = self.deleted_bytes_for_edit_ids(&transaction.edit_ids);
         self.history
             .push_transaction(transaction, now, deleted_bytes);
@@ -2537,6 +2671,10 @@ impl BufferSnapshot {
 
     pub fn as_rope(&self) -> &Rope {
         &self.visible_text
+    }
+
+    pub fn can_reconstruct_version(&self, version: &clock::Global) -> bool {
+        version.observed_all(&self.stripped_floor)
     }
 
     pub fn rope_for_version(&self, version: &clock::Global) -> Rope {

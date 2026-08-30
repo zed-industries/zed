@@ -140,6 +140,42 @@ pub fn serialize_undo_map_entry(
     }
 }
 
+pub fn serialize_history_watermark(
+    project_id: u64,
+    buffer_id: u64,
+    watermark: &text::HistoryWatermark,
+) -> proto::UpdateHistoryWatermark {
+    proto::UpdateHistoryWatermark {
+        project_id,
+        buffer_id,
+        horizon: serialize_version(&watermark.horizon),
+        min_pinned: watermark
+            .min_pinned
+            .iter()
+            .map(|pinned| proto::LamportTimestamp {
+                replica_id: pinned.replica_id.as_u16() as u32,
+                value: pinned.value,
+            })
+            .collect(),
+    }
+}
+
+pub fn deserialize_history_watermark(
+    watermark: &proto::UpdateHistoryWatermark,
+) -> text::HistoryWatermark {
+    text::HistoryWatermark {
+        horizon: deserialize_version(&watermark.horizon),
+        min_pinned: watermark
+            .min_pinned
+            .iter()
+            .map(|pinned| clock::Lamport {
+                replica_id: ReplicaId::new(pinned.replica_id as u16),
+                value: pinned.value,
+            })
+            .collect(),
+    }
+}
+
 pub fn serialize_fragment(fragment: &text::FragmentState) -> proto::BufferFragment {
     proto::BufferFragment {
         insertion_replica_id: fragment.insertion_id.replica_id.as_u16() as u32,
