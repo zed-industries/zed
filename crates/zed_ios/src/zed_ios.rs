@@ -370,7 +370,14 @@ fn open_settings_file(
 #[unsafe(no_mangle)]
 pub extern "C" fn zed_ios_run() -> bool {
     zlog::init();
-    zlog::init_output_stdout();
+    // Log to a file inside the container so device sessions (where stdout is
+    // lost) can be diagnosed by pulling the app container.
+    if let Err(error) = std::fs::create_dir_all(paths::logs_dir()) {
+        eprintln!("failed to create the logs directory: {error}");
+        zlog::init_output_stdout();
+    } else if zlog::init_output_file(paths::log_file(), Some(paths::old_log_file())).is_err() {
+        zlog::init_output_stdout();
+    }
 
     let did_start = Rc::new(Cell::new(false));
     gpui_ios::ios::ffi::set_app_callback(Box::new({
