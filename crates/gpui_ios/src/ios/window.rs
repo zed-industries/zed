@@ -374,7 +374,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
             is_key_down: bool,
         ) -> bool {
             const UI_KEY_MODIFIER_CONTROL: isize = 1 << 18;
-            const UI_KEY_MODIFIER_ALTERNATE: isize = 1 << 19;
             const UI_KEY_MODIFIER_COMMAND: isize = 1 << 20;
 
             let window_ptr: *mut std::ffi::c_void = unsafe {
@@ -399,10 +398,13 @@ fn register_text_input_view_class() -> &'static AnyClass {
                     let key_code: isize = msg_send![key, keyCode];
                     let modifier_flags: isize = msg_send![key, modifierFlags];
 
+                    // Option is deliberately not treated as a shortcut
+                    // modifier: on many layouts option-combos type characters
+                    // (@ on German is option-l), which arrive via insertText.
+                    // Option still reaches the keymap for navigation keys
+                    // below (e.g. alt-left for word movement).
                     let has_shortcut_modifier = modifier_flags
-                        & (UI_KEY_MODIFIER_CONTROL
-                            | UI_KEY_MODIFIER_ALTERNATE
-                            | UI_KEY_MODIFIER_COMMAND)
+                        & (UI_KEY_MODIFIER_CONTROL | UI_KEY_MODIFIER_COMMAND)
                         != 0;
                     // Keys that produce no text and are not already delivered
                     // through UIKeyInput (enter/tab via insertText, backspace
