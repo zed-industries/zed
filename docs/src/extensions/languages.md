@@ -44,7 +44,6 @@ TBD: Document `language_name/config.toml` keys
 - opt_into_language_servers
 - code_fence_block_name
 - scope_opt_in_language_servers
-- increase_indent_pattern, decrease_indent_pattern
 - collapsed_placeholder
 - auto_indent_on_paste, auto_indent_using_last_non_empty_line
 - overrides: `[overrides.element]`, `[overrides.string]`
@@ -212,19 +211,96 @@ This query captures object keys for the outline structure.
 
 The `indents.scm` file defines indentation rules.
 
-Here's an example from an `indents.scm` file for JSON:
+#### Indenting and outdenting based on syntax
+
+| Capture  | Description                                                            |
+| -------- | ---------------------------------------------------------------------- |
+| @indent  | Defines an indentation range using the captured node                   |
+| @start   | Moves the start of an `@indent` range to the end of the captured node  |
+| @end     | Moves the end of an `@indent` range to the start of the captured node  |
+| @outdent | Ends the innermost indentation range at the start of the captured node |
+
+For example, to indent all of an `if_statement` node's contents:
 
 ```scheme
-(array "]" @end) @indent
-(object "}" @end) @indent
+(if_statement) @indent
 ```
 
-This query marks the end of arrays and objects for indentation purposes.
+The indentation range runs from the start of the node to its end.
 
-| Capture | Description                                        |
-| ------- | -------------------------------------------------- |
-| @end    | Captures closing brackets and braces               |
-| @indent | Captures entire arrays and objects for indentation |
+An HTML element includes its opening and closing tags. To indent only the
+content between them:
+
+```scheme
+(element
+  (start_tag) @start ; Begin indentation after the opening tag
+  (end_tag)? @end) @indent ; End indentation before the closing tag
+```
+
+A subsequent case label must outdent from the preceding case body so that
+sibling labels stay aligned:
+
+```scheme
+(compound_statement
+  (case_statement
+    ":" @start) ; Begin indenting the case body
+  "}" @end) @indent
+
+(compound_statement
+  (case_statement)
+  (case_statement) @outdent) ; Align subsequent case labels
+```
+
+#### Indenting and outdenting based on line patterns
+
+Use these `config.toml` options for indentation rules that match line contents
+instead of syntax nodes:
+
+| Option                     | Description                                                              |
+| -------------------------- | ------------------------------------------------------------------------ |
+| `increase_indent_pattern`  | A matching line indents the following line by one level                  |
+| `decrease_indent_pattern`  | A matching line outdents by one level without considering syntax context |
+| `decrease_indent_patterns` | A matching line aligns with an allowed earlier syntax construct          |
+
+For example, to indent after a line ending in `:`:
+
+```toml
+increase_indent_pattern = ":\\s*$"
+```
+
+For example, to outdent lines beginning with `end`:
+
+```toml
+decrease_indent_pattern = "^\\s*end\\b"
+```
+
+#### Aligning clauses with related blocks
+
+Use `decrease_indent_patterns` when a line should align with a related block
+instead of always moving left by one level. In `indents.scm`, mark the block
+start with a named `@start.<name>` capture:
+
+```scheme
+(if_statement) @start.if
+```
+
+In `config.toml`, list the capture suffix in `valid_after`:
+
+```toml
+decrease_indent_patterns = [
+  { pattern = "^\\s*else\\b", valid_after = ["if"] },
+]
+```
+
+A line beginning with `else` aligns with the most recent `@start.if` at the same
+or a lower indentation level. If Zed finds no matching block, it leaves the
+indentation unchanged.
+
+Named captures such as `@start.if` mark blocks for these rules. Unlike
+`@start`, they do not change an `@indent` range.
+
+Zed checks rules in order and stops after the first matching `pattern`. Put
+more specific patterns before overlapping general patterns.
 
 ### Code injections
 

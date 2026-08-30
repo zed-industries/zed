@@ -3,12 +3,9 @@ mod websocket;
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
-use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER_NAME};
+use anyhow::{Result, anyhow};
 pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
-use gpui::{App, Task};
-use gpui_tokio::Tokio;
 use http_client::http::request;
 use http_client::{
     AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode,
@@ -16,15 +13,18 @@ use http_client::{
 use parking_lot::RwLock;
 use serde::de::DeserializeOwned;
 use thiserror::Error;
-use yawc::WebSocket;
-
-use crate::websocket::Connection;
 
 pub use llm_token::LlmApiToken;
 
 struct Credentials {
     user_id: u32,
     access_token: String,
+}
+
+#[derive(Clone, Copy)]
+enum Authentication {
+    Credentials,
+    Session,
 }
 
 #[derive(Debug, Error)]
@@ -62,6 +62,7 @@ pub enum ClientApiError {
 pub struct CloudApiClient {
     credentials: RwLock<Option<Credentials>>,
     http_client: Arc<HttpClientWithUrl>,
+    authentication: Authentication,
 }
 
 impl CloudApiClient {
@@ -69,6 +70,15 @@ impl CloudApiClient {
         Self {
             credentials: RwLock::new(None),
             http_client,
+            authentication: Authentication::Credentials,
+        }
+    }
+
+    pub fn new_with_session_authentication(http_client: Arc<HttpClientWithUrl>) -> Self {
+        Self {
+            credentials: RwLock::new(None),
+            http_client,
+            authentication: Authentication::Session,
         }
     }
 
@@ -87,7 +97,7 @@ impl CloudApiClient {
         *self.credentials.write() = None;
     }
 
-    fn cloud_host(&self) -> String {
+    pub fn cloud_host(&self) -> String {
         self.http_client
             .build_zed_cloud_url("/")
             .ok()
@@ -113,35 +123,6 @@ impl CloudApiClient {
 
         self.send_authenticated_json_request(request_builder, AsyncBody::default())
             .await
-    }
-
-    pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
-        let mut connect_url = self
-            .http_client
-            .build_zed_cloud_url("/client/users/connect")?;
-        connect_url
-            .set_scheme(match connect_url.scheme() {
-                "https" => "wss",
-                "http" => "ws",
-                scheme => Err(anyhow!("invalid URL scheme: {scheme}"))?,
-            })
-            .map_err(|_| anyhow!("failed to set URL scheme"))?;
-
-        let credentials = self.credentials.read();
-        let credentials = credentials.as_ref().context("no credentials provided")?;
-        let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
-
-        Ok(Tokio::spawn_result(cx, async move {
-            let ws = WebSocket::connect(connect_url)
-                .with_request(
-                    request::Builder::new()
-                        .header("Authorization", authorization_header)
-                        .header(PROTOCOL_VERSION_HEADER_NAME, PROTOCOL_VERSION.to_string()),
-                )
-                .await?;
-
-            Ok(Connection::new(ws))
-        }))
     }
 
     async fn create_llm_token(
@@ -203,10 +184,13 @@ impl CloudApiClient {
         request_builder: request::Builder,
         body: impl Into<AsyncBody>,
     ) -> Result<Response<AsyncBody>, ClientApiError> {
-        let request = {
+        let request = if matches!(self.authentication, Authentication::Session) {
+            build_request(request_builder, body, None)
+                .map_err(ClientApiError::RequestBuildFailed)?
+        } else {
             let credentials = self.credentials.read();
             let credentials = credentials.as_ref().ok_or(ClientApiError::NotSignedIn)?;
-            build_request(request_builder, body, credentials)
+            build_request(request_builder, body, Some(credentials))
                 .map_err(ClientApiError::RequestBuildFailed)?
         };
 
@@ -261,10 +245,10 @@ impl CloudApiClient {
                     .as_ref(),
             ),
             AsyncBody::default(),
-            &Credentials {
+            Some(&Credentials {
                 user_id,
                 access_token: access_token.into(),
-            },
+            }),
         )?;
 
         let mut response = self.http_client.send(request).await?;
@@ -331,13 +315,60 @@ impl CloudApiClient {
 fn build_request(
     req: request::Builder,
     body: impl Into<AsyncBody>,
-    credentials: &Credentials,
+    credentials: Option<&Credentials>,
 ) -> Result<Request<AsyncBody>> {
     Ok(req
         .header("Content-Type", "application/json")
-        .header(
-            "Authorization",
-            format!("{} {}", credentials.user_id, credentials.access_token),
-        )
+        .when_some(credentials, |request, credentials| {
+            request.header(
+                "Authorization",
+                format!("{} {}", credentials.user_id, credentials.access_token),
+            )
+        })
         .body(body.into())?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_session_authenticated_request_without_authorization_header() -> Result<()> {
+        let request = build_request(
+            Request::builder().uri("https://cloud.zed.dev/client/users/me"),
+            AsyncBody::default(),
+            None,
+        )?;
+
+        assert_eq!(
+            request
+                .headers()
+                .get("Content-Type")
+                .and_then(|value| value.to_str().ok()),
+            Some("application/json")
+        );
+        assert!(!request.headers().contains_key("Authorization"));
+        Ok(())
+    }
+
+    #[test]
+    fn build_credentials_authenticated_request_with_authorization_header() -> Result<()> {
+        let request = build_request(
+            Request::builder().uri("https://cloud.zed.dev/client/users/me"),
+            AsyncBody::default(),
+            Some(&Credentials {
+                user_id: 123,
+                access_token: "token".into(),
+            }),
+        )?;
+
+        assert_eq!(
+            request
+                .headers()
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("123 token")
+        );
+        Ok(())
+    }
 }

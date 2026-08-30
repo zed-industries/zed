@@ -3,7 +3,7 @@ use std::{future, sync::Arc, time::Duration};
 use fs::FakeFs;
 use gpui::TestAppContext;
 use http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
-use project::AgentRegistryStore;
+use project::{AgentRegistryStore, RegistryAgent};
 use serde_json::json;
 
 use crate::init_test;
@@ -110,6 +110,66 @@ async fn registry_refresh_does_not_block_sequentially_on_hung_icon_downloads(
         assert_eq!(store.agents()[0].id().as_ref(), "slow-icon-a");
         assert_eq!(store.agents()[1].id().as_ref(), "slow-icon-b");
         assert_eq!(store.agents()[2].id().as_ref(), "slow-icon-c");
+        assert_eq!(store.fetch_error(), None);
+    });
+}
+
+#[gpui::test]
+async fn registry_refresh_preserves_optional_binary_checksums(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let checksum = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let fs = FakeFs::new(cx.executor());
+    let http_client = FakeHttpClient::create(move |_| async move {
+        let body = serde_json::to_vec(&json!({
+            "version": "1",
+            "agents": [{
+                "id": "binary-agent",
+                "name": "Binary Agent",
+                "version": "1.0.0",
+                "description": "A binary agent.",
+                "distribution": {
+                    "binary": {
+                        "darwin-aarch64": {
+                            "archive": "https://example.test/agent.zip",
+                            "sha256": checksum,
+                            "cmd": "./agent"
+                        },
+                        "linux-x86_64": {
+                            "archive": "https://example.test/agent.zip",
+                            "cmd": "./agent"
+                        }
+                    }
+                }
+            }]
+        }))?;
+        Ok(Response::builder()
+            .status(200)
+            .body(AsyncBody::from(body))?)
+    }) as Arc<dyn HttpClient>;
+
+    let registry_store =
+        cx.update(|cx| AgentRegistryStore::init_global(cx, fs.clone(), http_client));
+    cx.run_until_parked();
+
+    registry_store.read_with(cx, |store, _| {
+        let Some(RegistryAgent::Binary(agent)) = store.agents().first() else {
+            panic!("expected a binary registry agent");
+        };
+
+        assert_eq!(
+            agent
+                .targets
+                .get("darwin-aarch64")
+                .and_then(|target| target.sha256.as_deref()),
+            Some(checksum)
+        );
+        assert!(
+            agent
+                .targets
+                .get("linux-x86_64")
+                .is_some_and(|target| target.sha256.is_none())
+        );
         assert_eq!(store.fetch_error(), None);
     });
 }

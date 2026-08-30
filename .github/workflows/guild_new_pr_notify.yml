@@ -1,10 +1,15 @@
-# When a guild member opens a PR while already having another open PR in
-# zed-industries/zed, post a heads-up to #zed-guild-internal. PRs opened before
-# CUTOFF_DATE (the cohort start) don't count as "already open".
+# When a guild member opens a PR, react on the Guild board (#74):
+#   - if the PR will close an open board issue, set that issue to In Progress
+#     (covers starting work without self-assigning), and
+#   - if they already have another open PR opened since the cohort started, post
+#     a gentle heads-up to #zed-guild-internal.
 
 name: Guild New PR Notification
 
 on:
+  # zizmor: ignore[dangerous-triggers]
+  # Fork PRs must be supported, but this workflow only reads event metadata and
+  # checks out scripts from the trusted default branch; it never executes PR code.
   pull_request_target:
     types: [opened]
 
@@ -15,11 +20,8 @@ concurrency:
   group: guild-new-pr-notify-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
-env:
-  CUTOFF_DATE: "2026-07-01"
-
 jobs:
-  notify-slack:
+  react:
     if: github.repository == 'zed-industries/zed'
     runs-on: namespace-profile-2x4-ubuntu-2404
     timeout-minutes: 5
@@ -32,89 +34,31 @@ jobs:
           app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
           private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
           owner: zed-industries
+          repositories: zed
+          permission-issues: write
+          permission-members: read
+          permission-organization-projects: write
+          permission-pull-requests: read
 
-      - name: Notify on an additional open PR by a guild member
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        env:
-          SLACK_WEBHOOK_GUILD_INTERNAL: ${{ secrets.SLACK_WEBHOOK_GUILD_INTERNAL }}
+      - name: Checkout repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
-          github-token: ${{ steps.app-token.outputs.token }}
-          script: |
-            // Guild cohort members are outside collaborators holding this custom
-            // repository role, not members of an org team.
-            const GUILD_ROLE_NAME = 'Guild Assign issues/PRs';
-            const pr = context.payload.pull_request;
-            const author = pr.user.login;
+          sparse-checkout: |
+            script/github-guild-board.py
+          sparse-checkout-cone-mode: false
 
-            const isGuildMember = async (username) => {
-              try {
-                const response = await github.rest.repos.getCollaboratorPermissionLevel({
-                  owner: 'zed-industries',
-                  repo: 'zed',
-                  username
-                });
-                // role_name is the effective (highest) role; for cohort outside
-                // collaborators that is the custom role. Built-in roles come back
-                // lowercased and won't match.
-                return (response.data.role_name || '').toLowerCase() === GUILD_ROLE_NAME.toLowerCase();
-              } catch (error) {
-                if (error.status === 404) {
-                  return false;
-                }
-                throw error;
-              }
-            };
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
 
-            if (!(await isGuildMember(author))) {
-              console.log(`${author} is not a guild member, skipping`);
-              return;
-            }
+      - name: Install dependencies
+        run: pip install requests
 
-            const cutoff = process.env.CUTOFF_DATE;
-            const query = `repo:zed-industries/zed is:pr is:open author:${author} created:>=${cutoff}`;
-            const result = await github.rest.search.issuesAndPullRequests({ q: query, per_page: 100 });
-            const others = result.data.items.filter((item) => item.number !== pr.number);
-
-            if (others.length === 0) {
-              console.log(`${author} has no other qualifying open PRs, skipping`);
-              return;
-            }
-
-            const webhook = process.env.SLACK_WEBHOOK_GUILD_INTERNAL;
-            if (!webhook) {
-              core.setFailed('SLACK_WEBHOOK_GUILD_INTERNAL secret is not set');
-              return;
-            }
-
-            // Escape Slack's control characters so PR titles render literally
-            // instead of being read as links or @-mentions.
-            const esc = (text) =>
-              (text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-            const quips = [
-              'Deep into the queue they wander.',
-              'Nevermore just one open PR.',
-            ];
-            const quip = quips[Math.floor(Math.random() * quips.length)];
-            const otherList = others
-              .map((item) => `<${item.html_url}|#${item.number}> ${esc(item.title)}`)
-              .join('\n• ');
-            const message =
-              `${quip} @${author} just opened <${pr.html_url}|${esc(pr.title)}> ` +
-              `while still having open PR(s):\n• ${otherList}\n` +
-              'A gentle nudge to help them land one before spreading thin might be in order.';
-
-            const response = await fetch(webhook, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                text: `${author} opened another PR while others are still open`,
-                blocks: [{ type: 'section', text: { type: 'mrkdwn', text: message } }],
-              }),
-            });
-            if (!response.ok) {
-              const body = await response.text();
-              core.setFailed(`Slack notification failed with status ${response.status}: ${body}`);
-              return;
-            }
-            console.log(`Notified: ${author} has ${others.length} other open PR(s)`);
+      - name: React to the new PR
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "74"
+          GUILD_MODE: event
+          SLACK_WEBHOOK_GUILD_INTERNAL: ${{ secrets.SLACK_WEBHOOK_GUILD_INTERNAL }}
+        run: python script/github-guild-board.py

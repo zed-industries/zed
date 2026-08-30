@@ -1158,7 +1158,7 @@ impl SplittableEditor {
         }
     }
 
-    fn toggle_soft_wrap(
+    pub fn toggle_soft_wrap(
         &mut self,
         _: &ToggleSoftWrap,
         window: &mut Window,
@@ -3894,7 +3894,15 @@ mod tests {
         .unindent();
 
         let buffer2 = cx.new(|cx| Buffer::local(current_text.to_string(), cx));
-        let diff2 = cx.new(|cx| BufferDiff::new(&buffer2.read(cx).text_snapshot(), None, None, cx));
+        let diff2 = cx.new(|cx| {
+            BufferDiff::new(
+                &buffer2.read(cx).text_snapshot(),
+                None,
+                None,
+                buffer_diff::DiffBaseKind::Custom,
+                cx,
+            )
+        });
 
         editor.update(cx, |editor, cx| {
             let path1 = PathKey::sorted(0);

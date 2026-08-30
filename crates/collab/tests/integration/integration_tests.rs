@@ -19,8 +19,8 @@ use gpui::{
     UpdateGlobal, px, size,
 };
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
-    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
+    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, FakeLspAdapter, Language,
+    LanguageConfig, LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{Formatter, FormatterList},
     rust_lang, tree_sitter_rust, tree_sitter_typescript,
 };
@@ -2307,10 +2307,11 @@ async fn test_propagate_saves_and_fs_changes(
     let rust = Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -2318,10 +2319,11 @@ async fn test_propagate_saves_and_fs_changes(
     let javascript = Arc::new(Language::new(
         LanguageConfig {
             name: "JavaScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["js".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -2534,6 +2536,65 @@ async fn test_propagate_saves_and_fs_changes(
             assert_eq!(buffer_b.saved_mtime(), buffer_a.saved_mtime());
             assert_eq!(buffer_b.saved_version(), buffer_a.saved_version());
         });
+    });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_unloaded_entries_sync_to_guests(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    cx_a.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_depth = Some(1);
+            });
+        });
+    });
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/a"),
+            json!({
+                "junk": {
+                    "x": {
+                        "deep.txt": ""
+                    }
+                },
+                "top.txt": ""
+            }),
+        )
+        .await;
+
+    let (project_a, _) = client_a.build_local_project(path!("/a"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    executor.run_until_parked();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    executor.run_until_parked();
+
+    let worktree_b = project_b.read_with(cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+    worktree_b.read_with(cx_b, |tree, _| {
+        assert_eq!(
+            tree.entry_for_path(rel_path("junk"))
+                .map(|entry| entry.kind),
+            Some(worktree::EntryKind::UnloadedDir)
+        );
+        assert_eq!(tree.entry_for_path(rel_path("junk/x")), None);
+        assert_eq!(tree.deferred_scan_dir_count(), 1);
     });
 }
 
@@ -3473,7 +3534,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(dir_entry.id, false, cx).unwrap()
+            project.delete_entry(dir_entry.id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -3501,7 +3562,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(entry.id, false, cx).unwrap()
+            project.delete_entry(entry.id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -4130,10 +4191,11 @@ async fn test_collaborating_with_diagnostics(
     client_a.language_registry().add(Arc::new(Language::new(
         LanguageConfig {
             name: "Rust".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4175,7 +4237,7 @@ async fn test_collaborating_with_diagnostics(
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::WARNING),
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
-                message: "message 0".to_string(),
+                message: lsp::DiagnosticMessage::from("message 0"),
                 ..Default::default()
             }],
         },
@@ -4195,7 +4257,7 @@ async fn test_collaborating_with_diagnostics(
             diagnostics: vec![lsp::Diagnostic {
                 severity: Some(lsp::DiagnosticSeverity::ERROR),
                 range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
-                message: "message 1".to_string(),
+                message: lsp::DiagnosticMessage::from("message 1"),
                 ..Default::default()
             }],
         },
@@ -4262,6 +4324,14 @@ async fn test_collaborating_with_diagnostics(
     );
 
     // Simulate a language server reporting more errors for a file.
+    let markdown_message = lsp::MarkupContent {
+        kind: lsp::MarkupKind::Markdown,
+        value: "\n**message 1**\n".to_string(),
+    };
+    let plain_text_message = lsp::MarkupContent {
+        kind: lsp::MarkupKind::PlainText,
+        value: "\nmessage 2\n".to_string(),
+    };
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         lsp::PublishDiagnosticsParams {
             uri: lsp::Uri::from_file_path(path!("/a/a.rs")).unwrap(),
@@ -4270,13 +4340,13 @@ async fn test_collaborating_with_diagnostics(
                 lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::ERROR),
                     range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
-                    message: "message 1".to_string(),
+                    message: lsp::DiagnosticMessage::from(markdown_message.clone()),
                     ..Default::default()
                 },
                 lsp::Diagnostic {
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
                     range: lsp::Range::new(lsp::Position::new(0, 10), lsp::Position::new(0, 13)),
-                    message: "message 2".to_string(),
+                    message: lsp::DiagnosticMessage::from(plain_text_message.clone()),
                     ..Default::default()
                 },
             ],
@@ -4333,28 +4403,28 @@ async fn test_collaborating_with_diagnostics(
                 .diagnostics_in_range::<_, Point>(0..buffer.len(), false)
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(0, 4)..Point::new(0, 7),
-                    diagnostic: Diagnostic {
+                DiagnosticEntry::new(
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Diagnostic {
                         group_id: 2,
-                        message: "message 1".to_string(),
+                        message: DiagnosticMessage::from_lsp_markup(&markdown_message),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(0, 10)..Point::new(0, 13),
-                    diagnostic: Diagnostic {
+                ),
+                DiagnosticEntry::new(
+                    Point::new(0, 10)..Point::new(0, 13),
+                    Diagnostic {
                         group_id: 3,
                         severity: lsp::DiagnosticSeverity::WARNING,
-                        message: "message 2".to_string(),
+                        message: DiagnosticMessage::from_lsp_markup(&plain_text_message),
                         is_primary: true,
                         source_kind: DiagnosticSourceKind::Pushed,
                         ..Diagnostic::default()
                     }
-                }
+                )
             ]
         );
     });
@@ -4479,7 +4549,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                     severity: Some(lsp::DiagnosticSeverity::WARNING),
                     source: Some("the-disk-based-diagnostics-source".into()),
                     range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                    message: "message one".to_string(),
+                    message: lsp::DiagnosticMessage::from("message one"),
                     ..Default::default()
                 }],
             },
@@ -4846,10 +4916,11 @@ async fn test_prettier_formatting_buffer(
     client_a.language_registry().add(Arc::new(Language::new(
         LanguageConfig {
             name: "TypeScript".into(),
-            matcher: LanguageMatcher {
+            matcher: (LanguageMatcher {
                 path_suffixes: vec!["ts".to_string()],
                 ..Default::default()
-            },
+            })
+            .into(),
             ..Default::default()
         },
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
@@ -5135,6 +5206,109 @@ async fn test_definition(
         assert_eq!(
             type_definitions[0].target.range.to_point(target_buffer),
             Point::new(0, 5)..Point::new(0, 7)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edit_prediction_definition(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    let capabilities = lsp::ServerCapabilities {
+        definition_provider: Some(OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": "const ONE: usize = TWO;",
+                "b.rs": "const TWO: usize = 2;",
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/root"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("a.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
+    fake_language_server.set_request_handler::<lsp::request::GotoDefinition, _, _>(
+        |_, _| async move {
+            Ok(Some(lsp::GotoDefinitionResponse::Scalar(
+                lsp::Location::new(
+                    lsp::Uri::from_file_path(path!("/root/b.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ),
+            )))
+        },
+    );
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let definitions = project_b
+        .update(cx_b, |project, cx| {
+            project.edit_prediction_definitions(&buffer_b, 19, false, cx)
+        })
+        .await
+        .unwrap();
+
+    cx_b.read(|cx| {
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(
+            definitions[0].path,
+            ProjectPath {
+                worktree_id,
+                path: rel_path("b.rs").into(),
+            }
+        );
+        assert_eq!(
+            definitions[0].range.start.0,
+            language::PointUtf16::new(0, 6)
+        );
+        assert_eq!(definitions[0].range.end.0, language::PointUtf16::new(0, 9));
+        assert!(
+            project_b
+                .read(cx)
+                .get_open_buffer(&definitions[0].path, cx)
+                .is_none()
         );
     });
 }
@@ -5629,7 +5803,7 @@ async fn test_lsp_hover(
         let new_server = language_servers[i].next().await.unwrap_or_else(|| {
             panic!(
                 "Failed to get language server #{i} with name {}",
-                &language_server_names[i]
+                language_server_names[i]
             )
         });
         let new_server_name = new_server.server.name();
@@ -5844,6 +6018,7 @@ async fn test_project_symbols(
         .unwrap();
     assert_eq!(symbols.len(), 1);
     assert_eq!(symbols[0].name, "TWO");
+    assert_eq!(symbols[0].kind, language::SymbolKind::Constant);
 
     // Open one of the returned symbols.
     let buffer_b_2 = project_b

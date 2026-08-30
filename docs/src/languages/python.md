@@ -135,10 +135,12 @@ You can use the following configuration:
   "lsp": {
     "basedpyright": {
       "settings": {
-        "basedpyright.analysis": {
-          "diagnosticMode": "workspace",
-          "inlayHints": {
-            "callArgumentNames": false
+        "basedpyright": {
+          "analysis": {
+            "diagnosticMode": "workspace",
+            "inlayHints": {
+              "callArgumentNames": false
+            }
           }
         }
       }
@@ -146,6 +148,8 @@ You can use the following configuration:
   }
 }
 ```
+
+For compatibility with older configurations, Zed also accepts `basedpyright.analysis` as a top-level key within `settings`.
 
 ##### Configuration files
 

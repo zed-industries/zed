@@ -30,7 +30,7 @@ use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -198,11 +198,19 @@ impl StagedDiff {
 
         if let Some(entry) = entry {
             staged_diff.update(cx, |staged_diff, cx| {
-                staged_diff
-                    .diff
-                    .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
+                staged_diff.move_to_entry(entry, window, cx);
             });
         }
+    }
+
+    pub(crate) fn move_to_entry(
+        &mut self,
+        entry: GitStatusEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff
+            .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
     }
 
     pub(crate) fn new(
@@ -211,8 +219,8 @@ impl StagedDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff =
-            cx.new(|cx| DiffBufferList::new(DiffBase::Staged, project.clone(), window, cx));
+        let git_store = project.read(cx).git_store().clone();
+        let branch_diff = cx.new(|cx| DiffBufferList::new(DiffBase::Staged, git_store, None, cx));
         let workspace_handle = workspace.downgrade();
         let diff = cx.new(|cx| {
             DiffMultibuffer::new(
@@ -260,7 +268,7 @@ impl StagedDiff {
         let editor = diff.editor().read(cx).rhs_editor().clone();
         let editor = editor.read(cx);
         let snapshot = diff.multibuffer().read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let (selection, ranges) = diff.selected_ranges(cx);
         let unstage = editor
             .diff_hunks_in_ranges(&ranges, &snapshot)
@@ -338,16 +346,6 @@ impl Item for StagedDiff {
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
         Some("Staged Changes".into())
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(0, _cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
@@ -516,7 +514,6 @@ impl SerializableItem for StagedDiff {
         _: &mut Workspace,
         _: workspace::ItemId,
         _: bool,
-        _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         Some(Task::ready(Ok(())))
@@ -704,7 +701,7 @@ impl Render for StagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 Button::new("unstage-all", "Unstage All")
-                    .width(rems_from_px(80.))
+                    .width(rems_from_px(80_f32))
                     .disabled(!button_states.unstage_all)
                     .tooltip(Tooltip::for_action_title_in(
                         "Unstage All Changes",
@@ -968,7 +965,7 @@ mod tests {
             repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
                 .await
                 .unwrap(),
-            committed_contents
+            committed_contents.as_bytes()
         );
 
         fs.unpause_events_and_flush();

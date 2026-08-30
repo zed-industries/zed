@@ -2,15 +2,15 @@
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight, Keystroke,
-    ScrollHandle, Subscription, WeakEntity, Window,
+    App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, FontWeight,
+    KeybindingKeystroke, ScrollHandle, Subscription, WeakEntity, Window,
 };
 use settings::Settings;
 use std::collections::HashMap;
 use theme_settings::ThemeSettings;
 use ui::{
     Divider, DividerColor, DynamicSpacing, LabelSize, WithScrollbar, prelude::*,
-    text_for_keystrokes,
+    text_for_keybinding_keystrokes, text_for_keystrokes,
 };
 use workspace::{ModalView, Workspace};
 
@@ -69,30 +69,22 @@ impl WhichKeyModal {
 
         let mut binding_data = bindings
             .iter()
-            .map(|binding| {
-                // Map to keystrokes
-                (
-                    binding
-                        .keystrokes()
-                        .iter()
-                        .map(|k| k.inner().to_owned())
-                        .collect::<Vec<_>>(),
-                    binding.action(),
-                )
-            })
+            .map(|binding| (binding.keystrokes().to_vec(), binding.action()))
             .filter(|(keystrokes, _action)| {
                 // Check if this binding matches any filtered keystroke pattern
                 !FILTERED_KEYSTROKES.iter().any(|filtered| {
                     keystrokes.len() >= filtered.len()
-                        && keystrokes[..filtered.len()] == filtered[..]
+                        && keystrokes[..filtered.len()]
+                            .iter()
+                            .map(|keystroke| keystroke.inner())
+                            .eq(filtered.iter())
                 })
             })
-            .map(|(keystrokes, action)| {
-                // Map to remaining keystrokes and action name
-                let remaining_keystrokes = keystrokes[pending_keys.len()..].to_vec();
+            .filter_map(|(keystrokes, action)| {
+                let remaining_keystrokes = keystrokes.get(pending_keys.len()..)?.to_vec();
                 let action_name: SharedString =
                     command_palette::humanize_action_name(action.name()).into();
-                (remaining_keystrokes, action_name)
+                Some((remaining_keystrokes, action_name))
             })
             .collect();
 
@@ -118,8 +110,8 @@ impl WhichKeyModal {
             }
 
             // Finally sort by text length, then lexicographically for full stability
-            let text_a = text_for_keystrokes(keystrokes_a, cx);
-            let text_b = text_for_keystrokes(keystrokes_b, cx);
+            let text_a = text_for_keybinding_keystrokes(keystrokes_a, cx);
+            let text_b = text_for_keybinding_keystrokes(keystrokes_b, cx);
             let text_len_cmp = text_a.len().cmp(&text_b.len());
             if text_len_cmp != std::cmp::Ordering::Equal {
                 return text_len_cmp;
@@ -130,7 +122,12 @@ impl WhichKeyModal {
         self.pending_keys = text_for_keystrokes(&pending_keys, cx).into();
         self.bindings = binding_data
             .into_iter()
-            .map(|(keystrokes, action)| (text_for_keystrokes(&keystrokes, cx).into(), action))
+            .map(|(keystrokes, action)| {
+                (
+                    text_for_keybinding_keystrokes(&keystrokes, cx).into(),
+                    action,
+                )
+            })
             .collect();
     }
 }
@@ -271,10 +268,12 @@ impl ModalView for WhichKeyModal {
 }
 
 fn group_bindings(
-    binding_data: Vec<(Vec<Keystroke>, SharedString)>,
-) -> Vec<(Vec<Keystroke>, SharedString)> {
-    let mut groups: HashMap<Option<Keystroke>, Vec<(Vec<Keystroke>, SharedString)>> =
-        HashMap::new();
+    binding_data: Vec<(Vec<KeybindingKeystroke>, SharedString)>,
+) -> Vec<(Vec<KeybindingKeystroke>, SharedString)> {
+    let mut groups: HashMap<
+        Option<KeybindingKeystroke>,
+        Vec<(Vec<KeybindingKeystroke>, SharedString)>,
+    > = HashMap::new();
 
     // Group bindings by their first keystroke
     for (remaining_keystrokes, action_name) in binding_data {
@@ -305,4 +304,34 @@ fn group_bindings(
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    #[cfg(target_os = "windows")]
+    use gpui::Modifiers;
+    use gpui::{InvalidKeystrokeError, Keystroke};
+
+    use super::*;
+
+    #[test]
+    fn test_group_bindings_preserves_keybinding_keystrokes() -> Result<(), InvalidKeystrokeError> {
+        #[cfg(target_os = "windows")]
+        let keystroke = KeybindingKeystroke::new(
+            Keystroke::parse("ctrl-$")?,
+            Modifiers::control_shift(),
+            "4".to_owned(),
+        );
+        #[cfg(not(target_os = "windows"))]
+        let keystroke = KeybindingKeystroke::from_keystroke(Keystroke::parse("ctrl-x")?);
+        let binding_data = vec![(vec![keystroke.clone()], SharedString::from("test action"))];
+
+        let grouped_bindings = group_bindings(binding_data);
+
+        assert_eq!(
+            grouped_bindings,
+            vec![(vec![keystroke], SharedString::from("test action"))]
+        );
+        Ok(())
+    }
 }

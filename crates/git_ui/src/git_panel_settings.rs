@@ -3,12 +3,10 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, RegisterSetting, Settings, StatusStyle,
+    FolderIndicator, GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, IntoGpui,
+    RegisterSetting, Settings, StatusStyle,
 };
-use ui::{
-    px,
-    scrollbars::{ScrollbarVisibility, ShowScrollbar},
-};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -23,7 +21,7 @@ pub struct GitPanelSettings {
     pub default_width: Pixels,
     pub status_style: StatusStyle,
     pub file_icons: bool,
-    pub folder_icons: bool,
+    pub folder_indicator: FolderIndicator,
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by: GitPanelSortBy,
@@ -63,10 +61,10 @@ impl Settings for GitPanelSettings {
         Self {
             button: git_panel.button.unwrap(),
             dock: git_panel.dock.unwrap().into(),
-            default_width: px(git_panel.default_width.unwrap()),
+            default_width: git_panel.default_width.unwrap().into_gpui(),
             status_style: git_panel.status_style.unwrap(),
             file_icons: git_panel.file_icons.unwrap(),
-            folder_icons: git_panel.folder_icons.unwrap(),
+            folder_indicator: git_panel.folder_indicator.unwrap(),
             scrollbar: ScrollbarSettings {
                 show: git_panel
                     .scrollbar

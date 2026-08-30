@@ -385,7 +385,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -417,7 +417,7 @@ impl Editor {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
                 (
-                    movement::previous_word_start(map, head),
+                    movement::previous_word_start(map, head, false),
                     SelectionGoal::None,
                 )
             });
@@ -448,7 +448,10 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_cursors_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    movement::next_word_end(map, head, false),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -474,7 +477,10 @@ impl Editor {
     ) {
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(&mut |map, head, _| {
-                (movement::next_word_end(map, head), SelectionGoal::None)
+                (
+                    movement::next_word_end(map, head, false),
+                    SelectionGoal::None,
+                )
             });
         })
     }
@@ -1062,7 +1068,7 @@ impl Editor {
 
     pub fn go_to_declaration_split(
         &mut self,
-        _: &GoToDeclaration,
+        _: &GoToDeclarationSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Navigated>> {
@@ -1298,6 +1304,62 @@ impl Editor {
         }))
     }
 
+    /// Runs the LSP go-to query for `kind` (definition / declaration / type /
+    /// implementation) against the symbol under the cursor and returns the raw
+    /// target [`Location`]s. The go-to counterpart to
+    /// [`Self::find_all_references_locations`]; used by the LSP location pickers.
+    pub fn definition_locations_of_kind(
+        &mut self,
+        kind: GotoDefinitionKind,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Vec<Location>>>> {
+        let provider = self.semantics_provider.clone()?;
+        let selection = self.selections.newest_anchor();
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head = selection
+            .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+            .head();
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let definitions = provider.definitions(&buffer, head, kind, cx)?;
+        Some(cx.spawn(async move |editor, cx| {
+            let definitions = definitions.await?.unwrap_or_default();
+            // Drop a result that points back at the cursor, matching
+            // `go_to_definition_of_kind` (otherwise the picker lists the symbol
+            // you invoked it on).
+            editor.update(cx, |_, cx| {
+                definitions
+                    .into_iter()
+                    .filter(|link| hover_links::exclude_link_to_position(&buffer, &head, link, cx))
+                    .map(|link| link.target)
+                    .collect()
+            })
+        }))
+    }
+
+    /// Runs an LSP "find all references" query for the symbol under the cursor
+    /// and returns the raw [`Location`]s. Unlike [`Self::find_all_references`],
+    /// this does not group the results or open any UI
+    pub fn find_all_references_locations(
+        &mut self,
+        project: &Entity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<Vec<Location>>>> {
+        let selection = self.selections.newest_anchor();
+        let multi_buffer = self.buffer.read(cx);
+        let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+        let head = selection
+            .map(|anchor| anchor.to_offset(&multi_buffer_snapshot))
+            .head();
+
+        let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
+        let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
+        // Keep every reference, including the one under the cursor, to match the
+        // default `find_all_references` multibuffer (`always_open_multibuffer`).
+        Some(cx.spawn(async move |_, _| Ok(references.await?.unwrap_or_default())))
+    }
+
     pub fn find_all_references(
         &mut self,
         action: &FindAllReferences,
@@ -1405,8 +1467,6 @@ impl Editor {
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
-                                    let pane = workspace.active_pane().clone();
-
                                     let preview_tabs_settings = PreviewTabsSettings::get_global(cx);
                                     let keep_old_preview = preview_tabs_settings
                                         .enable_keep_preview_on_code_navigation;
@@ -1414,7 +1474,7 @@ impl Editor {
                                         .enable_preview_file_from_code_navigation;
 
                                     workspace.open_project_item(
-                                        pane,
+                                        None,
                                         target_buffer.clone(),
                                         true,
                                         true,
@@ -1880,7 +1940,7 @@ impl Editor {
                         window.defer(cx, move |window, cx| {
                             let (target_editor, target_pane): (Entity<Self>, Entity<Pane>) =
                                 workspace.update(cx, |workspace, cx| {
-                                    let pane = if split {
+                                    let requested_pane = if split {
                                         workspace.adjacent_pane(window, cx)
                                     } else {
                                         workspace.active_pane().clone()
@@ -1893,7 +1953,7 @@ impl Editor {
                                         .enable_preview_file_from_code_navigation;
 
                                     let editor = workspace.open_project_item(
-                                        pane.clone(),
+                                        split.then_some(requested_pane.clone()),
                                         target_buffer.clone(),
                                         true,
                                         true,
@@ -1902,7 +1962,10 @@ impl Editor {
                                         window,
                                         cx,
                                     );
-                                    (editor, pane)
+                                    let target_pane = workspace
+                                        .pane_for_item_id(editor.entity_id())
+                                        .unwrap_or(requested_pane);
+                                    (editor, target_pane)
                                 });
                             // We create our own nav history instead of using
                             // `target_editor.nav_history` because `nav_history`
@@ -2101,6 +2164,25 @@ impl Editor {
         self.go_to_symbol_by_offset(window, cx, -1).detach();
     }
 
+    /// Opens `location` and jumps to it through the same path as
+    /// go-to-definition, so selection, autoscroll, and jumplist tagging all
+    /// match. `split` opens it in the adjacent pane. Called on the editor the
+    /// jump originates from.
+    pub fn open_location(
+        &mut self,
+        location: Location,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Navigated>> {
+        let origin = self.navigation_entry(self.selections.newest_anchor().head(), cx);
+        let link = HoverLink::Text(LocationLink {
+            origin: None,
+            target: location,
+        });
+        self.navigate_to_hover_links(None, vec![link], origin, split, window, cx)
+    }
+
     /// Opens a multibuffer with the given project locations in it.
     pub(super) fn open_locations_in_multibuffer(
         workspace: &mut Workspace,
@@ -2126,7 +2208,9 @@ impl Editor {
         let excerpt_buffer = cx.new(|cx| {
             let key = &mut key.1;
             let mut multibuffer = MultiBuffer::new(capability);
-            for (buffer, mut ranges_for_buffer) in locations {
+            let mut sorted_locations = locations.into_iter().collect::<Vec<_>>();
+            sorted_locations.sort_by_key(|(buffer, _)| buffer.read(cx).remote_id());
+            for (buffer, mut ranges_for_buffer) in sorted_locations {
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
                 key.push((buffer.read(cx).remote_id(), ranges_for_buffer.clone()));
                 multibuffer.set_excerpts_for_path(
@@ -2219,6 +2303,11 @@ impl Editor {
         pane.update(cx, |pane, cx| {
             if allow_preview && !was_existing {
                 destination_index = pane.replace_preview_item_id(item.item_id(), window, cx);
+                editor.update(cx, |editor, cx| {
+                    editor
+                        .buffer
+                        .update(cx, |buffer, cx| buffer.refresh_preview(cx))
+                });
             }
             if was_existing && !allow_preview {
                 pane.unpreview_item_if_preview(item.item_id());
@@ -2286,7 +2375,7 @@ impl Editor {
         })
     }
 
-    fn go_to_definition_of_kind(
+    pub(crate) fn go_to_definition_of_kind(
         &mut self,
         kind: GotoDefinitionKind,
         split: bool,
@@ -2356,10 +2445,9 @@ impl Editor {
             let location = Some({
                 let target_buffer_handle = location_task.await.context("open local buffer")?;
                 let range = target_buffer_handle.read_with(cx, |target_buffer, _| {
-                    let target_start = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
-                    let target_end = target_buffer
-                        .clip_point_utf16(point_from_lsp(lsp_location.range.end), Bias::Left);
+                    let range = language::range_from_lsp(lsp_location.range);
+                    let target_start = target_buffer.clip_point_utf16(range.start, Bias::Left);
+                    let target_end = target_buffer.clip_point_utf16(range.end, Bias::Left);
                     target_buffer.anchor_after(target_start)
                         ..target_buffer.anchor_before(target_end)
                 });
@@ -2380,10 +2468,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let multibuffer = self.buffer().read(cx);
-        if !multibuffer.is_singleton() {
+        let Some(buffer) = multibuffer.as_singleton() else {
             return;
         };
-        let anchor_range = range.to_anchors(&multibuffer.snapshot(cx));
+        let Some(start) = multibuffer.buffer_point_to_anchor(&buffer, range.start, cx) else {
+            return;
+        };
+        let Some(end) = multibuffer.buffer_point_to_anchor(&buffer, range.end, cx) else {
+            return;
+        };
         self.change_selections(
             SelectionEffects::scroll(Autoscroll::for_go_to_definition(
                 self.cursor_top_offset(cx),
@@ -2392,7 +2485,7 @@ impl Editor {
             .nav_history(record_nav_history),
             window,
             cx,
-            |s| s.select_anchor_ranges([anchor_range]),
+            |s| s.select_anchor_ranges([start..end]),
         );
     }
 

@@ -1,7 +1,8 @@
+use std::borrow::Cow;
+
 use anyhow::Context as _;
-use language_core::{LanguageConfig, LanguageQueries, QUERY_FILENAME_PREFIXES};
+use language_core::{LanguageConfig, LanguageQueries, QueryFile, QueryFileContents};
 use rust_embed::RustEmbed;
-use util::asset_str;
 
 #[derive(RustEmbed)]
 #[folder = "src/"]
@@ -82,27 +83,15 @@ pub fn get_file(path: &str) -> Option<rust_embed::EmbeddedFile> {
     GrammarDir::get(path)
 }
 
-/// Load all `.scm` query files for a given language name into a `LanguageQueries`.
-///
-/// Multiple `.scm` files with the same prefix (e.g. `highlights.scm` and
-/// `highlights_extra.scm`) are concatenated together with their contents appended.
+/// Load all Tree-sitter query files for a given language name.
 pub fn load_queries(name: &str) -> LanguageQueries {
-    let mut result = LanguageQueries::default();
-    for path in GrammarDir::iter() {
-        if let Some(remainder) = path.strip_prefix(name).and_then(|p| p.strip_prefix('/')) {
-            if !remainder.ends_with(".scm") {
-                continue;
-            }
-            for (prefix, query) in QUERY_FILENAME_PREFIXES {
-                if remainder.starts_with(prefix) {
-                    let contents = asset_str::<GrammarDir>(path.as_ref());
-                    match query(&mut result) {
-                        None => *query(&mut result) = Some(contents),
-                        Some(existing) => existing.to_mut().push_str(contents.as_ref()),
-                    }
-                }
-            }
-        }
-    }
-    result
+    LanguageQueries::from_files(GrammarDir::iter().filter_map(|path| {
+        let file_name = path.strip_prefix(name)?.strip_prefix('/')?;
+        let query_file = file_name.parse::<QueryFile>().ok()?;
+        let contents = match GrammarDir::get(path.as_ref())?.data {
+            Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).ok()?),
+            Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).ok()?),
+        };
+        Some(QueryFileContents::new(query_file, contents))
+    }))
 }

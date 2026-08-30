@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use auto_update::{AutoUpdateStatus, AutoUpdater, UpdateCheckType};
 use gpui::{Empty, Render};
 use semver::Version;
-use ui::{UpdateButton, prelude::*};
+use ui::{Tooltip, UpdateButton, prelude::*};
 
 pub struct UpdateVersion {
     status: AutoUpdateStatus,
@@ -82,7 +82,7 @@ impl UpdateVersion {
     }
 
     fn version_tooltip_message(version: &Version) -> String {
-        format!("Update to Version: {version}")
+        UpdateButton::version_tooltip_message(version)
     }
 }
 
@@ -96,8 +96,20 @@ impl Render for UpdateVersion {
                 UpdateButton::checking().into_any_element()
             }
             AutoUpdateStatus::Downloading { version, progress } => {
-                let version = Self::version_tooltip_message(version);
-                UpdateButton::downloading(version, *progress).into_any_element()
+                let rendered_version = version.clone();
+                let tooltip = Tooltip::element(move |_, cx| {
+                    let status = AutoUpdater::get(cx).map(|updater| updater.read(cx).status());
+                    let message = match &status {
+                        Some(AutoUpdateStatus::Downloading { version, progress }) => {
+                            UpdateButton::downloading_tooltip_message(version, *progress)
+                        }
+                        _ => Self::version_tooltip_message(&rendered_version),
+                    };
+                    Label::new(message).into_any_element()
+                });
+                UpdateButton::downloading(*progress)
+                    .tooltip_fn(tooltip)
+                    .into_any_element()
             }
             AutoUpdateStatus::Installing { version } => {
                 let version = Self::version_tooltip_message(version);
@@ -147,5 +159,19 @@ mod tests {
             message,
             "Update to Version: 1.0.0+nightly.14d9a4189f058d8736339b06ff2340101eaea5af"
         );
+    }
+
+    #[test]
+    fn test_downloading_tooltip_message() {
+        let version = Version::new(1, 0, 0);
+
+        let message = UpdateButton::downloading_tooltip_message(&version, None);
+        assert_eq!(message, "Update to Version: 1.0.0");
+
+        let message = UpdateButton::downloading_tooltip_message(&version, Some(0.454));
+        assert_eq!(message, "Update to Version: 1.0.0 (45% downloaded)");
+
+        let message = UpdateButton::downloading_tooltip_message(&version, Some(1.5));
+        assert_eq!(message, "Update to Version: 1.0.0 (100% downloaded)");
     }
 }

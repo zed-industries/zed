@@ -279,6 +279,8 @@ impl Render for ConfigOptionsView {
         }
 
         h_flex()
+            .min_w_0()
+            .flex_wrap()
             .gap_1()
             .children(self.selectors.iter().cloned())
             .into_any_element()
@@ -581,6 +583,7 @@ impl Render for ConfigOptionSelector {
                         .label(option_name)
                         .label_position(SwitchLabelPosition::Start)
                         .label_size(LabelSize::Small)
+                        .label_color(Color::Muted)
                         .disabled(self.setting_value)
                         .on_click(move |state, _window, cx| {
                             let next_value = matches!(state, ToggleState::Selected);

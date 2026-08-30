@@ -709,7 +709,7 @@ fn normalize_path_mention(
 /// traverses. Invalid sequences and non-UTF-8 results leave the input
 /// unchanged. Returns `Cow::Owned` iff decoding changed the input
 /// (`parse_hyperlink_literal` relies on this).
-fn decode_path_escapes(input: &str) -> Cow<'_, str> {
+pub fn decode_path_escapes(input: &str) -> Cow<'_, str> {
     fn hex_digit(byte: u8) -> Option<u8> {
         match byte {
             b'0'..=b'9' => Some(byte - b'0'),
@@ -1095,8 +1095,7 @@ mod tests {
 
     #[test]
     fn test_posix_paths_are_not_rewritten_as_windows_drives() {
-        let parsed =
-            MentionUri::parse_hyperlink("/c/Projects/AGENTS.md", PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse_hyperlink("/c/Projects/AGENTS.md", PathStyle::Unix).unwrap();
         match parsed {
             MentionUri::File { abs_path } => {
                 assert_eq!(abs_path, PathBuf::from("/c/Projects/AGENTS.md"));
@@ -1107,7 +1106,7 @@ mod tests {
 
     #[test]
     fn test_hyperlink_percent_escapes_are_decoded() {
-        let parsed = MentionUri::parse_hyperlink("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse_hyperlink("/tmp/a%20b.rs", PathStyle::Unix).unwrap();
         assert_eq!(
             parsed,
             MentionUri::File {
@@ -1126,15 +1125,14 @@ mod tests {
         );
 
         // Separator escapes stay encoded (no introduced path traversal).
-        let parsed = MentionUri::parse_hyperlink("/tmp/a%2Fb.rs", PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse_hyperlink("/tmp/a%2Fb.rs", PathStyle::Unix).unwrap();
         assert_eq!(
             parsed,
             MentionUri::File {
                 abs_path: PathBuf::from("/tmp/a%2Fb.rs")
             }
         );
-        let parsed =
-            MentionUri::parse_hyperlink("/tmp/..%2F..%2Fsecret", PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse_hyperlink("/tmp/..%2F..%2Fsecret", PathStyle::Unix).unwrap();
         assert_eq!(
             parsed,
             MentionUri::File {
@@ -1145,7 +1143,7 @@ mod tests {
 
     #[test]
     fn test_parse_keeps_bare_path_targets_verbatim() {
-        let parsed = MentionUri::parse("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse("/tmp/a%20b.rs", PathStyle::Unix).unwrap();
         assert_eq!(
             parsed,
             MentionUri::File {
@@ -1165,7 +1163,7 @@ mod tests {
     #[test]
     fn test_parse_hyperlink_literal_keeps_percent_escapes() {
         let literal =
-            MentionUri::parse_hyperlink_literal("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
+            MentionUri::parse_hyperlink_literal("/tmp/a%20b.rs", PathStyle::Unix).unwrap();
         assert_eq!(
             literal,
             MentionUri::File {
@@ -1175,7 +1173,7 @@ mod tests {
 
         // Line suffixes still parse.
         let literal =
-            MentionUri::parse_hyperlink_literal("/tmp/a%20b.rs:42", PathStyle::Posix).unwrap();
+            MentionUri::parse_hyperlink_literal("/tmp/a%20b.rs:42", PathStyle::Unix).unwrap();
         assert_eq!(
             literal,
             MentionUri::Selection {
@@ -1200,27 +1198,27 @@ mod tests {
     fn test_parse_hyperlink_literal_returns_none_when_unambiguous() {
         // No percent escapes: identical to `parse_hyperlink`.
         assert_eq!(
-            MentionUri::parse_hyperlink_literal("/tmp/a b.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("/tmp/a b.rs", PathStyle::Unix),
             None
         );
         // Invalid escape sequences are also left alone by `parse_hyperlink`.
         assert_eq!(
-            MentionUri::parse_hyperlink_literal("/tmp/100%_done.txt", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("/tmp/100%_done.txt", PathStyle::Unix),
             None
         );
         // Separator escapes are never decoded, so they're not ambiguous.
         assert_eq!(
-            MentionUri::parse_hyperlink_literal("/tmp/a%2Fb.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("/tmp/a%2Fb.rs", PathStyle::Unix),
             None
         );
         // URLs are spec-encoded, not ambiguous.
         assert_eq!(
-            MentionUri::parse_hyperlink_literal("file:///tmp/a%20b.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("file:///tmp/a%20b.rs", PathStyle::Unix),
             None
         );
         // Relative paths are not bare-path mentions.
         assert_eq!(
-            MentionUri::parse_hyperlink_literal("tmp/a%20b.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("tmp/a%20b.rs", PathStyle::Unix),
             None
         );
     }
@@ -1476,7 +1474,7 @@ mod tests {
     #[test]
     fn test_parse_absolute_file_path_with_row() {
         let file_path = "/path/to/file.rs:42";
-        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Unix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
@@ -1494,7 +1492,7 @@ mod tests {
     #[test]
     fn test_parse_absolute_file_path_with_row_and_column() {
         let file_path = "/path/to/file.rs:42:5";
-        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Unix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
@@ -1506,7 +1504,7 @@ mod tests {
                 assert_eq!(line_range.end(), &41);
                 assert_eq!(column, &Some(4));
 
-                let parsed_again = MentionUri::parse(parsed.to_uri().as_ref(), PathStyle::Posix)
+                let parsed_again = MentionUri::parse(parsed.to_uri().as_ref(), PathStyle::Unix)
                     .expect("selection URI with column should parse");
                 assert_eq!(parsed_again, parsed.clone());
             }
@@ -1517,7 +1515,7 @@ mod tests {
     #[test]
     fn test_parse_absolute_file_path_with_fragment_line() {
         let file_path = "/path/to/file.rs#L42";
-        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Unix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
@@ -1589,7 +1587,7 @@ mod tests {
     #[test]
     fn test_parse_backticked_absolute_file_path() {
         let file_path = "`/path/to/file.rs`";
-        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Unix).unwrap();
         match &parsed {
             MentionUri::File { abs_path } => {
                 assert_eq!(abs_path, Path::new("/path/to/file.rs"));
@@ -1601,7 +1599,7 @@ mod tests {
     #[test]
     fn test_parse_backticked_absolute_file_path_with_fragment_line() {
         let file_path = "`/path/to/file.rs#L42`";
-        let parsed = MentionUri::parse(file_path, PathStyle::Posix).unwrap();
+        let parsed = MentionUri::parse(file_path, PathStyle::Unix).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,

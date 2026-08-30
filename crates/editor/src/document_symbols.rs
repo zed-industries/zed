@@ -6,7 +6,7 @@ use futures::future::join_all;
 use gpui::{App, Context, HighlightStyle, Task};
 use itertools::Itertools as _;
 use language::language_settings::LanguageSettings;
-use language::{Buffer, OutlineItem};
+use language::{Buffer, OutlineItem, highlight_ranges_from_text};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot,
     ToOffset as _,
@@ -219,12 +219,20 @@ impl Editor {
                         let display_snapshot =
                             editor.display_map.update(cx, |map, cx| map.snapshot(cx));
                         let mut highlighted_results = results;
-                        for items in highlighted_results.values_mut() {
+                        for (buffer_id, items) in highlighted_results.iter_mut() {
+                            let language = editor
+                                .buffer
+                                .read(cx)
+                                .buffer(*buffer_id)
+                                .and_then(|buffer| buffer.read(cx).language().cloned());
                             for item in items {
                                 if let Some(highlights) =
                                     highlights_from_buffer(&display_snapshot, &item, &syntax)
                                 {
                                     item.highlight_ranges = highlights;
+                                } else if let Some(language) = &language {
+                                    item.highlight_ranges =
+                                        highlight_ranges_from_text(&item.text, language, &syntax);
                                 }
                             }
                         }
@@ -333,12 +341,14 @@ mod tests {
     };
 
     use futures::StreamExt as _;
-    use gpui::TestAppContext;
+    use gpui::{App, TestAppContext};
+    use language::highlight_ranges_from_text;
     use multi_buffer::ToPoint;
     use settings::{DocumentSymbols, SettingsStore};
     use text::Point;
     use util::path;
-    use zed_actions::editor::{MoveDown, MoveUp};
+    use workspace::item::{Item, ItemEvent};
+    use zed_actions::editor::MoveDown;
 
     use crate::{
         Editor, LSP_REQUEST_DEBOUNCE_TIMEOUT,
@@ -354,6 +364,16 @@ mod tests {
             .1
             .iter()
             .map(|s| s.text.as_str())
+            .collect()
+    }
+
+    fn breadcrumb_texts(editor: &Editor, cx: &App) -> Vec<String> {
+        editor
+            .breadcrumbs(cx)
+            .expect("Should have breadcrumbs")
+            .0
+            .into_iter()
+            .map(|segment| segment.text.to_string())
             .collect()
     }
 
@@ -542,15 +562,10 @@ mod tests {
             );
         });
 
-        // Step 3: Switch back to tree-sitter
+        // Step 3: Switch back to tree-sitter, the symbols should refresh
+        // without any extra selection changes
         update_test_language_settings(&mut cx.cx.cx, &|settings| {
             settings.defaults.document_symbols = Some(DocumentSymbols::Off);
-        });
-        cx.run_until_parked();
-
-        // Force another selection change
-        cx.update_editor(|editor, window, cx| {
-            editor.move_up(&MoveUp, window, cx);
         });
         cx.run_until_parked();
 
@@ -808,6 +823,82 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_lsp_document_symbols_fall_back_to_reparsed_text_highlights(
+        cx: &mut TestAppContext,
+    ) {
+        use ui::ActiveTheme as _;
+
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        cx.update_editor(|editor, _window, cx| {
+            editor
+                .project
+                .as_ref()
+                .expect("editor should have a project")
+                .read(cx)
+                .languages()
+                .set_theme(cx.theme().clone());
+        });
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(vec![
+                        nested_symbol(
+                            "impl ZzzMissing",
+                            lsp::SymbolKind::OBJECT,
+                            lsp_range(0, 0, 0, 12),
+                            lsp_range(0, 3, 0, 7),
+                            Vec::new(),
+                        ),
+                    ])))
+                },
+            );
+
+        cx.set_state("fn teˇst() {}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            let (_, symbols) = editor
+                .outline_symbols_at_cursor
+                .as_ref()
+                .expect("Should have outline symbols");
+            assert_eq!(symbols.len(), 1);
+            let symbol = &symbols[0];
+            assert_eq!(symbol.text, "impl ZzzMissing");
+
+            let language = editor
+                .buffer
+                .read(cx)
+                .as_singleton()
+                .expect("singleton buffer")
+                .read(cx)
+                .language()
+                .cloned()
+                .expect("buffer language");
+            let expected = highlight_ranges_from_text(&symbol.text, &language, cx.theme().syntax());
+            assert_eq!(
+                expected.first().map(|(range, _)| range.clone()),
+                Some(0..4),
+                "reparsing the symbol text should highlight the `impl` keyword"
+            );
+            assert_eq!(symbol.highlight_ranges, expected);
+        });
+    }
+
+    #[gpui::test]
     async fn test_lsp_document_symbols_empty_response(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
@@ -920,7 +1011,7 @@ mod tests {
                         syntax: IndexMap::from_iter([(
                             "keyword".to_string(),
                             HighlightStyleContent {
-                                color: Some("#ff0000".to_string()),
+                                color: Some("#ff0000".into()),
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
@@ -980,7 +1071,7 @@ mod tests {
                         syntax: IndexMap::from_iter([(
                             "keyword".to_string(),
                             HighlightStyleContent {
-                                color: Some("#0000ff".to_string()),
+                                color: Some("#0000ff".into()),
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
@@ -1021,5 +1112,130 @@ mod tests {
                 "The 'fn' keyword should have blue color after theme change"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumbs_keep_file_name_without_lsp_symbols(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+                },
+            );
+
+        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string()],
+                "Breadcrumbs should fall back to the file name when the language server returns no symbols"
+            );
+
+            editor.set_breadcrumb_header("Last 1000 lines in the log".to_string());
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec!["Last 1000 lines in the log".to_string()],
+                "A custom breadcrumb header should never disappear"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_breadcrumbs_refresh_on_document_symbols_setting_change(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                document_symbol_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            cx,
+        )
+        .await;
+        let mut symbol_request = cx
+            .set_request_handler::<lsp::request::DocumentSymbolRequest, _, _>(
+                move |_, _, _| async move {
+                    Ok(Some(lsp::DocumentSymbolResponse::Nested(Vec::new())))
+                },
+            );
+
+        cx.set_state("fn maˇin() {\n    let x = 1;\n}\n");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string(), "fn main".to_string()],
+                "With tree-sitter symbols, breadcrumbs should show the file name and the symbol"
+            );
+        });
+
+        let breadcrumb_updates = Arc::new(atomic::AtomicUsize::new(0));
+        let editor = cx.editor.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&editor, {
+                let breadcrumb_updates = breadcrumb_updates.clone();
+                move |_, event, _| {
+                    Editor::to_item_events(event, &mut |item_event| {
+                        if item_event == ItemEvent::UpdateBreadcrumbs {
+                            breadcrumb_updates.fetch_add(1, atomic::Ordering::AcqRel);
+                        }
+                    });
+                }
+            })
+        });
+
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::On);
+        });
+        assert!(symbol_request.next().await.is_some());
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string()],
+                "After enabling LSP symbols that return nothing, breadcrumbs should keep the file name"
+            );
+        });
+        assert!(
+            breadcrumb_updates.load(atomic::Ordering::Acquire) > 0,
+            "Breadcrumbs should refresh on the setting change, without extra selection changes"
+        );
+
+        breadcrumb_updates.store(0, atomic::Ordering::Release);
+        update_test_language_settings(&mut cx.cx.cx, &|settings| {
+            settings.defaults.document_symbols = Some(DocumentSymbols::Off);
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, _window, cx| {
+            assert_eq!(
+                breadcrumb_texts(editor, cx),
+                vec![path!("dir/file.rs").to_string(), "fn main".to_string()],
+                "After disabling LSP symbols, tree-sitter breadcrumbs should return"
+            );
+        });
+        assert!(
+            breadcrumb_updates.load(atomic::Ordering::Acquire) > 0,
+            "Breadcrumbs should refresh on the setting change, without extra selection changes"
+        );
     }
 }

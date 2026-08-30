@@ -1,5 +1,5 @@
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
+use imara_diff::{Algorithm, Diff, InternedInput, sources::lines};
 use language::{
     Capability, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -25,6 +25,23 @@ pub struct BufferDiff {
     diff_snapshot: Option<BufferDiffSnapshot>,
     secondary_diff: Option<Entity<BufferDiff>>,
     buffer_snapshot: text::BufferSnapshot,
+    base_kind: DiffBaseKind,
+}
+
+/// Where this diff's base text came from. Only diffs whose base is HEAD
+/// support staging and restoring hunks; a diff against any other base (e.g.
+/// the merge base with another branch) would rewrite committed work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiffBaseKind {
+    /// The buffer's committed (HEAD) content.
+    Head,
+    /// The buffer's index (staged) content.
+    Index,
+    /// An arbitrary blob, such as the merge base with another branch.
+    Oid,
+    /// Arbitrary caller-provided text, such as an agent's original text,
+    /// the clipboard, or another file.
+    Custom,
 }
 
 #[derive(Clone)]
@@ -1192,13 +1209,20 @@ fn compute_hunks(
             return tree;
         }
 
-        let input = InternedInput::new(
-            lines_with_terminator(diff_base.as_ref()),
-            lines_with_terminator(buffer_text.as_str()),
-        );
-        let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
-        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
-        for hunk in hunks {
+        let input = InternedInput::new(lines(diff_base.as_ref()), lines(buffer_text.as_str()));
+        let mut diff = Diff::compute(Algorithm::Histogram, &input);
+        // Canonicalize the placement of ambiguous hunks (git's slider/indent
+        // heuristic). Without this, diffs of the same buffer against different
+        // base texts (e.g. HEAD vs index) can anchor the same logical change at
+        // different rows, and code that correlates hunks across those diffs
+        // misbehaves: hunks render as staged when they aren't, and staging or
+        // unstaging them corrupts the index.
+        diff.postprocess_lines(&input);
+        let mut sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
+        for hunk in diff.hunks() {
+            sink.process_change(hunk.before, hunk.after);
+        }
+        for hunk in sink.finish() {
             tree.push(hunk, buffer);
         }
     } else {
@@ -1244,7 +1268,7 @@ impl<'a> HunkSink<'a> {
     fn compute_line_offsets(text: &str) -> Vec<usize> {
         let mut offsets = vec![0];
         let mut offset = 0;
-        for line in lines_with_terminator(text) {
+        for line in lines(text) {
             offset += line.len();
             offsets.push(offset);
         }
@@ -1252,9 +1276,7 @@ impl<'a> HunkSink<'a> {
     }
 }
 
-impl Sink for HunkSink<'_> {
-    type Out = Vec<InternalDiffHunk>;
-
+impl HunkSink<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         let old_start = before.start as usize;
         let old_end = before.end as usize;
@@ -1321,7 +1343,7 @@ impl Sink for HunkSink<'_> {
         });
     }
 
-    fn finish(self) -> Self::Out {
+    fn finish(self) -> Vec<InternalDiffHunk> {
         self.hunks
     }
 }
@@ -1548,6 +1570,7 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
+        base_kind: DiffBaseKind,
         cx: &mut App,
     ) -> Self {
         let base_text = cx.new(|cx| {
@@ -1566,12 +1589,14 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            base_kind,
         }
     }
 
     pub fn new_with_base_text_buffer(
         buffer: &text::BufferSnapshot,
         base_text_buffer: Entity<language::Buffer>,
+        base_kind: DiffBaseKind,
         _cx: &mut App,
     ) -> Self {
         BufferDiff {
@@ -1580,6 +1605,7 @@ impl BufferDiff {
             diff_snapshot: None,
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            base_kind,
         }
     }
 
@@ -1587,6 +1613,7 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         language: Option<Arc<Language>>,
         language_registry: Option<Arc<LanguageRegistry>>,
+        base_kind: DiffBaseKind,
         cx: &mut Context<Self>,
     ) -> Self {
         let base_text = buffer.text();
@@ -1617,6 +1644,7 @@ impl BufferDiff {
             diff_snapshot: Some(diff_snapshot),
             buffer_snapshot: buffer.clone(),
             secondary_diff: None,
+            base_kind,
         }
     }
 
@@ -1626,7 +1654,7 @@ impl BufferDiff {
         buffer: &text::BufferSnapshot,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut this = BufferDiff::new(buffer, None, None, cx);
+        let mut this = BufferDiff::new(buffer, None, None, DiffBaseKind::Head, cx);
         let mut base_text = base_text.to_owned();
         text::LineEnding::normalize(&mut base_text);
         let base_text_buffer = cx.new(|cx| {
@@ -1648,6 +1676,16 @@ impl BufferDiff {
 
     pub fn set_secondary_diff(&mut self, diff: Entity<BufferDiff>) {
         self.secondary_diff = Some(diff);
+    }
+
+    pub fn base_kind(&self) -> DiffBaseKind {
+        self.base_kind
+    }
+
+    /// Whether hunks in this diff can be staged or restored: true only when
+    /// the diff's base is HEAD.
+    pub fn is_stageable(&self) -> bool {
+        self.base_kind == DiffBaseKind::Head
     }
 
     pub fn secondary_diff(&self) -> Option<Entity<BufferDiff>> {
@@ -2117,6 +2155,12 @@ impl BufferDiff {
             .is_some_and(|diff_snapshot| diff_snapshot.base_text_exists)
     }
 
+    pub fn changed_row_counts(&self) -> (u32, u32) {
+        self.diff_snapshot
+            .as_ref()
+            .map_or((0, 0), |diff_snapshot| diff_snapshot.changed_row_counts())
+    }
+
     pub fn snapshot(&self, cx: &App) -> BufferDiffSnapshot {
         let mut snapshot = self.diff_snapshot.clone().unwrap_or_else(|| {
             let base_text = self.base_text_buffer.read(cx).snapshot();
@@ -2438,7 +2482,8 @@ mod tests {
             ],
         );
 
-        diff = cx.update(|cx| BufferDiff::new(&buffer, None, None, cx).snapshot(cx));
+        diff = cx
+            .update(|cx| BufferDiff::new(&buffer, None, None, DiffBaseKind::Head, cx).snapshot(cx));
         assert_hunks::<&str, _>(
             diff.hunks_intersecting_range(
                 Anchor::min_max_range_for_buffer(buffer.remote_id()),
@@ -3143,7 +3188,8 @@ mod tests {
 
         let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text_1);
 
-        let empty_diff = cx.update(|cx| BufferDiff::new(&buffer, None, None, cx).snapshot(cx));
+        let empty_diff = cx
+            .update(|cx| BufferDiff::new(&buffer, None, None, DiffBaseKind::Head, cx).snapshot(cx));
         let diff_1 = BufferDiffSnapshot::new_sync(&buffer, base_text.clone(), cx);
         let DiffChanged {
             changed_range,
@@ -4301,7 +4347,8 @@ mod tests {
         );
         let buffer_snapshot = buffer.snapshot();
 
-        let diff = cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, cx));
+        let diff =
+            cx.new(|cx| BufferDiff::new(&buffer_snapshot, None, None, DiffBaseKind::Head, cx));
         diff.update(cx, |diff, cx| {
             diff.set_base_text(Some(Arc::from(base_text_crlf)), buffer_snapshot.clone(), cx)
         })
