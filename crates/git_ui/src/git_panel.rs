@@ -2093,16 +2093,17 @@ impl GitPanel {
             return;
         };
 
-        let visible_indices = match &self.view_mode {
-            GitPanelViewMode::Flat => Some((anchor.min(target)..=anchor.max(target)).collect()),
-            GitPanelViewMode::Tree(state) => {
-                let anchor_position = state.logical_indices.iter().position(|&ix| ix == anchor);
-                let target_position = state.logical_indices.iter().position(|&ix| ix == target);
-                anchor_position.zip(target_position).map(|(start, end)| {
-                    let (start, end) = (start.min(end), start.max(end));
-                    state.logical_indices[start..=end].to_vec()
-                })
-            }
+        let visible_order = match &self.view_mode {
+            GitPanelViewMode::Flat => self.visible_flat_entry_indices(),
+            GitPanelViewMode::Tree(state) => state.logical_indices.clone(),
+        };
+        let visible_indices = {
+            let anchor_position = visible_order.iter().position(|&ix| ix == anchor);
+            let target_position = visible_order.iter().position(|&ix| ix == target);
+            anchor_position.zip(target_position).map(|(start, end)| {
+                let (start, end) = (start.min(end), start.max(end));
+                visible_order[start..=end].to_vec()
+            })
         };
         let Some(visible_indices) = visible_indices else {
             // The anchor isn't visible (e.g. it sits under a collapsed
@@ -3111,7 +3112,18 @@ impl GitPanel {
             return;
         }
 
-        let entries = self.selected_status_entries();
+        let entries: Vec<_> = self
+            .marked_entries
+            .iter()
+            .copied()
+            .filter(|&index| !self.is_resolved_conflict(index, cx))
+            .filter_map(|index| {
+                self.entries
+                    .get(index)
+                    .and_then(GitListEntry::status_entry)
+                    .cloned()
+            })
+            .collect();
         if entries.is_empty() {
             return;
         }
@@ -7781,9 +7793,11 @@ impl GitPanel {
             return;
         };
         // Right-clicking an entry that isn't part of the multi-selection
-        // collapses the selection to just that entry.
+        // collapses the selection to just that entry, including selected_entry
+        // so context-menu actions target the right-clicked row.
         if !self.marked_entries.contains(&ix) {
             self.marked_entries.clear();
+            self.selected_entry = Some(ix);
         }
         let multiple_marked = self.marked_entries.len() > 1;
         // Resolve against the pending-op-aware status (like the checkboxes do)
@@ -9442,7 +9456,7 @@ mod tests {
         repository::repo_path,
         status::{StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
     };
-    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, point, px};
     use indoc::indoc;
     use project::FakeFs;
     use search::{BufferSearchBar, buffer_search::Deploy};
@@ -10048,6 +10062,100 @@ mod tests {
         panel.read_with(&cx, |panel, _| {
             assert!(panel.marked_entries.is_empty());
             assert_eq!(panel.selected_entry, Some(a_index));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_shift_click_skips_collapsed_flat_section(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (fs, _project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "conflict.rs": "conflict\n",
+                "tracked.rs": "tracked\n",
+                "new.txt": "new\n",
+            }),
+            &[("tracked.rs", StatusCode::Modified)],
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                (
+                    "conflict.rs",
+                    UnmergedStatus {
+                        first_head: UnmergedStatusCode::Updated,
+                        second_head: UnmergedStatusCode::Updated,
+                    }
+                    .into(),
+                ),
+                ("tracked.rs", StatusCode::Modified.worktree()),
+                ("new.txt", FileStatus::Untracked),
+            ],
+        );
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_section_collapsed(Section::Tracked, window, cx);
+            let conflict_index = entry_index_for_repo_path(panel, &repo_path("conflict.rs"))
+                .expect("conflict.rs should exist");
+            let new_index = entry_index_for_repo_path(panel, &repo_path("new.txt"))
+                .expect("new.txt should exist");
+            panel.select_entry(conflict_index, false, cx);
+            panel.select_entry(new_index, true, cx);
+        });
+
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                marked_repo_paths(panel),
+                vec![repo_path("conflict.rs"), repo_path("new.txt")]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_right_click_non_marked_entry_selects_it(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_fs, _project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "a.txt": "a\n",
+                "b.txt": "b\n",
+                "c.txt": "c\n",
+            }),
+            &[
+                ("a.txt", StatusCode::Modified),
+                ("b.txt", StatusCode::Modified),
+                ("c.txt", StatusCode::Modified),
+            ],
+        )
+        .await;
+
+        let (a_index, b_index, c_index) = panel.read_with(&cx, |panel, _| {
+            let a_index =
+                entry_index_for_repo_path(panel, &repo_path("a.txt")).expect("a.txt should exist");
+            let b_index =
+                entry_index_for_repo_path(panel, &repo_path("b.txt")).expect("b.txt should exist");
+            let c_index =
+                entry_index_for_repo_path(panel, &repo_path("c.txt")).expect("c.txt should exist");
+            (a_index, b_index, c_index)
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_entry(a_index, false, cx);
+            panel.select_entry(b_index, true, cx);
+            panel.deploy_entry_context_menu(point(px(0.), px(0.)), c_index, window, cx);
+        });
+
+        panel.read_with(&cx, |panel, _| {
+            assert!(panel.marked_entries.is_empty());
+            assert_eq!(panel.selected_entry, Some(c_index));
         });
     }
 
@@ -11457,6 +11565,42 @@ mod tests {
         assert_eq!(
             stage_status_of(&panel, &cx, "conflict.rs"),
             StageStatus::Staged
+        );
+
+        // Multi-selection toggle must skip resolved conflicts while still
+        // toggling the other selected files.
+        let staged_entry = panel.read_with(&cx, |panel, _| {
+            panel
+                .change_entries_by_path()
+                .find(|entry| entry.repo_path == repo_path("staged.rs"))
+                .cloned()
+                .expect("staged entry should exist")
+        });
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.change_file_stage(true, vec![staged_entry], cx);
+        });
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            let conflict_index = panel
+                .entry_by_path(&repo_path("conflict.rs"))
+                .expect("conflict entry should exist");
+            let staged_index = panel
+                .entry_by_path(&repo_path("staged.rs"))
+                .expect("staged entry should exist");
+            panel.select_entry(conflict_index, false, cx);
+            panel.select_entry(staged_index, true, cx);
+            panel.toggle_staged_for_selected(&ToggleStaged, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            stage_status_of(&panel, &cx, "conflict.rs"),
+            StageStatus::Staged
+        );
+        assert_eq!(
+            stage_status_of(&panel, &cx, "staged.rs"),
+            StageStatus::Unstaged
         );
     }
 
