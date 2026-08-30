@@ -75,7 +75,7 @@ util = { workspace = true, features = ["test-support"] }
 semver.workspace = true
 windows.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2-foundation.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]

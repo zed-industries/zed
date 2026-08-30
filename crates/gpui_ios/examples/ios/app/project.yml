@@ -5,7 +5,6 @@ options:
 settings:
   base:
     ARCHS: arm64
-    CODE_SIGNING_ALLOWED: NO
     ONLY_ACTIVE_ARCH: YES
 targets:
   GPUIIosExample:
@@ -32,10 +31,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.zed.gpui-ios-example
         PRODUCT_NAME: GPUIIosExample
-        LIBRARY_SEARCH_PATHS:
+        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
           - "$(SRCROOT)/../../../../../target/aarch64-apple-ios-sim/debug"
-        OTHER_LDFLAGS:
+        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
           - "-Wl,-force_load,$(SRCROOT)/../../../../../target/aarch64-apple-ios-sim/debug/libgpui_ios_example.a"
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(SRCROOT)/../../../../../target/aarch64-apple-ios/debug"
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - "-Wl,-force_load,$(SRCROOT)/../../../../../target/aarch64-apple-ios/debug/libgpui_ios_example.a"
     dependencies:
       - sdk: CoreFoundation.framework
       - sdk: CoreGraphics.framework

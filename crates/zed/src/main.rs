@@ -373,6 +373,12 @@ fn main() {
             use zed::mac_only_instance::*;
             ensure_only_instance() != IsOnlyInstance::Yes
         }
+
+        // iOS runs a single app instance by construction.
+        #[cfg(target_os = "ios")]
+        {
+            false
+        }
     };
     if failed_single_instance_check {
         println!("zed is already running");

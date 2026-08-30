@@ -23,7 +23,16 @@ fn main() {
         }
     }
 
-    if cfg!(target_os = "macos") {
+    // `cfg!(target_os)` in build scripts reflects the host, which would wrongly
+    // link macOS frameworks when cross-compiling (e.g. to iOS) on a Mac.
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS");
+    if target_os.as_deref() == Ok("ios") {
+        // Register exported Objective-C selectors, protocols, etc. Without this,
+        // categories in static libraries (e.g. WebRTC's UIDevice helpers) are
+        // stripped and their selectors fail to resolve at runtime.
+        println!("cargo:rustc-link-arg=-Wl,-ObjC");
+    }
+    if target_os.as_deref() == Ok("macos") {
         println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=10.15.7");
 
         // Weakly link ReplayKit to ensure Zed can be used on macOS 10.15+.

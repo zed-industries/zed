@@ -28,7 +28,7 @@ use std::os::unix::ffi::OsStrExt;
 #[cfg(unix)]
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 
-#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
 use std::mem::MaybeUninit;
 
 use async_tar::Archive;
@@ -200,6 +200,7 @@ struct TrashedEntry {
     pub original_parent: PathBuf,
 }
 
+#[cfg(not(target_os = "ios"))]
 impl From<trash::TrashItem> for TrashedEntry {
     fn from(item: trash::TrashItem) -> Self {
         Self {
@@ -210,6 +211,7 @@ impl From<trash::TrashItem> for TrashedEntry {
     }
 }
 
+#[cfg(not(target_os = "ios"))]
 impl TrashedEntry {
     fn into_trash_item(self) -> trash::TrashItem {
         trash::TrashItem {
@@ -238,6 +240,7 @@ pub enum TrashRestoreError {
     Unknown { description: String },
 }
 
+#[cfg(not(target_os = "ios"))]
 impl From<trash::Error> for TrashRestoreError {
     fn from(err: trash::Error) -> Self {
         match err {
@@ -428,7 +431,7 @@ pub trait FileHandle: Send + Sync + std::fmt::Debug {
 }
 
 impl FileHandle for std::fs::File {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         use std::{
             ffi::{CStr, OsStr},
@@ -872,6 +875,7 @@ impl Fs for RealFs {
         }
     }
 
+    #[cfg(not(target_os = "ios"))]
     async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashId> {
         // We must make the path absolute or trash will make a weird abomination
         // of the zed working directory (not usually the worktree) and whatever
@@ -885,6 +889,46 @@ impl Fs for RealFs {
             .await
             .context("Could not trash file or dir")?
             .into();
+
+        Ok(self.trash.lock().insert(entry))
+    }
+
+    // iOS has no system trash, so emulate one inside the app's temporary
+    // directory. Restore stays possible for the lifetime of that directory.
+    #[cfg(target_os = "ios")]
+    async fn trash(&self, path: &Path, _options: RemoveOptions) -> Result<TrashId> {
+        // Like on the other platforms, avoid resolving symlinks so that
+        // trashing a symlink does not trash its target.
+        let path = std::path::absolute(path).context("Could not make the path absolute")?;
+        let name = path
+            .file_name()
+            .context("Cannot trash a path without a file name")?
+            .to_os_string();
+        let original_parent = path
+            .parent()
+            .context("Cannot trash a path without a parent directory")?
+            .to_path_buf();
+
+        let entry = smol::unblock({
+            let name = name.clone();
+            move || {
+                let trash_root = std::env::temp_dir().join("zed-trash");
+                std::fs::create_dir_all(&trash_root)?;
+                let trashed_dir = tempfile::Builder::new()
+                    .prefix("item-")
+                    .tempdir_in(&trash_root)?
+                    .keep();
+                let trashed_path = trashed_dir.join(&name);
+                std::fs::rename(&path, &trashed_path)?;
+                anyhow::Ok(TrashedEntry {
+                    id: trashed_path.into_os_string(),
+                    name,
+                    original_parent,
+                })
+            }
+        })
+        .await
+        .context("Could not trash file or dir")?;
 
         Ok(self.trash.lock().insert(entry))
     }
@@ -1368,16 +1412,38 @@ impl Fs for RealFs {
 
         let restored_item_path = trashed_entry.original_parent.join(&trashed_entry.name);
 
-        let (tx, rx) = futures::channel::oneshot::channel();
-        std::thread::Builder::new()
-            .name("restore trashed item".to_string())
-            .spawn(move || {
-                let res = trash::restore_all([trashed_entry.into_trash_item()]);
-                tx.send(res)
-            })
-            .expect("The OS can spawn a threads");
+        #[cfg(not(target_os = "ios"))]
+        {
+            let (tx, rx) = futures::channel::oneshot::channel();
+            std::thread::Builder::new()
+                .name("restore trashed item".to_string())
+                .spawn(move || {
+                    let res = trash::restore_all([trashed_entry.into_trash_item()]);
+                    tx.send(res)
+                })
+                .expect("The OS can spawn a threads");
 
-        rx.await.expect("Restore all never panics")?;
+            rx.await.expect("Restore all never panics")?;
+        }
+
+        #[cfg(target_os = "ios")]
+        {
+            let restored_item_path = restored_item_path.clone();
+            smol::unblock(move || {
+                if restored_item_path.exists() {
+                    return Err(TrashRestoreError::Collision {
+                        path: restored_item_path,
+                    });
+                }
+                std::fs::rename(PathBuf::from(&trashed_entry.id), &restored_item_path).map_err(
+                    |err| TrashRestoreError::Unknown {
+                        description: err.to_string(),
+                    },
+                )
+            })
+            .await?;
+        }
+
         self.trash.lock().remove(trash_id);
         Ok(restored_item_path)
     }

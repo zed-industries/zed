@@ -111,6 +111,10 @@ pub fn os_name() -> String {
     {
         "macOS".to_string()
     }
+    #[cfg(target_os = "ios")]
+    {
+        "iOS".to_string()
+    }
     #[cfg(target_os = "linux")]
     {
         format!("Linux {}", gpui::guess_compositor())
@@ -133,7 +137,7 @@ pub fn os_version() -> String {
            // MacOS branch in particular is quite slow, hence we ought to "avoid" it in tests.
            "test binary".to_owned()
        }
-       target_os = "macos" => {
+       any(target_os = "macos", target_os = "ios") => {
            static MACOS_VERSION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
                Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap()
            });

@@ -571,7 +571,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         })
         .detach();
 
-        #[cfg(not(any(test, target_os = "macos")))]
+        #[cfg(not(any(test, target_os = "macos", target_os = "ios")))]
         initialize_file_watcher(window, cx);
 
         if let Some(specs) = window.gpu_specs() {

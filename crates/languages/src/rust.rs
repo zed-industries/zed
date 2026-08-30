@@ -45,7 +45,7 @@ pub(crate) fn semantic_token_rules() -> SemanticTokenRules {
 
 pub struct RustLspAdapter;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 impl RustLspAdapter {
     const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
     const ARCH_SERVER_NAME: &str = "apple-darwin";
