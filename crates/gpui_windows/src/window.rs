@@ -745,7 +745,9 @@ impl PlatformWindow for WindowsWindow {
                             PromptButton::Cancel(_) => IDCANCEL.0,
                             // the first few low integer values are reserved for known buttons
                             // so for simplicity we just go backwards from -1
-                            PromptButton::Other(_) => -(index as i32) - 1,
+                            PromptButton::Other(_) | PromptButton::Destructive(_) => {
+                                -(index as i32) - 1
+                            }
                         };
                         button_id_map.push(button_id);
                         buttons.push(TASKDIALOG_BUTTON {

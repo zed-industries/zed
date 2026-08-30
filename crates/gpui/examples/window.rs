@@ -303,6 +303,26 @@ impl Render for WindowDemo {
                 })
                 .detach();
             }))
+            .child(button("Prompt (destructive)", |window, cx| {
+                let answer = window.prompt(
+                    PromptLevel::Warning,
+                    "Save changes to 1 request?",
+                    Some("Unsaved changes will be lost if you discard them."),
+                    &[
+                        PromptButton::ok("Save"),
+                        PromptButton::destructive("Discard"),
+                        PromptButton::cancel("Cancel"),
+                    ],
+                    cx,
+                );
+
+                cx.spawn(async move |_| match answer.await.unwrap() {
+                    0 => println!("You have clicked Save"),
+                    1 => println!("You have clicked Discard"),
+                    _ => println!("You have clicked Cancel"),
+                })
+                .detach();
+            }))
     }
 }
 

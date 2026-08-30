@@ -2287,6 +2287,8 @@ pub enum PromptButton {
     Ok(SharedString),
     /// Cancel button
     Cancel(SharedString),
+    /// Destructive button
+    Destructive(SharedString),
     /// Other button
     Other(SharedString),
 }
@@ -2307,10 +2309,20 @@ impl PromptButton {
         PromptButton::Cancel(label.into())
     }
 
+    /// Create a Destructive button
+    pub fn destructive(label: impl Into<SharedString>) -> Self {
+        PromptButton::Destructive(label.into())
+    }
+
     /// Returns true if this button is a cancel button.
     #[allow(dead_code)]
     pub fn is_cancel(&self) -> bool {
         matches!(self, PromptButton::Cancel(_))
+    }
+
+    /// Returns true if this button is a destructive button.
+    pub fn is_destructive(&self) -> bool {
+        matches!(self, PromptButton::Destructive(_))
     }
 
     /// Returns the label of the button
@@ -2318,8 +2330,28 @@ impl PromptButton {
         match self {
             PromptButton::Ok(label) => label,
             PromptButton::Cancel(label) => label,
+            PromptButton::Destructive(label) => label,
             PromptButton::Other(label) => label,
         }
+    }
+}
+
+#[cfg(test)]
+mod prompt_button_tests {
+    use super::PromptButton;
+
+    #[test]
+    fn destructive_button_is_marked_destructive() {
+        let button = PromptButton::destructive("Discard");
+        assert!(button.is_destructive());
+        assert_eq!(button.label().as_ref(), "Discard");
+    }
+
+    #[test]
+    fn non_destructive_buttons_are_not_destructive() {
+        assert!(!PromptButton::ok("Save").is_destructive());
+        assert!(!PromptButton::cancel("Cancel").is_destructive());
+        assert!(!PromptButton::new("Other").is_destructive());
     }
 }
 

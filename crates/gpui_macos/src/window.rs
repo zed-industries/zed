@@ -1542,6 +1542,10 @@ impl PlatformWindow for MacWindow {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
 
+                if answer.is_destructive() {
+                    let _: () = msg_send![button, setHasDestructiveAction: YES];
+                }
+
                 if answer.is_cancel() {
                     if let Some(key) = std::char::from_u32(crate::events::ESCAPE_KEY as u32) {
                         let _: () =
