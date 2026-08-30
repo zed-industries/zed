@@ -414,6 +414,16 @@ fn thread_metadata_would_render_sidebar_row(
     draft_display_label_for_thread_metadata(metadata, workspace, cx).is_some()
 }
 
+fn thread_is_center_owned(thread_id: ThreadId, workspace: &ThreadEntryWorkspace, cx: &App) -> bool {
+    match workspace {
+        ThreadEntryWorkspace::Open(workspace) => workspace
+            .read(cx)
+            .panel::<AgentPanel>(cx)
+            .is_some_and(|panel| panel.read(cx).thread_is_in_center(thread_id)),
+        ThreadEntryWorkspace::Closed { .. } => false,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DraftKind {
     WithContent,
@@ -1835,21 +1845,29 @@ impl Sidebar {
                 }
                 threads.retain(|thread| thread.draft.is_none() || thread.metadata.title.is_some());
 
-                // Keep empty drafts only while their thread is active; preserve
-                // drafts with content because they hold user-typed state.
+                // Center-owned empty drafts remain independently usable even when another pane
+                // is active, so each one must keep its sidebar entry.
                 let pending_activation = self.pending_thread_activation;
-                let active_panel_thread_id = active_workspace
+                let actively_viewed_thread_id = active_workspace
                     .as_ref()
                     .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-                    .and_then(|panel| panel.read(cx).active_thread_id(cx));
+                    .and_then(|panel| {
+                        let panel = panel.read(cx);
+                        panel
+                            .active_center_thread_id(cx)
+                            .or_else(|| panel.active_thread_id(cx))
+                    });
                 threads.retain(|thread| {
                     if thread.draft != Some(DraftKind::Empty) {
+                        return true;
+                    }
+                    if thread_is_center_owned(thread.metadata.thread_id, &thread.workspace, cx) {
                         return true;
                     }
                     if pending_activation.is_some() {
                         return false;
                     }
-                    Some(thread.metadata.thread_id) == active_panel_thread_id
+                    Some(thread.metadata.thread_id) == actively_viewed_thread_id
                 });
 
                 // Build a lookup from live_infos and compute running/waiting
@@ -2277,7 +2295,7 @@ impl Sidebar {
             .read(cx)
             .workspaces()
             .filter_map(|ws| ws.read(cx).panel::<AgentPanel>(cx))
-            .flat_map(|panel| panel.read(cx).conversation_views())
+            .flat_map(|panel| panel.read(cx).conversation_views(cx))
             .collect();
 
         for cv in draft_conversation_views {
@@ -3942,21 +3960,25 @@ impl Sidebar {
             multi_workspace.activate(workspace.clone(), None, window, cx);
         });
 
+        let center_workspace = workspace.clone();
         let split = move |panel: Entity<AgentPanel>,
-                          workspace: Option<&Workspace>,
+                          terminal_workspace: Option<&Workspace>,
                           window: &mut Window,
                           cx: &mut App| {
             panel.update(cx, |panel, cx| {
                 let split_parent = origin.split_key();
-                origin.open_in_center(panel, workspace, window, cx);
+                origin.open_in_center(panel, terminal_workspace, window, cx);
                 panel.create_entry_in_center(
                     kind,
-                    workspace,
+                    terminal_workspace,
                     Some(SplitDirection::Right),
                     Some(split_parent),
                     window,
                     cx,
                 );
+            });
+            center_workspace.update(cx, |workspace, cx| {
+                workspace.close_panel::<AgentPanel>(window, cx);
             });
         };
 
@@ -6589,6 +6611,8 @@ impl Sidebar {
         let is_selected = is_active;
         let is_draft = thread.draft.is_some();
         let is_empty_draft = thread.draft == Some(DraftKind::Empty);
+        let is_center_owned =
+            thread_is_center_owned(thread.metadata.thread_id, &thread.workspace, cx);
         let is_running = matches!(
             thread.status,
             AgentThreadStatus::Running | AgentThreadStatus::WaitingForConfirmation
@@ -6737,8 +6761,8 @@ impl Sidebar {
                     )
                 } else {
                     match thread.draft {
-                        Some(DraftKind::Empty) => None,
-                        Some(DraftKind::WithContent) => Some(
+                        Some(DraftKind::Empty) if !is_center_owned => None,
+                        Some(DraftKind::Empty | DraftKind::WithContent) => Some(
                             IconButton::new("discard_thread", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Discard Draft"))
@@ -8453,7 +8477,7 @@ fn all_thread_infos_for_workspace(
     };
     let agent_panel = agent_panel.read(cx);
     let threads = agent_panel
-        .conversation_views()
+        .conversation_views(cx)
         .into_iter()
         .filter_map(|conversation_view| {
             let has_pending_tool_call = conversation_view

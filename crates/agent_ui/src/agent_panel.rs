@@ -3300,7 +3300,7 @@ impl AgentPanel {
 
     pub fn dismiss_all_notifications(&mut self, cx: &mut Context<Self>) -> bool {
         let mut dismissed = false;
-        for conversation_view in self.conversation_views() {
+        for conversation_view in self.conversation_views(cx) {
             dismissed |= conversation_view.update(cx, |view, cx| view.dismiss_notifications(cx));
         }
         let had_terminal_notifications = self
@@ -4876,7 +4876,7 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         let item_id = item.entity_id();
-        let release = cx.observe_release(item, move |this, _item, _cx| {
+        let release = cx.observe_release(item, move |this, _item, cx| {
             if this
                 .center_terminals
                 .get(&terminal_id)
@@ -4884,6 +4884,7 @@ impl AgentPanel {
             {
                 this.center_terminals.remove(&terminal_id);
                 this.clear_last_center_entry(CenterEntry::Terminal(terminal_id));
+                this.request_close_terminal_from_terminal_event(terminal_id, cx);
             }
         });
         self.center_terminals.insert(
@@ -4988,12 +4989,28 @@ impl AgentPanel {
         })
     }
 
-    pub fn conversation_views(&self) -> Vec<Entity<ConversationView>> {
-        self.active_conversation_view()
+    pub fn conversation_views(&self, cx: &App) -> Vec<Entity<ConversationView>> {
+        let mut views = self
+            .active_conversation_view()
             .into_iter()
             .cloned()
             .chain(self.retained_threads.values().cloned())
-            .collect()
+            .collect::<Vec<_>>();
+
+        for center in self.center_threads.values() {
+            let Some(item) = center.item.upgrade() else {
+                continue;
+            };
+            let conversation_view = item.read(cx).conversation_view().clone();
+            if !views
+                .iter()
+                .any(|view| view.entity_id() == conversation_view.entity_id())
+            {
+                views.push(conversation_view);
+            }
+        }
+
+        views
     }
 
     pub fn active_thread_view(&self, cx: &App) -> Option<Entity<ThreadView>> {
@@ -10438,6 +10455,15 @@ mod tests {
             panel.read_with(&cx, |panel, cx| panel.active_center_thread_id(cx)),
             Some(second_thread_id)
         );
+        assert!(
+            panel.read_with(&cx, |panel, cx| {
+                panel
+                    .conversation_views(cx)
+                    .iter()
+                    .any(|view| view.read(cx).thread_id == first_thread_id)
+            }),
+            "center-owned threads must remain available to sidebar status aggregation"
+        );
     }
 
     #[gpui::test]
@@ -10848,6 +10874,56 @@ mod tests {
             );
         });
         assert!(!panel.read_with(&cx, |panel, _cx| panel.has_terminal(terminal_id)));
+    }
+
+    #[gpui::test]
+    async fn test_closing_center_tab_emits_terminal_close_requested(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+
+        let close_requested = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _subscription = cx.update(|_window, cx| {
+            let close_requested = close_requested.clone();
+            cx.subscribe(&panel, move |_, event: &AgentPanelEvent, _| {
+                if matches!(event, AgentPanelEvent::TerminalCloseRequested { .. }) {
+                    close_requested.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            })
+        });
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_terminal_in_center(terminal_id, None, window, cx));
+        });
+        cx.run_until_parked();
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().clone();
+            let item = workspace
+                .active_item_as::<AgentTerminalPane>(cx)
+                .expect("active item should be AgentTerminalPane");
+            pane.update(cx, |pane, cx| {
+                pane.close_item_by_id(item.entity_id(), workspace::SaveIntent::Skip, window, cx)
+                    .detach();
+            });
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace.items_of_type::<AgentTerminalPane>(cx).count(),
+                0,
+                "center tab must be closed"
+            );
+        });
+        assert!(
+            close_requested.load(std::sync::atomic::Ordering::SeqCst),
+            "TerminalCloseRequested event must be emitted when center tab is closed"
+        );
     }
 
     #[gpui::test]

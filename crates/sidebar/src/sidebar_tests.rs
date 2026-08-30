@@ -2029,6 +2029,213 @@ async fn test_center_thread_updates_sidebar_active_entry(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_splitting_terminal_into_center_closes_agent_panel(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("First", true, window, cx)
+        })
+        .expect("the origin terminal should be created");
+    cx.run_until_parked();
+
+    let metadata = cx.read(|cx| {
+        TerminalThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(terminal_id)
+            .cloned()
+            .expect("the origin terminal should have metadata")
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.focus_panel::<AgentPanel>(window, cx);
+    });
+    assert!(cx.read(|cx| AgentPanel::is_visible(&workspace, cx)));
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.split_entry_in_workspace(
+            &workspace,
+            SplitOrigin::Terminal(metadata),
+            NewEntryKind::Terminal,
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    assert!(
+        !cx.read(|cx| AgentPanel::is_visible(&workspace, cx)),
+        "moving terminal work into center panes should not leave the Agent Panel visible"
+    );
+}
+
+#[gpui::test]
+async fn test_splitting_agent_into_center_keeps_draft_in_sidebar(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("First", true, window, cx)
+        })
+        .expect("the origin terminal should be created");
+    cx.run_until_parked();
+
+    let metadata = cx.read(|cx| {
+        TerminalThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(terminal_id)
+            .cloned()
+            .expect("the origin terminal should have metadata")
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.split_entry_in_workspace(
+            &workspace,
+            SplitOrigin::Terminal(metadata.clone()),
+            NewEntryKind::Thread(Agent::NativeAgent),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let center_thread_id = panel
+        .read_with(cx, |panel, cx| panel.active_center_thread_id(cx))
+        .expect("the new agent draft should be active in a center pane");
+    assert!(
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == center_thread_id)
+            })
+        }),
+        "a center-owned empty agent draft should remain visible in the sidebar"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.split_entry_in_workspace(
+            &workspace,
+            SplitOrigin::Terminal(metadata),
+            NewEntryKind::Thread(Agent::NativeAgent),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let second_center_thread_id = panel
+        .read_with(cx, |panel, cx| panel.active_center_thread_id(cx))
+        .expect("the second agent draft should be active in a center pane");
+    assert_ne!(center_thread_id, second_center_thread_id);
+    assert_eq!(
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar
+                .contents
+                .entries
+                .iter()
+                .filter(|entry| {
+                    matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == center_thread_id || thread.metadata.thread_id == second_center_thread_id)
+                })
+                .count()
+        }),
+        2,
+        "every empty agent draft that owns a center pane should remain visible in the sidebar"
+    );
+
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.remove_draft(
+            center_thread_id,
+            &ThreadEntryWorkspace::Open(workspace.clone()),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    assert!(!panel.read_with(cx, |panel, _cx| {
+        panel.thread_is_in_center(center_thread_id)
+    }));
+    assert!(panel.read_with(cx, |panel, _cx| {
+        panel.thread_is_in_center(second_center_thread_id)
+    }));
+    assert!(
+        !sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == center_thread_id)
+            })
+        }),
+        "discarding a center-owned draft should remove its sidebar row"
+    );
+}
+
+#[gpui::test]
+async fn test_center_owned_draft_survives_activating_another_workspace(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/project-a", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("First", true, window, cx)
+        })
+        .expect("the origin terminal should be created");
+    cx.run_until_parked();
+
+    let metadata = cx.read(|cx| {
+        TerminalThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry(terminal_id)
+            .cloned()
+            .expect("the origin terminal should have metadata")
+    });
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.split_entry_in_workspace(
+            &workspace,
+            SplitOrigin::Terminal(metadata),
+            NewEntryKind::Thread(Agent::NativeAgent),
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    let center_thread_id = panel
+        .read_with(cx, |panel, cx| panel.active_center_thread_id(cx))
+        .expect("the new agent draft should be active in a center pane");
+
+    // Activating a different workspace must not hide the first workspace's
+    // center-owned draft: the pane it owns is still open.
+    let fs = cx.update(|_, cx| <dyn fs::Fs>::global(cx));
+    let project_b = project::Project::test(fs, [], cx).await;
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert!(
+        sidebar.read_with(cx, |sidebar, _cx| {
+            sidebar.contents.entries.iter().any(|entry| {
+                matches!(entry, ListEntry::Thread(thread) if thread.metadata.thread_id == center_thread_id)
+            })
+        }),
+        "a center-owned empty draft should stay in the sidebar while another workspace is active"
+    );
+}
+
+#[gpui::test]
 async fn test_agent_panel_terminals_appear_in_sidebar_and_search(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -2159,6 +2366,78 @@ async fn test_closing_last_agent_panel_terminal_restores_empty_header(cx: &mut T
         vec!["> [my-project]"]
     );
     assert_project_header_has_threads(&sidebar, "my-project", true, cx);
+}
+
+#[gpui::test]
+async fn test_closing_center_tab_closes_terminal_in_sidebar_and_panel(cx: &mut TestAppContext) {
+    let project = init_test_project_with_agent_panel("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+    let workspace = multi_workspace.read_with(cx, |multi_workspace, _cx| {
+        multi_workspace.workspace().clone()
+    });
+
+    let terminal_id = panel
+        .update_in(cx, |panel, window, cx| {
+            panel.insert_test_terminal("Dev Server", true, window, cx)
+        })
+        .expect("test terminal should be inserted");
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.open_terminal_in_center(terminal_id, None, window, cx));
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .items_of_type::<agent_ui::AgentTerminalPane>(cx)
+                .count()
+        }),
+        1
+    );
+
+    workspace.update_in(cx, |workspace, window, cx| {
+        let pane = workspace.active_pane().clone();
+        let item = workspace
+            .active_item_as::<agent_ui::AgentTerminalPane>(cx)
+            .expect("active item should be AgentTerminalPane");
+        pane.update(cx, |pane, cx| {
+            pane.close_item_by_id(item.entity_id(), workspace::SaveIntent::Skip, window, cx)
+                .detach();
+        });
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(cx, |workspace, cx| {
+        assert_eq!(
+            workspace
+                .items_of_type::<agent_ui::AgentTerminalPane>(cx)
+                .count(),
+            0,
+            "center tab must be closed"
+        );
+    });
+
+    panel.read_with(cx, |panel, _cx| {
+        assert!(
+            !panel.has_terminal(terminal_id),
+            "terminal should be deleted from panel when center tab is closed"
+        );
+    });
+
+    let terminal_in_sidebar = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar.contents.entries.iter().any(|entry| match entry {
+            ListEntry::Terminal(terminal) => terminal.metadata.terminal_id == terminal_id,
+            _ => false,
+        })
+    });
+    assert!(
+        !terminal_in_sidebar,
+        "terminal should be removed from sidebar list when center tab is closed"
+    );
 }
 
 #[gpui::test]
