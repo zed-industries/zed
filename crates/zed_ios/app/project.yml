@@ -22,6 +22,7 @@ targets:
               - UISceneConfigurationName: Default Configuration
                 UISceneDelegateClassName: ZedSceneDelegate
         UILaunchScreen: {}
+        UIStatusBarHidden: true
         UIRequiresFullScreen: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

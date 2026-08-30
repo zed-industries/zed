@@ -88,6 +88,25 @@ fn register_view_controller_class() -> &'static AnyClass {
             }
         }
 
+        // Run edge-to-edge: hide the status bar and let the home indicator
+        // fade so the editor gets the full screen.
+        extern "C" fn prefers_status_bar_hidden(_this: *mut AnyObject, _sel: Sel) -> Bool {
+            Bool::YES
+        }
+
+        extern "C" fn prefers_home_indicator_auto_hidden(_this: *mut AnyObject, _sel: Sel) -> Bool {
+            Bool::YES
+        }
+
+        // UIRectEdgeAll: require a second swipe for system gestures at the
+        // screen edges, matching other full-screen apps.
+        extern "C" fn preferred_screen_edges_deferring_system_gestures(
+            _this: *mut AnyObject,
+            _sel: Sel,
+        ) -> usize {
+            15
+        }
+
         unsafe {
             decl.add_method(
                 sel!(preferredStatusBarStyle),
@@ -96,6 +115,19 @@ fn register_view_controller_class() -> &'static AnyClass {
             decl.add_method(
                 sel!(viewDidLayoutSubviews),
                 view_did_layout_subviews as extern "C" fn(*mut AnyObject, Sel),
+            );
+            decl.add_method(
+                sel!(prefersStatusBarHidden),
+                prefers_status_bar_hidden as extern "C" fn(*mut AnyObject, Sel) -> Bool,
+            );
+            decl.add_method(
+                sel!(prefersHomeIndicatorAutoHidden),
+                prefers_home_indicator_auto_hidden as extern "C" fn(*mut AnyObject, Sel) -> Bool,
+            );
+            decl.add_method(
+                sel!(preferredScreenEdgesDeferringSystemGestures),
+                preferred_screen_edges_deferring_system_gestures
+                    as extern "C" fn(*mut AnyObject, Sel) -> usize,
             );
         }
 
