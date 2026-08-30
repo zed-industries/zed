@@ -12,7 +12,6 @@ use fs::Fs;
 use gpui::AsyncApp;
 use http_client::HttpClient;
 use util::{
-    ResultExt,
     command::Command,
     normalize_path,
     paths::{PathStyle, RemotePathBuf},
@@ -498,11 +497,13 @@ impl DevContainerManifest {
         let image_tag =
             self.generate_features_image_tag(dockerfile_path.clone().display().to_string());
 
-        let build_info = FeaturesBuildInfo {
+        // Resolved below, once we know whether the user's Dockerfile could be
+        // given a stage alias for the feature stages to build on top of.
+        let mut build_info = FeaturesBuildInfo {
             dockerfile_path,
             features_content_dir,
             empty_context_dir,
-            build_image: dev_container.image.clone(),
+            build_image: None,
             image_tag,
         };
 
@@ -516,7 +517,12 @@ impl DevContainerManifest {
 
         let builtin_env_content = format!(
             "_CONTAINER_USER={}\n_REMOTE_USER={}\n",
-            container_user, remote_user
+            shlex::try_quote(&container_user)
+                .map(|quoted| quoted.to_string())
+                .unwrap_or_else(|_| format!("'{}'", container_user.replace('\'', "'\\''"))),
+            shlex::try_quote(&remote_user)
+                .map(|quoted| quoted.to_string())
+                .unwrap_or_else(|_| format!("'{}'", remote_user.replace('\'', "'\\''"))),
         );
 
         let builtin_env_path = build_info
@@ -679,7 +685,7 @@ impl DevContainerManifest {
         let use_buildkit = self.docker_client.supports_compose_buildkit() || !is_compose;
 
         let dockerfile_base_content = if let Some(location) = &self.dockerfile_location().await {
-            self.fs.load(location).await.log_err()
+            self.read_project_file(location).await.ok().flatten()
         } else {
             None
         };
@@ -702,6 +708,15 @@ impl DevContainerManifest {
                 )
             })
             .unwrap_or_default();
+
+        // The extended Dockerfile inlines the user's Dockerfile and appends a
+        // stage alias to its final stage, so the feature stages must build from
+        // that alias to inherit its layers. When there is no Dockerfile, or the
+        // alias could not be injected, the feature stages build directly on the
+        // configured base image instead.
+        if !dockerfile_content.contains("AS dev_container_auto_added_stage_label") {
+            build_info.build_image = Some(self.get_base_image_from_config().await?);
+        }
 
         let dockerfile_content = self.generate_dockerfile_extended(
             &container_user,
@@ -3303,7 +3318,7 @@ fn get_ent_passwd_shell_command(user: &str) -> String {
     let escaped_for_shell = user.replace('\\', "\\\\").replace('\'', "\\'");
     let escaped_for_regex = escape_regex_chars(user).replace('\'', "\\'");
     format!(
-        " (command -v getent >/dev/null 2>&1 && getent passwd '{shell}' || grep -E '^{re}|^[^:]*:[^:]*:{re}:' /etc/passwd || true)",
+        " (command -v getent >/dev/null 2>&1 && getent passwd '{shell}' || grep -E '^{re}:|^[^:]*:[^:]*:{re}:' /etc/passwd || true) | head -n 1",
         shell = escaped_for_shell,
         re = escaped_for_regex,
     )
@@ -3384,13 +3399,14 @@ echo 'Options       :'
 echo {escaped_options}
 echo ===========================================================================
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 set -a
-. ../devcontainer-features.builtin.env
-. ./devcontainer-features.env
+. "$SCRIPT_DIR/../devcontainer-features.builtin.env"
+. "$SCRIPT_DIR/devcontainer-features.env"
 set +a
 
-chmod +x ./install.sh
-./install.sh
+chmod +x "$SCRIPT_DIR/install.sh"
+"$SCRIPT_DIR/install.sh"
 "#
     );
 
@@ -3559,7 +3575,9 @@ fn get_container_user_from_config(
         }
     }
     if let Some(image_user) = &docker_config.config.image_user {
-        return Ok(image_user.to_string());
+        if !image_user.is_empty() {
+            return Ok(image_user.to_string());
+        }
     }
 
     Ok("root".to_string())
@@ -3781,6 +3799,7 @@ mod test {
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
             DockerInspect, REMOTE_BUILD_CONTEXT_DIR, config_path_for, dockerfile_inject_alias,
             escape_compose_interpolation, extract_feature_id, find_primary_service,
+            get_container_user_from_config, get_ent_passwd_shell_command,
             get_remote_user_from_config, image_from_dockerfile, is_local_feature_ref,
             load_devcontainer_contents, local_staging_directory, resolve_compose_dockerfile,
         },
@@ -4326,6 +4345,179 @@ mod test {
                 .any(|command| command.args.contains(&"'mkdir'".to_string())),
             "the remote staging directory must be created before the upload"
         );
+    }
+
+    #[gpui::test]
+    async fn passwd_lookup_falls_back_to_root_for_an_empty_image_user(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        let (_, manifest) = init_devcontainer_manifest(
+            cx,
+            fs.clone(),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::reading_from(fs.clone())),
+            HashMap::new(),
+            r#"{ "name": "empty-image-user", "image": "ubuntu:24.04" }"#,
+            DevContainerHost::Local,
+        )
+        .await
+        .unwrap();
+
+        let inspect = DockerInspect {
+            id: "sha256:test".to_string(),
+            config: DockerInspectConfig {
+                labels: DockerConfigLabels { metadata: None },
+                env: Vec::new(),
+                image_user: Some(String::new()),
+            },
+            mounts: None,
+            state: None,
+        };
+        let container_user =
+            get_container_user_from_config(&inspect, &manifest).expect("should resolve a user");
+        assert_eq!(container_user, "root");
+
+        // An empty user would make the /etc/passwd fallback match every account,
+        // producing a multi-line `_CONTAINER_USER_HOME` that breaks the sourced env file.
+        let command = get_ent_passwd_shell_command(&container_user);
+        assert!(command.contains("^root:"));
+        assert!(command.ends_with("| head -n 1"));
+    }
+
+    #[gpui::test]
+    async fn dockerfile_feature_build_builds_on_the_injected_stage_alias(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        let (_, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            fs.clone(),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::reading_from(fs.clone())),
+            HashMap::new(),
+            r#"
+            {
+              "name": "dockerfile-base-image",
+              "build": { "dockerfile": "Dockerfile" },
+              "features": {
+                "./lsp-devtools": { "version": "0.1.0" }
+              }
+            }
+            "#,
+            DevContainerHost::Local,
+        )
+        .await
+        .unwrap();
+
+        fs.insert_tree(
+            format!("{TEST_PROJECT_PATH}/.devcontainer"),
+            serde_json::json!({
+                "Dockerfile": "FROM ubuntu:24.04 AS base\nRUN useradd -m dev\n",
+                "lsp-devtools": {
+                    "devcontainer-feature.json": r#"{
+                        "id": "lsp-devtools",
+                        "version": "0.1.0",
+                        "name": "LSP Devtools"
+                    }"#,
+                    "install.sh": "#!/bin/sh\nset -e\n",
+                },
+            }),
+        )
+        .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .download_feature_and_dockerfile_resources()
+            .await
+            .unwrap();
+
+        // Building the feature stages from `ubuntu:24.04` would skip everything
+        // the user's Dockerfile does, so the alias must be used instead.
+        assert_eq!(
+            devcontainer_manifest
+                .features_build_info
+                .as_ref()
+                .and_then(|info| info.build_image.as_deref()),
+            None
+        );
+    }
+
+    #[gpui::test]
+    async fn remote_dockerfile_feature_build_reads_the_host_dockerfile(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        let connection = Arc::new(crate::FakeRemoteConnection::default());
+        let (_, mut devcontainer_manifest) = init_devcontainer_manifest(
+            cx,
+            fs.clone(),
+            fake_http_client(),
+            Arc::new(FakeDocker::new()),
+            Arc::new(TestCommandRunner::reading_from(fs.clone())),
+            HashMap::new(),
+            r#"
+            {
+              "name": "dockerfile-remote-base-image",
+              "build": { "dockerfile": "Dockerfile" },
+              "features": {
+                "./lsp-devtools": { "version": "0.1.0" }
+              }
+            }
+            "#,
+            DevContainerHost::Remote(connection),
+        )
+        .await
+        .unwrap();
+
+        fs.insert_tree(
+            format!("{TEST_PROJECT_PATH}/.devcontainer"),
+            serde_json::json!({
+                "Dockerfile": "FROM ubuntu:24.04 AS base\nRUN echo ok\n",
+                "lsp-devtools": {
+                    "devcontainer-feature.json": r#"{
+                        "id": "lsp-devtools",
+                        "version": "0.1.0",
+                        "name": "LSP Devtools"
+                    }"#,
+                    "install.sh": "#!/bin/sh\nset -e\n",
+                },
+            }),
+        )
+        .await;
+
+        devcontainer_manifest.parse_nonremote_vars().unwrap();
+        devcontainer_manifest
+            .download_feature_and_dockerfile_resources()
+            .await
+            .unwrap();
+
+        // Failing to read the Dockerfile from the remote host would leave the
+        // extended Dockerfile without a stage alias, falling back to the
+        // Dockerfile's own base image.
+        assert_eq!(
+            devcontainer_manifest
+                .features_build_info
+                .as_ref()
+                .and_then(|info| info.build_image.as_deref()),
+            None
+        );
+    }
+
+    #[test]
+    fn feature_install_wrapper_uses_safe_paths_and_shell_quoting() {
+        let script = super::generate_install_wrapper(
+            "ghcr.io/devcontainers/features/git:1",
+            "git",
+            "_CONTAINER_USER_HOME=/home/vscode\nPATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n",
+        )
+        .unwrap();
+
+        assert!(script.contains("SCRIPT_DIR=\"$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\""));
+        assert!(script.contains(". \"$SCRIPT_DIR/../devcontainer-features.builtin.env\""));
+        assert!(script.contains(". \"$SCRIPT_DIR/devcontainer-features.env\""));
+        assert!(script.contains("chmod +x \"$SCRIPT_DIR/install.sh\""));
+        assert!(script.contains("\"$SCRIPT_DIR/install.sh\""));
     }
 
     /// The spec runs `initializeCommand` on "the host machine", which for a
@@ -5470,8 +5662,8 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node|^[^:]*:[^:]*:node:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root:|^[^:]*:[^:]*:root:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node:|^[^:]*:[^:]*:node:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
 RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./docker-in-docker_0,target=/tmp/build-features-src/docker-in-docker_0 \
@@ -5588,13 +5780,14 @@ echo '    GOLANGCILINTVERSION=latest
     VERSION=latest'
 echo ===========================================================================
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 set -a
-. ../devcontainer-features.builtin.env
-. ./devcontainer-features.env
+. "$SCRIPT_DIR/../devcontainer-features.builtin.env"
+. "$SCRIPT_DIR/devcontainer-features.env"
 set +a
 
-chmod +x ./install.sh
-./install.sh
+chmod +x "$SCRIPT_DIR/install.sh"
+"$SCRIPT_DIR/install.sh"
 "#
         );
 
@@ -5839,8 +6032,8 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root:|^[^:]*:[^:]*:root:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode:|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
 RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./aws-cli_0,target=/tmp/build-features-src/aws-cli_0 \
@@ -6591,8 +6784,8 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root:|^[^:]*:[^:]*:root:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode:|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
 RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./aws-cli_0,target=/tmp/build-features-src/aws-cli_0 \
@@ -6953,8 +7146,8 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root:|^[^:]*:[^:]*:root:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'vscode' || grep -E '^vscode:|^[^:]*:[^:]*:vscode:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
 COPY --chown=root:root --from=dev_containers_feature_content_source /tmp/build-features/aws-cli_0 /tmp/dev-container-features/aws-cli_0
@@ -7211,8 +7404,8 @@ RUN mkdir -p /tmp/dev-container-features
 COPY --from=dev_containers_feature_content_normalize /tmp/build-features/ /tmp/dev-container-features
 
 RUN \
-echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root|^[^:]*:[^:]*:root:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
-echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node|^[^:]*:[^:]*:node:' /etc/passwd || true) | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
+echo "_CONTAINER_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'root' || grep -E '^root:|^[^:]*:[^:]*:root:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env && \
+echo "_REMOTE_USER_HOME=$( (command -v getent >/dev/null 2>&1 && getent passwd 'node' || grep -E '^node:|^[^:]*:[^:]*:node:' /etc/passwd || true) | head -n 1 | cut -d: -f6)" >> /tmp/dev-container-features/devcontainer-features.builtin.env
 
 
 RUN --mount=type=bind,from=dev_containers_feature_content_source,source=./docker-in-docker_0,target=/tmp/build-features-src/docker-in-docker_0 \
@@ -7280,13 +7473,14 @@ echo '    GOLANGCILINTVERSION=latest
     VERSION=latest'
 echo ===========================================================================
 
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 set -a
-. ../devcontainer-features.builtin.env
-. ./devcontainer-features.env
+. "$SCRIPT_DIR/../devcontainer-features.builtin.env"
+. "$SCRIPT_DIR/devcontainer-features.env"
 set +a
 
-chmod +x ./install.sh
-./install.sh
+chmod +x "$SCRIPT_DIR/install.sh"
+"$SCRIPT_DIR/install.sh"
 "#
         );
 
@@ -8300,6 +8494,23 @@ RUN echo $RUBY_VERSION2
                             metadata: Some(vec![HashMap::from([(
                                 "remoteUser".to_string(),
                                 Value::String("node".to_string()),
+                            )])]),
+                        },
+                        env: Vec::new(),
+                        image_user: Some("root".to_string()),
+                    },
+                    mounts: None,
+                    state: None,
+                });
+            }
+            if id.starts_with("ubuntu:") {
+                return Ok(DockerInspect {
+                    id: format!("sha256:ubuntu-{id}"),
+                    config: DockerInspectConfig {
+                        labels: DockerConfigLabels {
+                            metadata: Some(vec![HashMap::from([(
+                                "remoteUser".to_string(),
+                                Value::String("root".to_string()),
                             )])]),
                         },
                         env: Vec::new(),
