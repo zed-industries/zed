@@ -38,18 +38,33 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: dev.zed.zed-ios
         PRODUCT_NAME: ZedIos
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
-          - "$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug"
-        "OTHER_LDFLAGS[sdk=iphonesimulator*]":
-          - "-ObjC"
-          - "-lc++"
-          - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug/libzed_ios.a"
-        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
-          - "$(SRCROOT)/../../../target/aarch64-apple-ios/debug"
-        "OTHER_LDFLAGS[sdk=iphoneos*]":
-          - "-ObjC"
-          - "-lc++"
-          - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios/debug/libzed_ios.a"
+      configs:
+        Debug:
+          "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
+            - "$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug"
+          "OTHER_LDFLAGS[sdk=iphonesimulator*]":
+            - "-ObjC"
+            - "-lc++"
+            - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios-sim/debug/libzed_ios.a"
+          "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+            - "$(SRCROOT)/../../../target/aarch64-apple-ios/debug"
+          "OTHER_LDFLAGS[sdk=iphoneos*]":
+            - "-ObjC"
+            - "-lc++"
+            - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios/debug/libzed_ios.a"
+        Release:
+          "LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*]":
+            - "$(SRCROOT)/../../../target/aarch64-apple-ios-sim/release"
+          "OTHER_LDFLAGS[sdk=iphonesimulator*]":
+            - "-ObjC"
+            - "-lc++"
+            - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios-sim/release/libzed_ios.a"
+          "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+            - "$(SRCROOT)/../../../target/aarch64-apple-ios/release"
+          "OTHER_LDFLAGS[sdk=iphoneos*]":
+            - "-ObjC"
+            - "-lc++"
+            - "-Wl,-force_load,$(SRCROOT)/../../../target/aarch64-apple-ios/release/libzed_ios.a"
     dependencies:
       - sdk: AVFoundation.framework
       - sdk: AudioToolbox.framework
