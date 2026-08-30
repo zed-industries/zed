@@ -301,7 +301,6 @@ fn show_hover(
             || same_diagnostic_hover(editor, &snapshot, anchor)
             || editor.hover_state.diagnostic_popover.is_some()
         {
-            // Hover triggered from same location as last time. Don't show again.
             return None;
         } else {
             hide_hover(editor, cx);
@@ -625,13 +624,7 @@ fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -
         .any(|InfoPopover { symbol_range, .. }| {
             symbol_range
                 .as_text_range()
-                .map(|range| {
-                    let hover_range = range.to_offset(&snapshot.buffer_snapshot());
-                    let offset = anchor.to_offset(&snapshot.buffer_snapshot());
-                    // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
-                    // use an inclusive range here to check if we should dismiss the popover
-                    (hover_range.start..=hover_range.end).contains(&offset)
-                })
+                .map(|range| hover_range_contains_anchor(snapshot, &range, anchor))
                 .unwrap_or(false)
         })
 }
@@ -642,16 +635,27 @@ fn same_diagnostic_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anc
         .diagnostic_popover
         .as_ref()
         .map(|diagnostic| {
-            let hover_range = diagnostic
-                .local_diagnostic
-                .range
-                .to_offset(&snapshot.buffer_snapshot());
-            let offset = anchor.to_offset(&snapshot.buffer_snapshot());
-
-            // Here we do basically the same as in `same_info_hover`, see comment there for an explanation
-            (hover_range.start..=hover_range.end).contains(&offset)
+            hover_range_contains_anchor(snapshot, &diagnostic.local_diagnostic.range, anchor)
         })
         .unwrap_or(false)
+}
+
+fn hover_range_contains_anchor(
+    snapshot: &EditorSnapshot,
+    hover_range: &Range<Anchor>,
+    anchor: Anchor,
+) -> bool {
+    let multibuffer = snapshot.buffer_snapshot();
+    let hover_offsets = hover_range.to_offset(&multibuffer);
+    let anchor_offset = anchor.to_offset(&multibuffer);
+    if hover_offsets.start != hover_offsets.end {
+        // LSP returns a hover result for the end index of ranges that should be hovered, so we need to
+        // use an inclusive range here to check if we should dismiss the popover.
+        return (hover_offsets.start..=hover_offsets.end).contains(&anchor_offset);
+    }
+
+    let (surrounding_word, _) = multibuffer.surrounding_word(hover_offsets.start, None);
+    (surrounding_word.start..=surrounding_word.end).contains(&anchor_offset)
 }
 
 fn parse_blocks(
@@ -1480,13 +1484,16 @@ mod tests {
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
+        test::build_editor,
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
     use futures::stream::StreamExt;
     use gpui::App;
     use indoc::indoc;
+    use language::{Buffer, Capability::ReadWrite, Point};
     use markdown::parser::MarkdownEvent;
+    use multi_buffer::{MultiBuffer, PathKey};
     use project::InlayId;
     use settings::InlayHintSettingsContent;
     use settings::{DelayMs, SettingsStore};
@@ -3326,6 +3333,69 @@ mod tests {
                 editor.hover_state.info_task.is_none(),
                 "No hover info task should be scheduled when hover is disabled"
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_zero_width_hover_contains_anchor_in_same_word(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.new(|cx| Buffer::local("alpha beta\nignored\ncccc\n", cx));
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(ReadWrite);
+            multibuffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                buffer.clone(),
+                [
+                    Point::new(0, 0)..Point::new(0, 10),
+                    Point::new(2, 0)..Point::new(2, 4),
+                ],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+
+        cx.add_window(|window, cx| {
+            let editor = build_editor(multibuffer, window, cx);
+            let snapshot = editor.snapshot(window, cx);
+            let multibuffer = snapshot.buffer_snapshot();
+            assert_eq!(multibuffer.text(), "alpha beta\ncccc");
+
+            let hover_anchor = multibuffer.anchor_before(MultiBufferOffset(1));
+            let hover_range = hover_anchor..hover_anchor;
+
+            let word_end = multibuffer.anchor_before(MultiBufferOffset(5));
+            assert!(hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                word_end,
+            ));
+
+            let other_word = multibuffer.anchor_before(MultiBufferOffset(6));
+            assert!(!hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                other_word,
+            ));
+
+            let other_excerpt = multibuffer.anchor_before(MultiBufferOffset(11));
+            assert!(!hover_range_contains_anchor(
+                &snapshot,
+                &hover_range,
+                other_excerpt,
+            ));
+
+            let last_excerpt_end = multibuffer.anchor_before(MultiBufferOffset(15));
+            let last_excerpt_hover_range = last_excerpt_end..last_excerpt_end;
+            let inside_last_word = multibuffer.anchor_before(MultiBufferOffset(12));
+            assert!(hover_range_contains_anchor(
+                &snapshot,
+                &last_excerpt_hover_range,
+                inside_last_word,
+            ));
+
+            editor
         });
     }
 
