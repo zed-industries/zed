@@ -43,7 +43,7 @@ basic information about the extension:
 id = "my-extension"
 name = "My extension"
 version = "0.0.1"
-schema_version = 1
+schema_version = 2
 authors = ["Your Name <you@example.com>"]
 description = "Example extension"
 repository = "https://github.com/your-name/my-zed-extension"

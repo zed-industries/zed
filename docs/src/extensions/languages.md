@@ -477,9 +477,28 @@ An extension may provide any number of language servers. To provide a language s
 
 ```toml
 [language_servers.my-language-server]
-name = "My Language LSP"
+name = "My Language Server"
 languages = ["My Language"]
 ```
+
+Zed's default `language_servers` setting contains the `"..."` wildcard, which expands to all registered language servers that are enabled by default. As a result, a language server registered by an extension is normally selected without additional user configuration.
+
+With extension manifest schema version 2 or newer, an extension can exclude a language server from this wildcard expansion by setting `default_enabled = false`:
+
+```toml
+[language_servers.my-optional-language-server]
+name = "My Optional Language Server"
+languages = ["My Language"]
+default_enabled = false
+```
+
+The server remains registered, so users can opt in by explicitly including its ID in their language settings:
+
+```jsonc
+"language_servers": ["my-optional-language-server", "..."]
+```
+
+Here, the explicit ID enables the optional server, while `"..."` retains the other default-enabled language servers. To run only the optional server, omit `"..."`.
 
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:
 

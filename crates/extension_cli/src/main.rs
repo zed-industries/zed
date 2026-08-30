@@ -13,7 +13,7 @@ use cloud_api_types::ExtensionProvides;
 use extension::build_debug_adapter_schema_path;
 use extension::extension_builder::CompilationConcurrency;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-use extension::{ExtensionManifest, ExtensionSnippets};
+use extension::{ExtensionManifest, ExtensionSnippets, SchemaVersion};
 use http_client::Url;
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
@@ -432,6 +432,11 @@ enum ExtensionManifestValidationError {
         as these are currently unsupported"
     )]
     LanguageModelProvidersUnsupported,
+    #[error(
+        "language server '{0}' uses `default_enabled`, which requires extension manifest \
+        schema version 2 or newer"
+    )]
+    LanguageServerDefaultEnabledRequiresSchemaVersionTwo(String),
 }
 
 fn validate_extension_manifest(
@@ -484,6 +489,25 @@ fn validate_extension_manifest(
 
     if !manifest.language_model_providers.is_empty() {
         return Err(ExtensionManifestValidationError::LanguageModelProvidersUnsupported);
+    }
+
+    if manifest.schema_version < SchemaVersion::TWO
+        && let Some(language_server_name) =
+            manifest
+                .language_servers
+                .iter()
+                .find_map(|(language_server_name, language_server)| {
+                    language_server
+                        .default_enabled
+                        .is_some()
+                        .then(|| language_server_name.to_string())
+                })
+    {
+        return Err(
+            ExtensionManifestValidationError::LanguageServerDefaultEnabledRequiresSchemaVersionTwo(
+                language_server_name,
+            ),
+        );
     }
 
     Ok(())
@@ -687,7 +711,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use cloud_api_types::ExtensionProvides;
-    use extension::{LanguageModelProviderManifestEntry, SchemaVersion};
+    use extension::{LanguageModelProviderManifestEntry, LanguageServerManifestEntry};
 
     use super::*;
 
@@ -719,6 +743,28 @@ mod tests {
     #[test]
     fn test_validate_manifest_valid() {
         assert!(validate_extension_manifest(&valid_manifest()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_manifest_language_server_default_enabled_requires_schema_version_two() {
+        let mut manifest = valid_manifest();
+        let mut language_server = LanguageServerManifestEntry::default();
+        language_server.default_enabled = Some(false);
+        manifest
+            .language_servers
+            .insert("optional-language-server".into(), language_server);
+
+        assert_eq!(
+            validate_extension_manifest(&manifest),
+            Err(
+                ExtensionManifestValidationError::LanguageServerDefaultEnabledRequiresSchemaVersionTwo(
+                    "optional-language-server".to_string(),
+                )
+            ),
+        );
+
+        manifest.schema_version = SchemaVersion::TWO;
+        assert!(validate_extension_manifest(&manifest).is_ok());
     }
 
     #[test]

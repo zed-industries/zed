@@ -7,7 +7,7 @@ use crate::{
         ExtensionVersion, HeadlessExtensionStore, LoadedExtension, STALE_UPLOAD_TTL,
         hash_directory_contents, remove_stale_uploads,
     },
-    load_plugin_queries, remote_sync_retry_delay,
+    load_plugin_queries, remote_sync_retry_delay, schema_version_range,
 };
 use async_compression::futures::bufread::GzipEncoder;
 use async_trait::async_trait;
@@ -54,6 +54,14 @@ use util::{rel_path::rel_path_buf, test::TempTree};
 #[ctor::ctor(unsafe)]
 fn init_logger() {
     zlog::init_test();
+}
+
+#[test]
+fn test_schema_version_range() {
+    assert_eq!(
+        schema_version_range(),
+        SchemaVersion::ZERO..=SchemaVersion::TWO
+    );
 }
 
 #[gpui::test]

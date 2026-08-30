@@ -273,6 +273,12 @@ impl LspAdapter for ExtensionLspAdapter {
         self.language_server_id.clone()
     }
 
+    fn is_enabled_by_default(&self) -> bool {
+        self.extension
+            .manifest()
+            .is_language_server_enabled_by_default(&self.language_server_id)
+    }
+
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         let code_action_kinds = self
             .extension

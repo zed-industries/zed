@@ -3400,6 +3400,116 @@ async fn test_max_buffer_line_length_can_be_overridden(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_default_disabled_language_server_requires_explicit_opt_in(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "" })).await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let mut default_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "default-language-server",
+            ..Default::default()
+        },
+    );
+    let mut optional_language_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "optional-language-server",
+            enabled_by_default: false,
+            ..Default::default()
+        },
+    );
+    language_registry.add(rust_lang());
+
+    let (rust_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let mut default_language_server = default_language_servers.next().await.unwrap();
+    assert_eq!(
+        default_language_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        uri!("file:///dir/a.rs")
+    );
+    cx.run_until_parked();
+
+    let running_language_servers = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            rust_buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, _)| adapter.name())
+                    .collect::<HashSet<_>>()
+            })
+        })
+    });
+    assert_eq!(
+        running_language_servers,
+        HashSet::from_iter([LanguageServerName::new_static("default-language-server")])
+    );
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.languages_mut().insert(
+                    "Rust".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "optional-language-server".into(),
+                            "...".into(),
+                        ]),
+                        ..Default::default()
+                    },
+                );
+            });
+        })
+    });
+
+    let mut optional_language_server = optional_language_servers.next().await.unwrap();
+    assert_eq!(
+        optional_language_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document
+            .uri
+            .as_str(),
+        uri!("file:///dir/a.rs")
+    );
+    cx.run_until_parked();
+
+    let running_language_servers = project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            rust_buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .running_language_servers_for_local_buffer(buffer, cx)
+                    .map(|(adapter, _)| adapter.name())
+                    .collect::<HashSet<_>>()
+            })
+        })
+    });
+    assert_eq!(
+        running_language_servers,
+        HashSet::from_iter([
+            LanguageServerName::new_static("default-language-server"),
+            LanguageServerName::new_static("optional-language-server"),
+        ])
+    );
+}
+
+#[gpui::test]
 async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

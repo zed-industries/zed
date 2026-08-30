@@ -124,9 +124,9 @@ In this example:
 
 - `intelephense` is set as the primary language server.
 - `phpactor`, `phptools` and `phpantom` are disabled (note the `!` prefix).
-- `"..."` expands to the rest of the language servers registered for PHP that are not already listed.
+- `"..."` expands to the rest of the default-enabled language servers registered for PHP that are not already listed.
 
-The `"..."` entry acts as a wildcard that includes any registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new language server extension is installed or a new server is registered for a language, `"..."` will automatically include it. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
+The `"..."` entry acts as a wildcard that includes any default-enabled registered language server you haven't explicitly mentioned. Servers you list by name keep their position, and `"..."` fills in the remaining ones at that point in the list. Servers prefixed with `!` are excluded entirely. This means that if a new default-enabled language server extension is installed or a new default-enabled server is registered for a language, `"..."` will automatically include it. Language servers that their extension marks as default-disabled must be listed explicitly to enable them. If you want full control over which servers are enabled, omit `"..."` — only the servers you list by name will be used.
 
 #### Examples
 
@@ -151,7 +151,7 @@ Suppose you're working with Ruby. The default configuration is:
 }
 ```
 
-When you override `language_servers` in your settings, your list **replaces** the default entirely. This means default-disabled servers like `kanayago` will be re-enabled by `"..."` unless you explicitly disable them again.
+When you override `language_servers` in your settings, your list **replaces** the default entirely. This means servers disabled by Zed's default settings, like `kanayago`, will be re-enabled by `"..."` unless you explicitly disable them again. Servers marked as default-disabled by their extension remain excluded from `"..."` and must be listed explicitly.
 
 | Configuration                                     | Result                                                                                  |
 | ------------------------------------------------- | --------------------------------------------------------------------------------------- |

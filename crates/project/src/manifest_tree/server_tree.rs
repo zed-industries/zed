@@ -251,13 +251,14 @@ impl LanguageServerTree {
             return Default::default();
         }
         let available_lsp_adapters = self.languages.lsp_adapters(language_name);
-        let available_language_servers = available_lsp_adapters
+        let language_servers_enabled_by_default = available_lsp_adapters
             .iter()
-            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .filter(|adapter| adapter.enabled_by_default)
+            .map(|adapter| adapter.name.clone())
             .collect::<Vec<_>>();
 
         let desired_language_servers =
-            settings.customized_language_servers(&available_language_servers);
+            settings.customized_language_servers(&language_servers_enabled_by_default);
         let adapters_with_settings = desired_language_servers
             .into_iter()
             .filter_map(|desired_adapter| {

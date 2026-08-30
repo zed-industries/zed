@@ -333,6 +333,7 @@ pub type LanguageServerBinaryLocations = LocalBoxFuture<
 /// once at startup, and caches the results.
 pub struct CachedLspAdapter {
     pub name: LanguageServerName,
+    pub enabled_by_default: bool,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
@@ -344,6 +345,7 @@ impl Debug for CachedLspAdapter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CachedLspAdapter")
             .field("name", &self.name)
+            .field("enabled_by_default", &self.enabled_by_default)
             .field(
                 "disk_based_diagnostic_sources",
                 &self.disk_based_diagnostic_sources,
@@ -360,12 +362,14 @@ impl Debug for CachedLspAdapter {
 impl CachedLspAdapter {
     pub fn new(adapter: Arc<dyn LspAdapter>) -> Arc<Self> {
         let name = adapter.name();
+        let enabled_by_default = adapter.is_enabled_by_default();
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
 
         Arc::new(CachedLspAdapter {
             name,
+            enabled_by_default,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
             language_ids,
@@ -682,6 +686,11 @@ pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
         false
     }
 
+    /// Whether this adapter is included by `"..."` in language settings.
+    fn is_enabled_by_default(&self) -> bool {
+        true
+    }
+
     /// True for the extension adapter and false otherwise.
     fn is_extension(&self) -> bool {
         false
@@ -917,6 +926,7 @@ pub struct LanguageScope {
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLspAdapter {
     pub name: &'static str,
+    pub enabled_by_default: bool,
     pub initialization_options: Option<Value>,
     pub additional_initialization_options: HashMap<LanguageServerName, Value>,
     pub additional_workspace_configuration: HashMap<LanguageServerName, Value>,
@@ -1473,6 +1483,7 @@ impl Default for FakeLspAdapter {
     fn default() -> Self {
         Self {
             name: "the-fake-language-server",
+            enabled_by_default: true,
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,
@@ -1586,6 +1597,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_enabled_by_default(&self) -> bool {
+        self.enabled_by_default
     }
 
     fn is_extension(&self) -> bool {

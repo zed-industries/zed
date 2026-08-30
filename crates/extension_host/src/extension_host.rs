@@ -103,7 +103,7 @@ async fn with_remote_sync_timeout<T>(
 }
 
 /// The current extension [`SchemaVersion`] supported by Zed.
-const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion(1);
+const CURRENT_SCHEMA_VERSION: SchemaVersion = SchemaVersion::TWO;
 
 /// Extensions that should no longer be loaded or downloaded.
 ///

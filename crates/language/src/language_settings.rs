@@ -345,18 +345,21 @@ impl LanguageSettings {
         settings
     }
 
-    /// Returns the customized list of language servers from the list of
-    /// available language servers.
+    /// Returns the customized list of language servers, expanding `"..."` with
+    /// the provided language servers.
     pub fn customized_language_servers(
         &self,
-        available_language_servers: &[LanguageServerName],
+        language_servers_included_by_wildcard: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
-        Self::resolve_language_servers(&self.language_servers, available_language_servers)
+        Self::resolve_language_servers(
+            &self.language_servers,
+            language_servers_included_by_wildcard,
+        )
     }
 
     pub(crate) fn resolve_language_servers(
         configured_language_servers: &[ConfiguredLanguageServer],
-        available_language_servers: &[LanguageServerName],
+        language_servers_included_by_wildcard: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
         let (disabled_language_servers, enabled_language_servers): (
             Vec<LanguageServerName>,
@@ -372,7 +375,7 @@ impl LanguageSettings {
                 }
             });
 
-        let rest = available_language_servers
+        let rest = language_servers_included_by_wildcard
             .iter()
             .filter(|&available_language_server| {
                 !disabled_language_servers.contains(available_language_server)

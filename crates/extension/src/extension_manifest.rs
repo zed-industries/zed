@@ -50,14 +50,15 @@ impl fmt::Display for SchemaVersion {
 
 impl SchemaVersion {
     pub const ZERO: Self = Self(0);
+    pub const TWO: Self = Self(2);
 
     pub fn is_v0(&self) -> bool {
         self == &Self::ZERO
     }
 }
 
-// TODO: We should change this to just always be a Vec<PathBuf> once we bump the
-// extension.toml schema version to 2
+// TODO: We should change this to just always be a Vec<PathBuf> in a future
+// extension.toml schema version.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ExtensionSnippets {
@@ -123,6 +124,15 @@ pub struct ExtensionManifest {
 }
 
 impl ExtensionManifest {
+    pub fn is_language_server_enabled_by_default(
+        &self,
+        language_server_name: &LanguageServerName,
+    ) -> bool {
+        self.language_servers
+            .get(language_server_name)
+            .is_none_or(LanguageServerManifestEntry::is_enabled_by_default)
+    }
+
     /// Returns the set of features provided by the extension.
     pub fn provides(&self) -> BTreeSet<ExtensionProvides> {
         let mut provides = BTreeSet::default();
@@ -335,6 +345,9 @@ pub struct LanguageServerManifestEntry {
     /// The list of languages this language server should work with.
     #[serde(default)]
     languages: Vec<LanguageName>,
+    /// Whether this language server is included by `"..."` in language settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_enabled: Option<bool>,
     #[serde(default)]
     pub language_ids: HashMap<LanguageName, String>,
     #[serde(default)]
@@ -342,6 +355,10 @@ pub struct LanguageServerManifestEntry {
 }
 
 impl LanguageServerManifestEntry {
+    pub fn is_enabled_by_default(&self) -> bool {
+        self.default_enabled.unwrap_or(true)
+    }
+
     /// Returns the list of languages for the language server.
     ///
     /// Prefer this over accessing the `language` or `languages` fields directly,
@@ -587,6 +604,42 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+
+    #[test]
+    fn test_language_server_is_enabled_by_default() {
+        let enabled: LanguageServerManifestEntry =
+            toml::from_str("").expect("language server manifest entry should parse");
+        assert!(enabled.is_enabled_by_default());
+        assert!(
+            !toml::to_string(&enabled)
+                .expect("language server manifest entry should serialize")
+                .contains("default_enabled")
+        );
+
+        let disabled: LanguageServerManifestEntry = toml::from_str("default_enabled = false")
+            .expect("language server manifest entry should parse");
+        assert!(!disabled.is_enabled_by_default());
+        assert!(
+            toml::to_string(&disabled)
+                .expect("language server manifest entry should serialize")
+                .contains("default_enabled = false")
+        );
+
+        let mut manifest = extension_manifest();
+        manifest
+            .language_servers
+            .insert("optional-language-server".into(), disabled);
+        assert!(
+            !manifest.is_language_server_enabled_by_default(&LanguageServerName::new_static(
+                "optional-language-server"
+            ))
+        );
+        assert!(
+            manifest.is_language_server_enabled_by_default(&LanguageServerName::new_static(
+                "unknown-language-server"
+            ))
+        );
     }
 
     #[test]

@@ -23,6 +23,7 @@ pub fn register_fake_definition_server(
         language.name(),
         language::FakeLspAdapter {
             name: "fake-definition-lsp",
+            enabled_by_default: true,
             initialization_options: None,
             additional_initialization_options: HashMap::default(),
             additional_workspace_configuration: HashMap::default(),
