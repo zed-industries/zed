@@ -22,7 +22,14 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
+        System::{
+            Com::*,
+            LibraryLoader::*,
+            Ole::*,
+            Power::*,
+            SystemInformation::*,
+            SystemServices::{GUID_SESSION_DISPLAY_STATUS, MONITOR_DISPLAY_STATE, PowerMonitorOff},
+        },
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -47,6 +54,7 @@ pub struct WindowsPlatform {
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
     suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
+    display_status_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
     has_package_identity: bool,
     app_identity: RefCell<Option<(String, String)>>,
@@ -73,6 +81,7 @@ pub(crate) struct WindowsPlatformState {
     /// Shared with each window to coordinate draws across windows on the UI
     /// thread; see [`DrawCoordinator`].
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
+    pub(crate) occlusion: Arc<OcclusionState>,
     directx_devices: RefCell<Option<DirectXDevices>>,
 }
 
@@ -100,6 +109,7 @@ impl WindowsPlatformState {
             current_cursor: Cell::new(current_cursor),
             cursor_visible: Arc::new(AtomicBool::new(true)),
             draw_coordinator: Rc::new(DrawCoordinator::new()),
+            occlusion: Arc::new(OcclusionState::new()),
             directx_devices: RefCell::new(directx_devices),
             menus: RefCell::new(Vec::new()),
         }
@@ -204,6 +214,7 @@ impl WindowsPlatform {
             text_system,
             direct_write_text_system,
             suspend_resume_notification: RefCell::new(None),
+            display_status_notification: RefCell::new(None),
             disable_direct_composition,
             has_package_identity: has_package_identity(),
             drop_target_helper,
@@ -309,6 +320,20 @@ impl WindowsPlatform {
             .map(|hwnd| hwnd.as_raw())
     }
 
+    fn begin_display_status_notifications(&self) {
+        *self.display_status_notification.borrow_mut() = unsafe {
+            // SAFETY: self.handle is the platform window receiving
+            // WM_POWERBROADCAST, and outlives the registration, which is
+            // released in `Drop`.
+            RegisterPowerSettingNotification(
+                HANDLE(self.handle.0),
+                &GUID_SESSION_DISPLAY_STATUS,
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            )
+            .log_err()
+        };
+    }
+
     fn begin_vsync_thread(&self) {
         let Some(directx_devices) = self.inner.state.directx_devices.borrow().clone() else {
             return;
@@ -322,12 +347,14 @@ impl WindowsPlatform {
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(direct_write_text_system);
         let invalidate_devices = self.invalidate_devices.clone();
+        let occlusion = self.inner.state.occlusion.clone();
 
         std::thread::Builder::new()
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
                 loop {
+                    occlusion.wait_until_visible();
                     vsync_provider.wait_for_vsync();
                     if check_device_lost(&directx_device.device)
                         || invalidate_devices.fetch_and(false, Ordering::Acquire)
@@ -448,6 +475,7 @@ impl Platform for WindowsPlatform {
         on_finish_launching();
         if !self.headless {
             self.begin_vsync_thread();
+            self.begin_display_status_notifications();
         }
 
         let mut msg = MSG::default();
@@ -1003,7 +1031,7 @@ impl WindowsPlatformInner {
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST
             | WM_GPUI_END_SESSION => self.handle_gpui_events(msg, wparam, lparam),
-            WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
+            WM_POWERBROADCAST => self.handle_power_broadcast(wparam, lparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -1159,11 +1187,37 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
-    fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
-        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
-            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+    fn handle_power_broadcast(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        match wparam.0 as u32 {
+            PBT_APMRESUMEAUTOMATIC => {
+                self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+            }
+            PBT_POWERSETTINGCHANGE => self.handle_power_setting_change(lparam),
+            _ => {}
         }
         Some(1)
+    }
+
+    fn handle_power_setting_change(&self, lparam: LPARAM) {
+        if lparam.0 == 0 {
+            return;
+        }
+        // SAFETY: for PBT_POWERSETTINGCHANGE, lparam points to a
+        // POWERBROADCAST_SETTING owned by the system for the duration of the
+        // message. Only the registered setting is delivered here, but the GUID
+        // is checked anyway so adding another registration can't misread it.
+        let setting = unsafe { &*(lparam.0 as *const POWERBROADCAST_SETTING) };
+
+        if setting.PowerSetting != GUID_SESSION_DISPLAY_STATUS
+            || setting.DataLength as usize != std::mem::size_of::<u32>()
+        {
+            return;
+        }
+
+        let state = MONITOR_DISPLAY_STATE(setting.Data[0] as i32);
+        self.state
+            .occlusion
+            .set_display_on(state != PowerMonitorOff);
     }
 
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
@@ -1182,6 +1236,10 @@ impl Drop for WindowsPlatform {
             if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {
                 // SAFETY: notification was returned by RegisterSuspendResumeNotification.
                 UnregisterSuspendResumeNotification(notification).log_err();
+            }
+            if let Some(notification) = self.display_status_notification.borrow_mut().take() {
+                // SAFETY: notification was returned by RegisterPowerSettingNotification.
+                UnregisterPowerSettingNotification(notification).log_err();
             }
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
