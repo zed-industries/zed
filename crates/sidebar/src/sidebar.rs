@@ -677,6 +677,7 @@ fn apply_worktree_label_mode(
         AgentThreadWorktreeLabel::Worktree => {
             for wt in &mut worktrees {
                 wt.branch_name = None;
+                wt.detached = false;
             }
         }
         AgentThreadWorktreeLabel::Branch => {
@@ -1422,6 +1423,7 @@ impl Sidebar {
             all_paths.into_iter().zip(path_details).collect();
 
         let mut branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
+        let mut detached_paths = HashSet::new();
         for ws in &workspaces {
             let project = ws.read(cx).project().read(cx);
             for repo in project.repositories(cx).values() {
@@ -1432,17 +1434,21 @@ impl Sidebar {
                         SharedString::from(Arc::<str>::from(branch.name())),
                     );
                 }
+                if snapshot.is_linked_worktree() && snapshot.is_detached_head {
+                    detached_paths.insert(snapshot.work_directory_abs_path.to_path_buf());
+                }
                 for linked_wt in snapshot.linked_worktrees() {
                     if let Some(branch) = linked_wt.branch_name() {
                         branch_by_path.insert(
                             linked_wt.path.clone(),
                             SharedString::from(Arc::<str>::from(branch)),
                         );
+                    } else if !linked_wt.is_bare {
+                        detached_paths.insert(linked_wt.path.clone());
                     }
                 }
             }
         }
-
         for group in &groups {
             let group_key = &group.key;
             let group_workspaces = &group.workspaces;
@@ -1464,8 +1470,11 @@ impl Sidebar {
                 linked_worktree_path_lists_for_workspaces(group_workspaces, cx);
             let make_terminal_entry =
                 |metadata: TerminalThreadMetadata, workspace: ThreadEntryWorkspace| {
-                    let worktrees =
-                        worktree_info_from_thread_paths(&metadata.worktree_paths, &branch_by_path);
+                    let worktrees = worktree_info_from_thread_paths(
+                        &metadata.worktree_paths,
+                        &branch_by_path,
+                        &detached_paths,
+                    );
                     let has_notification =
                         live_notified_terminal_ids.contains(&metadata.terminal_id);
                     TerminalEntry {
@@ -1570,8 +1579,11 @@ impl Sidebar {
                 let make_thread_entry =
                     |row: ThreadMetadata, workspace: ThreadEntryWorkspace| -> Arc<ThreadEntry> {
                         let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
-                        let worktrees =
-                            worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
+                        let worktrees = worktree_info_from_thread_paths(
+                            &row.worktree_paths,
+                            &branch_by_path,
+                            &detached_paths,
+                        );
                         // Start drafts as `WithContent`; the post-processing
                         // pass below downgrades them to `Empty` if no draft
                         // label can be derived.

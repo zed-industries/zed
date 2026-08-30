@@ -98,6 +98,19 @@ fn has_thread_entry(sidebar: &Sidebar, session_id: &acp::SessionId) -> bool {
         .any(|entry| matches!(entry, ListEntry::Thread(t) if t.metadata.session_id.as_ref() == Some(session_id)))
 }
 
+fn thread_entry_by_title<'a>(sidebar: &'a Sidebar, title: &str) -> Option<&'a ThreadEntry> {
+    sidebar
+        .contents
+        .entries
+        .iter()
+        .find_map(|entry| match entry {
+            ListEntry::Thread(thread) if thread.metadata.title.as_deref() == Some(title) => {
+                Some(thread.as_ref())
+            }
+            _ => None,
+        })
+}
+
 #[track_caller]
 fn assert_project_header_has_threads(
     sidebar: &Entity<Sidebar>,
@@ -14291,11 +14304,12 @@ fn test_worktree_info_branch_names_for_main_worktrees() {
             .into_iter()
             .collect();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path, &HashSet::new());
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, Some(SharedString::from("feature-x")));
     assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
+    assert!(!infos[0].detached);
 }
 
 #[test]
@@ -14312,13 +14326,14 @@ fn test_worktree_info_branch_names_for_linked_worktrees() {
     .into_iter()
     .collect();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path, &HashSet::new());
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Linked);
     assert_eq!(
         infos[0].branch_name,
         Some(SharedString::from("feature-branch"))
     );
+    assert!(!infos[0].detached);
 }
 
 #[test]
@@ -14328,11 +14343,232 @@ fn test_worktree_info_missing_branch_returns_none() {
 
     let branch_by_path: HashMap<PathBuf, SharedString> = HashMap::new();
 
-    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path);
+    let infos = worktree_info_from_thread_paths(&worktree_paths, &branch_by_path, &HashSet::new());
     assert_eq!(infos.len(), 1);
     assert_eq!(infos[0].kind, ui::WorktreeKind::Main);
     assert_eq!(infos[0].branch_name, None);
     assert_eq!(infos[0].worktree_name, Some(SharedString::from("myapp")));
+    assert!(!infos[0].detached);
+}
+
+#[test]
+fn test_apply_worktree_label_mode_for_detached_worktree() {
+    let detached_worktree = ThreadItemWorktreeInfo {
+        worktree_name: Some("detached-worktree".into()),
+        detached: true,
+        kind: ui::WorktreeKind::Linked,
+        ..Default::default()
+    };
+
+    let both = apply_worktree_label_mode(
+        vec![detached_worktree.clone()],
+        AgentThreadWorktreeLabel::Both,
+    );
+    assert!(both[0].detached);
+    assert_eq!(both[0].worktree_name.as_deref(), Some("detached-worktree"));
+
+    let worktree = apply_worktree_label_mode(
+        vec![detached_worktree.clone()],
+        AgentThreadWorktreeLabel::Worktree,
+    );
+    assert!(!worktree[0].detached);
+    assert_eq!(
+        worktree[0].worktree_name.as_deref(),
+        Some("detached-worktree")
+    );
+
+    let branch =
+        apply_worktree_label_mode(vec![detached_worktree], AgentThreadWorktreeLabel::Branch);
+    assert!(branch[0].detached);
+    assert_eq!(
+        branch[0].worktree_name.as_deref(),
+        Some("detached-worktree")
+    );
+}
+
+#[gpui::test]
+async fn test_sidebar_worktree_info_for_base_and_detached_linked_checkout(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", serde_json::json!({ ".git": {} }))
+        .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/detached-worktree"),
+            ref_name: None,
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project = project::Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_thread_metadata_with_main_paths(
+        "base-thread",
+        "Base Thread",
+        PathList::new(&[PathBuf::from("/project")]),
+        PathList::new(&[PathBuf::from("/project")]),
+        Utc::now(),
+        cx,
+    );
+    save_thread_metadata_with_main_paths(
+        "detached-thread",
+        "Detached Thread",
+        PathList::new(&[PathBuf::from("/detached-worktree")]),
+        PathList::new(&[PathBuf::from("/project")]),
+        Utc::now(),
+        cx,
+    );
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let base = thread_entry_by_title(sidebar, "Base Thread")
+            .and_then(|thread| thread.worktrees.first())
+            .expect("base thread should have worktree metadata");
+        assert_eq!(base.kind, ui::WorktreeKind::Main);
+        assert_eq!(base.branch_name.as_deref(), Some("main"));
+        assert!(!base.detached);
+
+        let detached = thread_entry_by_title(sidebar, "Detached Thread")
+            .and_then(|thread| thread.worktrees.first())
+            .expect("detached thread should have worktree metadata");
+        assert_eq!(detached.kind, ui::WorktreeKind::Linked);
+        assert_eq!(detached.worktree_name.as_deref(), Some("detached-worktree"));
+        assert_eq!(detached.branch_name, None);
+        assert!(detached.detached);
+    });
+}
+
+#[gpui::test]
+async fn test_sidebar_worktree_info_for_current_detached_linked_checkout(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", serde_json::json!({ ".git": {} }))
+        .await;
+    fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+    fs.add_linked_worktree_for_repo(
+        Path::new("/project/.git"),
+        false,
+        git::repository::Worktree {
+            path: PathBuf::from("/detached-worktree"),
+            ref_name: None,
+            sha: "aaa".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project = project::Project::test(fs.clone(), ["/detached-worktree".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    save_thread_metadata(
+        acp::SessionId::new(Arc::from("detached-thread")),
+        Some("Detached Thread".into()),
+        Utc::now(),
+        None,
+        None,
+        &project,
+        cx,
+    );
+    sidebar.update(cx, |sidebar, cx| sidebar.update_entries(cx));
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let detached = thread_entry_by_title(sidebar, "Detached Thread")
+            .and_then(|thread| thread.worktrees.first())
+            .expect("detached thread should have worktree metadata");
+        assert_eq!(detached.kind, ui::WorktreeKind::Linked);
+        assert_eq!(detached.worktree_name.as_deref(), Some("detached-worktree"));
+        assert_eq!(detached.branch_name, None);
+        assert!(detached.detached);
+    });
+}
+
+#[gpui::test]
+async fn test_multi_main_worktree_branch_labels_are_disambiguated(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    for project_path in ["/project_a", "/project_b"] {
+        fs.insert_tree(project_path, serde_json::json!({ ".git": {} }))
+            .await;
+        let dot_git = PathBuf::from(project_path).join(".git");
+        fs.set_branch_name(&dot_git, Some("main"));
+    }
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project =
+        project::Project::test(fs, ["/project_a".as_ref(), "/project_b".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+    save_named_thread_metadata("multi-main", "Multi Main Thread", &project, cx).await;
+    multi_workspace.update_in(cx, |_, _window, cx| cx.notify());
+    cx.run_until_parked();
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let thread = thread_entry_by_title(sidebar, "Multi Main Thread")
+            .expect("multi-root thread should be present");
+        let mut labels = thread
+            .worktrees
+            .iter()
+            .map(|worktree| {
+                (
+                    worktree.worktree_name.as_deref().unwrap_or_default(),
+                    worktree.branch_name.as_deref().unwrap_or_default(),
+                    worktree.kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        labels.sort_unstable_by(|left, right| left.0.cmp(right.0));
+        assert_eq!(
+            labels,
+            vec![
+                ("project_a", "main", ui::WorktreeKind::Main),
+                ("project_b", "main", ui::WorktreeKind::Main),
+            ]
+        );
+    });
+
+    type_in_search(&sidebar, "project_a", cx);
+
+    sidebar.read_with(cx, |sidebar, _cx| {
+        let thread = thread_entry_by_title(sidebar, "Multi Main Thread")
+            .expect("matching multi-root thread should remain visible");
+        let project_a = thread
+            .worktrees
+            .iter()
+            .find(|worktree| worktree.worktree_name.as_deref() == Some("project_a"))
+            .expect("project_a metadata should be present");
+        assert!(!project_a.highlight_positions.is_empty());
+    });
 }
 
 #[gpui::test]

@@ -2912,7 +2912,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                     .color(Color::Default),
             )
             .child(section_label(
-                "Linked worktree with branch (worktree / branch)",
+                "Linked worktree with branch (worktree • branch, both icons)",
             ))
             .child(
                 container().child(
@@ -2925,11 +2925,12 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
                             branch_name: Some("fix-scrolling".into()),
+                            detached: false,
                         }]),
                 ),
             )
             .child(section_label(
-                "Linked worktree without branch (detached HEAD)",
+                "Linked worktree without branch (worktree • Detached HEAD)",
             ))
             .child(
                 container().child(
@@ -2942,10 +2943,11 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
                             branch_name: None,
+                            detached: true,
                         }]),
                 ),
             )
-            .child(section_label("Main worktree with branch (nothing shown)"))
+            .child(section_label("Main worktree with branch (branch only)"))
             .child(
                 container().child(
                     ThreadItem::new("ti-main-branch", "Request for Long Classic Poem")
@@ -2957,7 +2959,36 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
                             branch_name: Some("main".into()),
+                            detached: false,
                         }]),
+                ),
+            )
+            .child(section_label(
+                "Multiple main worktrees, one without a branch (visible name retained)",
+            ))
+            .child(
+                container().child(
+                    ThreadItem::new("ti-multi-main", "Coordinate multi-root changes")
+                        .icon(IconName::ZedAgent)
+                        .timestamp("3h")
+                        .worktrees(vec![
+                            ThreadItemWorktreeInfo {
+                                worktree_name: Some("zed".into()),
+                                full_path: "/projects/zed".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name: Some("main".into()),
+                                detached: false,
+                            },
+                            ThreadItemWorktreeInfo {
+                                worktree_name: Some("zed-slides".into()),
+                                full_path: "/projects/zed-slides".into(),
+                                highlight_positions: Vec::new(),
+                                kind: WorktreeKind::Main,
+                                branch_name: None,
+                                detached: false,
+                            },
+                        ]),
                 ),
             )
             .child(section_label(
@@ -2974,6 +3005,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
                             branch_name: None,
+                            detached: false,
                         }]),
                 ),
             )
@@ -2989,6 +3021,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
                             branch_name: Some("stoic-reed".into()),
+                            detached: false,
                         }]),
                 ),
             )
@@ -3006,6 +3039,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
                             branch_name: Some("persist-worktree-3-wiring".into()),
+                            detached: false,
                         }]),
                 ),
             )
@@ -3025,6 +3059,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Linked,
                             branch_name: Some("feature-branch".into()),
+                            detached: false,
                         }]),
                 ),
             )
@@ -3044,11 +3079,12 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             branch_name: Some(
                                 "fix-very-long-branch-name-that-should-truncate".into(),
                             ),
+                            detached: false,
                         }]),
                 ),
             )
             .child(section_label(
-                "Main worktree with branch + diff stats + timestamp (branch hidden)",
+                "Main worktree with branch + diff stats + timestamp (branch shown)",
             ))
             .child(
                 container().child(
@@ -3063,6 +3099,7 @@ impl gpui::Render for ThreadItemBranchNameTestView {
                             highlight_positions: Vec::new(),
                             kind: WorktreeKind::Main,
                             branch_name: Some("sidebar-show-branch-name".into()),
+                            detached: false,
                         }]),
                 ),
             )
@@ -3075,7 +3112,7 @@ fn run_thread_item_branch_name_visual_tests(
     cx: &mut VisualTestAppContext,
     update_baseline: bool,
 ) -> Result<TestResult> {
-    let window_size = size(px(400.0), px(1150.0));
+    let window_size = size(px(400.0), px(1250.0));
     let bounds = Bounds {
         origin: point(px(0.0), px(0.0)),
         size: window_size,

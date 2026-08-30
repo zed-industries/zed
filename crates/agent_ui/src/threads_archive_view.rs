@@ -655,6 +655,7 @@ impl ThreadsArchiveView {
                 let worktrees = worktree_info_from_thread_paths(
                     &thread.worktree_paths,
                     &branch_names_for_thread,
+                    &HashSet::new(),
                 );
 
                 let archived_color = Color::Custom(cx.theme().colors().icon_muted.opacity(0.6));
