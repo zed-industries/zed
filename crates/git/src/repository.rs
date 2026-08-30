@@ -846,7 +846,7 @@ pub trait GitRepository: Send + Sync {
 
     fn branches(&self) -> BoxFuture<'_, Result<BranchesScanResult>>;
 
-    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<SharedString>>;
     fn create_branch(&self, name: String, base_branch: Option<String>)
     -> BoxFuture<'_, Result<()>>;
     fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
@@ -2343,7 +2343,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<SharedString>> {
         let git_binary = self.git_binary_in_worktree();
         self.executor
             .spawn(async move {
@@ -2355,7 +2355,7 @@ impl GitRepository for RealGitRepository {
                     .is_ok()
                 {
                     git_binary.run(&["checkout", &name]).await?;
-                    return anyhow::Ok(());
+                    return anyhow::Ok(local_ref.into());
                 }
 
                 let remote_ref = format!("refs/remotes/{name}");
@@ -2389,7 +2389,7 @@ impl GitRepository for RealGitRepository {
                     }
 
                     git_binary.run(&["checkout", branch_name]).await?;
-                    return anyhow::Ok(());
+                    return anyhow::Ok(local_branch_ref.into());
                 }
 
                 anyhow::bail!("Branch '{}' not found", name);
@@ -4958,10 +4958,11 @@ mod tests {
                 .is_err()
         );
 
-        repository
+        let branch_ref = repository
             .change_branch("origin/feature".to_string())
             .await
             .unwrap();
+        assert_eq!(branch_ref.as_ref(), "refs/heads/feature");
 
         let git = repository.git_binary_in_worktree().unwrap();
         assert_eq!(
@@ -5034,10 +5035,11 @@ mod tests {
                 .is_err()
         );
 
-        repository
+        let branch_ref = repository
             .change_branch("origin/HEAD".to_string())
             .await
             .unwrap();
+        assert_eq!(branch_ref.as_ref(), "refs/heads/feature");
 
         let git = repository.git_binary_in_worktree().unwrap();
         assert_eq!(
@@ -5089,10 +5091,11 @@ mod tests {
         .unwrap();
         git.run(&["checkout", "-b", "scratch"]).await.unwrap();
 
-        repository
+        let branch_ref = repository
             .change_branch("upstream/HEAD".to_string())
             .await
             .unwrap();
+        assert_eq!(branch_ref.as_ref(), "refs/heads/main");
 
         let git = repository.git_binary_in_worktree().unwrap();
         assert_eq!(

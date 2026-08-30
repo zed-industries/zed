@@ -812,6 +812,8 @@ enum GitJobKey {
 }
 
 impl GitStore {
+    const MAX_INCREMENTAL_STATUS_PATHS: usize = 100;
+
     pub fn local(
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
@@ -4217,8 +4219,8 @@ impl GitStore {
         let branch_name = envelope.payload.branch_name;
 
         repository_handle
-            .update(&mut cx, |repository_handle, _| {
-                repository_handle.change_branch(branch_name)
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.change_branch(branch_name, cx)
             })
             .await??;
 
@@ -5142,7 +5144,11 @@ impl GitStore {
             coalesced.push(path);
         }
 
-        coalesced
+        if coalesced.len() > Self::MAX_INCREMENTAL_STATUS_PATHS {
+            vec![RepoPath::from_rel_path(RelPath::empty())]
+        } else {
+            coalesced
+        }
     }
 
     fn process_updated_entries(
@@ -7378,7 +7384,7 @@ impl Repository {
         cx: &mut AsyncApp,
     ) -> Result<(), SharedString> {
         let (request_tx, request_rx) =
-            async_channel::unbounded::<Vec<Arc<InitialGraphCommitData>>>();
+            async_channel::bounded::<Vec<Arc<InitialGraphCommitData>>>(1);
 
         let task = cx.background_executor().spawn({
             let log_source = log_source.clone();
@@ -7400,6 +7406,7 @@ impl Repository {
                 cx,
             )
             .await;
+            yield_now().await;
         }
 
         task.await?;
@@ -9644,15 +9651,69 @@ impl Repository {
         )
     }
 
-    pub fn change_branch(&mut self, branch_name: String) -> oneshot::Receiver<Result<()>> {
+    pub fn change_branch(
+        &mut self,
+        branch_name: String,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let updates_tx = self
+            .git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            });
+        let this = cx.weak_entity();
         self.send_job(
             "change_branch",
             Some(format!("git switch {branch_name}").into()),
-            move |repo, _cx| async move {
+            move |repo, mut cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.change_branch(branch_name).await
+                        let branch_ref = backend.change_branch(branch_name).await?;
+                        let snapshot = this.update(&mut cx, |this, cx| {
+                            let mut branch_list = this.snapshot.branch_list.to_vec();
+                            let mut branch = None;
+                            for candidate in &mut branch_list {
+                                candidate.is_head = candidate.ref_name == branch_ref;
+                                if candidate.is_head {
+                                    branch = Some(candidate.clone());
+                                }
+                            }
+
+                            let branch = branch.unwrap_or_else(|| {
+                                let branch = Branch {
+                                    is_head: true,
+                                    ref_name: branch_ref,
+                                    upstream: None,
+                                    most_recent_commit: None,
+                                };
+                                branch_list.push(branch.clone());
+                                branch_list
+                                    .sort_by(|left, right| left.ref_name.cmp(&right.ref_name));
+                                branch
+                            });
+                            let branch_list: Arc<[Branch]> = branch_list.into();
+                            let head_changed = this.snapshot.branch.as_ref() != Some(&branch);
+                            let branch_list_changed = *this.snapshot.branch_list != *branch_list;
+                            this.snapshot.branch = Some(branch);
+                            this.snapshot.branch_list = branch_list;
+                            if head_changed {
+                                cx.emit(RepositoryEvent::HeadChanged);
+                            }
+                            if branch_list_changed {
+                                cx.emit(RepositoryEvent::BranchListChanged);
+                            }
+                            this.snapshot.clone()
+                        })?;
+                        if let Some(updates_tx) = updates_tx {
+                            updates_tx
+                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                                .log_err();
+                        }
+                        Ok(())
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -12203,6 +12264,15 @@ mod tests {
             coalesced,
             repo_paths(&["submodule/a.txt", "submodule/nested/b.txt", "top_level.rs"])
         );
+    }
+
+    #[test]
+    fn coalesce_repo_paths_uses_root_for_oversized_batches() {
+        let paths = (0..=GitStore::MAX_INCREMENTAL_STATUS_PATHS)
+            .map(|index| repo_path(&format!("directory-{index}/file")))
+            .collect();
+
+        assert_eq!(GitStore::coalesce_repo_paths(paths), repo_paths(&[""]));
     }
 }
 

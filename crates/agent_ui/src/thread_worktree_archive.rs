@@ -692,7 +692,7 @@ pub async fn restore_worktree_via_git(
     if let Some(branch_name) = &row.branch_name {
         // Attempt to check out the branch the worktree was previously on.
         let checkout_result = wt_repo
-            .update(cx, |repo, _cx| repo.change_branch(branch_name.clone()))
+            .update(cx, |repo, cx| repo.change_branch(branch_name.clone(), cx))
             .await;
 
         match checkout_result.map_err(|e| anyhow!("{e}")).flatten() {
