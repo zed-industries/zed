@@ -10810,14 +10810,25 @@ impl Editor {
         &mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) -> Subscription {
+        self.register_action_erased(
+            TypeId::of::<A>(),
+            Arc::new(move |action, window, cx| {
+                listener(action.downcast_ref().unwrap(), window, cx)
+            }),
+        )
+    }
+
+    fn register_action_erased(
+        &mut self,
+        action_type: TypeId,
+        listener: Arc<dyn Fn(&dyn Any, &mut Window, &mut App)>,
+    ) -> Subscription {
         let id = self.next_editor_action_id.post_inc();
-        let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
             id,
             Box::new(move |_, window, _| {
                 let listener = listener.clone();
-                window.on_action(TypeId::of::<A>(), move |action, phase, window, cx| {
-                    let action = action.downcast_ref().unwrap();
+                window.on_action(action_type, move |action, phase, window, cx| {
                     if phase == DispatchPhase::Bubble {
                         listener(action, window, cx)
                     }
