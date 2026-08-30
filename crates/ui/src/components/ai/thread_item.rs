@@ -9,6 +9,8 @@ use gpui::{
 use itertools::Itertools as _;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+const MAX_INDENT_LEVEL: usize = 4;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AgentThreadStatus {
     #[default]
@@ -320,7 +322,7 @@ impl RenderOnce for ThreadItem {
                 .justify_center()
                 .when(!icon_visible, |this| this.invisible())
         };
-        let indent_level = self.indent_level;
+        let indent_level = self.indent_level.min(MAX_INDENT_LEVEL);
         let indent_guides = move || {
             (0..indent_level).map(move |_| {
                 div()
@@ -342,6 +344,11 @@ impl RenderOnce for ThreadItem {
                     |this, (expanded, on_toggle)| {
                         this.child(
                             Disclosure::new(toggle_id.clone(), expanded)
+                                .tooltip(Tooltip::text(if expanded {
+                                    "Hide Split Threads"
+                                } else {
+                                    "Show Split Threads"
+                                }))
                                 .on_click(move |event, window, cx| on_toggle(event, window, cx)),
                         )
                     },
@@ -501,8 +508,8 @@ impl RenderOnce for ThreadItem {
                     .gap_2()
                     .justify_between()
                     .children(indent_guides())
-                    .when_some(self.split_toggle, |this, toggle| {
-                        this.child(toggle_slot(Some(toggle)))
+                    .when(has_split_toggle || self.indent_level > 0, |this| {
+                        this.child(toggle_slot(self.split_toggle))
                     })
                     .child(
                         h_flex()
@@ -544,7 +551,9 @@ impl RenderOnce for ThreadItem {
                     h_flex()
                         .gap_1p5()
                         .children(indent_guides())
-                        .when(has_split_toggle, |this| this.child(toggle_slot(None)))
+                        .when(has_split_toggle || self.indent_level > 0, |this| {
+                            this.child(toggle_slot(None))
+                        })
                         .child(icon_container()) // Icon Spacing
                         .when(self.archived, |this| {
                             this.child(

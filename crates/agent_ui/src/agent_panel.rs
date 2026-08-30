@@ -38,6 +38,7 @@ use zed_actions::{
 use crate::ExpandMessageEditor;
 use crate::ManageProfiles;
 use crate::agent_connection_store::AgentConnectionStore;
+use crate::center_pane_store::AgentCenterPaneDb;
 use crate::completion_provider::{AgentContextSelection, AgentContextSource};
 use crate::terminal_thread_metadata_store::{
     TerminalThreadMetadata, TerminalThreadMetadataStore, compose_terminal_thread_title,
@@ -99,10 +100,11 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{
-    CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
-    SplitDirection, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
+    CollaboratorId, DraggedSelection, DraggedTab, ItemId, MultiWorkspace, PathList,
+    SerializedPathList, SplitDirection, ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView,
+    Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
-    item::{ItemEvent, ItemHandle},
+    item::{Item, ItemEvent, ItemHandle, SerializableItem},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -200,6 +202,307 @@ pub struct NewEntryOption {
     pub label: SharedString,
     pub icon: NewEntryIcon,
     pub kind: NewEntryKind,
+}
+
+struct CenterItem<T: 'static> {
+    item: WeakEntity<T>,
+    _release: Subscription,
+}
+
+/// The panel entry most recently handed to a center pane.
+///
+/// The panel also persists this as a fallback for older workspace layouts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CenterEntry {
+    Thread(ThreadId),
+    Terminal(TerminalId),
+}
+
+/// Adapts an agent panel terminal so it can live in a workspace pane.
+///
+/// The panel and the workspace pane share the same `TerminalView` entity; this wrapper exists so
+/// the panel keeps sole ownership of it. Adding the `TerminalView` to a pane directly would let the
+/// workspace serialize it as a plain `"Terminal"` item, and a restart would then restore a second,
+/// panel-less terminal alongside the one the panel restores from its own metadata.
+pub struct AgentTerminalPane {
+    terminal_view: Entity<TerminalView>,
+    terminal_id: TerminalId,
+    panel: WeakEntity<AgentPanel>,
+    _title_subscription: Subscription,
+}
+
+impl AgentTerminalPane {
+    fn new(
+        terminal_view: Entity<TerminalView>,
+        terminal_id: TerminalId,
+        panel: WeakEntity<AgentPanel>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let title_subscription =
+            cx.subscribe(&terminal_view, |_this, _terminal, event: &ItemEvent, cx| {
+                if matches!(event, ItemEvent::UpdateTab) {
+                    cx.emit(ItemEvent::UpdateTab);
+                }
+            });
+        Self {
+            terminal_view,
+            terminal_id,
+            panel,
+            _title_subscription: title_subscription,
+        }
+    }
+
+    pub fn terminal_id(&self) -> TerminalId {
+        self.terminal_id
+    }
+}
+
+impl Item for AgentTerminalPane {
+    type Event = ItemEvent;
+
+    fn include_in_nav_history() -> bool {
+        false
+    }
+
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
+        self.panel
+            .read_with(cx, |panel, cx| {
+                panel
+                    .terminals
+                    .get(&self.terminal_id)
+                    .map(|terminal| terminal.title(cx))
+            })
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| {
+                AgentTerminal::terminal_title_for_view(self.terminal_view.read(cx), cx)
+            })
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::Terminal))
+    }
+
+    fn to_item_events(event: &Self::Event, emit: &mut dyn FnMut(ItemEvent)) {
+        emit(*event);
+    }
+}
+
+impl EventEmitter<ItemEvent> for AgentTerminalPane {}
+
+impl Focusable for AgentTerminalPane {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.terminal_view.focus_handle(cx)
+    }
+}
+
+impl Render for AgentTerminalPane {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().size_full().child(self.terminal_view.clone())
+    }
+}
+
+async fn load_agent_panel_for_center_pane(
+    workspace: &WeakEntity<Workspace>,
+    cx: &mut AsyncWindowContext,
+) -> Result<Entity<AgentPanel>> {
+    if let Some(panel) =
+        workspace.read_with(cx, |workspace, cx| workspace.panel::<AgentPanel>(cx))?
+    {
+        return Ok(panel);
+    }
+
+    let loaded_panel = AgentPanel::load(workspace.clone(), cx.clone()).await?;
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.panel::<AgentPanel>(cx).unwrap_or_else(|| {
+            workspace.add_panel(loaded_panel.clone(), window, cx);
+            loaded_panel
+        })
+    })
+}
+
+impl SerializableItem for crate::ConversationPane {
+    fn serialized_item_kind() -> &'static str {
+        "AgentConversationPane"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        AgentCenterPaneDb::global(cx).cleanup_threads(workspace_id, alive_items, cx)
+    }
+
+    fn deserialize(
+        _project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let db = AgentCenterPaneDb::global(cx);
+        window.spawn(cx, async move |cx| {
+            let thread_id = db
+                .thread_id(workspace_id, item_id)?
+                .context("missing agent conversation pane metadata")
+                .and_then(|thread_id| ThreadId::from_key_string(&thread_id))?;
+            let (thread_store, reload_task) = cx.update(|_window, cx| {
+                let store = ThreadMetadataStore::global(cx);
+                let reload_task = store.read(cx).reload_task();
+                (store, reload_task)
+            })?;
+            reload_task.await;
+            let metadata = thread_store
+                .read_with(cx, |store, _cx| store.entry(thread_id).cloned())
+                .context("missing thread for agent conversation pane")?;
+
+            let panel = load_agent_panel_for_center_pane(&workspace, cx).await?;
+
+            panel.update_in(cx, |panel, window, cx| {
+                panel.load_agent_thread(
+                    Agent::from(metadata.agent_id.clone()),
+                    thread_id,
+                    Some(metadata.folder_paths().clone()),
+                    metadata.title,
+                    false,
+                    AgentThreadSource::AgentPanel,
+                    window,
+                    cx,
+                );
+                let conversation_view = panel
+                    .conversation_view_for_id(&thread_id, cx)
+                    .cloned()
+                    .context("failed to restore agent conversation pane")?;
+                let item =
+                    cx.new(|cx| crate::ConversationPane::new(conversation_view, thread_id, cx));
+                panel.register_center_thread(thread_id, &item, cx);
+                panel.last_center_entry = Some(CenterEntry::Thread(thread_id));
+                if panel.active_thread_id(cx) == Some(thread_id) {
+                    panel.set_base_view(BaseView::Uninitialized, false, window, cx);
+                }
+                Ok(item)
+            })?
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        _closing: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let thread_id = self.thread_id().to_key_string();
+        let db = AgentCenterPaneDb::global(cx);
+        Some(cx.background_spawn(
+            async move { db.save_thread(workspace_id, item_id, thread_id).await },
+        ))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+}
+
+impl SerializableItem for AgentTerminalPane {
+    fn serialized_item_kind() -> &'static str {
+        "AgentTerminalPane"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        AgentCenterPaneDb::global(cx).cleanup_terminals(workspace_id, alive_items, cx)
+    }
+
+    fn deserialize(
+        _project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let db = AgentCenterPaneDb::global(cx);
+        window.spawn(cx, async move |cx| {
+            let terminal_id = db
+                .terminal_id(workspace_id, item_id)?
+                .context("missing agent terminal pane metadata")
+                .and_then(|terminal_id| TerminalId::from_key_string(&terminal_id))?;
+            let (terminal_store, reload_task) = cx.update(|_window, cx| {
+                let store = TerminalThreadMetadataStore::global(cx);
+                let reload_task = store.read(cx).reload_task();
+                (store, reload_task)
+            })?;
+            reload_task.await;
+            let metadata = terminal_store
+                .read_with(cx, |store, _cx| store.entry(terminal_id).cloned())
+                .context("missing terminal for agent terminal pane")?;
+
+            let panel = load_agent_panel_for_center_pane(&workspace, cx).await?;
+            let terminal_view = panel.update_in(cx, |panel, window, cx| {
+                if !panel.supports_terminal(cx) {
+                    anyhow::bail!("this project cannot restore an agent terminal pane");
+                }
+                let receiver = panel.wait_for_terminal_view(terminal_id);
+                if !panel.has_terminal(terminal_id) {
+                    panel.restore_terminal(
+                        metadata,
+                        false,
+                        AgentThreadSource::AgentPanel,
+                        None,
+                        window,
+                        cx,
+                    );
+                }
+                Ok(receiver)
+            })??;
+            let terminal_view = terminal_view
+                .recv()
+                .await
+                .context("failed to restore agent terminal pane")?;
+
+            let item = cx.update(|_window, cx| {
+                cx.new(|cx| {
+                    AgentTerminalPane::new(terminal_view, terminal_id, panel.downgrade(), cx)
+                })
+            })?;
+            panel.update_in(cx, |panel, window, cx| {
+                panel.register_center_terminal(terminal_id, &item, cx);
+                panel.last_center_entry = Some(CenterEntry::Terminal(terminal_id));
+                if panel.active_terminal_id() == Some(terminal_id) {
+                    panel.set_base_view(BaseView::Uninitialized, false, window, cx);
+                }
+            })?;
+            Ok(item)
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        _closing: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let terminal_id = self.terminal_id.to_key_string();
+        let db = AgentCenterPaneDb::global(cx);
+        Some(cx.background_spawn(async move {
+            db.save_terminal(workspace_id, item_id, terminal_id).await
+        }))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -389,6 +692,9 @@ struct SerializedActiveThread {
 }
 
 pub fn init(cx: &mut App) {
+    workspace::register_serializable_item::<crate::ConversationPane>(cx);
+    workspace::register_serializable_item::<AgentTerminalPane>(cx);
+
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
@@ -1189,6 +1495,15 @@ pub struct AgentPanel {
     terminals: HashMap<TerminalId, AgentTerminal>,
     pending_terminal_spawn: Option<TerminalId>,
     pending_terminal_center_open: HashMap<TerminalId, Option<SplitDirection>>,
+    terminal_view_waiters: HashMap<TerminalId, Vec<async_channel::Sender<Entity<TerminalView>>>>,
+    /// Center pane items the panel handed its threads and terminals to.
+    ///
+    /// The panel is often updated from inside a `Workspace` update (a sidebar click, for one), so
+    /// it cannot read the workspace to answer "is this entry in the center?". This registry answers
+    /// it without touching the workspace; entries drop themselves when the pane releases the item.
+    center_threads: HashMap<ThreadId, CenterItem<crate::ConversationPane>>,
+    center_terminals: HashMap<TerminalId, CenterItem<AgentTerminalPane>>,
+    last_center_entry: Option<CenterEntry>,
     /// Split links for terminals created or restored in this session.
     /// `terminal_metadata` rebuilds metadata from live terminal state on every
     /// persist, so without this the link would be written away by the first
@@ -1223,20 +1538,31 @@ impl AgentPanel {
 
         let selected_agent = self.selected_agent.clone();
         let last_created_entry_kind = self.last_created_entry_kind;
+        // Keep the panel fallback so layouts saved before center panes became serializable still
+        // restore their last active entry.
         let last_active_terminal_id = self
             .active_terminal_id()
+            .or_else(|| self.serializable_center_terminal_id())
             .map(|terminal_id| terminal_id.to_key_string());
 
         let last_active_thread = if last_active_terminal_id.is_some() {
             None
         } else {
-            let is_draft_active = self.active_thread_is_draft(cx);
-            let active_thread_id = self.active_thread_id(cx);
-            let active_thread_agent = self
-                .active_conversation_view()
+            let active_conversation_view = self.serializable_conversation_view(cx);
+            let active_agent_thread = active_conversation_view
+                .as_ref()
+                .and_then(|cv| cv.read(cx).root_thread(cx));
+            let is_draft_active = active_agent_thread
+                .as_ref()
+                .is_some_and(|thread| thread.read(cx).is_draft_thread());
+            let active_thread_id = active_conversation_view
+                .as_ref()
+                .map(|cv| cv.read(cx).thread_id);
+            let active_thread_agent = active_conversation_view
+                .as_ref()
                 .map(|cv| cv.read(cx).agent_key().clone())
                 .unwrap_or_else(|| self.selected_agent.clone());
-            self.active_agent_thread(cx)
+            active_agent_thread
                 .map(|thread| {
                     let thread = thread.read(cx);
 
@@ -1259,7 +1585,7 @@ impl AgentPanel {
                     if is_draft_active {
                         return None;
                     }
-                    let conversation_view = self.active_conversation_view()?;
+                    let conversation_view = active_conversation_view.as_ref()?;
                     let session_id = conversation_view.read(cx).root_session_id.clone()?;
                     let metadata = ThreadMetadataStore::try_global(cx)
                         .and_then(|store| store.read(cx).entry_by_session(&session_id).cloned());
@@ -1518,7 +1844,7 @@ impl AgentPanel {
         })
     }
 
-    pub(crate) fn new(workspace: &Workspace, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
@@ -1575,10 +1901,14 @@ impl AgentPanel {
                 _ => {}
             });
 
-        let _thread_metadata_store_subscription = cx.subscribe(
+        let _thread_metadata_store_subscription = cx.subscribe_in(
             &ThreadMetadataStore::global(cx),
-            |this, _store, event, cx| {
+            window,
+            |this, _store, event, window, cx| {
                 let ThreadMetadataStoreEvent::ThreadArchived(thread_id) = event;
+                // The center pane holds its own reference to the conversation, so dropping only
+                // the retained one would leave an archived thread running in a tab.
+                this.close_center_item_for_thread(*thread_id, window, cx);
                 if this.retained_threads.remove(thread_id).is_some() {
                     cx.notify();
                 }
@@ -1608,6 +1938,10 @@ impl AgentPanel {
             terminals: HashMap::default(),
             pending_terminal_spawn: None,
             pending_terminal_center_open: HashMap::default(),
+            terminal_view_waiters: HashMap::default(),
+            center_threads: HashMap::default(),
+            center_terminals: HashMap::default(),
+            last_center_entry: None,
             terminal_split_parents: HashMap::default(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
@@ -2151,6 +2485,7 @@ impl AgentPanel {
                         }
                         this.pending_terminal_center_open.remove(&terminal_id);
                         this.terminal_split_parents.remove(&terminal_id);
+                        this.terminal_view_waiters.remove(&terminal_id);
                         cx.notify();
                     })
                     .log_err();
@@ -2304,7 +2639,7 @@ impl AgentPanel {
             .map(|title| title.to_string())
             .unwrap_or_default();
         let mut terminal = AgentTerminal {
-            view: terminal_view,
+            view: terminal_view.clone(),
             title_editor: None,
             title_editor_initial_title: None,
             title_editor_subscription: None,
@@ -2325,6 +2660,11 @@ impl AgentPanel {
         terminal.refresh_metadata(cx);
         terminal.report_started_terminal_program(terminal_id, source, cx);
         self.terminals.insert(terminal_id, terminal);
+        if let Some(waiters) = self.terminal_view_waiters.remove(&terminal_id) {
+            for waiter in waiters {
+                waiter.try_send(terminal_view.clone()).log_err();
+            }
+        }
         self.persist_terminal_metadata(terminal_id, cx);
         self.emit_terminal_thread_started(terminal_id, source, cx);
         if select {
@@ -2344,6 +2684,24 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.terminals.contains_key(&terminal_id) {
+            return;
+        }
+        // Same ownership rule as threads: a terminal living in the center stays there.
+        if self.terminal_is_in_center(terminal_id) {
+            if focus {
+                cx.defer_in(window, move |this, window, cx| {
+                    this.focus_terminal_in_center(terminal_id, window, cx);
+                });
+            }
+            self.dismiss_terminal_notifications(terminal_id, cx);
+            if let Some(terminal) = self.terminals.get_mut(&terminal_id) {
+                terminal.has_notification = false;
+            }
+            cx.emit(AgentPanelEvent::EntryChanged);
+            cx.notify();
+            return;
+        }
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
@@ -2357,6 +2715,22 @@ impl AgentPanel {
             cx.emit(AgentPanelEvent::EntryChanged);
             cx.notify();
         }
+    }
+
+    fn wait_for_terminal_view(
+        &mut self,
+        terminal_id: TerminalId,
+    ) -> async_channel::Receiver<Entity<TerminalView>> {
+        let (sender, receiver) = async_channel::bounded(1);
+        if let Some(terminal) = self.terminals.get(&terminal_id) {
+            sender.try_send(terminal.view.clone()).log_err();
+        } else {
+            self.terminal_view_waiters
+                .entry(terminal_id)
+                .or_default()
+                .push(sender);
+        }
+        receiver
     }
 
     pub fn close_terminal(
@@ -2389,10 +2763,12 @@ impl AgentPanel {
         if self.pending_terminal_spawn == Some(terminal_id) {
             self.pending_terminal_spawn = None;
         }
+        self.terminal_view_waiters.remove(&terminal_id);
         self.dismiss_terminal_notifications(terminal_id, cx);
         if self.terminals.remove(&terminal_id).is_none() {
             return;
         }
+        self.close_center_item_for_terminal(terminal_id, window, cx);
         self.terminal_split_parents.remove(&terminal_id);
         if let Some(store) = TerminalThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| {
@@ -2960,21 +3336,14 @@ impl AgentPanel {
     }
 
     fn terminal_center_visible(&self, terminal_id: TerminalId, cx: &App) -> bool {
-        let Some(terminal_view) = self
-            .terminals
-            .get(&terminal_id)
-            .map(|terminal| &terminal.view)
-        else {
-            return false;
-        };
         let Some(workspace) = self.workspace.upgrade() else {
             return false;
         };
         workspace.read(cx).panes().iter().any(|pane| {
             pane.read(cx)
                 .active_item()
-                .and_then(|item| item.to_any_view().downcast::<TerminalView>().ok())
-                .is_some_and(|item| item.entity_id() == terminal_view.entity_id())
+                .and_then(|item| item.to_any_view().downcast::<AgentTerminalPane>().ok())
+                .is_some_and(|item| item.read(cx).terminal_id() == terminal_id)
         })
     }
 
@@ -3107,6 +3476,20 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> Entity<ConversationView> {
         let desired_agent = self.selected_agent(cx);
+
+        // Unreachable while `register_center_thread` releases the slot, but it
+        // keeps this function correct on its own: handing back a center-owned
+        // view would render one conversation on two surfaces. Park it rather
+        // than deleting its metadata — the thread still exists in the center.
+        if let Some(draft) = self.draft_thread.clone()
+            && self.thread_is_in_center(draft.read(cx).thread_id)
+        {
+            let thread_id = draft.read(cx).thread_id;
+            self.draft_thread = None;
+            self._draft_editor_observation = None;
+            self.retained_threads.insert(thread_id, draft);
+        }
+
         if let Some(draft) = &self.draft_thread {
             let draft_entity = draft.entity_id();
             let agent_matches = *draft.read(cx).agent_key() == desired_agent;
@@ -3424,6 +3807,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.close_center_item_for_thread(id, window, cx);
         self.retained_threads.remove(&id);
         ThreadMetadataStore::global(cx).update(cx, |store, cx| {
             store.delete(id, cx);
@@ -4104,6 +4488,39 @@ impl AgentPanel {
         }
     }
 
+    /// The conversation the panel should persist as its last active thread: the one in the panel,
+    /// or — when the panel handed its base view to a center pane — the one it handed over.
+    fn serializable_conversation_view(&self, cx: &App) -> Option<Entity<ConversationView>> {
+        if let Some(conversation_view) = self.active_conversation_view() {
+            return Some(conversation_view.clone());
+        }
+        let CenterEntry::Thread(thread_id) = self.serializable_center_entry()? else {
+            return None;
+        };
+        self.conversation_view_for_id(&thread_id, cx).cloned()
+    }
+
+    fn serializable_center_terminal_id(&self) -> Option<TerminalId> {
+        match self.serializable_center_entry()? {
+            CenterEntry::Terminal(terminal_id) => Some(terminal_id),
+            CenterEntry::Thread(_) => None,
+        }
+    }
+
+    fn serializable_center_entry(&self) -> Option<CenterEntry> {
+        if !matches!(self.base_view, BaseView::Uninitialized) {
+            return None;
+        }
+        match self.last_center_entry? {
+            CenterEntry::Thread(thread_id) => self
+                .thread_is_in_center(thread_id)
+                .then_some(CenterEntry::Thread(thread_id)),
+            CenterEntry::Terminal(terminal_id) => self
+                .terminal_is_in_center(terminal_id)
+                .then_some(CenterEntry::Terminal(terminal_id)),
+        }
+    }
+
     pub(crate) fn visible_conversation_view(&self) -> Option<&Entity<ConversationView>> {
         match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => Some(conversation_view),
@@ -4165,22 +4582,26 @@ impl AgentPanel {
         })
     }
 
-    pub fn new_entry_options(&self, cx: &App) -> Vec<NewEntryOption> {
-        let mut options = Vec::new();
-
-        if self.supports_terminal(cx) {
-            options.push(NewEntryOption {
+    pub fn closed_project_new_entry_options() -> Vec<NewEntryOption> {
+        vec![
+            NewEntryOption {
                 label: "Terminal".into(),
                 icon: NewEntryIcon::Named(IconName::Terminal),
                 kind: NewEntryKind::Terminal,
-            });
-        }
+            },
+            NewEntryOption {
+                label: Agent::NativeAgent.label(),
+                icon: NewEntryIcon::Named(IconName::ZedAgent),
+                kind: NewEntryKind::Thread(Agent::NativeAgent),
+            },
+        ]
+    }
 
-        options.push(NewEntryOption {
-            label: Agent::NativeAgent.label(),
-            icon: NewEntryIcon::Named(IconName::ZedAgent),
-            kind: NewEntryKind::Thread(Agent::NativeAgent),
-        });
+    pub fn new_entry_options(&self, cx: &App) -> Vec<NewEntryOption> {
+        let mut options = Self::closed_project_new_entry_options();
+        if !self.supports_terminal(cx) {
+            options.retain(|option| !matches!(option.kind, NewEntryKind::Terminal));
+        }
 
         if self.project.read(cx).is_via_collab() {
             return options;
@@ -4261,17 +4682,6 @@ impl AgentPanel {
                     });
                 }
                 self.open_thread_in_center(thread_id, split_direction, window, cx);
-
-                // The draft now lives in the center, so release the panel's
-                // single new-draft slot; otherwise the next split would reuse
-                // it instead of starting a second agent.
-                if let Some(draft) = self.draft_thread.clone()
-                    && draft.read(cx).thread_id == thread_id
-                {
-                    self.draft_thread = None;
-                    self._draft_editor_observation = None;
-                    self.retained_threads.insert(thread_id, draft);
-                }
             }
         }
     }
@@ -4291,7 +4701,8 @@ impl AgentPanel {
         };
 
         if !self.focus_thread_in_center(thread_id, window, cx) {
-            let item = cx.new(|_| crate::ConversationPane::new(conversation_view, thread_id));
+            let item = cx.new(|cx| crate::ConversationPane::new(conversation_view, thread_id, cx));
+            self.register_center_thread(thread_id, &item, cx);
             workspace.update(cx, |workspace, cx| {
                 if let Some(split_direction) = split_direction {
                     workspace.split_item(split_direction, Box::new(item), window, cx);
@@ -4301,6 +4712,7 @@ impl AgentPanel {
             });
         }
 
+        self.last_center_entry = Some(CenterEntry::Thread(thread_id));
         if self.active_thread_id(cx) == Some(thread_id) {
             self.set_base_view(BaseView::Uninitialized, false, window, cx);
         }
@@ -4326,6 +4738,18 @@ impl AgentPanel {
         workspace.update(cx, |workspace, cx| {
             workspace.activate_item(&existing, true, true, window, cx)
         })
+    }
+
+    pub fn thread_is_in_center(&self, thread_id: ThreadId) -> bool {
+        self.center_threads
+            .get(&thread_id)
+            .is_some_and(|center| center.item.upgrade().is_some())
+    }
+
+    pub fn terminal_is_in_center(&self, terminal_id: TerminalId) -> bool {
+        self.center_terminals
+            .get(&terminal_id)
+            .is_some_and(|center| center.item.upgrade().is_some())
     }
 
     pub fn active_center_thread_id(&self, cx: &App) -> Option<ThreadId> {
@@ -4360,21 +4784,19 @@ impl AgentPanel {
         };
 
         if !self.focus_terminal_in_center(terminal_id, window, cx) {
+            let panel = cx.weak_entity();
+            let item = cx.new(|cx| AgentTerminalPane::new(terminal_view, terminal_id, panel, cx));
+            self.register_center_terminal(terminal_id, &item, cx);
             workspace.update(cx, |workspace, cx| {
                 if let Some(split_direction) = split_direction {
-                    workspace.split_item(split_direction, Box::new(terminal_view), window, cx);
+                    workspace.split_item(split_direction, Box::new(item), window, cx);
                 } else {
-                    workspace.add_item_to_active_pane(
-                        Box::new(terminal_view),
-                        None,
-                        true,
-                        window,
-                        cx,
-                    );
+                    workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
                 }
             });
         }
 
+        self.last_center_entry = Some(CenterEntry::Terminal(terminal_id));
         if self.active_terminal_id() == Some(terminal_id) {
             self.set_base_view(BaseView::Uninitialized, false, window, cx);
         }
@@ -4387,20 +4809,13 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(terminal_view) = self
-            .terminals
-            .get(&terminal_id)
-            .map(|terminal| terminal.view.clone())
-        else {
-            return false;
-        };
         let Some(workspace) = self.workspace.upgrade() else {
             return false;
         };
         let existing = workspace
             .read(cx)
-            .items_of_type::<TerminalView>(cx)
-            .find(|item| item.entity_id() == terminal_view.entity_id());
+            .items_of_type::<AgentTerminalPane>(cx)
+            .find(|item| item.read(cx).terminal_id() == terminal_id);
         let Some(existing) = existing else {
             return false;
         };
@@ -4411,10 +4826,130 @@ impl AgentPanel {
 
     pub fn active_center_terminal_id(&self, cx: &App) -> Option<TerminalId> {
         let workspace = self.workspace.upgrade()?;
-        let terminal_view = workspace.read(cx).active_item_as::<TerminalView>(cx)?;
-        self.terminals.iter().find_map(|(terminal_id, terminal)| {
-            (terminal.view.entity_id() == terminal_view.entity_id()).then_some(*terminal_id)
-        })
+        let item = workspace.read(cx).active_item_as::<AgentTerminalPane>(cx)?;
+        Some(item.read(cx).terminal_id())
+    }
+
+    fn register_center_thread(
+        &mut self,
+        thread_id: ThreadId,
+        item: &Entity<crate::ConversationPane>,
+        cx: &mut Context<Self>,
+    ) {
+        // Ownership is created here, so this is where the panel gives up its
+        // claim on the view. Parking the draft (rather than deleting it) keeps
+        // the thread's sidebar entry alive: it is a real thread now, it just
+        // lives in the center.
+        if let Some(draft) = self.draft_thread.clone()
+            && draft.read(cx).thread_id == thread_id
+        {
+            self.draft_thread = None;
+            self._draft_editor_observation = None;
+            self.retained_threads.insert(thread_id, draft);
+            self.serialize(cx);
+        }
+
+        let item_id = item.entity_id();
+        let release = cx.observe_release(item, move |this, _item, _cx| {
+            if this
+                .center_threads
+                .get(&thread_id)
+                .is_some_and(|center| center.item.entity_id() == item_id)
+            {
+                this.center_threads.remove(&thread_id);
+                this.clear_last_center_entry(CenterEntry::Thread(thread_id));
+            }
+        });
+        self.center_threads.insert(
+            thread_id,
+            CenterItem {
+                item: item.downgrade(),
+                _release: release,
+            },
+        );
+    }
+
+    fn register_center_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        item: &Entity<AgentTerminalPane>,
+        cx: &mut Context<Self>,
+    ) {
+        let item_id = item.entity_id();
+        let release = cx.observe_release(item, move |this, _item, _cx| {
+            if this
+                .center_terminals
+                .get(&terminal_id)
+                .is_some_and(|center| center.item.entity_id() == item_id)
+            {
+                this.center_terminals.remove(&terminal_id);
+                this.clear_last_center_entry(CenterEntry::Terminal(terminal_id));
+            }
+        });
+        self.center_terminals.insert(
+            terminal_id,
+            CenterItem {
+                item: item.downgrade(),
+                _release: release,
+            },
+        );
+    }
+
+    /// Removes the center pane item that mirrors a panel entry, if any.
+    ///
+    /// The panel owns the underlying entity, so every path that drops an entry from the panel must
+    /// drop the center item too; otherwise the pane keeps rendering — and keeps alive — an entry
+    /// the panel no longer tracks. The removal is deferred because these paths can run while the
+    /// workspace is already being updated.
+    fn close_center_item_for_terminal(
+        &mut self,
+        terminal_id: TerminalId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_last_center_entry(CenterEntry::Terminal(terminal_id));
+        let Some(center) = self.center_terminals.remove(&terminal_id) else {
+            return;
+        };
+        self.close_center_item(center.item.entity_id(), window, cx);
+    }
+
+    fn close_center_item_for_thread(
+        &mut self,
+        thread_id: ThreadId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_last_center_entry(CenterEntry::Thread(thread_id));
+        let Some(center) = self.center_threads.remove(&thread_id) else {
+            return;
+        };
+        self.close_center_item(center.item.entity_id(), window, cx);
+    }
+
+    fn clear_last_center_entry(&mut self, entry: CenterEntry) {
+        if self.last_center_entry == Some(entry) {
+            self.last_center_entry = None;
+        }
+    }
+
+    fn close_center_item(
+        &self,
+        item_id: gpui::EntityId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        cx.defer_in(window, move |_this, window, cx| {
+            let panes = workspace.read(cx).panes().to_vec();
+            for pane in panes {
+                pane.update(cx, |pane, cx| {
+                    pane.remove_item(item_id, false, true, window, cx);
+                });
+            }
+        });
     }
 
     pub fn regenerate_thread_title(
@@ -4562,22 +5097,11 @@ impl AgentPanel {
     }
 
     fn cleanup_retained_threads(&mut self, cx: &App) {
-        let center_thread_ids = self
-            .workspace
-            .upgrade()
-            .map(|workspace| {
-                workspace
-                    .read(cx)
-                    .items_of_type::<crate::ConversationPane>(cx)
-                    .map(|item| item.read(cx).thread_id())
-                    .collect::<HashSet<_>>()
-            })
-            .unwrap_or_default();
         let mut potential_removals = self
             .retained_threads
             .iter()
             .filter(|(thread_id, view)| {
-                if center_thread_ids.contains(thread_id) {
+                if self.thread_is_in_center(**thread_id) {
                     return false;
                 }
                 let Some(thread_view) = view.read(cx).root_thread_view() else {
@@ -4618,6 +5142,18 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        match &new_view {
+            BaseView::AgentThread { conversation_view } => debug_assert!(
+                !self.thread_is_in_center(conversation_view.read(cx).thread_id),
+                "a center-owned thread must not also render in the panel"
+            ),
+            BaseView::Terminal { terminal_id } => debug_assert!(
+                !self.terminal_is_in_center(*terminal_id),
+                "a center-owned terminal must not also render in the panel"
+            ),
+            BaseView::Uninitialized => {}
+        }
+
         let old_view = std::mem::replace(&mut self.base_view, new_view);
         self.retain_running_thread(old_view, cx);
 
@@ -4783,6 +5319,19 @@ impl AgentPanel {
             store.update(cx, |store, cx| {
                 store.unarchive(thread_id, cx);
             });
+        }
+
+        // A thread that was split into the center is owned by that pane. Moving it back into the
+        // panel would leave the same `ConversationView` rendered by both surfaces, so reveal the
+        // center item instead.
+        if self.thread_is_in_center(thread_id) {
+            if focus {
+                cx.defer_in(window, move |this, window, cx| {
+                    this.focus_thread_in_center(thread_id, window, cx);
+                });
+            }
+            cx.emit(AgentPanelEvent::ActiveViewChanged);
+            return;
         }
 
         // Check if the active view already holds this thread.
@@ -9892,6 +10441,53 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_splitting_a_draft_releases_the_panel_draft_slot(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.activate_draft(false, AgentThreadSource::Sidebar, window, cx);
+        });
+        cx.run_until_parked();
+
+        let draft_thread_id = panel
+            .read_with(&cx, |panel, cx| {
+                panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id)
+            })
+            .expect("the panel should start with a draft");
+
+        // The sidebar's Split action opens the origin in the center and nothing
+        // else, so the draft slot has to be released by the center-open itself.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(draft_thread_id, None, window, cx));
+        });
+        cx.run_until_parked();
+
+        assert!(
+            panel.read_with(&cx, |panel, _cx| panel.draft_thread.is_none()),
+            "the panel must give up its draft slot once the draft lives in the center"
+        );
+
+        // Re-activating the panel must build a fresh draft rather than
+        // re-adopting the one the center pane now owns.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.ensure_thread_initialized(window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_ne!(
+            panel.read_with(&cx, |panel, cx| panel.active_thread_id(cx)),
+            Some(draft_thread_id),
+            "the same conversation must not render in the panel and the center simultaneously"
+        );
+        assert!(
+            cx.read(|cx| ThreadMetadataStore::global(cx)
+                .read(cx)
+                .entry(draft_thread_id)
+                .is_some()),
+            "parking the draft must not delete the thread's sidebar entry"
+        );
+    }
+
+    #[gpui::test]
     async fn test_create_entry_in_center_splits_beside_existing_thread(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
         open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
@@ -9967,7 +10563,7 @@ mod tests {
 
         assert_eq!(
             workspace.read_with(&cx, |workspace, cx| {
-                workspace.items_of_type::<TerminalView>(cx).count()
+                workspace.items_of_type::<AgentTerminalPane>(cx).count()
             }),
             1,
             "the split terminal should open in the center pane"
@@ -10038,7 +10634,7 @@ mod tests {
 
         assert_eq!(
             workspace.read_with(&cx, |workspace, cx| {
-                workspace.items_of_type::<TerminalView>(cx).count()
+                workspace.items_of_type::<AgentTerminalPane>(cx).count()
             }),
             1
         );
@@ -10147,6 +10743,153 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_loading_center_thread_does_not_move_it_back_into_the_panel(
+        cx: &mut TestAppContext,
+    ) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let thread_id = active_thread_id(&panel, &cx);
+        let agent = panel.read_with(&cx, |panel, _cx| panel.selected_agent.clone());
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(thread_id, None, window, cx));
+        });
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.load_agent_thread(
+                agent,
+                thread_id,
+                None,
+                None,
+                true,
+                AgentThreadSource::Sidebar,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert!(
+            panel.read_with(&cx, |panel, _cx| matches!(
+                panel.base_view,
+                BaseView::Uninitialized
+            )),
+            "the thread stays owned by the center pane, so the panel must not render it too"
+        );
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .items_of_type::<crate::ConversationPane>(cx)
+                    .count(),
+                1
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_archiving_center_thread_closes_its_center_item(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        open_thread_with_connection(&panel, StubAgentConnection::new(), &mut cx);
+        cx.run_until_parked();
+
+        let thread_id = active_thread_id(&panel, &cx);
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_thread_in_center(thread_id, None, window, cx));
+        });
+        cx.run_until_parked();
+
+        cx.update(|_window, cx| {
+            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.archive(thread_id, None, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .items_of_type::<crate::ConversationPane>(cx)
+                    .count(),
+                0,
+                "an archived thread must not keep running in a center tab"
+            );
+        });
+        assert!(!panel.read_with(&cx, |panel, _cx| panel.thread_is_in_center(thread_id)));
+    }
+
+    #[gpui::test]
+    async fn test_closing_terminal_closes_its_center_item(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_terminal_in_center(terminal_id, None, window, cx));
+        });
+        cx.run_until_parked();
+
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.close_terminal(terminal_id, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace.items_of_type::<AgentTerminalPane>(cx).count(),
+                0,
+                "closing the terminal must take its center tab — and its pty — with it"
+            );
+        });
+        assert!(!panel.read_with(&cx, |panel, _cx| panel.has_terminal(terminal_id)));
+    }
+
+    #[gpui::test]
+    async fn test_center_terminal_uses_agent_terminal_serialization(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
+
+        let terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .unwrap();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.open_terminal_in_center(terminal_id, None, window, cx));
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace.items_of_type::<TerminalView>(cx).count(),
+                0,
+                "a bare TerminalView in a pane would be serialized and restored without the panel"
+            );
+            for pane in workspace.panes() {
+                for item in pane.read(cx).items() {
+                    assert_eq!(
+                        item.to_serializable_item_handle(cx)
+                            .map(|item| item.serialized_item_kind()),
+                        Some("AgentTerminalPane"),
+                        "agent panel terminals must use their own serialization kind"
+                    );
+                }
+            }
+        });
+
+        assert_eq!(
+            panel.read_with(&cx, |panel, _cx| panel.serializable_center_terminal_id()),
+            Some(terminal_id)
+        );
+    }
+
+    #[gpui::test]
     async fn test_open_two_terminal_threads_side_by_side(cx: &mut TestAppContext) {
         let (panel, mut cx) = setup_panel(cx).await;
         let workspace = panel.read_with(&cx, |panel, _cx| panel.workspace.upgrade().unwrap());
@@ -10175,7 +10918,7 @@ mod tests {
         });
 
         workspace.read_with(&cx, |workspace, cx| {
-            assert_eq!(workspace.items_of_type::<TerminalView>(cx).count(), 2);
+            assert_eq!(workspace.items_of_type::<AgentTerminalPane>(cx).count(), 2);
             assert_eq!(workspace.panes().len(), 2);
         });
         assert_eq!(

@@ -1283,6 +1283,24 @@ mod tests {
         assert!(archived.archived);
     }
 
+    #[test]
+    fn test_reads_channel_database_without_split_parent_column() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = create_channel_db(dir.path(), ReleaseChannel::Nightly);
+        connection
+            .exec("ALTER TABLE sidebar_threads DROP COLUMN split_parent")
+            .unwrap()()
+        .unwrap();
+        insert_thread(&connection, "Legacy Thread", "2025-01-15T10:00:00Z", false);
+        drop(connection);
+
+        let threads = read_threads_from_channel(dir.path(), ReleaseChannel::Nightly).unwrap();
+
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].display_title().as_ref(), "Legacy Thread");
+        assert_eq!(threads[0].split_parent, None);
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
         cx.update(|cx| {

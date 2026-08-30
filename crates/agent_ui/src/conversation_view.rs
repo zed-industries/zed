@@ -122,13 +122,25 @@ pub use thread_view::*;
 pub struct ConversationPane {
     conversation_view: Entity<ConversationView>,
     thread_id: ThreadId,
+    _title_subscription: Subscription,
 }
 
 impl ConversationPane {
-    pub fn new(conversation_view: Entity<ConversationView>, thread_id: ThreadId) -> Self {
+    pub fn new(
+        conversation_view: Entity<ConversationView>,
+        thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let title_subscription = cx.subscribe(
+            &conversation_view,
+            |_this, _view, _: &RootThreadUpdated, cx| {
+                cx.emit(workspace::item::ItemEvent::UpdateTab);
+            },
+        );
         Self {
             conversation_view,
             thread_id,
+            _title_subscription: title_subscription,
         }
     }
 
@@ -142,7 +154,7 @@ impl ConversationPane {
 }
 
 impl Item for ConversationPane {
-    type Event = ();
+    type Event = workspace::item::ItemEvent;
 
     fn include_in_nav_history() -> bool {
         false
@@ -151,9 +163,13 @@ impl Item for ConversationPane {
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         self.conversation_view.read(cx).title(cx)
     }
+
+    fn to_item_events(event: &Self::Event, emit: &mut dyn FnMut(workspace::item::ItemEvent)) {
+        emit(*event);
+    }
 }
 
-impl EventEmitter<()> for ConversationPane {}
+impl EventEmitter<workspace::item::ItemEvent> for ConversationPane {}
 
 impl Focusable for ConversationPane {
     fn focus_handle(&self, cx: &App) -> FocusHandle {

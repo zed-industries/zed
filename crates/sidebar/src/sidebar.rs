@@ -3827,19 +3827,15 @@ impl Sidebar {
         workspace: ThreadEntryWorkspace,
         cx: &App,
     ) -> ContextMenu {
-        let Some(panel_workspace) = (match &workspace {
-            ThreadEntryWorkspace::Open(workspace) => Some(workspace.clone()),
-            ThreadEntryWorkspace::Closed { .. } => sidebar
-                .upgrade()
-                .and_then(|sidebar| sidebar.read(cx).multi_workspace.upgrade())
-                .map(|multi_workspace| multi_workspace.read(cx).workspace().clone()),
-        }) else {
-            return menu;
+        let options = match &workspace {
+            ThreadEntryWorkspace::Open(workspace) => {
+                let Some(panel) = workspace.read(cx).panel::<AgentPanel>(cx) else {
+                    return menu;
+                };
+                panel.read(cx).new_entry_options(cx)
+            }
+            ThreadEntryWorkspace::Closed { .. } => AgentPanel::closed_project_new_entry_options(),
         };
-        let Some(panel) = panel_workspace.read(cx).panel::<AgentPanel>(cx) else {
-            return menu;
-        };
-        let options = panel.read(cx).new_entry_options(cx);
         if options.is_empty() {
             return menu;
         }
@@ -6818,7 +6814,26 @@ impl Sidebar {
             });
 
         if is_draft || thread.metadata.session_id.is_none() {
-            return thread_item.into_any_element();
+            let context_menu_id = SharedString::from(format!("thread-context-menu-{}", ix));
+            let sidebar = cx.weak_entity();
+            let center_metadata = thread.metadata.clone();
+            return right_click_menu(context_menu_id)
+                .trigger(move |_, _, _| thread_item)
+                .menu(move |window, cx| {
+                    let sidebar = sidebar.clone();
+                    let center_metadata = center_metadata.clone();
+                    let center_workspace = center_workspace.clone();
+                    ContextMenu::build(window, cx, move |menu, _window, cx| {
+                        Self::add_split_submenu(
+                            menu,
+                            &sidebar,
+                            SplitOrigin::Thread(center_metadata.clone()),
+                            center_workspace.clone(),
+                            cx,
+                        )
+                    })
+                })
+                .into_any_element();
         }
 
         let Some(session_id) = thread.metadata.session_id.clone() else {

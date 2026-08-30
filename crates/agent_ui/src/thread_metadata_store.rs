@@ -38,6 +38,10 @@ impl ThreadId {
         Self(uuid::Uuid::new_v4())
     }
 
+    pub(crate) fn from_key_string(key: &str) -> anyhow::Result<Self> {
+        Ok(Self(uuid::Uuid::parse_str(key)?))
+    }
+
     /// Stable, hyphenated string form suitable for use as a key.
     pub fn to_key_string(&self) -> String {
         self.0.hyphenated().to_string()
@@ -95,7 +99,18 @@ const THREAD_ID_MIGRATION_KEY: &str = "thread-metadata-thread-id-backfill";
 pub(crate) fn list_thread_metadata_from_connection(
     connection: &db::sqlez::connection::Connection,
 ) -> anyhow::Result<Vec<ThreadMetadata>> {
-    connection.select::<ThreadMetadata>(ThreadMetadataDb::LIST_QUERY)?()
+    let has_split_parent = connection.select_row::<i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('sidebar_threads') \
+             WHERE name = 'split_parent'",
+    )?()?
+    .unwrap_or_default()
+        > 0;
+    let query = if has_split_parent {
+        ThreadMetadataDb::LIST_QUERY
+    } else {
+        ThreadMetadataDb::LEGACY_LIST_QUERY
+    };
+    connection.select::<ThreadMetadata>(query)?()
 }
 
 /// Run the `ThreadMetadataDb` migrations on a raw connection.
@@ -1540,6 +1555,12 @@ impl ThreadMetadataDb {
     const LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
         created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
         main_worktree_paths_order, remote_connection, title_override, split_parent \
+        FROM sidebar_threads \
+        ORDER BY updated_at DESC";
+
+    const LEGACY_LIST_QUERY: &str = "SELECT thread_id, session_id, agent_id, title, updated_at, \
+        created_at, interacted_at, folder_paths, folder_paths_order, archived, main_worktree_paths, \
+        main_worktree_paths_order, remote_connection, title_override, NULL AS split_parent \
         FROM sidebar_threads \
         ORDER BY updated_at DESC";
 
