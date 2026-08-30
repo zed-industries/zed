@@ -448,6 +448,50 @@ async fn run_command(handle: &Arc<SshHandle>, command: &str, cx: &AsyncApp) -> R
     task.await
 }
 
+/// Uploads bytes to `remote_path` by streaming them into `cat` over an exec
+/// channel, avoiding the need for scp or sftp on either side.
+async fn upload_via_cat(
+    handle: &Arc<SshHandle>,
+    remote_path: &str,
+    data: Vec<u8>,
+    cx: &AsyncApp,
+) -> Result<()> {
+    let handle = handle.clone();
+    let remote_path = remote_path.to_string();
+    let task = Tokio::spawn_result(cx, async move {
+        let mut channel = handle.channel_open_session().await?;
+        let command = format!("cat > {}", shell_quote(&remote_path));
+        channel.exec(true, command.as_bytes()).await?;
+        channel.data(&data[..]).await?;
+        channel.eof().await?;
+
+        let mut exit_status = None;
+        while let Some(message) = channel.wait().await {
+            if let ChannelMsg::ExitStatus { exit_status: code } = message {
+                exit_status = Some(code);
+            }
+        }
+        anyhow::ensure!(
+            exit_status == Some(0),
+            "uploading to {remote_path} failed with exit status {exit_status:?}"
+        );
+        anyhow::Ok(())
+    });
+    task.await
+}
+
+/// The path of a server binary bundled with the app for the given platform,
+/// if one exists (as a gzipped file next to the executable).
+fn bundled_server_binary(platform: RemotePlatform) -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let path = executable.parent()?.join(format!(
+        "zed-remote-server-{}-{}.gz",
+        platform.os.as_str(),
+        platform.arch.as_str()
+    ));
+    path.exists().then_some(path)
+}
+
 async fn run_proxy(
     handle: Arc<SshHandle>,
     command: String,
@@ -556,6 +600,41 @@ async fn ensure_server_binary(
     .await
     .is_ok()
     {
+        return Ok(dst_path.into());
+    }
+
+    // Prefer a server bundled with the app: it matches this build exactly.
+    if let Some(bundled_path) = bundled_server_binary(platform) {
+        delegate.set_status(Some("Installing the bundled remote development server"), cx);
+        let data = std::fs::read(&bundled_path)
+            .with_context(|| format!("reading {}", bundled_path.display()))?;
+        let tmp_path = format!("{dst_display}.upload.gz");
+        run_command(
+            handle,
+            &format!(
+                "mkdir -p {}",
+                shell_quote(&paths::remote_server_dir_relative().display(PathStyle::Unix))
+            ),
+            cx,
+        )
+        .await
+        .context("creating the remote server directory")?;
+        upload_via_cat(handle, &tmp_path, data, cx)
+            .await
+            .context("uploading the bundled remote server")?;
+        run_command(
+            handle,
+            &format!(
+                "gunzip -f {} && mv {} {} && chmod +x {}",
+                shell_quote(&tmp_path),
+                shell_quote(tmp_path.trim_end_matches(".gz")),
+                shell_quote(&dst_display),
+                shell_quote(&dst_display),
+            ),
+            cx,
+        )
+        .await
+        .context("installing the bundled remote server")?;
         return Ok(dst_path.into());
     }
 

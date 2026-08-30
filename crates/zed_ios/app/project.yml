@@ -13,6 +13,8 @@ targets:
     sources:
       - main.m
       - Assets.xcassets
+      - path: RemoteServers
+        buildPhase: resources
     info:
       path: Info.plist
       properties:

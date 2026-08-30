@@ -361,7 +361,112 @@ fn register_text_input_view_class() -> &'static AnyClass {
             }
         }
 
+        // --- Hardware keyboard handling ---
+        //
+        // UIKit only reports modifier combinations (cmd-s, ctrl-c, arrows, …)
+        // through pressesBegan/pressesEnded; insertText: never fires for them.
+        // Intercept exactly those and let everything else fall through to the
+        // system so plain typing keeps flowing through insertText with the
+        // user's keyboard layout applied.
+        fn handle_presses(
+            this: *mut AnyObject,
+            presses: *mut AnyObject,
+            is_key_down: bool,
+        ) -> bool {
+            const UI_KEY_MODIFIER_CONTROL: isize = 1 << 18;
+            const UI_KEY_MODIFIER_ALTERNATE: isize = 1 << 19;
+            const UI_KEY_MODIFIER_COMMAND: isize = 1 << 20;
+
+            let window_ptr: *mut std::ffi::c_void = unsafe {
+                #[allow(deprecated)]
+                *(*this).get_ivar(GPUI_WINDOW_IVAR)
+            };
+            if window_ptr.is_null() {
+                return false;
+            }
+            let window = unsafe { &*(window_ptr as *const IosWindow) };
+
+            let mut handled = false;
+            unsafe {
+                let all_presses: *mut AnyObject = msg_send![presses, allObjects];
+                let count: usize = msg_send![all_presses, count];
+                for index in 0..count {
+                    let press: *mut AnyObject = msg_send![all_presses, objectAtIndex: index];
+                    let key: *mut AnyObject = msg_send![press, key];
+                    if key.is_null() {
+                        continue;
+                    }
+                    let key_code: isize = msg_send![key, keyCode];
+                    let modifier_flags: isize = msg_send![key, modifierFlags];
+
+                    let has_shortcut_modifier = modifier_flags
+                        & (UI_KEY_MODIFIER_CONTROL
+                            | UI_KEY_MODIFIER_ALTERNATE
+                            | UI_KEY_MODIFIER_COMMAND)
+                        != 0;
+                    // Keys that produce no text and are not already delivered
+                    // through UIKeyInput (enter/tab via insertText, backspace
+                    // via deleteBackward).
+                    let is_navigation_key = matches!(
+                        key_code,
+                        0x29 // escape
+                            | 0x3A..=0x45 // f1-f12
+                            | 0x49..=0x52 // insert/home/pageup/delete/end/pagedown/arrows
+                    );
+                    if has_shortcut_modifier || is_navigation_key {
+                        window.handle_key_event(
+                            key_code as u32,
+                            modifier_flags as u32,
+                            is_key_down,
+                        );
+                        handled = true;
+                    }
+                }
+            }
+            handled
+        }
+
+        unsafe extern "C" fn presses_began(
+            this: *mut AnyObject,
+            _sel: Sel,
+            presses: *mut AnyObject,
+            event: *mut AnyObject,
+        ) {
+            if !handle_presses(this, presses, true) {
+                unsafe {
+                    let superclass = class!(UIView);
+                    let _: () =
+                        msg_send![super(this, superclass), pressesBegan: presses, withEvent: event];
+                }
+            }
+        }
+
+        unsafe extern "C" fn presses_ended(
+            this: *mut AnyObject,
+            _sel: Sel,
+            presses: *mut AnyObject,
+            event: *mut AnyObject,
+        ) {
+            if !handle_presses(this, presses, false) {
+                unsafe {
+                    let superclass = class!(UIView);
+                    let _: () =
+                        msg_send![super(this, superclass), pressesEnded: presses, withEvent: event];
+                }
+            }
+        }
+
         unsafe {
+            decl.add_method(
+                sel!(pressesBegan:withEvent:),
+                presses_began
+                    as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
+            );
+            decl.add_method(
+                sel!(pressesEnded:withEvent:),
+                presses_ended
+                    as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
+            );
             decl.add_method(
                 sel!(hasText),
                 has_text as unsafe extern "C" fn(*mut AnyObject, Sel) -> Bool,

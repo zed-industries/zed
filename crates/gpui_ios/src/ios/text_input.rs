@@ -100,7 +100,9 @@ pub fn modifier_flags_to_modifiers(flags: u32) -> Modifiers {
 pub fn key_code_to_key_down(key_code: u32, modifier_flags: u32) -> PlatformInput {
     let modifiers = modifier_flags_to_modifiers(modifier_flags);
     let key = key_code_to_string(key_code);
-    let key_char = if key.len() == 1 {
+    // Shortcut chords must not double as text insertion.
+    let key_char = if key.len() == 1 && !modifiers.control && !modifiers.alt && !modifiers.platform
+    {
         Some(key.clone())
     } else {
         None
