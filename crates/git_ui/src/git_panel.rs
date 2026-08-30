@@ -8016,7 +8016,18 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    this.open_selected_entry_on_click(event.modifiers().secondary(), window, cx);
+                    if event.click_count() >= 2
+                        && GitPanelSettings::get_global(cx).open_file_on_double_click
+                    {
+                        // Double-click opens the actual file, like VS Code.
+                        this.view_file(&Default::default(), window, cx);
+                    } else {
+                        this.open_selected_entry_on_click(
+                            event.modifiers().secondary(),
+                            window,
+                            cx,
+                        );
+                    }
                 })
             })
             .on_mouse_down(
@@ -9302,6 +9313,14 @@ mod tests {
             language_model::init(cx);
             editor::init(cx);
             crate::init(cx);
+        });
+    }
+
+    #[gpui::test]
+    fn test_open_file_on_double_click_defaults_to_off(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            assert!(!GitPanelSettings::get_global(cx).open_file_on_double_click);
         });
     }
 

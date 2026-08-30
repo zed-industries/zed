@@ -808,6 +808,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: project_diff
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+
+    /// Whether double-clicking a file in the Git panel opens the file in the editor.
+    /// When disabled, a double-click behaves like a normal click (opens the diff).
+    ///
+    /// Default: false
+    pub open_file_on_double_click: Option<bool>,
 }
 
 #[derive(

@@ -1093,6 +1093,11 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
+    // Whether double-clicking a file in the Git panel opens the file in the editor.
+    // When disabled, a double-click behaves like a normal click (opens the diff).
+    //
+    // Default: false
+    "open_file_on_double_click": false,
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
