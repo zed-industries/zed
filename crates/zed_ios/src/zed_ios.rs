@@ -285,7 +285,8 @@ fn initialize_pane(
 const IOS_BASELINE_SETTINGS: &str = r#"{
   "use_system_path_prompts": false,
   "telemetry": { "diagnostics": false, "metrics": false },
-  "autosave": { "after_delay": { "milliseconds": 1000 } }
+  "autosave": { "after_delay": { "milliseconds": 1000 } },
+  "session": { "trust_all_worktrees": true }
 }
 "#;
 
