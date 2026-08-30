@@ -369,6 +369,14 @@ fn open_settings_file(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zed_ios_run() -> bool {
+    // On device, only Documents/, Library/ and tmp/ inside the container are
+    // writable - the container root is not (unlike the simulator). Route all
+    // of Zed's state below Library before any path is resolved.
+    let zed_data_dir = util::paths::home_dir().join("Library/Application Support/Zed");
+    if let Some(zed_data_dir) = zed_data_dir.to_str() {
+        paths::set_custom_data_dir(zed_data_dir);
+    }
+
     zlog::init();
     // Log to a file inside the container so device sessions (where stdout is
     // lost) can be diagnosed by pulling the app container.
