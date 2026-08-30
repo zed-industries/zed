@@ -690,12 +690,35 @@ struct DefaultState {
 
 /// Probed reachability of known servers, keyed by `host:port`.
 #[derive(Default)]
-struct ServerReachability(std::collections::HashMap<SharedString, bool>);
+struct ServerReachability(std::collections::HashMap<SharedString, ProbeState>);
+
+#[derive(Copy, Clone)]
+enum ProbeState {
+    Probing,
+    Done {
+        reachable: bool,
+        at: std::time::Instant,
+    },
+}
 
 impl gpui::Global for ServerReachability {}
 
+const REACHABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn probe_server_reachability(host: String, port: u16, cx: &mut App) {
     let key = SharedString::from(format!("{host}:{port}"));
+
+    // The server list is rebuilt liberally (settings changes, window
+    // refreshes); dedup here so each server is probed at most once per TTL,
+    // which also keeps a probe's own refresh from scheduling the next probe.
+    let reachability = cx.default_global::<ServerReachability>();
+    match reachability.0.get(&key) {
+        Some(ProbeState::Probing) => return,
+        Some(ProbeState::Done { at, .. }) if at.elapsed() < REACHABILITY_TTL => return,
+        _ => {}
+    }
+    reachability.0.insert(key.clone(), ProbeState::Probing);
+
     cx.spawn(async move |cx| {
         let reachable = cx
             .background_spawn(async move {
@@ -715,9 +738,13 @@ fn probe_server_reachability(host: String, port: u16, cx: &mut App) {
             })
             .await;
         cx.update(|cx| {
-            cx.default_global::<ServerReachability>()
-                .0
-                .insert(key, reachable);
+            cx.default_global::<ServerReachability>().0.insert(
+                key,
+                ProbeState::Done {
+                    reachable,
+                    at: std::time::Instant::now(),
+                },
+            );
             cx.refresh_windows();
         });
     })
@@ -1053,9 +1080,13 @@ impl RemoteServerPickerDelegate {
                     .try_global::<ServerReachability>()
                     .and_then(|reachability| reachability.0.get(&key).copied());
                 let color = match reachable {
-                    Some(true) => cx.theme().status().created,
-                    Some(false) => cx.theme().status().error,
-                    None => cx.theme().colors().text_muted,
+                    Some(ProbeState::Done {
+                        reachable: true, ..
+                    }) => cx.theme().status().created,
+                    Some(ProbeState::Done {
+                        reachable: false, ..
+                    }) => cx.theme().status().error,
+                    Some(ProbeState::Probing) | None => cx.theme().colors().text_muted,
                 };
                 Some(
                     div()
