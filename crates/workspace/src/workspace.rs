@@ -4495,6 +4495,14 @@ impl Workspace {
         })
     }
 
+    pub fn toggle_panel<T: Panel>(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_panel_open::<T>(cx) {
+            self.close_panel::<T>(window, cx);
+        } else {
+            self.toggle_panel_focus::<T>(window, cx);
+        }
+    }
+
     /// Transfer focus to the panel of the given type.
     pub fn focus_panel<T: Panel>(
         &mut self,

@@ -1645,11 +1645,7 @@ impl AgentPanel {
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
         {
-            if workspace.is_panel_open::<Self>(cx) {
-                workspace.close_panel::<Self>(window, cx);
-            } else {
-                workspace.toggle_panel_focus::<Self>(window, cx);
-            }
+            workspace.toggle_panel::<AgentPanel>(window, cx);
         }
     }
 

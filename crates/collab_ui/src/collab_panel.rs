@@ -118,13 +118,7 @@ pub fn init(cx: &mut App) {
             }
         });
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            if workspace.is_panel_open::<CollabPanel>(cx) {
-                workspace.close_panel::<CollabPanel>(window, cx);
-            } else {
-                if !workspace.toggle_panel_focus::<CollabPanel>(window, cx) {
-                    workspace.close_panel::<CollabPanel>(window, cx);
-                }
-            }
+            workspace.toggle_panel::<CollabPanel>(window, cx);
         });
         workspace.register_action(|_, _: &OpenChannelNotes, window, cx| {
             let channel_id = ActiveCall::global(cx)

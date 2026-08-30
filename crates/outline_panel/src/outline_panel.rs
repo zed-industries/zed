@@ -656,13 +656,7 @@ pub fn init(cx: &mut App) {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
-            if workspace.is_panel_open::<OutlinePanel>(cx) {
-                workspace.close_panel::<OutlinePanel>(window, cx);
-            } else {
-                if !workspace.toggle_panel_focus::<OutlinePanel>(window, cx) {
-                    workspace.close_panel::<OutlinePanel>(window, cx);
-                }
-            }
+            workspace.toggle_panel::<OutlinePanel>(window, cx);
         });
     })
     .detach();
