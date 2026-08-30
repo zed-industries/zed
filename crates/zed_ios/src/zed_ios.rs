@@ -132,6 +132,14 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     });
     AppState::set_global(app_state.clone(), cx);
 
+    // The remote server only receives the user settings layer, so the trust
+    // default has to live in the user's file rather than the global baseline.
+    if !user_settings.contains("trust_all_worktrees") {
+        settings::update_settings_file(fs.clone(), cx, |content, _| {
+            content.session.get_or_insert_default().trust_all_worktrees = Some(true);
+        });
+    }
+
     workspace::init(app_state.clone(), cx);
     editor::init(cx);
     file_finder::init(cx);
@@ -233,6 +241,15 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
                     add_panel_when_ready(git_panel, workspace_handle.clone(), cx.clone()),
                     add_panel_when_ready(terminal_panel, workspace_handle.clone(), cx.clone()),
                 );
+                // On a small screen there is no other hint that a project is
+                // open; show the file tree right away.
+                workspace_handle
+                    .update_in(cx, |workspace, window, cx| {
+                        if workspace.project().read(cx).visible_worktrees(cx).count() > 0 {
+                            workspace.open_panel::<project_panel::ProjectPanel>(window, cx);
+                        }
+                    })
+                    .ok();
             })
             .detach();
         },
