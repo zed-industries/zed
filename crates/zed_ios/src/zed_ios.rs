@@ -62,6 +62,34 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     });
     theme_settings::init(theme::LoadThemes::All(Box::new(Assets)), cx);
 
+    // There is no file-watcher backend on iOS, so poll the settings file and
+    // feed changes (e.g. a connection added through the UI, which writes the
+    // file) back into the store.
+    cx.spawn(async move |cx| {
+        let mut last_contents: Option<String> = None;
+        loop {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(2))
+                .await;
+            let Ok(contents) = std::fs::read_to_string(paths::settings_file()) else {
+                continue;
+            };
+            if last_contents.as_deref() == Some(contents.as_str()) {
+                continue;
+            }
+            last_contents = Some(contents.clone());
+            cx.update(|cx| {
+                settings::SettingsStore::update_global(cx, |store, cx| {
+                    let result = store.set_user_settings(&contents, cx);
+                    if let settings::ParseStatus::Failed { error } = &result.parse_status {
+                        log::error!("failed to reload the settings file: {error}");
+                    }
+                })
+            });
+        }
+    })
+    .detach();
+
     let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
     let client = Client::production(cx);
     client::init(&client, cx);
@@ -130,8 +158,14 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     .detach();
 
     cx.observe_new(
-        |workspace: &mut Workspace, window, cx: &mut gpui::Context<Workspace>| {
+        |workspace: &mut Workspace, mut window, cx: &mut gpui::Context<Workspace>| {
             workspace.register_action(open_settings_file);
+            if let Some(window) = window.as_deref_mut() {
+                let touch_action_bar = cx.new(|_| TouchActionBar);
+                workspace.status_bar().update(cx, |status_bar, cx| {
+                    status_bar.add_left_item(touch_action_bar, window, cx);
+                });
+            }
             workspace.register_action(
                 |workspace, _: &zed_actions::OpenSettings, window, cx| {
                     open_settings_file(workspace, &zed_actions::OpenSettingsFile, window, cx);
@@ -238,6 +272,53 @@ const IOS_BASELINE_SETTINGS: &str = r#"{
   "autosave": { "after_delay": { "milliseconds": 1000 } }
 }
 "#;
+
+/// Touch-reachable buttons for actions that otherwise need a keyboard:
+/// the command palette (which reaches everything else) and save.
+struct TouchActionBar;
+
+impl workspace::StatusItemView for TouchActionBar {
+    fn set_active_pane_item(
+        &mut self,
+        _active_pane_item: Option<&dyn workspace::ItemHandle>,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) {
+    }
+
+    fn hide_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        None
+    }
+}
+
+impl gpui::Render for TouchActionBar {
+    fn render(
+        &mut self,
+        _window: &mut gpui::Window,
+        _cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use ui::prelude::*;
+
+        ui::h_flex()
+            .gap_1()
+            .child(
+                ui::IconButton::new("touch-command-palette", ui::IconName::ListCollapse)
+                    .icon_size(ui::IconSize::Small)
+                    .tooltip(ui::Tooltip::text("Command Palette"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
+                    }),
+            )
+            .child(
+                ui::IconButton::new("touch-save", ui::IconName::Check)
+                    .icon_size(ui::IconSize::Small)
+                    .tooltip(ui::Tooltip::text("Save"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(workspace::Save { save_intent: None }), cx);
+                    }),
+            )
+    }
+}
 
 fn open_settings_file(
     workspace: &mut Workspace,

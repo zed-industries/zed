@@ -688,8 +688,52 @@ struct DefaultState {
     filter_data: Arc<FilterData>,
 }
 
+/// Probed reachability of known servers, keyed by `host:port`.
+#[derive(Default)]
+struct ServerReachability(std::collections::HashMap<SharedString, bool>);
+
+impl gpui::Global for ServerReachability {}
+
+fn probe_server_reachability(host: String, port: u16, cx: &mut App) {
+    let key = SharedString::from(format!("{host}:{port}"));
+    cx.spawn(async move |cx| {
+        let reachable = cx
+            .background_spawn(async move {
+                use std::net::ToSocketAddrs as _;
+                (host.as_str(), port)
+                    .to_socket_addrs()
+                    .ok()
+                    .and_then(|mut addresses| addresses.next())
+                    .map(|address| {
+                        std::net::TcpStream::connect_timeout(
+                            &address,
+                            std::time::Duration::from_millis(1500),
+                        )
+                        .is_ok()
+                    })
+                    .unwrap_or(false)
+            })
+            .await;
+        cx.update(|cx| {
+            cx.default_global::<ServerReachability>()
+                .0
+                .insert(key, reachable);
+            cx.refresh_windows();
+        });
+    })
+    .detach();
+}
+
 impl DefaultState {
     fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
+        let ssh_settings = RemoteSettings::get_global(cx);
+        for connection in ssh_settings.ssh_connections() {
+            probe_server_reachability(
+                connection.host.to_string(),
+                connection.port.unwrap_or(22),
+                cx,
+            );
+        }
         let ssh_settings = RemoteSettings::get_global(cx);
         let read_ssh_config = ssh_settings.read_ssh_config;
 
@@ -994,9 +1038,35 @@ impl RemoteServerPickerDelegate {
         &self,
         server_index: usize,
         host_positions: &[usize],
+        cx: &App,
     ) -> Option<AnyElement> {
         let server = self.state.servers.get(server_index)?;
         let connection = server.connection().into_owned();
+        let reachability_indicator = match &connection {
+            Connection::Ssh(connection) => {
+                let key = SharedString::from(format!(
+                    "{}:{}",
+                    connection.host,
+                    connection.port.unwrap_or(22)
+                ));
+                let reachable = cx
+                    .try_global::<ServerReachability>()
+                    .and_then(|reachability| reachability.0.get(&key).copied());
+                let color = match reachable {
+                    Some(true) => cx.theme().status().created,
+                    Some(false) => cx.theme().status().error,
+                    None => cx.theme().colors().text_muted,
+                };
+                Some(
+                    div()
+                        .size(gpui::px(6.))
+                        .flex_none()
+                        .rounded_full()
+                        .bg(color),
+                )
+            }
+            _ => None,
+        };
         let (main_label, aux_label, is_wsl) = match &connection {
             Connection::Ssh(connection) => {
                 if let Some(nickname) = connection.nickname.clone() {
@@ -1016,6 +1086,7 @@ impl RemoteServerPickerDelegate {
                 .px_3()
                 .gap_1()
                 .overflow_hidden()
+                .children(reachability_indicator)
                 .child(
                     h_flex()
                         .gap_1()
@@ -1260,7 +1331,7 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::ServerHeader {
                 server,
                 host_positions,
-            } => self.render_server_header(*server, host_positions),
+            } => self.render_server_header(*server, host_positions, cx),
             RemoteMatch::AddServer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect SSH Server", selected))
             }
