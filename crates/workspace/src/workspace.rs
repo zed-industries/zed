@@ -4486,11 +4486,6 @@ impl Workspace {
     pub fn is_panel_open<T: Panel>(&self, cx: &mut Context<Self>) -> bool {
         self.all_docks().iter().any(|dock| {
             let dock = dock.read(cx);
-            println!("dock.is_open() = {}", dock.is_open());
-            println!(
-                "dock.panel::<T>().is_some() = {}",
-                dock.panel::<T>().is_some()
-            );
             dock.is_open() && dock.panel_index_for_type::<T>() == dock.active_panel_index()
         })
     }
