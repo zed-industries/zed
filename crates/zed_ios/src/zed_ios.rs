@@ -14,10 +14,9 @@ use std::sync::Arc;
 use assets::Assets;
 use client::{Client, UserStore};
 use fs::RealFs;
-use gpui::{AppContext as _, WindowOptions};
+use gpui::AppContext as _;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
-use project::Project;
 use reqwest_client::ReqwestClient;
 use session::{AppSession, Session};
 use ui::App;
@@ -40,7 +39,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     // Zed's built-in picker registered by `file_finder::init`.
     use gpui::UpdateGlobal as _;
     settings::SettingsStore::update_global(cx, |store, cx| {
-        let result = store.set_user_settings(r#"{"use_system_path_prompts": false}"#, cx);
+        let result = store.set_user_settings(r#"{"use_system_path_prompts": false, "telemetry": {"diagnostics": false, "metrics": false}, "autosave": {"after_delay": {"milliseconds": 1000}}}"#, cx);
         if let settings::ParseStatus::Failed { error } = &result.parse_status {
             log::error!("failed to apply iOS default settings: {error}");
         }
@@ -76,22 +75,60 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     workspace::init(app_state.clone(), cx);
     editor::init(cx);
     file_finder::init(cx);
+    command_palette::init(cx);
+    project_panel::init(cx);
+    languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
-    let project = Project::local(
-        client,
-        node_runtime,
-        user_store,
-        languages,
-        fs,
+    {
+        use theme::ActiveTheme as _;
+        languages.set_theme(cx.theme().clone());
+    }
+    cx.observe_global::<theme::GlobalTheme>({
+        use theme::ActiveTheme as _;
+        let languages = languages.clone();
+        move |cx| {
+            languages.set_theme(cx.theme().clone());
+        }
+    })
+    .detach();
+
+    cx.observe_new(
+        |_: &mut Workspace, window, cx: &mut gpui::Context<Workspace>| {
+            let Some(window) = window else { return };
+            cx.spawn_in(window, async move |workspace_handle, cx| {
+                match project_panel::ProjectPanel::load(workspace_handle.clone(), cx.clone()).await
+                {
+                    Ok(panel) => {
+                        workspace_handle
+                            .update_in(cx, |workspace, window, cx| {
+                                workspace.add_panel(panel, window, cx);
+                            })
+                            .ok();
+                    }
+                    Err(error) => log::error!("failed to load project panel: {error:#}"),
+                }
+            })
+            .detach();
+        },
+    )
+    .detach();
+
+    let open_task = Workspace::new_local(
+        Vec::new(),
+        app_state,
         None,
-        Default::default(),
+        None,
+        None,
+        workspace::OpenMode::Activate,
         cx,
     );
-
-    cx.open_window(WindowOptions::default(), |window, cx| {
-        cx.new(|cx| Workspace::new(None, project, app_state.clone(), window, cx))
-    })?;
-    cx.activate(true);
+    cx.spawn(async move |cx| {
+        if let Err(error) = open_task.await {
+            log::error!("failed to open the initial workspace window: {error:#}");
+        }
+        cx.update(|cx| cx.activate(true));
+    })
+    .detach();
     Ok(())
 }
 

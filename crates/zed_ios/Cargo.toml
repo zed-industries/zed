@@ -16,6 +16,7 @@ crate-type = ["staticlib"]
 anyhow.workspace = true
 assets.workspace = true
 client.workspace = true
+command_palette.workspace = true
 db.workspace = true
 editor.workspace = true
 file_finder.workspace = true
@@ -23,10 +24,15 @@ fs.workspace = true
 gpui.workspace = true
 gpui_ios.workspace = true
 language.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
 log.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+project_panel.workspace = true
 release_channel.workspace = true
+# Embed assets and grammar queries even in debug builds; the app sandbox
+# cannot read the repository's source tree at runtime.
+rust-embed = { workspace = true, features = ["debug-embed"] }
 reqwest_client.workspace = true
 session.workspace = true
 settings.workspace = true
