@@ -144,9 +144,11 @@ pub struct Buffer {
     has_bom: bool,
     reload_with_encoding_txns: HashMap<TransactionId, (&'static Encoding, bool)>,
     last_reload_transaction: Option<TransactionId>,
+    last_reload_completed_at: Option<Instant>,
     last_unproductive_compaction_horizon: Option<clock::Global>,
     history_compaction_enabled: bool,
     reload_coalesce_interval: Duration,
+    reload_debounce_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -162,6 +164,8 @@ const MAX_COALESCED_RELOAD_EDITS: usize = 1024;
 const MAX_COALESCED_RELOAD_BYTES: usize = 8 * 1024 * 1024;
 
 const RELOAD_COALESCE_INTERVAL: Duration = Duration::from_secs(5);
+
+const RELOAD_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(250);
 
 const STATE_TRANSFER_LINE_ENDING_POISON: i32 = i32::MAX;
 
@@ -1235,9 +1239,15 @@ impl Buffer {
             has_bom: false,
             reload_with_encoding_txns: HashMap::default(),
             last_reload_transaction: None,
+            last_reload_completed_at: None,
             last_unproductive_compaction_horizon: None,
             history_compaction_enabled: false,
             reload_coalesce_interval: RELOAD_COALESCE_INTERVAL,
+            reload_debounce_interval: if cfg!(any(test, feature = "test-support")) {
+                Duration::ZERO
+            } else {
+                RELOAD_DEBOUNCE_INTERVAL
+            },
         }
     }
 
@@ -1688,8 +1698,18 @@ impl Buffer {
     ) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
+        let debounce = self
+            .last_reload_completed_at
+            .and_then(|last_reload_completed_at| {
+                self.reload_debounce_interval
+                    .checked_sub(last_reload_completed_at.elapsed())
+            })
+            .filter(|debounce| !debounce.is_zero());
 
         self.reload_task = Some(cx.spawn(async move |this, cx| {
+            if let Some(debounce) = debounce {
+                cx.background_executor().timer(debounce).await;
+            }
             let Some((new_mtime, load_bytes_task, current_encoding)) =
                 this.update(cx, |this, cx| {
                     let file = this.file.as_ref()?.as_local()?;
@@ -1792,6 +1812,7 @@ impl Buffer {
                     this.did_reload(prev_version, this.line_ending(), this.saved_mtime, cx);
                 }
 
+                this.last_reload_completed_at = Some(Instant::now());
                 this.reload_task.take();
             })
         }));
@@ -2744,6 +2765,11 @@ impl Buffer {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_reload_coalesce_interval(&mut self, interval: Duration) {
         self.reload_coalesce_interval = interval;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_reload_debounce_interval(&mut self, interval: Duration) {
+        self.reload_debounce_interval = interval;
     }
 
     pub fn compact_history(&mut self) -> usize {

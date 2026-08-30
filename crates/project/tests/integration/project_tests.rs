@@ -7558,6 +7558,78 @@ async fn test_external_reload_churn_is_compacted(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_external_reloads_are_debounced(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "file.txt": "version 0" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+    let debounce = std::time::Duration::from_millis(250);
+    buffer.update(cx, |buffer, _| {
+        buffer.set_reload_debounce_interval(debounce);
+        buffer.set_reload_coalesce_interval(std::time::Duration::ZERO);
+    });
+
+    fs.save(
+        path!("/dir/file.txt").as_ref(),
+        &"version 1".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "version 1",
+            "the first reload after a quiet period must not be delayed"
+        );
+    });
+
+    for version in 2..=5 {
+        fs.save(
+            path!("/dir/file.txt").as_ref(),
+            &format!("version {version}").into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            "version 1",
+            "reloads within the debounce interval must not have been applied yet"
+        );
+    });
+
+    cx.executor().advance_clock(debounce);
+    cx.executor().run_until_parked();
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 5");
+        assert_eq!(
+            buffer.retained_history().undo_stack_entries,
+            2,
+            "the debounced burst must have been applied as a single reload"
+        );
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 1");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 0");
+    });
+}
+
+#[gpui::test]
 async fn test_save_compacts_evicted_undo_history(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
