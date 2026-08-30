@@ -15,6 +15,7 @@ use rpc::proto::Envelope;
 use util::command::Child;
 
 pub mod docker;
+pub mod in_process_ssh;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 pub mod ssh;

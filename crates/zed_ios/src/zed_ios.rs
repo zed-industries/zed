@@ -25,7 +25,16 @@ use workspace::{AppState, Workspace, WorkspaceStore};
 fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     let version = release_channel::AppVersion::load(env!("CARGO_PKG_VERSION"), None, None);
     release_channel::init(version, cx);
+    gpui_tokio::init(cx);
     cx.set_global(db::AppDatabase::new());
+    let db_trusted_paths = match workspace::WorkspaceDb::global(cx).fetch_trusted_worktrees() {
+        Ok(trusted_paths) => trusted_paths,
+        Err(error) => {
+            log::error!("failed to fetch trusted worktrees: {error:#}");
+            Default::default()
+        }
+    };
+    project::trusted_worktrees::init(db_trusted_paths, cx);
     Assets.load_fonts(cx)?;
 
     let http_client = ReqwestClient::user_agent("zed-ios")?;
@@ -96,6 +105,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     go_to_line::init(cx);
     markdown_preview::init(cx);
     git_ui::init(cx);
+    recent_projects::init(cx);
 
     // Not every action referenced by the bundled keymap is registered in this
     // trimmed-down app, so tolerate individual binding failures.

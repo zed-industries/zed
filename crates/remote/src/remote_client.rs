@@ -1,12 +1,13 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::transport::mock::ConnectGuard;
+#[cfg(not(target_os = "ios"))]
+use crate::transport::ssh::SshRemoteConnection;
 use crate::{
     SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
         docker::{DockerConnectionOptions, DockerExecConnection},
-        ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
     },
 };
@@ -1269,10 +1270,20 @@ impl ConnectionPool {
                 let delegate = delegate.clone();
                 async move |cx| {
                     let connection = match opts.clone() {
+                        #[cfg(not(target_os = "ios"))]
                         RemoteConnectionOptions::Ssh(opts) => {
                             SshRemoteConnection::new(opts, delegate, cx)
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
+                        // iOS cannot spawn the ssh binary; speak SSH in-process.
+                        #[cfg(target_os = "ios")]
+                        RemoteConnectionOptions::Ssh(opts) => {
+                            crate::transport::in_process_ssh::InProcessSshConnection::new(
+                                opts, delegate, cx,
+                            )
+                            .await
+                            .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
                         RemoteConnectionOptions::Wsl(opts) => {
                             WslRemoteConnection::new(opts, delegate, cx)

@@ -33,6 +33,9 @@ paths.workspace = true
 prost.workspace = true
 release_channel.workspace = true
 rpc = { workspace = true, features = ["gpui"] }
+russh.workspace = true
+gpui_tokio.workspace = true
+tokio.workspace = true
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
