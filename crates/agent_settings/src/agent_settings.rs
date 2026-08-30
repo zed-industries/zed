@@ -3,20 +3,20 @@ mod user_agents_md;
 
 use std::cmp::Ordering::{Equal, Greater, Less};
 use std::fmt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock};
 
 use anyhow::Context as _;
 use collections::{HashSet, IndexMap};
 use fs::Fs;
 use futures::channel::oneshot;
-use gpui::{App, Pixels, SharedString, px};
+use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockPosition, DockSide, LanguageModelParameters, LanguageModelSelection,
+    DockPosition, DockSide, IntoGpui, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, PlaySoundWhenAgentDone, RegisterSetting, Settings, SettingsContent,
     SettingsStore, SidebarDockPosition, SidebarSide, ThinkingBlockDisplay, ToolPermissionMode,
     update_settings_file, update_settings_file_with_completion,
@@ -219,6 +219,7 @@ pub struct AgentSettings {
     pub commit_message_include_project_rules: bool,
     pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
+    pub compaction_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub favorite_models: Vec<LanguageModelSelection>,
     pub default_profile: AgentProfileId,
@@ -431,11 +432,17 @@ pub struct SandboxPermissions {
     /// approved "once" or "for this thread", which keeps the sandboxed
     /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
-    pub write_paths: Vec<PathBuf>,
+    /// Directory subtree grants, each paired with the canonical
+    /// (symlink-resolved) target established when the grant was approved.
+    pub write_paths: Vec<settings::GrantedWritePath>,
     /// Whether sandbox escalation prompts warn about domains or write paths
     /// that contain potentially confusable Unicode characters (homoglyphs,
     /// invisible characters, or bidirectional overrides). Enabled by default.
     pub warn_confusable_unicode: bool,
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem, whose sandbox-integrity guarantees
+    /// are weaker than a distro-native filesystem. Enabled by default.
+    pub warn_ntfs_grants: bool,
 }
 
 impl Default for SandboxPermissions {
@@ -448,6 +455,8 @@ impl Default for SandboxPermissions {
             write_paths: Vec::new(),
             // The confusable-Unicode warning is a safety net, so it defaults on.
             warn_confusable_unicode: true,
+            // The weaker-guarantee warning for Windows-hosted grants defaults on.
+            warn_ntfs_grants: true,
         }
     }
 }
@@ -750,10 +759,10 @@ impl Settings for AgentSettings {
             button: agent.button.unwrap(),
             dock: agent.dock.unwrap(),
             sidebar_side: agent.sidebar_side.unwrap(),
-            default_width: px(agent.default_width.unwrap()),
-            default_height: px(agent.default_height.unwrap()),
+            default_width: agent.default_width.unwrap().into_gpui(),
+            default_height: agent.default_height.unwrap().into_gpui(),
             max_content_width: if agent.limit_content_width.unwrap() {
-                Some(px(agent.max_content_width.unwrap()))
+                Some(agent.max_content_width.unwrap().into_gpui())
             } else {
                 None
             },
@@ -770,6 +779,7 @@ impl Settings for AgentSettings {
             commit_message_model: agent.commit_message_model,
             commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
+            compaction_model: agent.compaction_model,
             inline_alternatives: agent.inline_alternatives.unwrap_or_default(),
             favorite_models: agent.favorite_models,
             default_profile: AgentProfileId(agent.default_profile.unwrap()),
@@ -819,13 +829,24 @@ fn compile_sandbox_permissions(
         return SandboxPermissions::default();
     };
 
-    let mut write_paths = Vec::new();
-    for path in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
+    let mut write_paths: Vec<settings::GrantedWritePath> = Vec::new();
+    for entry in content.write_paths.map(|paths| paths.0).unwrap_or_default() {
         // Normalize away `..`/`.` before storing, since coverage checks are
-        // purely lexical; drop paths that escape the filesystem root.
-        if let Ok(normalized) = util::paths::normalize_lexically(&path) {
-            util::paths::insert_subtree(&mut write_paths, normalized);
-        }
+        // purely lexical; drop entries whose requested (or resolved) path
+        // escapes the filesystem root.
+        let Ok(requested) = util::paths::normalize_lexically(&entry.requested) else {
+            continue;
+        };
+        let granted = match entry.resolved {
+            Some(resolved) => {
+                let Ok(resolved) = util::paths::normalize_lexically(&resolved) else {
+                    continue;
+                };
+                settings::GrantedWritePath::resolved_on_fs(requested, resolved, entry.on_windows_fs)
+            }
+            None => settings::GrantedWritePath::from_requested(requested),
+        };
+        insert_granted_subtree(&mut write_paths, granted);
     }
 
     let network_hosts = content
@@ -840,7 +861,35 @@ fn compile_sandbox_permissions(
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
         warn_confusable_unicode: content.warn_confusable_unicode.unwrap_or(true),
+        warn_ntfs_grants: content.warn_ntfs_grants.unwrap_or(true),
     }
+}
+
+/// Subtree-insert mirroring [`util::paths::insert_subtree`], but over
+/// [`settings::GrantedWritePath`] entries compared by their canonical
+/// (symlink-resolved) grant path — the path actually enforced at write time.
+///
+/// Insertion is a no-op when the new grant's canonical path is already covered
+/// by an existing entry; otherwise the new grant is added and any existing
+/// entries whose canonical path is a descendant of it are pruned. Containment
+/// is purely lexical, so callers should normalize paths first.
+fn insert_granted_subtree(
+    subtrees: &mut Vec<settings::GrantedWritePath>,
+    granted: settings::GrantedWritePath,
+) {
+    if subtrees.iter().any(|existing| {
+        granted
+            .canonical_or_requested()
+            .starts_with(existing.canonical_or_requested())
+    }) {
+        return;
+    }
+    subtrees.retain(|existing| {
+        !existing
+            .canonical_or_requested()
+            .starts_with(granted.canonical_or_requested())
+    });
+    subtrees.push(granted);
 }
 
 fn compile_tool_permissions(content: Option<settings::ToolPermissionsContent>) -> ToolPermissions {
@@ -944,6 +993,7 @@ mod tests {
     use serde_json::json;
     use settings::ToolPermissionMode;
     use settings::ToolPermissionsContent;
+    use std::path::PathBuf;
 
     #[test]
     fn test_parse_auto_compact_threshold() {
@@ -1160,7 +1210,10 @@ mod tests {
         assert!(permissions.allow_unsandboxed);
         assert_eq!(
             permissions.write_paths,
-            vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]
+            vec![
+                settings::GrantedWritePath::from_requested(PathBuf::from("/tmp/build")),
+                settings::GrantedWritePath::from_requested(PathBuf::from("/var/log")),
+            ]
         );
     }
 
@@ -1178,7 +1231,77 @@ mod tests {
 
         // `/tmp/build/../build/cache` normalizes to `/tmp/build/cache`, which is
         // then pruned as a redundant child of `/tmp/build`.
-        assert_eq!(permissions.write_paths, vec![PathBuf::from("/tmp/build")]);
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_bare_string_has_no_resolved() {
+        let json = json!({
+            "write_paths": ["/tmp/build"]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::from_requested(PathBuf::from(
+                "/tmp/build"
+            ))]
+        );
+        assert_eq!(permissions.write_paths[0].resolved, None);
+    }
+
+    #[test]
+    fn test_sandbox_permissions_object_preserves_resolved() {
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link", "resolved": "/tmp/real" }
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/link"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
+        assert_eq!(
+            permissions.write_paths[0].resolved,
+            Some(PathBuf::from("/tmp/real"))
+        );
+    }
+
+    #[test]
+    fn test_sandbox_permissions_dedup_keys_on_resolved_path() {
+        // The requested paths are unrelated, but the resolved (canonical)
+        // targets form a subtree, so dedup must prune by the resolved path.
+        let json = json!({
+            "write_paths": [
+                { "requested": "/tmp/link/cache", "resolved": "/tmp/real/cache" },
+                { "requested": "/tmp/other", "resolved": "/tmp/real" },
+            ]
+        });
+
+        let content: settings::SandboxPermissionsContent = serde_json::from_value(json).unwrap();
+        let permissions = compile_sandbox_permissions(Some(content));
+
+        assert_eq!(
+            permissions.write_paths,
+            vec![settings::GrantedWritePath::resolved(
+                PathBuf::from("/tmp/other"),
+                PathBuf::from("/tmp/real"),
+            )]
+        );
     }
 
     #[test]

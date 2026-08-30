@@ -1,4 +1,5 @@
 use crate::{
+    branch_diff::BranchDiff,
     diff_multibuffer::DiffMultibuffer,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     staged_diff::StagedDiff,
@@ -12,7 +13,7 @@ use editor::{
 };
 use git::{Commit, StageAll, StageAndNext, ToggleStaged, UnstageAll, UnstageAndNext};
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
+    Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
     Subscription, Task, WeakEntity, actions,
 };
 use language::Capability;
@@ -26,13 +27,14 @@ use project::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::GitDiffBaseSetting;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use ui::{DiffStat, Divider, Tooltip, prelude::*};
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::SearchableItemHandle,
 };
 use zed_actions::git as git_actions;
@@ -40,8 +42,14 @@ use zed_actions::git as git_actions;
 actions!(
     git,
     [
-        /// Shows the diff between the working directory and the index.
+        /// Shows the diff against the configured diff base: working changes
+        /// relative to HEAD, or all branch changes relative to the default
+        /// branch, following the `git.diff_base` setting.
         Diff,
+        /// Shows working changes relative to HEAD.
+        DiffHead,
+        /// Toggles the git diff base between HEAD and the default branch.
+        ToggleDiffBase,
         /// Adds files to the git staging area.
         Add,
         /// Opens a new agent thread with the branch diff for review.
@@ -55,7 +63,7 @@ actions!(
 /// Shows the diff between the working directory and your default
 /// branch (typically main or master).
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
-#[action(namespace = git, name = "BranchDiff")]
+#[action(namespace = git, name = "DiffBranch", deprecated_aliases = ["git::BranchDiff"])]
 pub(crate) struct DeployBranchDiff;
 
 pub struct ProjectDiff {
@@ -68,6 +76,22 @@ pub struct ProjectDiff {
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(|workspace, _: &DiffHead, window, cx| {
+            Self::deploy_at(workspace, None, window, cx);
+        });
+        workspace.register_action(|workspace, _: &ToggleDiffBase, _window, cx| {
+            settings::update_settings_file(
+                workspace.app_state().fs.clone(),
+                cx,
+                move |settings, _| {
+                    let git = settings.git.get_or_insert_default();
+                    git.diff_base = Some(match git.diff_base.unwrap_or_default() {
+                        GitDiffBaseSetting::Head => GitDiffBaseSetting::DefaultBranch,
+                        GitDiffBaseSetting::DefaultBranch => GitDiffBaseSetting::Head,
+                    });
+                },
+            );
+        });
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
                 Self::deploy_at(workspace, None, window, cx);
@@ -84,7 +108,7 @@ impl ProjectDiff {
             },
         );
         workspace.register_action(|workspace, _: &Add, window, cx| {
-            Self::deploy(workspace, &Diff, window, cx);
+            Self::deploy_at(workspace, None, window, cx);
         });
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
@@ -95,6 +119,11 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let project = workspace.project().clone();
+        if project.read(cx).git_store().read(cx).diff_base() == GitDiffBaseSetting::DefaultBranch {
+            BranchDiff::deploy_branch_diff(workspace, window, cx);
+            return;
+        }
         Self::deploy_at(workspace, None, window, cx)
     }
 
@@ -194,9 +223,9 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff = cx.new(|cx| {
-            diff_buffer_list::DiffBufferList::new(DiffBase::Head, project.clone(), window, cx)
-        });
+        let git_store = project.read(cx).git_store().clone();
+        let branch_diff =
+            cx.new(|cx| diff_buffer_list::DiffBufferList::new(DiffBase::Head, git_store, None, cx));
         Self::new_impl(branch_diff, project, workspace, window, cx)
     }
 
@@ -309,7 +338,7 @@ impl ProjectDiff {
         let editor = diff.editor().read(cx).rhs_editor().clone();
         let editor = editor.read(cx);
         let snapshot = diff.multibuffer().read(cx).snapshot(cx);
-        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let prev_next = snapshot.diff_hunks().next().is_some();
         let (selection, ranges) = diff.selected_ranges(cx);
         let mut has_staged_hunks = false;
         let mut has_unstaged_hunks = false;
@@ -407,16 +436,6 @@ impl Item for ProjectDiff {
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
         Some(self.tab_content_text(0, cx))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        Label::new(self.tab_content_text(0, cx))
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
@@ -586,13 +605,9 @@ impl SerializableItem for ProjectDiff {
     ) -> Task<Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
             cx.update(|window, cx| {
+                let git_store = project.read(cx).git_store().clone();
                 let branch_diff = cx.new(|cx| {
-                    diff_buffer_list::DiffBufferList::new(
-                        DiffBase::Head,
-                        project.clone(),
-                        window,
-                        cx,
-                    )
+                    diff_buffer_list::DiffBufferList::new(DiffBase::Head, git_store, None, cx)
                 });
                 let workspace = workspace.upgrade().context("workspace gone")?;
                 anyhow::Ok(
@@ -607,7 +622,6 @@ impl SerializableItem for ProjectDiff {
         _: &mut Workspace,
         _: workspace::ItemId,
         _: bool,
-        _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         Some(Task::ready(Ok(())))
@@ -1067,6 +1081,129 @@ mod tests {
                 (2, "BranchDiff".to_string())
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_diff_action_follows_diff_base_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "committed.txt": "head\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("committed.txt", "head\n".into())],
+        );
+        fs.set_merge_base_content_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("committed.txt", "base\n".into())],
+        );
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace =
+            multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+        cx.focus(&workspace);
+
+        cx.update(|_window, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().diff_base =
+                        Some(GitDiffBaseSetting::DefaultBranch);
+                });
+            });
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::DefaultBranch
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::DefaultBranch
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::Head
+            );
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(ToggleDiffBase.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            window.dispatch_action(Diff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<BranchDiff>(cx).is_some());
+            assert_eq!(workspace.items_of_type::<ProjectDiff>(cx).count(), 0);
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(DiffHead.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.active_item_as::<ProjectDiff>(cx).is_some());
+        });
+
+        cx.update(|_window, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git.get_or_insert_default().diff_base = Some(GitDiffBaseSetting::Head);
+                });
+            });
+        });
+        cx.run_until_parked();
+        let repository_id = project.read_with(cx, |project, cx| {
+            assert_eq!(
+                project.git_store().read(cx).diff_base(),
+                GitDiffBaseSetting::Head
+            );
+            project.active_repository(cx).unwrap().read(cx).id
+        });
+
+        cx.update(|window, cx| {
+            window.dispatch_action(DeployBranchDiff.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+        project.read_with(cx, |project, cx| {
+            assert!(
+                project
+                    .git_store()
+                    .read(cx)
+                    .display_diff_for_repo(repository_id)
+                    .is_none()
+            );
+        });
     }
 
     #[gpui::test]

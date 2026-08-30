@@ -172,6 +172,14 @@ pub trait PickerDelegate: Sized + 'static {
     fn separators_after_indices(&self) -> Vec<usize> {
         Vec::new()
     }
+    fn set_hovered_index(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        self.set_selected_index(ix, window, cx);
+    }
     fn set_selected_index(
         &mut self,
         ix: usize,
@@ -298,6 +306,27 @@ pub trait PickerDelegate: Sized + 'static {
         _query: String,
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
+    /// Called when `SelectChild` fires (e.g. shift-right-arrow). Return `Some(query)`
+    /// to step into the currently selected item (e.g. a directory); the picker
+    /// will set the query and refresh matches.
+    fn select_child(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<String> {
+        None
+    }
+
+    /// Called when `SelectParent` fires (e.g. shift-left-arrow). Return `Some(query)`
+    /// to step back to the parent; the picker will set the query and refresh
+    /// matches.
+    fn select_parent(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
         None
     }
@@ -476,6 +505,32 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) -> Self {
         let head = Head::editor(
+            delegate.placeholder_text(window, cx),
+            Self::on_input_editor_event,
+            window,
+            cx,
+        );
+
+        let preview = Preview::new(preview);
+        Self::new(
+            delegate,
+            ContainerKind::List,
+            head,
+            Some(preview),
+            window,
+            cx,
+        )
+    }
+
+    pub fn list_with_preview_and_query_editor(
+        delegate: D,
+        preview: Arc<dyn PreviewBackend>,
+        query_editor: Arc<dyn ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let head = Head::with_editor(
+            query_editor,
             delegate.placeholder_text(window, cx),
             Self::on_input_editor_event,
             window,
@@ -750,6 +805,32 @@ impl<D: PickerDelegate> Picker<D> {
         self.focus_handle(cx).focus(window, cx);
     }
 
+    pub fn set_hovered_index(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let match_count = self.delegate.match_count();
+        if match_count == 0 {
+            return;
+        }
+
+        if !self.delegate.can_select(ix, window, cx) {
+            return;
+        }
+
+        let previous_index = self.delegate.selected_index();
+        self.delegate.set_hovered_index(ix, window, cx);
+        let current_index = self.delegate.selected_index();
+
+        if previous_index != current_index {
+            if let Some(action) = self.delegate.selected_index_changed(ix, window, cx) {
+                action(window, cx);
+            }
+            if let Some(preview) = &mut self.preview
+                && let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
+            {
+                preview.update(update, window, cx);
+            }
+        }
+    }
+
     /// Handles the selecting an index, and passing the change to the delegate.
     /// If `fallback_direction` is set to `None`, the index will not be selected
     /// if the element at that index cannot be selected.
@@ -997,6 +1078,26 @@ impl<D: PickerDelegate> Picker<D> {
         cx: &mut Context<Self>,
     ) {
         if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), window, cx) {
+            self.set_query(&new_query, window, cx);
+        } else {
+            cx.propagate()
+        }
+    }
+    fn select_child(&mut self, _: &menu::SelectChild, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(new_query) = self.delegate.select_child(window, cx) {
+            self.set_query(&new_query, window, cx);
+        } else {
+            cx.propagate()
+        }
+    }
+
+    fn select_parent(
+        &mut self,
+        _: &menu::SelectParent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(new_query) = self.delegate.select_parent(window, cx) {
             self.set_query(&new_query, window, cx);
         } else {
             cx.propagate()
@@ -1347,7 +1448,7 @@ impl<D: PickerDelegate> Picker<D> {
             .when(self.delegate.select_on_hover(), |this| {
                 this.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
                     if *hovered {
-                        this.set_selected_index(ix, None, false, window, cx);
+                        this.set_hovered_index(ix, window, cx);
                         cx.notify();
                     }
                 }))

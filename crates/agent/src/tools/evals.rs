@@ -3,7 +3,7 @@ use futures::future::LocalBoxFuture;
 #[cfg(all(test, feature = "unit-eval"))]
 use gpui::TestAppContext;
 #[cfg(all(test, feature = "unit-eval"))]
-use std::fmt::Display;
+use std::{fmt::Display, time::Duration};
 
 #[cfg(all(test, feature = "unit-eval"))]
 mod edit_file;
@@ -11,6 +11,14 @@ mod edit_file;
 mod terminal_tool;
 #[cfg(all(test, feature = "unit-eval"))]
 mod write_file;
+
+#[cfg(all(test, feature = "unit-eval"))]
+fn completion_retry_delay(error: &anyhow::Error, retry_attempt: usize) -> Option<Duration> {
+    error
+        .downcast_ref::<language_model::LanguageModelCompletionError>()?
+        .retry_delay(retry_attempt)
+        .map(crate::jitter_retry_delay)
+}
 
 #[cfg(all(test, feature = "unit-eval"))]
 fn run_gpui_eval<T>(

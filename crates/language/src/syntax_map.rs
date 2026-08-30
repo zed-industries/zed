@@ -101,7 +101,7 @@ pub struct SyntaxMapMatch<'a> {
 
 struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
-    captures: QueryCaptures<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    captures: QueryCaptures<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     next_capture: Option<QueryCapture<'a>>,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
@@ -113,7 +113,7 @@ struct SyntaxMapMatchesLayer<'a> {
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
-    matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
+    matches: QueryMatches<'a, 'a, 'static, TextProvider<'a>, &'a [u8]>,
     query: &'a Query,
     grammar_index: usize,
     _query_cursor: QueryCursorHandle,
@@ -150,6 +150,16 @@ impl SyntaxLayerContent {
         match self {
             SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
             SyntaxLayerContent::Pending { .. } => None,
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn language_name(&self) -> SharedString {
+        match self {
+            SyntaxLayerContent::Parsed { language, .. } => language.name().0,
+            SyntaxLayerContent::Pending { language_name } => {
+                SharedString::from(language_name.clone())
+            }
         }
     }
 }
@@ -901,22 +911,34 @@ impl SyntaxSnapshot {
 
     #[cfg(debug_assertions)]
     fn check_invariants(&self, text: &BufferSnapshot) {
+        let out_of_order = |reason: &str| -> ! {
+            let mut dump = format!("layers out of order: {reason}\nlayers:\n");
+            for layer in self.layers.iter() {
+                dump.push_str(&format!(
+                    "  depth={} range={:?} language={} id={:?}\n",
+                    layer.depth,
+                    layer.range.to_offset(text),
+                    layer.content.language_name(),
+                    layer.content.language_id(),
+                ));
+            }
+            panic!("{dump}");
+        };
+
         let mut max_depth = 0;
         let mut prev_layer: Option<(Range<Anchor>, Option<LanguageId>)> = None;
         for layer in self.layers.iter() {
             match Ord::cmp(&layer.depth, &max_depth) {
-                Ordering::Less => {
-                    panic!("layers out of order")
-                }
+                Ordering::Less => out_of_order("depth decreased"),
                 Ordering::Equal => {
                     if let Some((prev_range, prev_language_id)) = prev_layer {
                         match layer.range.start.cmp(&prev_range.start, text) {
-                            Ordering::Less => panic!("layers out of order"),
+                            Ordering::Less => out_of_order("start decreased"),
                             Ordering::Equal => match layer.range.end.cmp(&prev_range.end, text) {
-                                Ordering::Less => panic!("layers out of order"),
+                                Ordering::Less => out_of_order("end decreased at equal start"),
                                 Ordering::Equal => {
                                     if layer.content.language_id() < prev_language_id {
-                                        panic!("layers out of order")
+                                        out_of_order("language id decreased at equal range")
                                     }
                                 }
                                 Ordering::Greater => {}
@@ -1677,7 +1699,7 @@ fn get_injections(
             range: outer_range.clone(),
             included_ranges,
             mode: ParseMode::Combined {
-                parent_layer_range: node.start_byte()..node.end_byte(),
+                parent_layer_range: outer_range.to_offset(text),
                 parent_layer_changed_ranges: changed_ranges.to_vec(),
             },
         })

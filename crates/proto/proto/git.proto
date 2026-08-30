@@ -79,6 +79,15 @@ message GetPermalinkToLineResponse {
   string permalink = 1;
 }
 
+message GetFilePermalink {
+  uint64 project_id = 1;
+  ProjectPath path = 2;
+}
+
+message GetFilePermalinkResponse {
+  string permalink = 1;
+}
+
 message Branch {
   bool is_head = 1;
   string ref_name = 2;
@@ -289,10 +298,12 @@ message LoadCommitDiff {
   reserved 2;
   uint64 repository_id = 3;
   string commit = 4;
+  bool ignore_shallow_boundary = 5;
 }
 
 message LoadCommitDiffResponse {
   repeated CommitFile files = 1;
+  bool is_shallow_boundary = 2;
 }
 
 message CommitFile {
@@ -378,6 +389,9 @@ message Stash {
   uint64 project_id = 1;
   uint64 repository_id = 2;
   repeated string paths = 3;
+  optional string message = 4;
+  // When set, stash the index only (`git stash push --staged`) and ignore `paths`.
+  optional bool staged = 5;
 }
 
 message StashPop {
@@ -413,6 +427,7 @@ message Commit {
     bool amend = 1;
     bool signoff = 2;
     bool allow_empty = 3;
+    bool no_verify = 4;
   }
 }
 
@@ -444,6 +459,7 @@ message Fetch {
   uint64 repository_id = 3;
   uint64 askpass_id = 4;
   optional string remote = 5;
+  bool unshallow = 6;
 }
 
 message GetRemotes {
@@ -505,6 +521,7 @@ message BlameEntry {
   optional string previous = 14;
 
   string filename = 15;
+  bool boundary = 16;
 }
 
 message CommitMessage {
@@ -523,11 +540,31 @@ message BlameBufferResponse {
     repeated CommitMessage messages = 2;
     reserved 3;
     reserved 4;
+    repeated CommitTagNames tag_names = 5;
   }
 
   optional BlameResponse blame_response = 5;
 
   reserved 1 to 4;
+}
+
+message BlameBufferAtRevision {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string path = 3;
+  string revision = 4;
+}
+
+message BlameBufferAtRevisionResponse {
+  string content = 1;
+  repeated BlameEntry entries = 2;
+  repeated CommitMessage messages = 3;
+  repeated CommitTagNames tag_names = 4;
+}
+
+message CommitTagNames {
+  bytes oid = 1;
+  repeated string tag_names = 2;
 }
 
 message GetDefaultBranch {
@@ -546,6 +583,7 @@ message GetTreeDiff {
   bool is_merge = 3;
   string base = 4;
   string head = 5;
+  bool includes_worktree = 6;
 }
 
 message GetTreeDiffResponse {
@@ -572,6 +610,15 @@ message GetBlobContent {
 
 message GetBlobContentResponse {
   string content = 1;
+}
+
+message LoadCommitTemplate {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+}
+
+message LoadCommitTemplateResponse {
+  optional string template = 1;
 }
 
 message GitGetWorktrees {

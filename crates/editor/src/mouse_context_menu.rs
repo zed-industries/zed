@@ -107,7 +107,7 @@ impl MouseContextMenu {
             }
         });
 
-        let selection_init = editor.selections.newest_anchor().clone();
+        let selection_init = *editor.selections.newest_anchor();
 
         let _cursor_move_subscription = cx.subscribe_in(
             &cx.entity(),
@@ -257,8 +257,11 @@ pub fn deploy_context_menu(
                     |builder| builder.separator(),
                 )
                 .action("Go to Definition", Box::new(GoToDefinition::default()))
-                .action("Go to Declaration", Box::new(GoToDeclaration))
-                .action("Go to Type Definition", Box::new(GoToTypeDefinition))
+                .action("Go to Declaration", Box::new(GoToDeclaration::default()))
+                .action(
+                    "Go to Type Definition",
+                    Box::new(GoToTypeDefinition::default()),
+                )
                 .action(
                     "Go to Implementation",
                     Box::new(GoToImplementation::default()),
@@ -266,6 +269,14 @@ pub fn deploy_context_menu(
                 .action(
                     "Find All References",
                     Box::new(FindAllReferences::default()),
+                )
+                .action(
+                    "Show Incoming Calls",
+                    Box::new(zed_actions::ShowIncomingCalls),
+                )
+                .action(
+                    "Show Outgoing Calls",
+                    Box::new(zed_actions::ShowOutgoingCalls),
                 )
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
@@ -307,7 +318,7 @@ pub fn deploy_context_menu(
                 )
                 .action_disabled_when(
                     !has_git_repo,
-                    "Copy Permalink",
+                    "Copy Permalink to Line",
                     Box::new(CopyPermalinkToLine),
                 )
                 .action_disabled_when(
@@ -352,7 +363,12 @@ pub fn deploy_context_menu(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor_tests::init_test, test::editor_lsp_test_context::EditorLspTestContext};
+    use crate::{
+        editor_tests::init_test,
+        test::{
+            editor_lsp_test_context::EditorLspTestContext, editor_test_context::EditorTestContext,
+        },
+    };
     use indoc::indoc;
 
     #[gpui::test]
@@ -399,5 +415,49 @@ mod tests {
             }
         "});
         cx.editor(|editor, _window, _app| assert!(editor.mouse_context_menu.is_some()));
+    }
+
+    #[gpui::test]
+    async fn test_mouse_context_menu_at_pixel_snapped_scroll_position(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.set_state(&format!("ˇ{}", "aaaaa\n".repeat(100)));
+        cx.update(|window, _| window.set_scale_factor(1.25));
+        cx.update_editor(|editor, _, cx| {
+            editor.set_text_style_refinement(gpui::TextStyleRefinement {
+                font_size: Some(gpui::px(14.).into()),
+                line_height: Some(gpui::relative(1.3)),
+                ..Default::default()
+            });
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(window.scale_factor(), 1.25);
+            let line_height = editor
+                .style(cx)
+                .text
+                .line_height_in_pixels(window.rem_size());
+            assert_eq!(line_height, gpui::px(18.));
+            assert!(window.pixel_snap_f64(f64::from(line_height)) / f64::from(line_height) < 1.);
+            editor.set_scroll_position(gpui::point(0., 1.), window, cx);
+            assert_eq!(editor.snapshot(window, cx).scroll_position().y, 1.);
+
+            deploy_context_menu(
+                editor,
+                Some(gpui::point(gpui::px(200.), gpui::px(200.))),
+                DisplayPoint::new(crate::display_map::DisplayRow(5), 0),
+                window,
+                cx,
+            );
+            assert!(editor.mouse_context_menu.is_some());
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("MENU_ITEM-Copy").is_some());
     }
 }

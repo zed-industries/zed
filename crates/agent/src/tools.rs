@@ -1,4 +1,5 @@
 mod apply_code_action_tool;
+mod ask_user_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -33,7 +34,7 @@ use feature_flags::{
     CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
 };
 use gpui::App;
-use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
+use language_model::LanguageModelRequestTool;
 use serde::{
     Deserialize, Deserializer,
     de::{DeserializeOwned, Error as _},
@@ -47,22 +48,30 @@ where
     T: DeserializeOwned,
     D: Deserializer<'de>,
 {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ValueOrJsonString<T> {
-        Value(T),
-        String(String),
+    fn to_custom_error<E>(e: serde_json::Error) -> E
+    where
+        E: serde::de::Error,
+    {
+        E::custom(format!("{e}"))
     }
 
-    match ValueOrJsonString::<T>::deserialize(deserializer)? {
-        ValueOrJsonString::Value(value) => Ok(value),
-        ValueOrJsonString::String(string) => serde_json::from_str::<T>(&string).map_err(|error| {
-            D::Error::custom(format!("failed to parse stringified value: {error}"))
-        }),
+    let raw_value = serde_json::Value::deserialize(deserializer)
+        .map_err(|error| D::Error::custom(format!("invalid JSON: {error}")))?;
+
+    match T::deserialize(&raw_value) {
+        Ok(value) => Ok(value),
+        Err(original_error) => {
+            let Some(string) = raw_value.as_str() else {
+                return Err(to_custom_error(original_error));
+            };
+
+            serde_json::from_str(string).map_err(to_custom_error)
+        }
     }
 }
 
 pub use apply_code_action_tool::*;
+pub use ask_user_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
@@ -153,10 +162,12 @@ macro_rules! tools {
         /// A list of all built-in tools
         pub fn built_in_tools() -> impl Iterator<Item = LanguageModelRequestTool> {
             fn language_model_tool<T: AgentTool>() -> LanguageModelRequestTool {
+                let mut input_schema = T::input_schema().to_value();
+                language_model::tool_schema::normalize_tool_schema(&mut input_schema);
                 LanguageModelRequestTool::function(
                     T::NAME.to_string(),
                     T::description().to_string(),
-                    T::input_schema(LanguageModelToolSchemaFormat::JsonSchema).to_value(),
+                    input_schema,
                     T::supports_input_streaming(),
                 )
             }
@@ -187,6 +198,7 @@ macro_rules! tools {
 //    it never offers a tool the agent can't actually use.
 tools! {
     ApplyCodeActionTool,
+    AskUserTool,
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,
@@ -235,6 +247,33 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn built_in_tool_schemas_are_normalized() {
+        let tools = built_in_tools().collect::<Vec<_>>();
+
+        assert_eq!(tools.len(), ALL_TOOL_NAMES.len());
+        for tool in tools {
+            let language_model::LanguageModelRequestToolInput::Function { input_schema, .. } =
+                tool.input
+            else {
+                panic!("built-in tool `{}` should use a JSON schema", tool.name);
+            };
+            assert_eq!(input_schema.get("$schema"), None, "tool `{}`", tool.name);
+            assert_eq!(input_schema.get("title"), None, "tool `{}`", tool.name);
+            assert_eq!(
+                input_schema.get("description"),
+                None,
+                "tool `{}`",
+                tool.name
+            );
+            assert!(
+                input_schema["properties"].is_object(),
+                "tool `{}` should have object properties",
+                tool.name
+            );
+        }
+    }
 
     #[test]
     fn fetch_and_terminal_are_forbidden_in_restricted_mode() {

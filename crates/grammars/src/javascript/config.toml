@@ -32,7 +32,7 @@ jsx_element_node_name = "jsx_element"
 tag_name_node_name = "identifier"
 
 [overrides.default]
-linked_edit_characters = ["."]
+linked_edit_characters = [".", "-"]
 
 [overrides.element]
 line_comments = { remove = true }

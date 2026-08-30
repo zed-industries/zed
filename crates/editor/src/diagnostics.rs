@@ -55,7 +55,7 @@ pub(super) struct InlineDiagnostic {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ActiveDiagnosticGroup {
     active_range: Range<Anchor>,
-    active_message: String,
+    active_message: language::DiagnosticMessage,
     group_id: usize,
     blocks: HashSet<CustomBlockId>,
 }
@@ -369,7 +369,10 @@ impl Editor {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
-                        && entry.diagnostic.message == active_diagnostics.active_message
+                        && entry
+                            .diagnostic
+                            .message
+                            .rendered_eq(&active_diagnostics.active_message)
                 });
 
             if !is_valid {
@@ -495,11 +498,16 @@ impl Editor {
                         let message = diagnostic_entry
                             .diagnostic
                             .message
+                            .as_str()
                             .split_once('\n')
                             .map(|(line, _)| line)
                             .map(SharedString::new)
                             .unwrap_or_else(|| {
-                                SharedString::new(&*diagnostic_entry.diagnostic.message)
+                                diagnostic_entry
+                                    .diagnostic
+                                    .message
+                                    .as_shared_string()
+                                    .clone()
                             });
                         let start_anchor = snapshot.anchor_before(diagnostic_entry.range.start);
                         let (Ok(i) | Err(i)) = inline_diagnostics
@@ -600,11 +608,14 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use crate::{
-        actions::{ToggleDiagnostics, ToggleInlineDiagnostics},
+        actions::{
+            ToggleCodeLens, ToggleDiagnostics, ToggleInlayHints, ToggleInlineDiagnostics,
+            ToggleSemanticHighlights,
+        },
         editor_tests::init_test,
         test::editor_test_context::EditorTestContext,
     };
-    use gpui::{TestAppContext, UpdateGlobal};
+    use gpui::{Action, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language::DiagnosticSourceKind;
     use lsp::LanguageServerId;
@@ -651,7 +662,7 @@ mod tests {
                                     lsp::Position::new(0, 15),
                                 ),
                                 severity: Some(lsp::DiagnosticSeverity::ERROR),
-                                message: "cannot find value `def`".to_string(),
+                                message: lsp::DiagnosticMessage::from("cannot find value `def`"),
                                 ..Default::default()
                             }],
                         },
@@ -747,6 +758,140 @@ mod tests {
                 editor.inline_diagnostics.len(),
                 1,
                 "inline diagnostics should reappear after toggling them back on"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_actions_gated_by_lsp_data(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+        let lsp_data_actions: [&dyn Action; 4] = [
+            &ToggleDiagnostics,
+            &ToggleInlayHints,
+            &ToggleCodeLens,
+            &ToggleSemanticHighlights,
+        ];
+
+        cx.update_editor(|editor, _, cx| {
+            editor.enable_lsp_data = false;
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            for action in lsp_data_actions {
+                assert!(
+                    !window.is_action_available(action, cx),
+                    "{} should not be available when LSP data is disabled",
+                    action.name()
+                );
+            }
+        });
+
+        cx.update_editor(|editor, _, cx| {
+            editor.enable_lsp_data = true;
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            for action in lsp_data_actions {
+                assert!(
+                    window.is_action_available(action, cx),
+                    "{} should be available again after re-enabling LSP data",
+                    action.name()
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_diagnostics_remains_available_after_disabling_diagnostics(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                !editor.diagnostics_enabled(),
+                "diagnostics should be disabled after dispatching ToggleDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics should still be available after disabling diagnostics, \
+                 so the user can re-enable it"
+            );
+        });
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert!(
+                editor.diagnostics_enabled(),
+                "diagnostics should be re-enabled after a second dispatch of ToggleDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleDiagnostics, cx),
+                "ToggleDiagnostics should be available again after re-enabling diagnostics"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_inline_diagnostics_availability(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorTestContext::new(cx).await;
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update(|window, cx| {
+            assert!(
+                !window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should not be available when diagnostics are disabled"
+            );
+        });
+
+        cx.dispatch_action(ToggleDiagnostics);
+        cx.update(|window, cx| {
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should be available again after re-enabling diagnostics"
+            );
+        });
+
+        let initial_show = cx.update_editor(|editor, _, _| editor.show_inline_diagnostics());
+        cx.dispatch_action(ToggleInlineDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.show_inline_diagnostics(),
+                !initial_show,
+                "inline diagnostics visibility should flip after dispatching ToggleInlineDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should still be available after toggling it, \
+                 so the user can toggle it back"
+            );
+        });
+
+        cx.dispatch_action(ToggleInlineDiagnostics);
+        cx.update_editor(|editor, window, cx| {
+            assert_eq!(
+                editor.show_inline_diagnostics(),
+                initial_show,
+                "inline diagnostics visibility should flip back after a second dispatch of ToggleInlineDiagnostics"
+            );
+            assert!(
+                window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should remain available after toggling it back"
+            );
+        });
+
+        cx.update_editor(|editor, _, cx| {
+            editor.disable_inline_diagnostics();
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            assert!(
+                !window.is_action_available(&ToggleInlineDiagnostics, cx),
+                "ToggleInlineDiagnostics should not be available in editors with inline diagnostics permanently disabled"
             );
         });
     }

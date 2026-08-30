@@ -19,7 +19,6 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 anyhow.workspace = true
 async-channel.workspace = true
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
-base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 cloud_api_client.workspace = true
@@ -35,11 +34,11 @@ gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
 http_client_tls.workspace = true
-httparse = "1.10"
 log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 postage.workspace = true
+proxy_handshake = { workspace = true, features = ["tokio"] }
 rand.workspace = true
 regex.workspace = true
 release_channel.workspace = true
@@ -56,7 +55,6 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http.workspace = true
-tokio-socks.workspace = true
 tokio.workspace = true
 url.workspace = true
 util.workspace = true

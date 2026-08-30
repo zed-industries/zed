@@ -282,7 +282,7 @@ impl LspAdapter for VtslsLspAdapter {
                 "showOnAllFunctions": true
             },
             "tsserver": {
-                "maxTsServerMemory": 8092
+                "maxTsServerMemory": 8192
             },
         });
 

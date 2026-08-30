@@ -8,7 +8,7 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, SubPageProviderSettings,
+    ProviderSettingsView, RateLimiter, SubPageProviderSettings,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -358,10 +358,6 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         self.model.capabilities.tools
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchemaSubset
-    }
-
     fn supports_images(&self) -> bool {
         self.model.capabilities.images
     }
@@ -438,14 +434,18 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 Err(error) => return async move { Err(error.into()) }.boxed(),
             };
             let completions = self.stream_completion(request, cx);
+            let executor = cx.background_executor().clone();
             async move {
                 let mapper = OpenAiEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
+                Ok(language_model::stream_in_background(
+                    mapper.map_stream(completions.await?).boxed(),
+                    executor,
+                ))
             }
             .boxed()
         } else {
             disable_response_thinking_for_none_effort(&mut request, &self.model);
-            let request = into_open_ai_response(
+            let request = match into_open_ai_response(
                 request,
                 &self.model.name,
                 self.model.capabilities.parallel_tool_calls,
@@ -453,11 +453,20 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
                 self.max_output_tokens(),
                 default_thinking_reasoning_effort(&self.model),
                 supports_none_reasoning_effort(&self.model),
-            );
+                &self.provider_id,
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_response(request, cx);
+            let compaction_state_owner = self.provider_id.clone();
+            let executor = cx.background_executor().clone();
             async move {
-                let mapper = OpenAiResponseEventMapper::new();
-                Ok(mapper.map_stream(completions.await?).boxed())
+                let mapper = OpenAiResponseEventMapper::new(compaction_state_owner);
+                Ok(language_model::stream_in_background(
+                    mapper.map_stream(completions.await?).boxed(),
+                    executor,
+                ))
             }
             .boxed()
         }
@@ -635,7 +644,9 @@ mod tests {
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
             supports_none_reasoning_effort(&model),
-        );
+            &LanguageModelProviderId::new("test-compatible-provider"),
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(
@@ -664,7 +675,9 @@ mod tests {
             model.max_output_tokens,
             default_thinking_reasoning_effort(&model),
             supports_none_reasoning_effort(&model),
-        );
+            &LanguageModelProviderId::new("test-compatible-provider"),
+        )
+        .unwrap();
         let serialized = serde_json::to_value(request).unwrap();
 
         assert_eq!(serialized.get("reasoning"), None);

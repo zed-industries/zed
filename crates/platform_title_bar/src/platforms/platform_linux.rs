@@ -205,29 +205,45 @@ impl WindowControl {
 }
 
 impl RenderOnce for WindowControl {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let enabled = match self.icon {
+            WindowControlType::Minimize => window.is_minimizable(),
+            WindowControlType::Restore | WindowControlType::Maximize => window.is_resizable(),
+            WindowControlType::Close => true,
+        };
         let icon = svg()
             .size_4()
             .flex_none()
             .path(self.icon.icon().path())
-            .text_color(self.style.icon)
-            .group_hover("", |this| this.text_color(self.style.icon_hover));
+            .text_color(if enabled {
+                self.style.icon
+            } else {
+                cx.theme().colors().icon_disabled
+            })
+            .when(enabled, |this| {
+                this.group_hover("", |this| this.text_color(self.style.icon_hover))
+            });
 
         h_flex()
             .id(self.id)
             .group("")
-            .cursor_pointer()
             .justify_center()
             .content_center()
             .rounded_2xl()
             .w_5()
             .h_5()
-            .hover(|this| this.bg(self.style.background_hover))
-            .active(|this| this.bg(self.style.background_hover))
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(self.style.background_hover))
+                    .active(|this| this.bg(self.style.background_hover))
+            })
             .child(icon)
             .on_mouse_move(|_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
+                if !enabled {
+                    return;
+                }
                 match self.icon {
                     WindowControlType::Minimize => window.minimize_window(),
                     WindowControlType::Restore => window.zoom_window(),

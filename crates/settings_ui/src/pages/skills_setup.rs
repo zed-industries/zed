@@ -136,7 +136,7 @@ fn render_skill_row(
     let group = format!("group-{}", skill.name);
 
     let title = h_flex()
-        .ml(rems_from_px(-22.))
+        .ml(rems_from_px(-22.0_f32))
         .gap_1()
         .child({
             let share_skill_file_path = skill.skill_file_path.clone();

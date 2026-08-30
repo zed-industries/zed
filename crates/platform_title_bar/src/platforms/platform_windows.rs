@@ -95,7 +95,12 @@ impl WindowsCaptionButton {
 }
 
 impl RenderOnce for WindowsCaptionButton {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let enabled = match &self {
+            Self::Minimize => window.is_minimizable(),
+            Self::Restore | Self::Maximize => window.is_resizable(),
+            Self::Close => true,
+        };
         let (hover_bg, hover_fg, active_bg, active_fg) = match self {
             Self::Close => {
                 let color: Hsla = Rgba {
@@ -129,8 +134,14 @@ impl RenderOnce for WindowsCaptionButton {
             .w(px(36.))
             .h_full()
             .text_size(px(10.0))
-            .hover(|style| style.bg(hover_bg).text_color(hover_fg))
-            .active(|style| style.bg(active_bg).text_color(active_fg))
+            .when(!enabled, |style| {
+                style.text_color(cx.theme().colors().text_disabled)
+            })
+            .when(enabled, |style| {
+                style
+                    .hover(|style| style.bg(hover_bg).text_color(hover_fg))
+                    .active(|style| style.bg(active_bg).text_color(active_fg))
+            })
             .window_control_area(self.control_area())
             .child(self.icon())
     }

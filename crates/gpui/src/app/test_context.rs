@@ -404,7 +404,7 @@ impl TestAppContext {
     }
 
     /// Returns true if there's an alert dialog open.
-    pub fn expect_restart(&self) -> oneshot::Receiver<Option<PathBuf>> {
+    pub fn expect_restart(&self) -> oneshot::Receiver<(Option<PathBuf>, Vec<std::ffi::OsString>)> {
         let (tx, rx) = futures::channel::oneshot::channel();
         self.test_platform.expect_restart.borrow_mut().replace(tx);
         rx
@@ -900,7 +900,7 @@ impl VisualTestContext {
         E: Element,
     {
         self.update(|window, cx| {
-            let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+            let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
             window.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
@@ -914,7 +914,7 @@ impl VisualTestContext {
             window.refresh();
 
             drop(element);
-            cx.element_arena.borrow_mut().clear();
+            arena_scope.exit(&cx.element_arena).clear(cx);
 
             (request_layout_state, prepaint_state)
         })

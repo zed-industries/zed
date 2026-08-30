@@ -24,7 +24,7 @@ use workspace::searchable::{self, Direction, FilteredSearchRange};
 use crate::motion::{self, MotionKind};
 use crate::state::{HelixJumpBehaviour, HelixJumpLabel, Mode, Operator, SearchState};
 use crate::{
-    PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
+    HelixAppendState, PushHelixSurroundAdd, PushHelixSurroundDelete, PushHelixSurroundReplace, Vim,
     motion::{Motion, right},
 };
 use std::ops::Range;
@@ -42,6 +42,8 @@ actions!(
         HelixInsertEndOfLine,
         /// Goes to the location of the last modification.
         HelixGotoLastModification,
+        /// Goes to the line specified by the count.
+        HelixGotoLine,
         /// Select entire line or multiple lines, extending downwards.
         HelixSelectLine,
         /// Select all matches of a given pattern within the current selection.
@@ -63,6 +65,9 @@ actions!(
         HelixSelectNext,
         /// Select the previous match for the current search query.
         HelixSelectPrevious,
+        /// Trim leading and trailing whitespace from each selection.
+        /// Originally-empty selections (cursors) are dropped before trimming.
+        HelixTrimSelections,
     ]
 );
 
@@ -73,6 +78,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_insert_end_of_line);
     Vim::action(editor, cx, Vim::helix_yank);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
+    Vim::action(editor, cx, Vim::helix_goto_line);
     Vim::action(editor, cx, Vim::helix_paste);
     Vim::action(editor, cx, Vim::helix_select_regex);
     Vim::action(editor, cx, Vim::helix_keep_newest_selection);
@@ -89,6 +95,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_jump_to_word);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
+    Vim::action(editor, cx, Vim::helix_trim_selections);
     Vim::action(editor, cx, |vim, _: &PushHelixSurroundAdd, window, cx| {
         vim.clear_operator(window, cx);
         vim.push_operator(Operator::HelixSurroundAdd, window, cx);
@@ -718,7 +725,15 @@ impl Vim {
     fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
-        self.update_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |vim, editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            let selections_before_append = editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .map(|selection| selection.tail()..selection.head())
+                .collect();
+
             editor.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(&mut |map, selection| {
                     let point = if selection.is_empty() {
@@ -728,6 +743,18 @@ impl Vim {
                     };
                     selection.collapse_to(point, SelectionGoal::None);
                 });
+            });
+
+            let snapshot = editor.display_snapshot(cx);
+            let cursors_after_append = editor
+                .selections
+                .all_anchors(&snapshot)
+                .iter()
+                .map(|selection| selection.range())
+                .collect();
+            vim.helix_append_state = Some(HelixAppendState {
+                selections_before_append,
+                cursors_after_append,
             });
         });
     }
@@ -834,6 +861,17 @@ impl Vim {
         self.jump(".".into(), false, false, window, cx);
     }
 
+    pub fn helix_goto_line(
+        &mut self,
+        _: &HelixGotoLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(line_number) = Vim::take_count(cx) {
+            self.helix_move_cursor(Motion::StartOfDocument, Some(line_number), window, cx);
+        }
+    }
+
     pub fn helix_select_lines(
         &mut self,
         _: &HelixSelectLine,
@@ -889,6 +927,94 @@ impl Vim {
                 .selections
                 .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             editor.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
+        });
+    }
+
+    fn helix_trim_selections(
+        &mut self,
+        _: &HelixTrimSelections,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
+        self.update_editor(cx, |_, editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            let buffer = display_snapshot.buffer_snapshot();
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&display_snapshot);
+            let mut trimmed = Vec::new();
+
+            for selection in &selections {
+                if selection.is_empty() {
+                    continue;
+                }
+                let all_whitespace = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .flat_map(|chunk| chunk.chars())
+                    .all(|ch| ch.is_whitespace());
+                if all_whitespace {
+                    continue;
+                }
+
+                let mut new_start = selection.start;
+                for ch in buffer.chars_at(selection.start) {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    new_start += ch.len_utf8();
+                }
+
+                let mut new_end = selection.end;
+                for ch in buffer.reversed_chars_at(selection.end) {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    new_end -= ch.len_utf8();
+                }
+
+                let mut new_selection = *selection;
+                new_selection.start = new_start;
+                new_selection.end = new_end;
+                trimmed.push(new_selection);
+            }
+
+            if !trimmed.is_empty() {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select(trimmed);
+                });
+                return;
+            }
+
+            // All selections were empty or entirely whitespace. Match Helix's
+            // fallback: `collapse_selection` followed by `keep_primary_selection`.
+            // Take the newest selection and collapse it to a one-char cursor at
+            // the head (head - 1 for a forward, non-empty selection; head as-is
+            // otherwise).
+            let newest = editor
+                .selections
+                .newest::<MultiBufferOffset>(&display_snapshot);
+            let head = if newest.reversed {
+                newest.start
+            } else {
+                newest.end
+            };
+            let cursor_offset = if !newest.reversed && !newest.is_empty() {
+                let mut p = head;
+                if let Some(ch) = buffer.reversed_chars_at(head).next() {
+                    p -= ch.len_utf8();
+                }
+                p
+            } else {
+                head
+            };
+            let mut collapsed = newest;
+            collapsed.start = cursor_offset;
+            collapsed.end = cursor_offset;
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select(vec![collapsed]);
+            });
         });
     }
 
@@ -1754,7 +1880,10 @@ mod test {
     use std::{fmt::Write, time::Duration};
 
     use editor::{HighlightKey, MultiBufferOffset};
-    use gpui::{KeyBinding, UpdateGlobal, VisualTestContext};
+    use gpui::{
+        Bounds, DispatchEventResult, ElementInputHandler, KeyBinding, KeyDownEvent, Keystroke,
+        PlatformInput, PlatformInputHandler, UpdateGlobal, VisualTestContext,
+    };
     use indoc::indoc;
     use language::{CursorShape, Point};
     use project::FakeFs;
@@ -1767,7 +1896,7 @@ mod test {
 
     use super::{HELIX_JUMP_LABEL_LIMIT, HelixJumpToWord};
     use crate::{
-        HELIX_JUMP_OVERLAY_KEY, Vim, VimAddon,
+        HELIX_JUMP_OVERLAY_KEY, SwitchToHelixNormalMode, Vim, VimAddon,
         state::{Mode, Operator},
         test::VimTestContext,
     };
@@ -1841,6 +1970,36 @@ mod test {
                 Some("vim_mode == normal || vim_mode == visual"),
             )])
         });
+    }
+
+    fn assert_helix_jump_bypasses_text_input(cx: &mut VimTestContext) {
+        let editor = cx.update_editor(|_, _, cx| cx.entity());
+        let mut input_handler = cx.update(|window, cx| {
+            PlatformInputHandler::new(
+                window.to_async(cx),
+                Box::new(ElementInputHandler::new(Bounds::default(), editor)),
+            )
+        });
+        assert!(!input_handler.query_accepts_text_input());
+        assert!(!input_handler.query_prefers_ime_for_printable_keys());
+    }
+
+    fn dispatch_native_printable_key(cx: &mut VimTestContext, key: char) -> DispatchEventResult {
+        let keystroke = Keystroke::parse(&key.to_string())
+            .expect("helix jump labels are valid keystrokes")
+            .with_simulated_ime();
+        let result = cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        result
     }
 
     fn active_helix_jump_overlay_counts(cx: &mut VimTestContext) -> (usize, usize) {
@@ -2479,6 +2638,23 @@ mod test {
     async fn test_append(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
+
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a");
+
+        cx.assert_state("Theˇ quick brown", Mode::Insert);
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.set_state("The quick brownˇ", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a escape");
+
+        cx.assert_state("The quick brownˇ", Mode::HelixNormal);
+
         // test from the end of the selection
         cx.set_state(
             indoc! {"
@@ -2496,6 +2672,16 @@ mod test {
             fox jumps over
             the lazy dog."},
             Mode::Insert,
+        );
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state(
+            indoc! {"
+            «Theˇ» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
         );
 
         // test from the beginning of the selection
@@ -2516,6 +2702,37 @@ mod test {
             the lazy dog."},
             Mode::Insert,
         );
+
+        cx.simulate_keystrokes("escape");
+
+        cx.assert_state(
+            indoc! {"
+            «ˇThe» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        // escape must not restore the selection once text was inserted
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a x escape");
+
+        cx.assert_state("Thexˇ quick brown", Mode::HelixNormal);
+
+        // or when the cursor moved during insert mode
+        cx.set_state("Thˇe quick brown", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a left left escape");
+
+        cx.assert_state("Tˇhe quick brown", Mode::HelixNormal);
+
+        // all selections restore with multiple cursors
+        cx.set_state("ˇaaa bbb\nˇccc ddd", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("a escape");
+
+        cx.assert_state("ˇaaa bbb\nˇccc ddd", Mode::HelixNormal);
     }
 
     #[gpui::test]
@@ -3641,6 +3858,39 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_helix_jump_consumes_label_keystrokes_before_ime(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        bind_vim_jump_to_word(&mut cx, "s");
+        cx.set_state("ˇone two three", Mode::Normal);
+
+        cx.simulate_keystrokes("s");
+        let label = helix_jump_label_for_word(&mut cx, "two");
+        let mut chars = label.chars();
+        let first = chars.next().expect("jump labels are two characters long");
+        let second = chars.next().expect("jump labels are two characters long");
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_helix_jump_bypasses_text_input(&mut cx);
+
+        let result = dispatch_native_printable_key(&mut cx, first);
+        assert!(!result.propagate, "jump label keystroke should be consumed");
+        assert!(matches!(
+            cx.active_operator(),
+            Some(Operator::HelixJump {
+                first_char: Some(input),
+                ..
+            }) if input == first.to_ascii_lowercase()
+        ));
+        assert_helix_jump_bypasses_text_input(&mut cx);
+
+        let result = dispatch_native_printable_key(&mut cx, second);
+        assert!(!result.propagate, "jump label keystroke should be consumed");
+
+        cx.assert_state("one ˇtwo three", Mode::Normal);
+        assert_eq!(cx.active_operator(), None);
+    }
+
+    #[gpui::test]
     async fn test_vim_jump_keeps_normal_cursor_shape(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         bind_vim_jump_to_word(&mut cx, "g z");
@@ -3799,7 +4049,7 @@ mod test {
                 store.update_user_settings(cx, |settings| {
                     settings.theme.experimental_theme_overrides = Some(ThemeStyleContent {
                         colors: ThemeColorsContent {
-                            vim_helix_jump_label_foreground: Some("#00ff00".to_string()),
+                            vim_helix_jump_label_foreground: Some("#00ff00".into()),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -4196,6 +4446,97 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_helix_goto_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // <count G> lands at column 0 of the target line
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+            ˇ  line two
+            line three"},
+            Mode::HelixNormal,
+        );
+
+        // including when targeting the current line
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("3 shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+              line two
+            ˇline three"},
+            Mode::HelixNormal,
+        );
+
+        // but not when count is missing entirely
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixNormal,
+        );
+
+        // bare shift-g does not exit select mode
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("shift-g");
+        cx.assert_state(
+            indoc! {"
+            line one
+              line two
+            line ˇthree"},
+            Mode::HelixSelect,
+        );
+
+        // shift-g with count jumps without extending the selection, unlike <count>gg
+        cx.set_state(
+            indoc! {"
+            line one
+              line two
+            line «ˇthree»"},
+            Mode::HelixSelect,
+        );
+        cx.simulate_keystrokes("1 shift-g");
+        cx.assert_state(
+            indoc! {"
+            ˇline one
+              line two
+            line three"},
+            Mode::HelixSelect,
+        );
+    }
+
+    #[gpui::test]
     async fn test_helix_end_of_document(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.enable_helix();
@@ -4393,5 +4734,66 @@ mod test {
         rename_request.next().await.unwrap();
 
         cx.assert_state("const after = 2; console.log(afterˇ)", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Canonical case: a line selection (as produced by `x`) including its
+        // trailing newline. `_` strips the leading indent and trailing newline.
+        cx.set_state("«    indented line\nˇ»next line\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("_");
+        cx.assert_state("    «indented lineˇ»\nnext line\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections_all_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // An entirely-whitespace selection is filtered out before trimming.
+        // When every selection filters out, Helix falls back to
+        // `collapse_selection` + `keep_primary_selection`, which collapses the
+        // primary selection to a one-char cursor at head - 1 (the last
+        // whitespace char of the original selection).
+        cx.set_state("aa«    ˇ»next\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("_");
+        cx.assert_state("aa   ˇ next\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections_consumes_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // A count is meaningless for `_`, but it must not leak into the next
+        // command.
+        cx.set_state("«  aa  ˇ»\nbbb\nccc\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("2 _");
+        cx.assert_state("  «aaˇ»  \nbbb\nccc\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("x");
+        cx.assert_state("«  aa  \nˇ»bbb\nccc\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_line_with_multi_keybinding_to_helix_normal(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.update(|_, cx| {
+            cx.bind_keys([KeyBinding::new(
+                "j j",
+                SwitchToHelixNormalMode,
+                Some("vim_mode == insert"),
+            )]);
+        });
+
+        cx.set_state("hello worldˇ\n", Mode::Insert);
+        cx.simulate_keystrokes("j j");
+        cx.assert_state("hello worldˇ\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("o");
+        cx.assert_state("hello world\nˇ\n", Mode::Insert);
     }
 }

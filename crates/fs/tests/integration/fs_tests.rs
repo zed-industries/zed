@@ -591,6 +591,82 @@ async fn test_realfs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
 }
 
 #[gpui::test]
+async fn test_fake_fs_rename_ignore_if_exists_leaves_source_and_target_unchanged(
+    executor: BackgroundExecutor,
+) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "source.txt": "from source",
+            "target.txt": "from target",
+        }),
+    )
+    .await;
+
+    let handle = fs
+        .open_handle(Path::new(path!("/root/source.txt")))
+        .await
+        .unwrap();
+
+    let result = fs
+        .rename(
+            Path::new(path!("/root/source.txt")),
+            Path::new(path!("/root/target.txt")),
+            RenameOptions {
+                ignore_if_exists: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        fs.load(Path::new(path!("/root/source.txt"))).await.unwrap(),
+        "from source"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/root/target.txt"))).await.unwrap(),
+        "from target"
+    );
+
+    // An ignored rename must not be recorded as a move either, or a handle held
+    // across it reports a path its file never went to.
+    assert!(
+        handle.current_path(&(fs.clone() as Arc<dyn Fs>)).is_err(),
+        "an ignored rename should not record a move"
+    );
+}
+
+#[gpui::test]
+async fn test_fake_fs_rename_onto_itself_keeps_the_file(executor: BackgroundExecutor) {
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a.txt": "content",
+        }),
+    )
+    .await;
+
+    let path = Path::new(path!("/root/a.txt"));
+    let result = fs
+        .rename(
+            path,
+            path,
+            RenameOptions {
+                overwrite: true,
+                ..Default::default()
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+    assert_eq!(fs.load(path).await.unwrap(), "content");
+}
+
+#[gpui::test]
 #[cfg(unix)]
 async fn test_realfs_broken_symlink_metadata(executor: BackgroundExecutor) {
     let tempdir = TempDir::new().unwrap();
@@ -697,7 +773,13 @@ async fn test_fake_fs_restore(executor: BackgroundExecutor) {
     let path = path!("/root/src/file_a.txt").as_ref();
     let trashed_entry = fs.trash(path, Default::default()).await.unwrap();
 
+    assert_eq!(
+        fs.original_path_for_trash_id(trashed_entry),
+        Some(path.to_path_buf())
+    );
+
     fs.restore(trashed_entry).await.unwrap();
+    assert_eq!(fs.original_path_for_trash_id(trashed_entry), None);
 
     assert_eq!(
         fs.files(),
@@ -1119,4 +1201,31 @@ async fn test_realfs_watch_stress_reports_missed_paths(
         "missed {} paths without rescan being reported",
         missed_paths.len()
     );
+}
+
+#[gpui::test]
+async fn restore_can_be_retried_after_collision(cx: &mut TestAppContext) {
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let path = path!("/root/a.txt");
+    let remove_options = RemoveOptions::default();
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "original"}))
+        .await;
+
+    // We'll first trash the `a.txt` file so we can hold onto its `TrashId`,
+    // allowing us to later attempt restoring it again, ensuring that it didn't
+    // get removed from the trash state, even if restoring failed.
+    let trash_id = fs.trash(path.as_ref(), remove_options).await.unwrap();
+
+    fs.insert_file(path, "conflicting".into()).await;
+    let err = fs.restore(trash_id).await.unwrap_err();
+    assert!(matches!(err, TrashRestoreError::Collision { .. }));
+
+    fs.remove_file(path.as_ref(), remove_options).await.unwrap();
+    let restored_path = fs.restore(trash_id).await.unwrap();
+    assert_eq!(fs.load(restored_path.as_path()).await.unwrap(), "original");
+
+    assert!(matches!(
+        fs.restore(trash_id).await.unwrap_err(),
+        TrashRestoreError::AlreadyRestored
+    ));
 }

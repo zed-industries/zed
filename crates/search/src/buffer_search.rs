@@ -331,7 +331,7 @@ impl Render for BufferSearchBar {
                         query_focus.clone(),
                     ))
                     .when(!narrow_mode, |this| {
-                        this.child(div().ml_2().min_w(rems_from_px(40.)).child(
+                        this.child(div().ml_2().min_w(rems_from_px(40_f32)).child(
                             Label::new(match_text).size(LabelSize::Small).color(
                                 if self.active_match_index.is_some() {
                                     Color::Default
@@ -951,7 +951,7 @@ impl BufferSearchBar {
     }
 
     fn deployed_toolbar_location(&self, cx: &App) -> ToolbarItemLocation {
-        if self.needs_expand_collapse_option(cx) && !self.uses_hidden_splittable_editor(cx) {
+        if self.needs_expand_collapse_option(cx) {
             ToolbarItemLocation::PrimaryLeft
         } else {
             ToolbarItemLocation::Secondary
@@ -976,20 +976,11 @@ impl BufferSearchBar {
     // We provide an expand/collapse button if we are in a multibuffer
     // and not doing a project search.
     fn needs_expand_collapse_option(&self, cx: &App) -> bool {
-        if let Some(item) = &self.active_searchable_item {
-            let buffer_kind = item.buffer_kind(cx);
-
-            if buffer_kind == ItemBufferKind::Singleton {
-                return false;
-            }
-
-            let workspace::searchable::SearchOptions {
-                find_in_results, ..
-            } = item.supported_options(cx);
-            !find_in_results
-        } else {
-            false
-        }
+        !self.uses_hidden_splittable_editor(cx)
+            && self.active_searchable_item.as_ref().is_some_and(|item| {
+                item.buffer_kind(cx) == ItemBufferKind::Multibuffer
+                    && !item.supported_options(cx).find_in_results
+            })
     }
 
     fn toggle_fold_all(&mut self, _: &ToggleFoldAll, window: &mut Window, cx: &mut Context<Self>) {
@@ -1053,6 +1044,11 @@ impl BufferSearchBar {
         let search = self
             .query_suggestion(seed_query_override, window, cx)
             .map(|suggestion| {
+                let suggestion = if self.default_options.contains(SearchOptions::REGEX) {
+                    regex::escape(&suggestion)
+                } else {
+                    suggestion
+                };
                 self.search(&suggestion, Some(self.default_options), true, window, cx)
             });
 
@@ -1883,7 +1879,7 @@ mod tests {
         display_map::DisplayRow, test::editor_test_context::EditorTestContext,
     };
     use futures::stream::StreamExt as _;
-    use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
+    use gpui::{FocusHandle, Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     #[cfg(target_os = "macos")]
     use project::Project;
@@ -1892,6 +1888,7 @@ mod tests {
     use util_macros::perf;
     #[cfg(target_os = "macos")]
     use workspace::{AppState, MultiWorkspace, Workspace};
+    use workspace::{item::Item, searchable::SearchableItem};
 
     fn init_globals(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3180,6 +3177,83 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_replace_with_lookaround(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_test(cx);
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("316227766016837933199\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(\d)(?=(\d{4})+$)",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "$1,",
+            replace_all: true,
+            expected_text: "3,1622,7766,0168,3793,3199\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Xfoo\nbar\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"foo\n(?<=Xfoo\n)bar",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "BAZ",
+            replace_all: true,
+            expected_text: "Xfoo\nbar\n".to_string(),
+        })
+        .await;
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("food: bar\nfoo: bar\n", window, cx)
+        });
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"(?<=foo: )bar",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "BAZ",
+            replace_all: false,
+            expected_text: "food: bar\nfoo: BAZ\n".to_string(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
+    async fn test_replace_with_lookaround_in_multibuffer(cx: &mut TestAppContext) {
+        let (editor, search_bar, cx) = init_multibuffer_test(cx);
+
+        run_replacement_test(ReplacementTestParams {
+            editor: &editor,
+            search_bar: &search_bar,
+            cx,
+            search_text: r"\w+(?= expression)",
+            search_options: Some(SearchOptions::REGEX),
+            replacement_text: "SOME",
+            replace_all: true,
+            expected_text: r#"
+            A SOME expression (shortened as regex or regexp;[1] also referred to as
+            SOME expression[2][3]) is a sequence of characters that specifies a search
+            pattern in text. Usually such patterns are used by string-searching algorithms
+            for "find" or "find and replace" operations on strings, or for input validation.
+            Some Additional text with the term SOME expression in it.
+            There two lines."#
+                .unindent(),
+        })
+        .await;
+    }
+
+    #[gpui::test]
     async fn test_deploy_replace_focuses_replacement_editor(cx: &mut TestAppContext) {
         init_globals(cx);
         let (editor, search_bar, cx) = init_test(cx);
@@ -3613,6 +3687,144 @@ mod tests {
 
     #[perf]
     #[gpui::test]
+    async fn test_no_expand_collapse_option_when_item_is_not_buffer_backed(
+        cx: &mut TestAppContext,
+    ) {
+        // Items that are backed by neither a singleton buffer nor a
+        // multibuffer, for example, the LSP log view, report
+        // `ItemBufferKind::None` and must not show the expand/collapse all
+        // files button.
+
+        // A searchable item that reports `ItemBufferKind::None`, like the LSP
+        // log view.
+        struct NonBufferSearchableItem {
+            focus_handle: FocusHandle,
+        }
+
+        impl EventEmitter<()> for NonBufferSearchableItem {}
+        impl EventEmitter<SearchEvent> for NonBufferSearchableItem {}
+
+        impl Focusable for NonBufferSearchableItem {
+            fn focus_handle(&self, _: &App) -> FocusHandle {
+                self.focus_handle.clone()
+            }
+        }
+
+        impl Render for NonBufferSearchableItem {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        impl Item for NonBufferSearchableItem {
+            type Event = ();
+
+            fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+                "Non-buffer item".into()
+            }
+
+            fn as_searchable(
+                &self,
+                handle: &Entity<Self>,
+                _: &App,
+            ) -> Option<Box<dyn SearchableItemHandle>> {
+                Some(Box::new(handle.clone()))
+            }
+
+            fn buffer_kind(&self, _: &App) -> ItemBufferKind {
+                ItemBufferKind::None
+            }
+        }
+
+        impl SearchableItem for NonBufferSearchableItem {
+            type Match = ();
+
+            fn clear_matches(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+            fn update_matches(
+                &mut self,
+                _: &[Self::Match],
+                _: Option<usize>,
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn query_suggestion(
+                &mut self,
+                _: Option<SeedQuerySetting>,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> String {
+                String::new()
+            }
+            fn activate_match(
+                &mut self,
+                _: usize,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn select_matches(
+                &mut self,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn replace(
+                &mut self,
+                _: &Self::Match,
+                _: &SearchQuery,
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) {
+            }
+            fn find_matches(
+                &mut self,
+                _: Arc<SearchQuery>,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Task<Vec<Self::Match>> {
+                Task::ready(Vec::new())
+            }
+            fn active_match_index(
+                &mut self,
+                _: Direction,
+                _: &[Self::Match],
+                _: SearchToken,
+                _: &mut Window,
+                _: &mut Context<Self>,
+            ) -> Option<usize> {
+                None
+            }
+        }
+
+        init_globals(cx);
+        let window = cx.add_window(|window, cx| {
+            let item = cx.new(|cx| NonBufferSearchableItem {
+                focus_handle: cx.focus_handle(),
+            });
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&item), window, cx);
+            search_bar
+        });
+        let search_bar = window.root(cx).unwrap();
+        let cx = VisualTestContext::from_window(*window, cx).into_mut();
+
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert!(
+                !search_bar.needs_expand_collapse_option(cx),
+                "Items reporting ItemBufferKind::None must not get the expand/collapse button"
+            );
+        });
+    }
+
+    #[perf]
+    #[gpui::test]
     async fn test_hides_and_uses_secondary_when_part_of_project_search(cx: &mut TestAppContext) {
         let (editor, search_bar, cx) = init_multibuffer_test(cx);
 
@@ -3764,6 +3976,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                search_on_type: false,
             },
             cx,
         );
@@ -3827,6 +4040,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                search_on_type: false,
             },
             cx,
         );
@@ -3865,6 +4079,7 @@ mod tests {
                 include_ignored: false,
                 regex: false,
                 center_on_match: false,
+                search_on_type: false,
             },
             cx,
         );
@@ -4038,6 +4253,50 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_seeded_query_is_escaped_in_regex_mode(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let buffer = cx.new(|cx| Buffer::local("z.d\nzed\n", cx));
+        let cx = cx.add_empty_window();
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        // Select "z.d" on the first line.
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([Point::new(0, 0)..Point::new(0, 3)])
+            });
+        });
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
+            search_bar.search_suggested(Some(SeedQuerySetting::Selection), window, cx);
+        });
+        cx.run_until_parked();
+
+        search_bar.read_with(cx, |search_bar, cx| {
+            assert_eq!(
+                search_bar.query(cx),
+                r"z\.d",
+                "seeded regex query must be escaped"
+            );
+        });
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.search_background_highlights(cx).len(),
+                1,
+                "only the literal 'z.d' should match, not 'zed'"
+            );
+        });
+    }
+
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
@@ -4049,6 +4308,7 @@ mod tests {
                         include_ignored: Some(search_settings.include_ignored),
                         regex: Some(search_settings.regex),
                         center_on_match: Some(search_settings.center_on_match),
+                        search_on_type: Some(search_settings.search_on_type),
                     });
                 });
             });

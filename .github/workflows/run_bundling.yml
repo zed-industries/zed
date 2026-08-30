@@ -197,6 +197,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -247,6 +248,7 @@ jobs:
       with:
         node-version: '24'
         check-latest: true
+        package-manager-cache: false
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:

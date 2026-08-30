@@ -24,7 +24,7 @@ use language::{
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
+use multi_buffer::{BufferOffset, MultiBufferOffset, MultiBufferRow, PathKey};
 use project::{
     File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
@@ -617,7 +617,7 @@ fn deserialize_anchor(anchor: proto::EditorAnchor, buffer: &MultiBufferSnapshot)
         let text_anchor = language::proto::deserialize_anchor(anchor)?;
         buffer.anchor_in_buffer(text_anchor)
     } else {
-        match proto::Bias::from_i32(anchor.bias)? {
+        match proto::Bias::try_from(anchor.bias).ok()? {
             proto::Bias::Left => Some(Anchor::Min),
             proto::Bias::Right => Some(Anchor::Max),
         }
@@ -759,11 +759,10 @@ impl Item for Editor {
                     let buffer_id = buffer.remote_id();
                     let project = self.project()?.read(cx);
                     let entry = project.entry_for_path(&path, cx)?;
-                    let (repo, repo_path) = project
+                    let status = project
                         .git_store()
                         .read(cx)
-                        .repository_and_path_for_buffer_id(buffer_id, cx)?;
-                    let status = repo.read(cx).status_for_path(&repo_path)?.status;
+                        .display_status_for_buffer_id(buffer_id, cx)?;
 
                     Some(entry_git_aware_label_color(
                         status.summary(),
@@ -812,6 +811,7 @@ impl Item for Editor {
                         params.max_title_len.unwrap_or(MAX_TAB_TITLE_LEN),
                     )
                 })
+                .single_line()
                 .color(label_color)
                 .when(params.truncate_title_middle, |this| {
                     this.truncate_middle().flex_1()
@@ -822,6 +822,7 @@ impl Item for Editor {
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
+                        .single_line()
                         .size(LabelSize::XSmall)
                         .when(params.truncate_title_middle, |this| {
                             this.truncate_start().flex_shrink()
@@ -931,6 +932,9 @@ impl Item for Editor {
     }
 
     fn can_save(&self, cx: &App) -> bool {
+        if self.read_only(cx) {
+            return false;
+        }
         let buffer = &self.buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton() {
             buffer.read(cx).project_path(cx).is_some()
@@ -946,6 +950,9 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         // Add meta data tracking # of auto saves
         if options.autosave {
             self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
@@ -964,7 +971,13 @@ impl Item for Editor {
         } else {
             buffers
                 .into_iter()
-                .filter(|buffer| buffer.read(cx).is_dirty())
+                // Skip untitled buffers: a multi-buffer (e.g. project search results) can
+                // excerpt a buffer with no file on disk, which can only be persisted via
+                // `save_as`. Trying to save it here errors and aborts the whole save.
+                .filter(|buffer| {
+                    let buffer = buffer.read(cx);
+                    buffer.is_dirty() && !buffer.read_only() && buffer.file().is_some()
+                })
                 .collect()
         };
 
@@ -1169,11 +1182,11 @@ impl Item for Editor {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::BreadcrumbsChanged => {
+            EditorEvent::BreadcrumbsChanged | EditorEvent::OutlineSymbolsChanged => {
                 f(ItemEvent::UpdateBreadcrumbs);
             }
 
-            EditorEvent::DirtyChanged => {
+            EditorEvent::DirtyChanged | EditorEvent::CapabilityChanged => {
                 f(ItemEvent::UpdateTab);
             }
 
@@ -1306,6 +1319,7 @@ impl SerializableItem for Editor {
             } => window.spawn(cx, {
                 let project = project.clone();
                 async move |cx| {
+                    let content_language_detection_enabled = language.is_none();
                     let language_registry =
                         project.read_with(cx, |project, _| project.languages().clone());
 
@@ -1328,6 +1342,9 @@ impl SerializableItem for Editor {
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
+                        if content_language_detection_enabled {
+                            buffer.set_content_language_detection_enabled(true);
+                        }
                         buffer.set_language_registry(language_registry);
                         buffer.set_text(contents, cx);
                         if let Some(entry) = buffer.peek_undo_stack() {
@@ -1417,12 +1434,18 @@ impl SerializableItem for Editor {
             SerializedEditor {
                 abs_path: None,
                 contents: None,
+                language,
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
                     .update(cx, |project, cx| project.create_buffer(None, true, cx))
                     .await
                     .context("Failed to create buffer")?;
+                if language.is_none() {
+                    buffer.update(cx, |buffer, _| {
+                        buffer.set_content_language_detection_enabled(true);
+                    });
+                }
 
                 cx.update(|window, cx| {
                     cx.new(|cx| {
@@ -1441,7 +1464,6 @@ impl SerializableItem for Editor {
         workspace: &mut Workspace,
         item_id: ItemId,
         closing: bool,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let buffer_serialization = self.buffer_serialization?;
@@ -1477,35 +1499,37 @@ impl SerializableItem for Editor {
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
+        let content_language_detection_enabled =
+            buffer.read(cx).content_language_detection_enabled();
 
         let snapshot = buffer.read(cx).snapshot();
 
         let db = EditorDb::global(cx);
-        Some(cx.spawn_in(window, async move |_this, cx| {
-            cx.background_spawn(async move {
-                let (contents, language) = if serialize_dirty_buffers && is_dirty {
-                    let contents = snapshot.text();
-                    let language = snapshot.language().map(|lang| lang.name().to_string());
-                    (Some(contents), language)
-                } else {
-                    (None, None)
-                };
+        Some(cx.background_spawn(async move {
+            let (contents, language) = if serialize_dirty_buffers && is_dirty {
+                let contents = snapshot.text();
+                let language = snapshot.language().and_then(|language| {
+                    if content_language_detection_enabled && *language == *PLAIN_TEXT {
+                        None
+                    } else {
+                        Some(language.name().to_string())
+                    }
+                });
+                (Some(contents), language)
+            } else {
+                (None, None)
+            };
 
-                let editor = SerializedEditor {
-                    abs_path,
-                    contents,
-                    language,
-                    mtime,
-                };
-                log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
-                db.save_serialized_editor(item_id, workspace_id, editor)
-                    .await
-                    .context("failed to save serialized editor")
-            })
-            .await
-            .context("failed to save contents of buffer")?;
-
-            Ok(())
+            let editor = SerializedEditor {
+                abs_path,
+                contents,
+                language,
+                mtime,
+            };
+            log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
+            db.save_serialized_editor(item_id, workspace_id, editor)
+                .await
+                .context("failed to save serialized editor")
         }))
     }
 
@@ -1644,6 +1668,41 @@ impl Editor {
                 })
             });
         });
+    }
+}
+
+// Replace-all commonly expands several hits against the same line.
+#[derive(Default)]
+struct SearchHitContext {
+    row: Option<u32>,
+    text: String,
+}
+
+impl SearchHitContext {
+    fn for_hit(
+        &mut self,
+        snapshot: &MultiBufferSnapshot,
+        hit: &Range<Anchor>,
+    ) -> (&str, Range<usize>) {
+        let start = hit.start.to_point(snapshot);
+        let end = hit.end.to_point(snapshot);
+        let range = if start.row == end.row {
+            if self.row != Some(start.row) {
+                self.text.clear();
+                self.text.extend(snapshot.text_for_range(
+                    Point::new(start.row, 0)
+                        ..Point::new(start.row, snapshot.line_len(MultiBufferRow(start.row))),
+                ));
+                self.row = Some(start.row);
+            }
+            start.column as usize..end.column as usize
+        } else {
+            self.row = None;
+            self.text.clear();
+            self.text.extend(snapshot.text_for_range(start..end));
+            0..self.text.len()
+        };
+        (&self.text, range)
     }
 }
 
@@ -1832,19 +1891,20 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
-        let text = text.text_for_range(identifier.clone()).collect::<Vec<_>>();
-        let text: Cow<_> = if text.len() == 1 {
-            text.first().cloned().unwrap().into()
+        let replacement = if query.replacement_requires_context() {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let mut context = SearchHitContext::default();
+            let (line, hit) = context.for_hit(&snapshot, identifier);
+            query
+                .replacement_for(line, hit)
+                .map(|replacement| Arc::<str>::from(&*replacement))
         } else {
-            let joined_chunks = text.concat();
-            joined_chunks.into()
+            query.replacement().map(Arc::<str>::from)
         };
 
-        if let Some(replacement) = query.replacement_for(&text) {
+        if let Some(replacement) = replacement {
             self.transact(window, cx, |this, _, cx| {
-                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
+                this.edit([(identifier.clone(), replacement)], cx);
             });
         }
     }
@@ -1856,26 +1916,18 @@ impl SearchableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.buffer.read(cx);
-        let text = text.snapshot(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut edits = vec![];
 
         // A regex might have replacement variables so we cannot apply
         // the same replacement to all matches
-        if query.is_regex() {
+        if query.replacement_requires_context() {
+            let mut context = SearchHitContext::default();
             edits = matches
                 .filter_map(|m| {
-                    let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-                    let text: Cow<_> = if text.len() == 1 {
-                        text.first().cloned().unwrap().into()
-                    } else {
-                        let joined_chunks = text.concat();
-                        joined_chunks.into()
-                    };
-
+                    let (line, hit) = context.for_hit(&snapshot, m);
                     query
-                        .replacement_for(&text)
+                        .replacement_for(line, hit)
                         .map(|replacement| (m.clone(), Arc::from(&*replacement)))
                 })
                 .collect();
@@ -2830,6 +2882,7 @@ mod tests {
                     buffer.language().map(|lang| lang.name()),
                     Some("Rust".into())
                 ); // Language should be set to Rust
+                assert!(!buffer.content_language_detection_enabled());
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });
         }
@@ -2904,6 +2957,7 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert!(buffer.file().is_none());
+                assert!(buffer.content_language_detection_enabled());
             });
         }
 
@@ -3281,6 +3335,92 @@ mod tests {
             let r = ranges[0].start.to_point(text_snapshot)..ranges[0].end.to_point(text_snapshot);
             assert_eq!(r.start.row, 2, "merged range should start at row 2");
             assert_eq!(r.end.row, 3, "merged range should end at row 3");
+        });
+    }
+
+    // Regression test for a multi-buffer (e.g. project search results) that excerpts
+    // an untitled buffer alongside a file-backed one. Saving used to error out with
+    // "buffer doesn't have a file", which aborted `workspace: reload` and quit flows.
+    #[gpui::test]
+    async fn test_save_multi_buffer_with_untitled_buffer_skips_untitled(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/dir"), json!({ "file.txt": "the cat sat" }))
+            .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let file_buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let untitled_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("the cat", None, false, cx)
+        });
+
+        // Make both buffers dirty so both are candidates to be saved.
+        file_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "X")], None, cx);
+        });
+        untitled_buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "Y")], None, cx);
+        });
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(project.read(cx).capability());
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                file_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                untitled_buffer.clone(),
+                [Point::new(0, 0)..Point::new(0, 3)],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+        let editor = cx.new_window_entity(|window, cx| {
+            Editor::for_multibuffer(multi_buffer, Some(project.clone()), window, cx)
+        });
+        cx.run_until_parked();
+
+        editor.update(cx, |editor, cx| {
+            assert!(!editor.buffer().read(cx).is_singleton());
+        });
+
+        let save = editor.update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: false,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        });
+        save.await
+            .expect("saving a multi-buffer that excerpts an untitled buffer should not error");
+        cx.run_until_parked();
+
+        // The file-backed buffer is saved; the untitled buffer is skipped and stays dirty.
+        file_buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
+        untitled_buffer.update(cx, |buffer, _| {
+            assert!(buffer.file().is_none());
+            assert!(buffer.is_dirty());
         });
     }
 }

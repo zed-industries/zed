@@ -17,6 +17,7 @@ use crate::{
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{StreamExt, stream::FuturesUnordered};
+use git::{CopyFilePermalink, OpenFilePermalink};
 use gpui::{
     Action, Anchor, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
@@ -2023,8 +2024,17 @@ impl Pane {
                 }
 
                 if should_save {
-                    match Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
-                        .await
+                    let Some(pane_handle) = pane.upgrade() else {
+                        return Ok(());
+                    };
+                    match Self::save_item(
+                        project.clone(),
+                        pane_handle,
+                        &*item_to_close,
+                        save_intent,
+                        cx,
+                    )
+                    .await
                     {
                         Ok(success) => {
                             if !success {
@@ -2039,7 +2049,7 @@ impl Pane {
                                 );
                                 window.prompt(
                                     PromptLevel::Warning,
-                                    &format!("Unable to save file: {}", &err),
+                                    &format!("Unable to save file: {err}"),
                                     Some(&detail),
                                     &["Close Without Saving", "Cancel"],
                                     cx,
@@ -2235,7 +2245,7 @@ impl Pane {
 
     pub async fn save_item(
         project: Entity<Project>,
-        pane: &WeakEntity<Pane>,
+        pane: Entity<Pane>,
         item: &dyn ItemHandle,
         save_intent: SaveIntent,
         cx: &mut AsyncWindowContext,
@@ -2256,13 +2266,17 @@ impl Pane {
             }
             return Ok(true);
         };
-        let Some(item_ix) = pane
-            .read_with(cx, |pane, _| pane.index_for_item(item))
-            .ok()
-            .flatten()
-        else {
+        let Some(item_ix) = pane.read_with(cx, |pane, _| pane.index_for_item(item)) else {
             return Ok(true);
         };
+
+        if (save_intent == SaveIntent::Save
+            || save_intent == SaveIntent::FormatAndSave
+            || save_intent == SaveIntent::SaveWithoutFormat)
+            && cx.update(|_window, cx| !item.capability(cx).editable())?
+        {
+            return Ok(true);
+        }
 
         let (
             mut has_conflict,
@@ -2404,7 +2418,7 @@ impl Pane {
                                     "save modal was not present in spawned modals after awaiting for its answer"
                                 )
                             }
-                        })?;
+                        });
                         match answer {
                             Ok(0) => {}
                             Ok(1) => {
@@ -2469,16 +2483,13 @@ impl Pane {
                     return Ok(false);
                 };
 
-                let project_path = pane
-                    .update(cx, |pane, cx| {
-                        pane.project
-                            .update(cx, |project, cx| {
-                                project.find_or_create_worktree(new_path, true, cx)
-                            })
-                            .ok()
-                    })
-                    .ok()
-                    .flatten();
+                let project_path = pane.update(cx, |pane, cx| {
+                    pane.project
+                        .update(cx, |project, cx| {
+                            project.find_or_create_worktree(new_path, true, cx)
+                        })
+                        .ok()
+                });
                 let save_task = if let Some(project_path) = project_path {
                     let (worktree, path) = project_path.await?;
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
@@ -2516,13 +2527,13 @@ impl Pane {
             }
         }
 
-        pane.update(cx, |_, cx| {
+        Ok(pane.update(cx, |_, cx| {
             cx.emit(Event::UserSavedItem {
                 item: item.downgrade_item(),
                 save_intent,
             });
             true
-        })
+        }))
     }
 
     pub fn autosave_item(
@@ -2875,13 +2886,13 @@ impl Pane {
                 .tooltip(move |_, cx| {
                     if toggleable {
                         Tooltip::with_meta(
-                            "Unlock File",
+                            "Unlock Tab",
                             None,
-                            "This will make this file editable",
+                            "This will make this tab editable",
                             cx,
                         )
                     } else {
-                        Tooltip::with_meta("Locked File", None, "This file is read-only", cx)
+                        Tooltip::with_meta("Locked Tab", None, "This tab is read-only", cx)
                     }
                 })
                 .on_click(cx.listener(move |pane, _, window, cx| {
@@ -3058,7 +3069,7 @@ impl Pane {
                             } else {
                                 this.tooltip(move |_, cx| {
                                     let text = text.clone();
-                                    Tooltip::with_meta(text, None, "Read-Only File", cx)
+                                    Tooltip::with_meta(text, None, "Read-Only Tab", cx)
                                 })
                             }
                         }
@@ -3240,9 +3251,9 @@ impl Pane {
 
                         if capability != Capability::ReadOnly {
                             let read_only_label = if capability.editable() {
-                                "Make File Read-Only"
+                                "Make Tab Read-Only"
                             } else {
-                                "Make File Editable"
+                                "Make Tab Editable"
                             };
                             menu = menu.separator().entry(
                                 read_only_label,
@@ -3279,8 +3290,19 @@ impl Pane {
                             let parent_abs_path = entry_abs_path
                                 .as_deref()
                                 .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                            let has_git_repo = project_path.as_ref().is_some_and(|project_path| {
+                                pane.read(cx).project.upgrade().is_some_and(|project| {
+                                    project
+                                        .read(cx)
+                                        .git_store()
+                                        .read(cx)
+                                        .repository_and_path_for_project_path(project_path, cx)
+                                        .is_some()
+                                })
+                            });
                             let relative_path = project_path
-                                .map(|project_path| project_path.path)
+                                .as_ref()
+                                .map(|project_path| project_path.path.clone())
                                 .filter(|_| has_relative_path);
 
                             let visible_in_project_panel = relative_path.is_some()
@@ -3324,6 +3346,53 @@ impl Pane {
                                                 relative_path.display(path_style).to_string(),
                                             ));
                                         }),
+                                    )
+                                })
+                                .when(has_git_repo, |menu| {
+                                    menu.separator().when_some(
+                                        project_path.clone(),
+                                        |menu, project_path| {
+                                            menu.entry(
+                                                "Open File Permalink",
+                                                Some(OpenFilePermalink.boxed_clone()),
+                                                window.handler_for(&pane, {
+                                                    let project_path = project_path.clone();
+                                                    move |pane, window, cx| {
+                                                        let Some(project) = pane.project.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        crate::open_file_permalink(
+                                                            project,
+                                                            project_path.clone(),
+                                                            pane.workspace.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }),
+                                            )
+                                            .entry(
+                                                "Copy File Permalink",
+                                                Some(CopyFilePermalink.boxed_clone()),
+                                                window.handler_for(
+                                                    &pane,
+                                                    move |pane, window, cx| {
+                                                        let Some(project) = pane.project.upgrade()
+                                                        else {
+                                                            return;
+                                                        };
+                                                        crate::copy_file_permalink(
+                                                            project,
+                                                            project_path.clone(),
+                                                            pane.workspace.clone(),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ),
+                                            )
+                                        },
                                     )
                                 })
                                 .when(is_local, |menu| {
@@ -4056,25 +4125,38 @@ impl Pane {
         let mut to_pane = cx.entity();
         let mut split_direction = self.drag_split_direction;
         let paths = paths.paths().to_vec();
-        let is_remote = self
+        let (should_block, needs_wsl_translation) = self
             .workspace
             .update(cx, |workspace, cx| {
-                if workspace.project().read(cx).is_via_collab() {
+                let project = workspace.project().read(cx);
+
+                if project.is_via_collab() {
                     workspace.show_error("Cannot drop files on a remote project", cx);
-                    true
-                } else {
-                    false
+                    return (true, false);
                 }
+                if project.is_via_remote_server() {
+                    if !project.is_via_wsl(cx) {
+                        workspace.show_error(
+                            "Cannot drop local files on a remote SSH/Docker project",
+                            cx,
+                        );
+                        return (true, false);
+                    }
+                    return (false, true);
+                }
+                (false, false)
             })
-            .unwrap_or(true);
-        if is_remote {
+            .unwrap_or((true, false));
+        if should_block {
             return;
         }
 
         self.workspace
             .update(cx, |workspace, cx| {
                 let fs = Arc::clone(workspace.project().read(cx).fs());
+                let project = workspace.project().clone();
                 cx.spawn_in(window, async move |workspace, cx| {
+                    // `fs` is the host's file system even for remote projects, so probe the paths as they were dropped, before translating them to the remote's path style.
                     let mut is_file_checks = FuturesUnordered::new();
                     for path in &paths {
                         is_file_checks.push(fs.is_file(path))
@@ -4090,6 +4172,40 @@ impl Pane {
                     if !has_files_to_open {
                         split_direction = None;
                     }
+
+                    let paths = if needs_wsl_translation {
+                        let mut translated = Vec::with_capacity(paths.len());
+                        for path in &paths {
+                            log::debug!("dropped Windows path {}", path.display());
+                            let fut = project.read_with(cx, |project, cx| {
+                                project.try_windows_path_to_wsl(path, cx)
+                            });
+                            match fut.await {
+                                Ok(wsl_path) => {
+                                    log::debug!("translated to WSL path {}", wsl_path.display());
+                                    translated.push(wsl_path);
+                                }
+                                Err(e) => log::warn!(
+                                    "wslpath failed for {}: {e:#}, dropping this path",
+                                    path.display()
+                                ),
+                            }
+                        }
+                        if translated.is_empty() && !paths.is_empty() {
+                            workspace
+                                .update_in(cx, |workspace, _, cx| {
+                                    workspace.show_error(
+                                        "Could not translate the dropped paths into WSL paths",
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            return;
+                        }
+                        translated
+                    } else {
+                        paths
+                    };
 
                     if let Ok((open_task, to_pane)) =
                         workspace.update_in(cx, |workspace, window, cx| {
@@ -4307,7 +4423,11 @@ impl Render for Pane {
         let Some(project) = self.project.upgrade() else {
             return div().track_focus(&self.focus_handle(cx));
         };
-        let is_local = project.read(cx).is_local();
+        // WSL remotes accept dropped host files too, since their paths can be translated with `wslpath`; see `Pane::handle_external_paths_drop`.
+        let accepts_external_paths = {
+            let project = project.read(cx);
+            project.is_local() || project.is_via_wsl(cx)
+        };
 
         v_flex()
             .key_context(key_context)
@@ -4482,7 +4602,7 @@ impl Render for Pane {
                     .overflow_hidden()
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
-                    .when(is_local, |div| {
+                    .when(accepts_external_paths, |div| {
                         div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
                     })
                     .map(|div| {
@@ -4533,7 +4653,7 @@ impl Render for Pane {
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<DraggedSelection>("", |style| style.visible())
-                            .when(is_local, |div| {
+                            .when(accepts_external_paths, |div| {
                                 div.group_drag_over::<ExternalPaths>("", |style| style.visible())
                             })
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
@@ -4608,6 +4728,10 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
+    pub fn is_preview_item(&self) -> bool {
+        self.history.0.lock().preview_item_id == Some(self.item.id())
+    }
+
     pub fn push<D: 'static + Any + Send + Sync>(
         &mut self,
         data: Option<D>,
@@ -4619,19 +4743,18 @@ impl ItemNavHistory {
             .upgrade()
             .is_some_and(|item| item.include_in_nav_history())
         {
-            let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
+            let is_preview_item = self.is_preview_item();
             self.history
                 .push(data, self.item.clone(), is_preview_item, row, cx);
         }
     }
 
     pub fn navigation_entry(&self, data: Option<Arc<dyn Any + Send + Sync>>) -> NavigationEntry {
-        let is_preview_item = self.history.0.lock().preview_item_id == Some(self.item.id());
         NavigationEntry {
             item: self.item.clone(),
             data,
             timestamp: 0,
-            is_preview: is_preview_item,
+            is_preview: self.is_preview_item(),
             row: None,
         }
     }
@@ -8883,6 +9006,45 @@ mod tests {
             pane.activate_next_item(&ActivateNextItem { wrap_around: false }, window, cx);
         });
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_save_intents_are_noops_for_read_only_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item = pane.update_in(cx, |pane, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx)
+                    .with_dirty(true)
+                    .with_capability(Capability::ReadOnly)
+                    .with_project_items(&[TestProjectItem::new(1, "read_only.txt", cx)])
+            });
+            pane.add_item(Box::new(item.clone()), true, true, None, window, cx);
+            item
+        });
+
+        for save_intent in [
+            SaveIntent::Save,
+            SaveIntent::FormatAndSave,
+            SaveIntent::SaveWithoutFormat,
+        ] {
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.save_active_item(save_intent, window, cx)
+                })
+                .await
+                .unwrap();
+        }
+
+        item.read_with(cx, |item, _| {
+            assert_eq!(item.save_count, 0);
+            assert_eq!(item.save_as_count, 0);
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {

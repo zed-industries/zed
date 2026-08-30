@@ -11,16 +11,13 @@ use file_icons::FileIcons;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     parse_git_remote_url,
-    repository::{
-        CommitDiff, CommitFile, InitialGraphCommitData, LogOrder, LogSource, RepoPath,
-        SearchCommitArgs,
-    },
+    repository::{InitialGraphCommitData, LogOrder, LogSource, RepoPath, SearchCommitArgs},
     status::{FileStatus, StatusCode, TrackedStatus},
 };
 use gpui::{
-    Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength, DismissEvent,
-    DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
-    MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollHandle, ScrollStrategy,
+    Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
+    DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
+    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollHandle, ScrollStrategy,
     ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
@@ -32,13 +29,9 @@ use picker::{Picker, PickerDelegate};
 use project::{
     ProjectPath,
     git_store::{
-        CommitDataState, GitGraphEvent, GitStore, GitStoreEvent, GraphDataResponse, Repository,
-        RepositoryEvent, RepositoryId,
+        CommitDataState, CommitDiff, CommitFile, GitGraphEvent, GitStore, GitStoreEvent,
+        GraphDataResponse, Repository, RepositoryEvent, RepositoryId,
     },
-};
-use search::{
-    SearchOption, SearchOptions, SearchSource, SelectNextMatch, SelectPreviousMatch,
-    ToggleCaseSensitive, buffer_search,
 };
 use smallvec::{SmallVec, smallvec};
 use std::{
@@ -47,6 +40,10 @@ use std::{
     rc::Rc,
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
+};
+use zed_actions::{
+    buffer_search,
+    search::{SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive},
 };
 
 use theme::AccentColors;
@@ -1723,6 +1720,10 @@ impl GitGraph {
         Chip::new(name.clone())
             .label_size(LabelSize::Small)
             .truncate()
+            .tooltip({
+                let name = name.clone();
+                move |_, cx| Tooltip::simple(name.clone(), cx)
+            })
             .map(|chip| {
                 if is_head {
                     chip.icon(IconName::Check)
@@ -1752,6 +1753,7 @@ impl GitGraph {
             return chip.into_any_element();
         };
         div()
+            .min_w_0()
             .child(chip)
             .on_mouse_down(
                 MouseButton::Right,
@@ -2152,7 +2154,8 @@ impl GitGraph {
 
         self.load_selected_commit_message(cx, &commit_message_handle, &repository);
 
-        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(diff_handle));
+        let diff_receiver =
+            repository.update(cx, |repo, _| repo.load_commit_diff(diff_handle, false));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
             if let Ok(Ok(diff)) = diff_receiver.await {
@@ -2542,14 +2545,6 @@ impl GitGraph {
             .focus_handle(cx)
             .tab_index(1)
             .tab_stop(true);
-        let search_options = {
-            let mut options = SearchOptions::NONE;
-            options.set(
-                SearchOptions::CASE_SENSITIVE,
-                self.search_state.case_sensitive,
-            );
-            options
-        };
 
         h_flex()
             .key_context("GitGraphSearchBar")
@@ -2575,11 +2570,29 @@ impl GitGraph {
                     .bg(color.toolbar_background)
                     .on_action(cx.listener(Self::confirm_search))
                     .child(self.search_state.editor.clone())
-                    .child(SearchOption::CaseSensitive.as_button(
-                        search_options,
-                        SearchSource::Buffer,
-                        query_focus_handle,
-                    )),
+                    .child({
+                        let focus_handle = query_focus_handle.clone();
+                        IconButton::new("git-graph-search-case-sensitive", IconName::CaseSensitive)
+                            .shape(ui::IconButtonShape::Square)
+                            .toggle_state(self.search_state.case_sensitive)
+                            .on_click({
+                                let focus_handle = query_focus_handle.clone();
+                                move |_, window, cx| {
+                                    if !focus_handle.is_focused(window) {
+                                        window.focus(&focus_handle, cx);
+                                    }
+                                    window.dispatch_action(ToggleCaseSensitive.boxed_clone(), cx);
+                                }
+                            })
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Match Case Sensitivity",
+                                    &ToggleCaseSensitive,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            })
+                    }),
             )
             .child(
                 h_flex()
@@ -2972,7 +2985,7 @@ impl GitGraph {
                             })
                             .when_some(remote.clone(), |this, remote| {
                                 let provider_name = remote.host.name();
-                                let icon = crate::get_provider_icon(provider_name.as_str());
+                                let icon = ui::git_hosting_provider_icon(provider_name.as_str());
                                 let parsed_remote = ParsedGitRemote {
                                     owner: remote.owner.as_ref().into(),
                                     repo: remote.repo.as_ref().into(),
@@ -4096,8 +4109,8 @@ impl Render for GitGraph {
 impl EventEmitter<ItemEvent> for GitGraph {}
 
 impl Focusable for GitGraph {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.search_state.editor.read(cx).focus_handle(cx)
     }
 }
 
@@ -4294,7 +4307,6 @@ impl workspace::SerializableItem for GitGraph {
         workspace: &mut Workspace,
         item_id: workspace::ItemId,
         _closing: bool,
-        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
@@ -5389,7 +5401,7 @@ mod tests {
         let commits = generate_random_commit_dag(&mut rng, 10, false);
         fs.set_graph_commits(Path::new("/project/.git"), commits.clone());
 
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        let project = Project::test(fs.clone(), [], cx).await;
         let observed_repository_events = Arc::new(Mutex::new(Vec::new()));
         project.update(cx, |project, cx| {
             let observed_repository_events = observed_repository_events.clone();
@@ -5403,6 +5415,13 @@ mod tests {
             })
             .detach();
         });
+        project
+            .update(cx, |project, cx| {
+                project.create_worktree("/project", true, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
 
         let repository = project.read_with(cx, |project, cx| {
             project
@@ -6431,6 +6450,61 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_focus_handle_focuses_search_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            serde_json::json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |graph, window, cx| {
+            window.focus(&graph.focus_handle(cx), cx);
+            assert!(
+                graph
+                    .search_state
+                    .editor
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window),
+                "focusing the git graph item should focus the search editor"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_row_height_matches_uniform_list_item_height(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -7412,6 +7486,7 @@ mod tests {
                     new_text: Some("updated content".into()),
                     is_binary: false,
                 }],
+                is_shallow_boundary: false,
             });
             graph.selected_commit_diff_stats = Some((1, 1));
             cx.notify();

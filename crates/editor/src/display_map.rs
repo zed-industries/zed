@@ -89,6 +89,7 @@ pub use fold_map::{
     ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
 };
 pub use inlay_map::{InlayOffset, InlayPoint};
+use invisibles::is_standalone_grapheme;
 pub use invisibles::{is_invisible, replacement};
 pub use wrap_map::{WrapPoint, WrapRow, WrapSnapshot};
 
@@ -162,7 +163,7 @@ pub enum HighlightKey {
     // Note we want semantic tokens > colorized brackets
     // to allow language server highlights to work over brackets.
     ColorizeBracket(usize),
-    SemanticToken,
+    SemanticToken(u32),
     // below is sorted lexicographically, as there is no relevant ordering for these aside from coming after the above
     BufferSearchHighlights,
     ConsoleAnsiHighlight(usize),
@@ -360,6 +361,7 @@ pub struct SemanticTokenHighlight {
     pub token_type: TokenType,
     pub token_modifiers: u32,
     pub server_id: lsp::LanguageServerId,
+    pub precedence: u32,
 }
 
 impl DisplayMap {
@@ -1369,7 +1371,6 @@ impl DisplayMap {
         }
     }
 
-    #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::App) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
     }
@@ -1419,24 +1420,25 @@ impl<'a> HighlightedChunk<'a> {
         self,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = Self> + 'a {
-        let mut chunks = self.text.graphemes(true).peekable();
         let mut text = self.text;
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
         let is_inlay = self.is_inlay;
         iter::from_fn(move || {
-            let mut prefix_len = 0;
-            while let Some(&chunk) = chunks.peek() {
-                let mut chars = chunk.chars();
-                let Some(ch) = chars.next() else { break };
-                if chunk.len() != ch.len_utf8() || !is_invisible(ch) {
-                    prefix_len += chunk.len();
-                    chunks.next();
+            if text.is_empty() {
+                return None;
+            }
+            for (offset, ch) in text.char_indices() {
+                if !is_invisible(ch) {
                     continue;
                 }
-                if prefix_len > 0 {
-                    let (prefix, suffix) = text.split_at(prefix_len);
+                let ch_end = offset + ch.len_utf8();
+                if !is_standalone_grapheme(text, offset, ch_end) {
+                    continue;
+                }
+                if offset > 0 {
+                    let (prefix, suffix) = text.split_at(offset);
                     text = suffix;
                     return Some(HighlightedChunk {
                         text: prefix,
@@ -1446,70 +1448,44 @@ impl<'a> HighlightedChunk<'a> {
                         replacement: renderer.clone(),
                     });
                 }
-                chunks.next();
-                let (prefix, suffix) = text.split_at(chunk.len());
+                let (invisible_text, suffix) = text.split_at(ch_end);
                 text = suffix;
-                if let Some(replacement) = replacement(ch) {
-                    let invisible_highlight = HighlightStyle {
-                        background_color: Some(editor_style.status.hint_background),
-                        underline: Some(UnderlineStyle {
-                            color: Some(editor_style.status.hint),
-                            thickness: px(1.),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    };
-                    let invisible_style = if let Some(style) = style {
-                        style.highlight(invisible_highlight)
-                    } else {
-                        invisible_highlight
-                    };
-                    return Some(HighlightedChunk {
-                        text: prefix,
-                        style: Some(invisible_style),
-                        is_tab: false,
-                        is_inlay,
-                        replacement: Some(ChunkReplacement::Str(replacement.into())),
-                    });
+                let invisible_highlight = HighlightStyle {
+                    background_color: Some(editor_style.status.hint_background),
+                    underline: Some(UnderlineStyle {
+                        color: Some(editor_style.status.hint),
+                        thickness: px(1.),
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                };
+                let invisible_style = if let Some(style) = style {
+                    style.highlight(invisible_highlight)
                 } else {
-                    let invisible_highlight = HighlightStyle {
-                        background_color: Some(editor_style.status.hint_background),
-                        underline: Some(UnderlineStyle {
-                            color: Some(editor_style.status.hint),
-                            thickness: px(1.),
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    };
-                    let invisible_style = if let Some(style) = style {
-                        style.highlight(invisible_highlight)
-                    } else {
-                        invisible_highlight
-                    };
-
-                    return Some(HighlightedChunk {
-                        text: prefix,
-                        style: Some(invisible_style),
-                        is_tab: false,
-                        is_inlay,
-                        replacement: renderer.clone(),
-                    });
-                }
-            }
-
-            if !text.is_empty() {
-                let remainder = text;
-                text = "";
-                Some(HighlightedChunk {
-                    text: remainder,
-                    style,
-                    is_tab,
+                    invisible_highlight
+                };
+                return Some(HighlightedChunk {
+                    text: invisible_text,
+                    style: Some(invisible_style),
+                    is_tab: false,
                     is_inlay,
-                    replacement: renderer.clone(),
-                })
-            } else {
-                None
+                    replacement: match replacement(ch) {
+                        Some(replacement) => {
+                            Some(ChunkReplacement::Str(SharedString::from(replacement)))
+                        }
+                        None => renderer.clone(),
+                    },
+                });
             }
+            let remainder = text;
+            text = "";
+            Some(HighlightedChunk {
+                text: remainder,
+                style,
+                is_tab,
+                is_inlay,
+                replacement: renderer.clone(),
+            })
         })
     }
 }
@@ -1547,7 +1523,7 @@ impl DisplaySnapshot {
     /// The column `point` sits at once tabs are expanded, which is where it appears
     /// on screen when the line isn't soft-wrapped. Unlike a display column this is
     /// counted from the start of the buffer row rather than the wrapped segment.
-    pub fn tab_expanded_column(&self, point: Point) -> u32 {
+    pub(crate) fn tab_expanded_column(&self, point: Point) -> u32 {
         self.tab_snapshot()
             .point_to_tab_point(point, Bias::Left)
             .0
@@ -1555,15 +1531,21 @@ impl DisplaySnapshot {
     }
 
     /// Inverse of [`Self::tab_expanded_column`], clamped to the end of the row.
-    pub fn point_for_tab_expanded_column(&self, row: u32, column: u32) -> Point {
-        let column = column.min(self.tab_snapshot().line_len(row));
-        self.tab_snapshot()
-            .tab_point_to_point(TabPoint(Point::new(row, column)), Bias::Left)
+    pub(crate) fn point_for_tab_expanded_column(
+        &self,
+        buffer_row: MultiBufferRow,
+        column: u32,
+    ) -> Point {
+        let tab_snapshot = self.tab_snapshot();
+        let tab_row = tab_snapshot.buffer_row_to_tab_row(buffer_row);
+        let column = column.min(tab_snapshot.line_len(tab_row));
+        tab_snapshot.tab_point_to_point(TabPoint(Point::new(tab_row, column)), Bias::Left)
     }
 
-    /// The length of `row` once tabs are expanded.
-    pub fn tab_expanded_line_len(&self, row: u32) -> u32 {
-        self.tab_snapshot().line_len(row)
+    /// The length of `buffer_row` once tabs are expanded.
+    pub(crate) fn tab_expanded_line_len(&self, buffer_row: MultiBufferRow) -> u32 {
+        let tab_snapshot = self.tab_snapshot();
+        tab_snapshot.line_len(tab_snapshot.buffer_row_to_tab_row(buffer_row))
     }
 
     pub fn fold_snapshot(&self) -> &FoldSnapshot {
@@ -2103,7 +2085,7 @@ impl DisplaySnapshot {
             });
         chars.collect::<String>().graphemes(true).next().map(|s| {
             if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
-                replacement(invisible).unwrap_or(s).to_owned().into()
+                replacement(invisible).map_or_else(|| s.to_owned().into(), SharedString::from)
             } else if s == "\n" {
                 " ".into()
             } else {
@@ -2725,6 +2707,7 @@ pub mod tests {
     use lsp::LanguageServerId;
 
     use futures::stream::StreamExt;
+    use multi_buffer::PathKey;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
     use std::{env, sync::Arc};
@@ -3269,10 +3252,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3486,15 +3470,15 @@ pub mod tests {
             buffer.update_diagnostics(
                 LanguageServerId(0),
                 DiagnosticSet::new(
-                    [DiagnosticEntry {
-                        range: PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
-                        diagnostic: Diagnostic {
+                    [DiagnosticEntry::new(
+                        PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
+                        Diagnostic {
                             severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "hi".into(),
                             ..Default::default()
                         },
-                    }],
+                    )],
                     buffer,
                 ),
                 cx,
@@ -3717,10 +3701,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -3804,10 +3789,11 @@ pub mod tests {
             Language::new(
                 LanguageConfig {
                     name: "Test".into(),
-                    matcher: LanguageMatcher {
+                    matcher: (LanguageMatcher {
                         path_suffixes: vec![".test".to_string()],
                         ..Default::default()
-                    },
+                    })
+                    .into(),
                     ..Default::default()
                 },
                 Some(tree_sitter_rust::LANGUAGE.into()),
@@ -4133,6 +4119,197 @@ pub mod tests {
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
+    }
+
+    /// Asserts that every header-like block in the snapshot references a
+    /// buffer that is still present in the multibuffer: the invariant whose
+    /// violation panics at render time with "buffer snapshot not found for
+    /// excerpt boundary" (ZED-7G6).
+    #[track_caller]
+    fn assert_headers_resolve(snapshot: &DisplaySnapshot) {
+        let end_row = DisplayRow(snapshot.max_point().row().0 + 1);
+        for (row, block) in snapshot.blocks_in_range(DisplayRow(0)..end_row) {
+            let excerpt = match block {
+                Block::BufferHeader { excerpt, .. } | Block::ExcerptBoundary { excerpt, .. } => {
+                    excerpt
+                }
+                Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
+                _ => continue,
+            };
+            assert!(
+                snapshot
+                    .buffer_snapshot()
+                    .buffer_for_id(excerpt.buffer_id())
+                    .is_some(),
+                "stale header block {:?} at {row:?} references buffer {:?}, \
+                 which is no longer in the multibuffer",
+                block.id(),
+                excerpt.buffer_id(),
+            );
+        }
+    }
+
+    /// Deterministic end-to-end regression test for ZED-7G6 ("buffer snapshot
+    /// not found for excerpt boundary"), driving a real `DisplayMap` with
+    /// ordinary operations. In a diff-backed multibuffer with all hunks
+    /// expanded, two folds inside an expanded deleted hunk are ordered only by
+    /// their diff base anchors. Replacing the diff's base text used to invert
+    /// that order (comparison filtered diff base anchors on validity, which
+    /// the base edit revoked for one anchor of the pair), silently unsorting
+    /// the fold map's persistent fold tree; subsequent syncs walked it with
+    /// forward-only cursors and emitted edits that misdescribed the changed
+    /// rows, until removing a buffer left its header block referencing a
+    /// buffer absent from the snapshot -- the state whose render-time
+    /// resolution panics.
+    ///
+    /// On pre-fix code this fails in the display map layers' internal
+    /// checks; in production builds, where those checks don't run, the same
+    /// corruption propagated to the stale header instead.
+    #[gpui::test]
+    async fn test_removing_buffer_removes_header_after_diff_base_changes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        fn excerpt_buffer(
+            multibuffer: &Entity<MultiBuffer>,
+            path: u64,
+            buffer: &Entity<Buffer>,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            multibuffer.update(cx, |multibuffer, cx| {
+                let max_point = buffer.read(cx).max_point();
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(path),
+                    buffer.clone(),
+                    [Point::zero()..max_point],
+                    0,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+
+        async fn set_base_text(
+            diff: &Entity<buffer_diff::BufferDiff>,
+            buffer: &Entity<Buffer>,
+            base_text: &str,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some(base_text.to_string().into()), snapshot, cx)
+            })
+            .await;
+            cx.run_until_parked();
+        }
+
+        #[track_caller]
+        fn assert_headers(display_map: &Entity<DisplayMap>, cx: &mut gpui::TestAppContext) {
+            cx.run_until_parked();
+            let snapshot = display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+            assert_headers_resolve(&snapshot);
+        }
+
+        let buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+        let diff_a = cx.new(|cx| {
+            buffer_diff::BufferDiff::new_with_base_text(
+                "DEL1\nDEL2\nbbb\nccc\nddd\n",
+                &buffer_a.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        let buffer_b = cx.new(|cx| Buffer::local("xxx\nyyy\n", cx));
+        let buffer_b_id = buffer_b.read_with(cx, |buffer, _| buffer.remote_id());
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+        excerpt_buffer(&multibuffer, 0, &buffer_a, cx);
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.add_diff(diff_a.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                multibuffer.clone(),
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        assert_headers(&display_map, cx);
+
+        // Two folds inside the expanded deleted hunk (rows 0 and 1 are
+        // materialized from the base text), sharing a buffer position and
+        // ordered only by their diff base anchors: a narrow fold within
+        // "DEL1", then a wider fold from "DEL2" into the buffer's own rows.
+        display_map.update(cx, |display_map, cx| {
+            display_map.fold(
+                vec![
+                    Crease::simple(Point::new(0, 1)..Point::new(1, 0), FoldPlaceholder::test()),
+                    Crease::simple(Point::new(1, 1)..Point::new(2, 2), FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+        });
+        assert_headers(&display_map, cx);
+
+        // Keep "DEL1" (the first fold's base anchors survive) but delete
+        // "DEL2" (the second fold's start anchor is tombstoned): the folds'
+        // relative order must not change.
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        assert_headers(&display_map, cx);
+
+        // Churn the buffers, the diff base, and buffer B's excerpts the way
+        // the original fuzz sequence did, syncing the display map after each
+        // group of operations.
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(4..5, "")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "Q\n")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        assert_headers(&display_map, cx);
+
+        set_base_text(&diff_a, &buffer_a, "DEL2\nbbb\nccc\nddd\n", cx).await;
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(2..2, "Q\n")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        assert_headers(&display_map, cx);
+
+        // Removing B must remove its header block: with the fold tree
+        // corrupted, the removal edit's rows were misdescribed by the time
+        // they reached the block map, B's header row went uncovered, and the
+        // header survived pointing at a buffer absent from the snapshot.
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        assert_headers(&display_map, cx);
     }
 
     fn init_test(cx: &mut App, f: &dyn Fn(&mut SettingsContent)) {
