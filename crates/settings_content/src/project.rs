@@ -75,6 +75,13 @@ pub struct ProjectSettingsContent {
     /// Default: 60
     pub context_server_timeout: Option<u64>,
 
+    /// Maximum number of undo steps kept per buffer.
+    /// Undo steps containing very large changes may additionally be dropped
+    /// earlier than this limit to bound the memory retained by history.
+    ///
+    /// Default: 100000
+    pub max_undo_steps: Option<u64>,
+
     /// Configuration for how direnv configuration should be loaded
     pub load_direnv: Option<DirenvSettings>,
 
@@ -91,6 +98,7 @@ crate::fallible_options::flattened_deserialize!(ProjectSettingsContent {
     sections: { all_languages, worktree },
     options: {
         terminal, context_server_timeout, load_direnv, git_hosting_providers, disable_ai,
+        max_undo_steps,
     },
     defaults: { lsp, dap, context_servers },
 });

@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Bias;
-use text::BufferId;
+use text::{BufferId, MAX_UNDO_STACK_ENTRIES};
 
 use crate::{Anchor, BufferState, MultiBufferOffset};
 
@@ -73,6 +73,7 @@ impl History {
                 false
             } else {
                 self.redo_stack.clear();
+                self.trim_undo_stack();
                 let transaction = self.undo_stack.last_mut().unwrap();
                 transaction.last_edit_at = now;
                 for (buffer_id, transaction_id) in buffer_transactions {
@@ -110,6 +111,14 @@ impl History {
         if !transaction.buffer_transactions.is_empty() {
             self.undo_stack.push(transaction);
             self.redo_stack.clear();
+            self.trim_undo_stack();
+        }
+    }
+
+    fn trim_undo_stack(&mut self) {
+        if self.undo_stack.len() > MAX_UNDO_STACK_ENTRIES {
+            let excess = self.undo_stack.len() - MAX_UNDO_STACK_ENTRIES;
+            self.undo_stack.drain(..excess);
         }
     }
 
@@ -542,5 +551,24 @@ impl MultiBuffer {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_undo_stack_is_bounded() {
+        let mut history = History::default();
+        let mut clock = clock::Lamport::MIN;
+        let buffer_id = BufferId::new(1).unwrap();
+        for _ in 0..MAX_UNDO_STACK_ENTRIES + 10 {
+            history.start_transaction(Instant::now());
+            let mut buffer_transactions = HashMap::new();
+            buffer_transactions.insert(buffer_id, clock.tick());
+            history.end_transaction(Instant::now(), buffer_transactions);
+        }
+        assert_eq!(history.undo_stack.len(), MAX_UNDO_STACK_ENTRIES);
     }
 }

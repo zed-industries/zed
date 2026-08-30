@@ -129,6 +129,7 @@ pub struct HistoryEntry {
     first_edit_at: Instant,
     last_edit_at: Instant,
     suppress_grouping: bool,
+    deleted_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +149,28 @@ impl HistoryEntry {
     pub fn transaction_id(&self) -> TransactionId {
         self.transaction.id
     }
+
+    pub fn last_edit_at(&self) -> Instant {
+        self.last_edit_at
+    }
+
+    pub fn deleted_bytes(&self) -> usize {
+        self.deleted_bytes
+    }
+}
+
+pub const MAX_UNDO_STACK_ENTRIES: usize = 100_000;
+
+pub const MAX_PINNED_HISTORY_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RetainedHistory {
+    pub operation_count: usize,
+    pub operation_new_text_bytes: usize,
+    pub deleted_text_bytes: usize,
+    pub undo_stack_entries: usize,
+    pub redo_stack_entries: usize,
+    pub pinned_deleted_bytes: usize,
 }
 
 struct History {
@@ -157,6 +180,9 @@ struct History {
     redo_stack: Vec<HistoryEntry>,
     transaction_depth: usize,
     group_interval: Duration,
+    max_undo_entries: usize,
+    max_pinned_bytes: usize,
+    pinned_bytes: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -222,6 +248,9 @@ impl History {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
+            max_undo_entries: MAX_UNDO_STACK_ENTRIES,
+            max_pinned_bytes: MAX_PINNED_HISTORY_BYTES,
+            pinned_bytes: 0,
             // Don't group transactions in tests unless we opt in, because it's a footgun.
             group_interval: if cfg!(any(test, feature = "test-support")) {
                 Duration::ZERO
@@ -253,10 +282,19 @@ impl History {
                 first_edit_at: now,
                 last_edit_at: now,
                 suppress_grouping: false,
+                deleted_bytes: 0,
             });
             Some(id)
         } else {
             None
+        }
+    }
+
+    fn record_deleted_bytes(&mut self, deleted_bytes: usize) {
+        assert_ne!(self.transaction_depth, 0);
+        if let Some(entry) = self.undo_stack.last_mut() {
+            entry.deleted_bytes += deleted_bytes;
+            self.pinned_bytes += deleted_bytes;
         }
     }
 
@@ -275,7 +313,8 @@ impl History {
                 self.undo_stack.pop();
                 None
             } else {
-                self.redo_stack.clear();
+                self.clear_redo_stack();
+                self.trim_undo_stack();
                 let entry = self.undo_stack.last_mut().unwrap();
                 entry.last_edit_at = now;
                 Some(entry)
@@ -325,6 +364,7 @@ impl History {
                 for edit_id in &entry.transaction.edit_ids {
                     last_entry.transaction.edit_ids.push(*edit_id);
                 }
+                last_entry.deleted_bytes += entry.deleted_bytes;
             }
 
             if let Some(entry) = entries_to_merge.last_mut() {
@@ -344,14 +384,17 @@ impl History {
         })
     }
 
-    fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
+    fn push_transaction(&mut self, transaction: Transaction, now: Instant, deleted_bytes: usize) {
         assert_eq!(self.transaction_depth, 0);
         self.undo_stack.push(HistoryEntry {
             transaction,
             first_edit_at: now,
             last_edit_at: now,
             suppress_grouping: false,
+            deleted_bytes,
         });
+        self.pinned_bytes += deleted_bytes;
+        self.trim_undo_stack();
     }
 
     /// Differs from `push_transaction` in that it does not clear the redo
@@ -383,8 +426,54 @@ impl History {
             first_edit_at: now,
             last_edit_at: now,
             suppress_grouping: false,
+            deleted_bytes: 0,
         });
+        self.trim_undo_stack();
         id
+    }
+
+    fn trim_undo_stack(&mut self) {
+        if self.undo_stack.len() > self.max_undo_entries {
+            let excess = self.undo_stack.len() - self.max_undo_entries;
+            for entry in self.undo_stack.drain(..excess) {
+                self.pinned_bytes -= entry.deleted_bytes;
+            }
+        }
+        let redo_bytes = self
+            .redo_stack
+            .iter()
+            .map(|entry| entry.deleted_bytes)
+            .sum::<usize>();
+        let mut drop_count = 0;
+        let mut remaining_bytes = self.pinned_bytes - redo_bytes;
+        for entry in self
+            .undo_stack
+            .iter()
+            .take(self.undo_stack.len().saturating_sub(1))
+        {
+            if remaining_bytes <= self.max_pinned_bytes {
+                break;
+            }
+            remaining_bytes -= entry.deleted_bytes;
+            drop_count += 1;
+        }
+        if drop_count > 0 {
+            let mut dropped_bytes = 0;
+            for entry in self.undo_stack.drain(..drop_count) {
+                dropped_bytes += entry.deleted_bytes;
+            }
+            log::debug!(
+                "undo history byte budget exceeded, dropping {drop_count} oldest undo entries, \
+                 freeing {dropped_bytes} pinned bytes"
+            );
+            self.pinned_bytes -= dropped_bytes;
+        }
+    }
+
+    fn clear_redo_stack(&mut self) {
+        for entry in self.redo_stack.drain(..) {
+            self.pinned_bytes -= entry.deleted_bytes;
+        }
     }
 
     fn push_undo(&mut self, op_id: clock::Lamport) {
@@ -439,13 +528,17 @@ impl History {
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            Some(self.undo_stack.remove(entry_ix).transaction)
+            let entry = self.undo_stack.remove(entry_ix);
+            self.pinned_bytes -= entry.deleted_bytes;
+            Some(entry.transaction)
         } else if let Some(entry_ix) = self
             .redo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            Some(self.redo_stack.remove(entry_ix).transaction)
+            let entry = self.redo_stack.remove(entry_ix);
+            self.pinned_bytes -= entry.deleted_bytes;
+            Some(entry.transaction)
         } else {
             None
         }
@@ -478,10 +571,36 @@ impl History {
     }
 
     fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
-        if let Some(transaction) = self.forget(transaction)
-            && let Some(destination) = self.transaction_mut(destination)
+        let entry = if let Some(entry_ix) = self
+            .undo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction)
         {
-            destination.edit_ids.extend(transaction.edit_ids);
+            self.undo_stack.remove(entry_ix)
+        } else if let Some(entry_ix) = self
+            .redo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction)
+        {
+            self.redo_stack.remove(entry_ix)
+        } else {
+            return;
+        };
+
+        if let Some(destination_entry) = self
+            .undo_stack
+            .iter_mut()
+            .chain(self.redo_stack.iter_mut())
+            .rfind(|destination_entry| destination_entry.transaction.id == destination)
+        {
+            destination_entry
+                .transaction
+                .edit_ids
+                .extend(entry.transaction.edit_ids);
+            destination_entry.last_edit_at = destination_entry.last_edit_at.max(entry.last_edit_at);
+            destination_entry.deleted_bytes += entry.deleted_bytes;
+        } else {
+            self.pinned_bytes -= entry.deleted_bytes;
         }
     }
 
@@ -826,6 +945,19 @@ impl Buffer {
         }
     }
 
+    pub fn truncate_transaction_edits(
+        &mut self,
+        transaction_id: TransactionId,
+        max_edit_count: usize,
+    ) {
+        if let Some(transaction) = self.history.transaction_mut(transaction_id)
+            && transaction.edit_ids.len() > max_edit_count
+        {
+            let excess = transaction.edit_ids.len() - max_edit_count;
+            transaction.edit_ids.drain(..excess);
+        }
+    }
+
     pub fn version(&self) -> clock::Global {
         self.version.clone()
     }
@@ -880,10 +1012,12 @@ impl Buffer {
 
         self.start_transaction();
         let timestamp = self.lamport_clock.tick();
-        let operation = Operation::Edit(self.apply_local_edit(edits, timestamp));
+        let (edit_operation, deleted_bytes) = self.apply_local_edit(edits, timestamp);
+        let operation = Operation::Edit(edit_operation);
 
         self.history.push(operation.clone());
         self.history.push_undo(operation.timestamp());
+        self.history.record_deleted_bytes(deleted_bytes);
         self.snapshot.version.observe(operation.timestamp());
         self.end_transaction();
         operation
@@ -893,13 +1027,18 @@ impl Buffer {
         &mut self,
         edits: impl ExactSizeIterator<Item = (Range<S>, T)>,
         timestamp: clock::Lamport,
-    ) -> EditOperation {
+    ) -> (EditOperation, usize) {
         let edits: Vec<_> = edits
             .map(|(range, new_text)| (range.to_offset(&*self), new_text.into()))
             .collect();
         let (edit_op, edits_patch) = self.snapshot.apply_edit_internal(edits, timestamp);
+        let deleted_bytes = edits_patch
+            .edits()
+            .iter()
+            .map(|edit| edit.old.len())
+            .sum::<usize>();
         self.subscriptions.publish_mut(&edits_patch);
-        edit_op
+        (edit_op, deleted_bytes)
     }
 
     pub fn set_line_ending(&mut self, line_ending: LineEnding) {
@@ -1149,6 +1288,21 @@ impl Buffer {
         self.subscriptions.publish_mut(&edits_patch)
     }
 
+    fn deleted_bytes_for_edit_ids(&self, edit_ids: &[clock::Lamport]) -> usize {
+        let mut fragment_ids = self.fragment_ids_for_edits(edit_ids.iter());
+        fragment_ids.dedup();
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>(&None);
+        fragment_ids
+            .into_iter()
+            .filter_map(|fragment_id| {
+                cursor.seek_forward(&Some(fragment_id), Bias::Left);
+                cursor.item()
+            })
+            .filter(|fragment| !fragment.visible)
+            .map(|fragment| fragment.len as usize)
+            .sum()
+    }
+
     fn fragment_ids_for_edits<'a>(
         &'a self,
         edit_ids: impl Iterator<Item = &'a clock::Lamport>,
@@ -1302,6 +1456,15 @@ impl Buffer {
         !self.deferred_ops.is_empty()
     }
 
+    pub fn set_max_undo_entries(&mut self, max_undo_entries: usize) {
+        self.history.max_undo_entries = max_undo_entries.max(1);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_max_pinned_history_bytes(&mut self, max_pinned_bytes: usize) {
+        self.history.max_pinned_bytes = max_pinned_bytes;
+    }
+
     pub fn peek_undo_stack(&self) -> Option<&HistoryEntry> {
         self.history.undo_stack.last()
     }
@@ -1347,6 +1510,29 @@ impl Buffer {
 
     pub fn operations(&self) -> &TreeMap<clock::Lamport, Operation> {
         &self.history.operations
+    }
+
+    pub fn retained_history(&self) -> RetainedHistory {
+        let mut operation_count = 0;
+        let mut operation_new_text_bytes = 0;
+        for (_, operation) in self.history.operations.iter() {
+            operation_count += 1;
+            if let Operation::Edit(edit) = operation {
+                operation_new_text_bytes += edit
+                    .new_text
+                    .iter()
+                    .map(|new_text| new_text.len())
+                    .sum::<usize>();
+            }
+        }
+        RetainedHistory {
+            operation_count,
+            operation_new_text_bytes,
+            deleted_text_bytes: self.snapshot.deleted_text.len(),
+            undo_stack_entries: self.history.undo_stack.len(),
+            redo_stack_entries: self.history.redo_stack.len(),
+            pinned_deleted_bytes: self.history.pinned_bytes,
+        }
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
@@ -1445,7 +1631,9 @@ impl Buffer {
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
-        self.history.push_transaction(transaction, now);
+        let deleted_bytes = self.deleted_bytes_for_edit_ids(&transaction.edit_ids);
+        self.history
+            .push_transaction(transaction, now, deleted_bytes);
     }
 
     /// Differs from `push_transaction` in that it does not clear the redo stack.
@@ -1772,6 +1960,16 @@ impl Buffer {
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
             assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
         }
+
+        assert_eq!(
+            self.history.pinned_bytes,
+            self.history
+                .undo_stack
+                .iter()
+                .chain(&self.history.redo_stack)
+                .map(|entry| entry.deleted_bytes)
+                .sum::<usize>()
+        );
 
         let fragment_summary = self.snapshot.fragments.summary();
         assert_eq!(
@@ -3140,28 +3338,23 @@ impl sum_tree::Item for Fragment {
         let mut min_insertion_version = clock::Global::new();
         min_insertion_version.observe(self.timestamp);
         let max_insertion_version = min_insertion_version.clone();
-        if self.visible {
-            FragmentSummary {
-                max_id: self.id.clone(),
-                text: FragmentTextSummary {
-                    visible: self.len as usize,
-                    deleted: 0,
-                },
-                max_version,
-                min_insertion_version,
-                max_insertion_version,
+        let text = if self.visible {
+            FragmentTextSummary {
+                visible: self.len as usize,
+                deleted: 0,
             }
         } else {
-            FragmentSummary {
-                max_id: self.id.clone(),
-                text: FragmentTextSummary {
-                    visible: 0,
-                    deleted: self.len as usize,
-                },
-                max_version,
-                min_insertion_version,
-                max_insertion_version,
+            FragmentTextSummary {
+                visible: 0,
+                deleted: self.len as usize,
             }
+        };
+        FragmentSummary {
+            max_id: self.id.clone(),
+            text,
+            max_version,
+            min_insertion_version,
+            max_insertion_version,
         }
     }
 }

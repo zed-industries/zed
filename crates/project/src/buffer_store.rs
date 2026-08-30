@@ -1,6 +1,7 @@
 use crate::{
     ProjectPath,
     lsp_store::OpenLspBufferHandle,
+    project_settings::ProjectSettings,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -24,7 +25,7 @@ use rpc::{
     proto::{self, PeerId},
 };
 
-use settings::Settings;
+use settings::{Settings, SettingsStore};
 use std::{io, sync::Arc, time::Instant};
 use text::{BufferId, ReplicaId};
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
@@ -830,6 +831,7 @@ impl BufferStore {
 
     /// Creates a buffer store, optionally retaining its buffers.
     pub fn local(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+        Self::observe_undo_limit_settings(cx);
         Self {
             state: BufferStoreState::Local(LocalBufferStore {
                 local_buffer_ids_by_entry_id: Default::default(),
@@ -856,8 +858,9 @@ impl BufferStore {
         worktree_store: Entity<WorktreeStore>,
         upstream_client: AnyProtoClient,
         remote_id: u64,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        Self::observe_undo_limit_settings(cx);
         Self {
             state: BufferStoreState::Remote(RemoteBufferStore {
                 shared_with_me: Default::default(),
@@ -876,6 +879,22 @@ impl BufferStore {
             worktree_store,
             project_search: Default::default(),
         }
+    }
+
+    fn observe_undo_limit_settings(cx: &mut Context<Self>) {
+        let mut max_undo_steps = ProjectSettings::get_global(cx).max_undo_steps;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let new_max_undo_steps = ProjectSettings::get_global(cx).max_undo_steps;
+            if new_max_undo_steps != max_undo_steps {
+                max_undo_steps = new_max_undo_steps;
+                for buffer in this.buffers().collect::<Vec<_>>() {
+                    buffer.update(cx, |buffer, _| {
+                        buffer.set_max_undo_entries(new_max_undo_steps)
+                    });
+                }
+            }
+        })
+        .detach();
     }
 
     fn as_local_mut(&mut self) -> Option<&mut LocalBufferStore> {
@@ -1053,6 +1072,9 @@ impl BufferStore {
         if let Some(path) = path {
             self.path_to_buffer_id.insert(path, remote_id);
         }
+
+        let max_undo_steps = ProjectSettings::get_global(cx).max_undo_steps;
+        buffer_entity.update(cx, |buffer, _| buffer.set_max_undo_entries(max_undo_steps));
 
         cx.subscribe(&buffer_entity, Self::on_buffer_event).detach();
         cx.emit(BufferStoreEvent::BufferAdded(buffer_entity));

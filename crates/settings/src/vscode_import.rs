@@ -528,6 +528,7 @@ impl VsCodeSettings {
             dap: Default::default(),
             context_servers: self.context_servers(),
             context_server_timeout: None,
+            max_undo_steps: None,
             load_direnv: None,
             git_hosting_providers: None,
             disable_ai: None,

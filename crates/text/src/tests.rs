@@ -31,6 +31,178 @@ fn test_edit() {
 }
 
 #[test]
+fn test_retained_history_accounting() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "hello world");
+    assert_eq!(buffer.retained_history(), RetainedHistory::default());
+
+    buffer.edit([(0..5, "goodbye")]);
+    assert_eq!(
+        buffer.retained_history(),
+        RetainedHistory {
+            operation_count: 1,
+            operation_new_text_bytes: 7,
+            deleted_text_bytes: 5,
+            undo_stack_entries: 1,
+            redo_stack_entries: 0,
+            pinned_deleted_bytes: 5,
+        }
+    );
+
+    buffer.undo();
+    assert_eq!(
+        buffer.retained_history(),
+        RetainedHistory {
+            operation_count: 2,
+            operation_new_text_bytes: 7,
+            deleted_text_bytes: 7,
+            undo_stack_entries: 0,
+            redo_stack_entries: 1,
+            pinned_deleted_bytes: 5,
+        }
+    );
+}
+
+#[test]
+fn test_undo_stack_is_bounded() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_max_undo_entries(32);
+    buffer.edit([(0..0, "x")]);
+    let first_transaction = buffer.peek_undo_stack().unwrap().transaction_id();
+    for _ in 1..100 {
+        let len = buffer.len();
+        buffer.edit([(len..len, "x")]);
+    }
+    assert_eq!(buffer.retained_history().undo_stack_entries, 32);
+    assert_eq!(
+        buffer
+            .get_transaction(first_transaction)
+            .map(|transaction| transaction.id),
+        None
+    );
+    let len_before_undo = buffer.len();
+    assert!(buffer.undo().is_some());
+    assert_eq!(buffer.len(), len_before_undo - 1);
+}
+
+#[test]
+fn test_pushed_transactions_are_bounded() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.set_max_undo_entries(32);
+    for _ in 0..100 {
+        buffer.push_empty_transaction(Instant::now());
+    }
+    assert_eq!(buffer.retained_history().undo_stack_entries, 32);
+}
+
+#[test]
+fn test_pushed_transaction_bytes_count_shared_fragments_once() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.start_transaction_at(Instant::now());
+    buffer.edit([(0..0, "abcdef")]);
+    buffer.edit([(2..4, "")]);
+    let (transaction_id, _) = buffer.end_transaction_at(Instant::now()).unwrap();
+    assert_eq!(buffer.retained_history().pinned_deleted_bytes, 2);
+
+    let transaction = buffer.forget_transaction(transaction_id).unwrap();
+    assert_eq!(buffer.retained_history().pinned_deleted_bytes, 0);
+
+    buffer.push_transaction(transaction, Instant::now());
+    assert_eq!(
+        buffer.retained_history().pinned_deleted_bytes,
+        2,
+        "a fragment inserted and deleted by the same transaction must be counted once"
+    );
+}
+
+#[test]
+fn test_undo_history_byte_budget() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "x".repeat(200));
+    buffer.set_max_pinned_history_bytes(64);
+
+    buffer.edit([(0..30, "")]);
+    assert_eq!(buffer.retained_history().pinned_deleted_bytes, 30);
+    assert_eq!(buffer.retained_history().undo_stack_entries, 1);
+
+    buffer.edit([(0..30, "")]);
+    assert_eq!(buffer.retained_history().pinned_deleted_bytes, 60);
+    assert_eq!(buffer.retained_history().undo_stack_entries, 2);
+
+    buffer.edit([(0..30, "")]);
+    assert_eq!(
+        buffer.retained_history().pinned_deleted_bytes,
+        60,
+        "oldest entry must be evicted once the byte budget is exceeded"
+    );
+    assert_eq!(buffer.retained_history().undo_stack_entries, 2);
+
+    assert!(buffer.undo().is_some());
+    assert!(buffer.undo().is_some());
+    assert!(
+        buffer.undo().is_none(),
+        "the evicted deletion must no longer be possible to undo"
+    );
+    assert_eq!(buffer.text(), "x".repeat(170));
+
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "y".repeat(200));
+    buffer.set_max_pinned_history_bytes(64);
+    buffer.edit([(0..100, "")]);
+    assert_eq!(
+        buffer.retained_history().undo_stack_entries,
+        1,
+        "a single over-budget entry must survive so the latest change can still be undone"
+    );
+    assert!(buffer.undo().is_some());
+    assert_eq!(buffer.text(), "y".repeat(200));
+}
+
+#[test]
+fn test_redo_bytes_do_not_evict_undo_entries() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "z".repeat(100));
+    buffer.set_max_pinned_history_bytes(60);
+    buffer.edit([(0..80, "")]);
+    assert_eq!(buffer.retained_history().pinned_deleted_bytes, 80);
+    buffer.undo();
+    assert_eq!(buffer.retained_history().redo_stack_entries, 1);
+
+    let first = buffer.push_empty_transaction(Instant::now());
+    buffer.push_empty_transaction(Instant::now());
+    assert!(
+        buffer.get_transaction(first).is_some(),
+        "bytes pinned by the redo stack must not evict unrelated undo entries"
+    );
+    assert_eq!(buffer.retained_history().undo_stack_entries, 2);
+    assert_eq!(buffer.retained_history().redo_stack_entries, 1);
+}
+
+#[test]
+fn test_truncate_transaction_edits() {
+    let mut buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), "");
+    buffer.start_transaction_at(Instant::now());
+    for _ in 0..10 {
+        let len = buffer.len();
+        buffer.edit([(len..len, "x")]);
+    }
+    let (transaction_id, _) = buffer.end_transaction_at(Instant::now()).unwrap();
+    assert_eq!(
+        buffer
+            .get_transaction(transaction_id)
+            .unwrap()
+            .edit_ids
+            .len(),
+        10
+    );
+
+    buffer.truncate_transaction_edits(transaction_id, 4);
+    let transaction = buffer.get_transaction(transaction_id).unwrap();
+    assert_eq!(transaction.edit_ids.len(), 4);
+
+    let transaction = transaction.clone();
+    buffer.undo();
+    assert_eq!(buffer.text(), "xxxxxx");
+    assert_eq!(transaction.edit_ids.len(), 4);
+}
+
+#[test]
 fn test_point_for_row_and_column_from_external_source() {
     let buffer = Buffer::new(
         ReplicaId::LOCAL,

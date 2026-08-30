@@ -65,6 +65,9 @@ pub struct ProjectSettings {
     /// Default timeout for context server requests in seconds.
     pub context_server_timeout: u64,
 
+    /// Maximum number of undo steps kept per buffer.
+    pub max_undo_steps: usize,
+
     /// Configuration for Diagnostics-related features.
     pub diagnostics: DiagnosticsSettings,
 
@@ -728,6 +731,11 @@ impl Settings for ProjectSettings {
                 .map(|(key, value)| (key, value.into()))
                 .collect(),
             context_server_timeout: project.context_server_timeout.unwrap_or(60),
+            max_undo_steps: project
+                .max_undo_steps
+                .map_or(text::MAX_UNDO_STACK_ENTRIES, |max_undo_steps| {
+                    max_undo_steps as usize
+                }),
             lsp: project
                 .lsp
                 .clone()

@@ -143,6 +143,8 @@ pub struct Buffer {
     encoding: &'static Encoding,
     has_bom: bool,
     reload_with_encoding_txns: HashMap<TransactionId, (&'static Encoding, bool)>,
+    last_reload_transaction: Option<TransactionId>,
+    reload_coalesce_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -152,6 +154,12 @@ pub struct TreeSitterData {
 }
 
 const MAX_ROWS_IN_A_CHUNK: u32 = 50;
+
+const MAX_COALESCED_RELOAD_EDITS: usize = 1024;
+
+const MAX_COALESCED_RELOAD_BYTES: usize = 8 * 1024 * 1024;
+
+const RELOAD_COALESCE_INTERVAL: Duration = Duration::from_secs(5);
 
 impl TreeSitterData {
     fn clear(&mut self, snapshot: &text::BufferSnapshot) {
@@ -1160,6 +1168,8 @@ impl Buffer {
             encoding: encoding_rs::UTF_8,
             has_bom: false,
             reload_with_encoding_txns: HashMap::default(),
+            last_reload_transaction: None,
+            reload_coalesce_interval: RELOAD_COALESCE_INTERVAL,
         }
     }
 
@@ -1659,6 +1669,13 @@ impl Buffer {
                     this.finalize_last_transaction();
                     let old_encoding = this.encoding;
                     let old_has_bom = this.has_bom;
+                    let merge_destination = this.last_reload_transaction.filter(|previous| {
+                        this.text.peek_undo_stack().is_some_and(|entry| {
+                            entry.transaction_id() == *previous
+                                && entry.last_edit_at().elapsed() <= this.reload_coalesce_interval
+                                && entry.deleted_bytes() < MAX_COALESCED_RELOAD_BYTES
+                        })
+                    });
                     this.apply_diff(diff, cx);
                     this.encoding = encoding_used;
                     this.has_bom = has_bom;
@@ -1667,6 +1684,24 @@ impl Buffer {
                         if old_encoding != encoding_used || old_has_bom != has_bom {
                             this.reload_with_encoding_txns
                                 .insert(txn.id, (old_encoding, old_has_bom));
+                        }
+                        let merge_destination = merge_destination
+                            .filter(|destination| this.get_transaction(*destination).is_some());
+                        if let Some(destination) = merge_destination {
+                            if let Some(encoding_change) =
+                                this.reload_with_encoding_txns.remove(&txn.id)
+                            {
+                                this.reload_with_encoding_txns
+                                    .entry(destination)
+                                    .or_insert(encoding_change);
+                            }
+                            this.text.merge_transactions(txn.id, destination);
+                            this.text.truncate_transaction_edits(
+                                destination,
+                                MAX_COALESCED_RELOAD_EDITS,
+                            );
+                        } else {
+                            this.last_reload_transaction = Some(txn.id);
                         }
                     }
                     tx.send(transaction).ok();
@@ -2619,6 +2654,15 @@ impl Buffer {
     /// Manually merge two transactions in the buffer's undo history.
     pub fn merge_transactions(&mut self, transaction: TransactionId, destination: TransactionId) {
         self.text.merge_transactions(transaction, destination);
+    }
+
+    pub fn set_max_undo_entries(&mut self, max_undo_entries: usize) {
+        self.text.set_max_undo_entries(max_undo_entries);
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_reload_coalesce_interval(&mut self, interval: Duration) {
+        self.reload_coalesce_interval = interval;
     }
 
     /// Waits for the buffer to receive operations with the given timestamps.

@@ -3307,6 +3307,16 @@ Configuration for various AI model providers including API URLs and authenticati
 
 Positive `integer` values or `null` for unlimited tabs
 
+## Max Undo Steps
+
+- Description: Maximum number of undo steps kept per buffer. Undo steps containing very large changes may additionally be dropped earlier than this limit to bound the memory retained by history.
+- Setting: `max_undo_steps`
+- Default: `100000`
+
+**Options**
+
+Positive `integer` values, clamped to a minimum of `1` so the latest change can always be undone
+
 ## Middle Click Paste (Linux only)
 
 - Description: Enable middle-click paste on Linux

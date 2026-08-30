@@ -7358,6 +7358,156 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_repeated_external_reloads_coalesce_undo_history(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "version 0",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    for version in 1..=20 {
+        fs.save(
+            path!("/dir/file.txt").as_ref(),
+            &format!("version {version}").into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 20");
+        assert_eq!(buffer.retained_history().undo_stack_entries, 1);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(0..0, "user edit: ")], None, cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    for version in 21..=22 {
+        fs.save(
+            path!("/dir/file.txt").as_ref(),
+            &format!("version {version}").into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 22");
+        assert_eq!(buffer.retained_history().undo_stack_entries, 3);
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "user edit: version 20");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 20");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 0");
+    });
+}
+
+#[gpui::test]
+async fn test_max_undo_steps_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "file.txt": "abc" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        for _ in 0..5 {
+            let len = buffer.len();
+            buffer.edit([(len..len, "x")], None, cx);
+        }
+        assert_eq!(buffer.retained_history().undo_stack_entries, 5);
+    });
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |settings, cx| {
+            settings.update_user_settings(cx, |settings| {
+                settings.project.max_undo_steps = Some(2);
+            });
+        })
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        let len = buffer.len();
+        buffer.edit([(len..len, "x")], None, cx);
+        assert_eq!(buffer.retained_history().undo_stack_entries, 2);
+    });
+}
+
+#[gpui::test]
+async fn test_spaced_external_reloads_do_not_coalesce(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "file.txt": "version 0",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |p, cx| p.open_local_buffer(path!("/dir/file.txt"), cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| {
+        buffer.set_reload_coalesce_interval(std::time::Duration::ZERO)
+    });
+
+    for version in 1..=3 {
+        fs.save(
+            path!("/dir/file.txt").as_ref(),
+            &format!("version {version}").into(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        cx.executor().run_until_parked();
+    }
+
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.retained_history().undo_stack_entries, 3);
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 2");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 1");
+        buffer.undo(cx);
+        assert_eq!(buffer.text(), "version 0");
+    });
+}
+
+#[gpui::test]
 async fn test_buffer_file_change_to_binary_fails(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
