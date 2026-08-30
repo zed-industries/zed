@@ -183,7 +183,7 @@ echo "PACKAGE_NAME=$PACKAGE_NAME" >> $env:GITHUB_OUTPUT
 
     named::job(
         Job::default()
-            .runs_on(runners::WINDOWS_DEFAULT)
+            .runs_on(runners::Platform::Windows.runner(runners::RunnerSize::Default))
             .add_step(sync_winget_pkgs_fork())
             .add_step(set_package_name)
             .add_step(winget_releaser(&package_name)),
