@@ -186,6 +186,13 @@ message Operation {
 message ProjectTransaction {
   repeated uint64 buffer_ids = 1;
   repeated Transaction transactions = 2;
+  repeated FileRename file_renames = 3;
+}
+
+message FileRename {
+  ProjectPath old_path = 1;
+  ProjectPath new_path = 2;
+  uint64 entry_id = 3;
 }
 
 message Transaction {

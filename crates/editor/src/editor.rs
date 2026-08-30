@@ -3551,7 +3551,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if transaction.0.is_empty() {
+        if transaction.buffers.is_empty() {
             return;
         }
 
@@ -3564,7 +3564,7 @@ impl Editor {
                 .filter(|editor| editor.entity_id() != cx.entity_id())
                 .collect();
 
-            transaction.0.keys().all(|buffer| {
+            transaction.buffers.keys().all(|buffer| {
                 other_editors.iter().any(|editor| {
                     let multi_buffer = editor.read(cx).buffer();
                     multi_buffer.read(cx).is_singleton()
@@ -3597,7 +3597,7 @@ impl Editor {
         title: String,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
+        let mut entries = transaction.buffers.into_iter().collect::<Vec<_>>();
         cx.update(|_, cx| {
             entries.sort_unstable_by_key(|(buffer, _)| {
                 buffer.read(cx).file().map(|f| f.path().clone())
@@ -8432,7 +8432,7 @@ impl Editor {
                 if let Some(transaction) = transaction
                     && !buffer.is_singleton()
                 {
-                    buffer.push_transaction(&transaction.0, cx);
+                    buffer.push_transaction(&transaction.buffers, cx);
                 }
                 cx.notify();
             });
@@ -8503,7 +8503,7 @@ impl Editor {
                 if let Some(transaction) = transaction
                     && !buffer.is_singleton()
                 {
-                    buffer.push_transaction(&transaction.0, cx);
+                    buffer.push_transaction(&transaction.buffers, cx);
                 }
                 cx.notify();
             });

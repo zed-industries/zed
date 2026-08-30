@@ -97,14 +97,44 @@ pub enum BufferStoreEvent {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct ProjectTransaction(pub HashMap<Entity<Buffer>, language::Transaction>);
+pub struct ProjectTransaction {
+    pub buffers: HashMap<Entity<Buffer>, language::Transaction>,
+    /// Files moved by this transaction's workspace edit, in the order they were
+    /// applied. An LSP rename can move a file as well as edit its contents, and
+    /// consumers that only look at the buffers cannot tell that it happened.
+    pub file_renames: Vec<FileRename>,
+}
+
+/// A file moved while applying a workspace edit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRename {
+    /// The entry that moved, rather than the path it sat at. By the time anyone
+    /// acts on this, something unrelated may occupy either end of the move.
+    pub entry_id: ProjectEntryId,
+    pub old_path: ProjectPath,
+    pub new_path: ProjectPath,
+}
+
+impl ProjectTransaction {
+    /// Folds another transaction into this one. Both the buffer edits and the
+    /// file renames have to be carried over, or the moves would be dropped
+    /// while the edits that came with them are kept.
+    pub fn merge(&mut self, other: Self) {
+        self.buffers.extend(other.buffers);
+        self.file_renames.extend(other.file_renames);
+    }
+}
 
 impl PartialEq for ProjectTransaction {
     fn eq(&self, other: &Self) -> bool {
-        self.0.len() == other.0.len()
-            && self.0.iter().all(|(buffer, transaction)| {
-                other.0.get(buffer).is_some_and(|t| t.id == transaction.id)
+        self.buffers.len() == other.buffers.len()
+            && self.buffers.iter().all(|(buffer, transaction)| {
+                other
+                    .buffers
+                    .get(buffer)
+                    .is_some_and(|t| t.id == transaction.id)
             })
+            && self.file_renames == other.file_renames
     }
 }
 
@@ -276,10 +306,24 @@ impl RemoteBufferStore {
                     .update(cx, |this, cx| this.wait_for_remote_buffer(buffer_id, cx))?
                     .await?;
                 let transaction = language::proto::deserialize_transaction(transaction)?;
-                project_transaction.0.insert(buffer, transaction);
+                project_transaction.buffers.insert(buffer, transaction);
             }
 
-            for (buffer, transaction) in &project_transaction.0 {
+            for rename in message.file_renames {
+                let (Some(old_path), Some(new_path)) = (
+                    rename.old_path.and_then(ProjectPath::from_proto),
+                    rename.new_path.and_then(ProjectPath::from_proto),
+                ) else {
+                    continue;
+                };
+                project_transaction.file_renames.push(FileRename {
+                    entry_id: ProjectEntryId::from_proto(rename.entry_id),
+                    old_path,
+                    new_path,
+                });
+            }
+
+            for (buffer, transaction) in &project_transaction.buffers {
                 buffer
                     .update(cx, |buffer, _| {
                         buffer.wait_for_edits(transaction.edit_ids.iter().copied())
@@ -809,7 +853,7 @@ impl LocalBufferStore {
                         if !push_to_history {
                             buffer.forget_transaction(transaction.id);
                         }
-                        project_transaction.0.insert(cx.entity(), transaction);
+                        project_transaction.buffers.insert(cx.entity(), transaction);
                     }
                 });
             }
@@ -1763,8 +1807,17 @@ impl BufferStore {
         let mut serialized_transaction = proto::ProjectTransaction {
             buffer_ids: Default::default(),
             transactions: Default::default(),
+            file_renames: project_transaction
+                .file_renames
+                .iter()
+                .map(|rename| proto::FileRename {
+                    old_path: Some(rename.old_path.to_proto()),
+                    new_path: Some(rename.new_path.to_proto()),
+                    entry_id: rename.entry_id.to_proto(),
+                })
+                .collect(),
         };
-        for (buffer, transaction) in project_transaction.0 {
+        for (buffer, transaction) in project_transaction.buffers {
             self.create_buffer_for_peer(&buffer, peer_id, cx)
                 .detach_and_log_err(cx);
             serialized_transaction

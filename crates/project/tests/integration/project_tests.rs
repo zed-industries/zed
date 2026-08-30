@@ -6279,7 +6279,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // Applying the code action returns a project transaction containing the edits
     // sent by the language server in its `workspaceEdit` request.
     let transaction = apply.await.unwrap();
-    assert!(transaction.0.contains_key(&buffer));
+    assert!(transaction.buffers.contains_key(&buffer));
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "Xa");
         buffer.undo(cx);
@@ -8356,7 +8356,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .next()
         .await
         .unwrap();
-    let mut transaction = response.await.unwrap().0;
+    let mut transaction = response.await.unwrap().buffers;
     assert_eq!(transaction.len(), 2);
     assert_eq!(
         transaction

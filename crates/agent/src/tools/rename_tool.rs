@@ -89,14 +89,14 @@ impl AgentTool for RenameTool {
                 .await
                 .map_err(|e| format!("Rename failed: {e}"))?;
 
-            if transaction.0.is_empty() {
+            if transaction.buffers.is_empty() {
                 return Ok(format!(
                     "No changes were made. The language server could not rename '{}'.",
                     input.symbol.symbol_name
                 ));
             }
 
-            let buffers = transaction.0.keys().cloned().collect::<HashSet<_>>();
+            let buffers = transaction.buffers.keys().cloned().collect::<HashSet<_>>();
             project
                 .update(cx, |project, cx| project.save_buffers(buffers, cx))
                 .await
@@ -106,10 +106,10 @@ impl AgentTool for RenameTool {
                 "Renamed `{}` to `{}` in {} file(s):\n",
                 input.symbol.symbol_name,
                 input.new_name,
-                transaction.0.len()
+                transaction.buffers.len()
             );
 
-            for (buffer, _) in &transaction.0 {
+            for (buffer, _) in &transaction.buffers {
                 buffer.read_with(cx, |buffer, cx| {
                     let path = buffer
                         .file()
