@@ -1061,30 +1061,29 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut workspace::Workspace, _, _| {
         workspace.register_action_renderer(|div, workspace, window, cx| {
-            div.when_some(
-                resolve_file_history_target(workspace, window, cx),
-                |div, (repo_id, log_source)| {
-                    let git_store = workspace.project().read(cx).git_store().clone();
-                    let workspace = workspace.weak_handle();
+            let targets = resolve_file_history_targets(workspace, window, cx);
+            div.when_some((!targets.is_empty()).then_some(targets), |div, targets| {
+                let git_store = workspace.project().read(cx).git_store().clone();
+                let workspace = workspace.weak_handle();
 
-                    div.on_action(move |_: &git::FileHistory, window, cx| {
-                        let git_store = git_store.clone();
-                        workspace
-                            .update(cx, |workspace, cx| {
+                div.on_action(move |_: &git::FileHistory, window, cx| {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            for (repo_id, log_source) in &targets {
                                 open_or_reuse_graph(
                                     workspace,
-                                    repo_id,
-                                    git_store,
+                                    *repo_id,
+                                    git_store.clone(),
                                     log_source.clone(),
                                     None,
                                     window,
                                     cx,
                                 );
-                            })
-                            .ok();
-                    })
-                },
-            )
+                            }
+                        })
+                        .ok();
+                })
+            })
             .when(
                 workspace.project().read(cx).active_repository(cx).is_some(),
                 |div| {
@@ -1167,33 +1166,48 @@ pub fn resolve_file_history_target_from_project_path(
     Some((repo.read(cx).id, log_source))
 }
 
-fn resolve_file_history_target(
+fn resolve_file_history_targets(
     workspace: &Workspace,
     window: &Window,
     cx: &App,
-) -> Option<(RepositoryId, LogSource)> {
+) -> Vec<(RepositoryId, LogSource)> {
     if let Some(panel) = workspace.panel::<crate::git_panel::GitPanel>(cx)
         && panel.read(cx).focus_handle(cx).contains_focused(window, cx)
-        && let Some((repository, repo_path)) = panel.read(cx).selected_file_history_target()
     {
-        return Some((repository.read(cx).id, LogSource::Path(repo_path)));
+        let targets = panel
+            .read(cx)
+            .selected_file_history_targets()
+            .into_iter()
+            .map(|(repository, repo_path)| (repository.read(cx).id, LogSource::Path(repo_path)))
+            .collect::<Vec<_>>();
+        if !targets.is_empty() {
+            return targets;
+        }
     }
 
-    let editor = workspace.active_item_as::<Editor>(cx)?;
+    let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
+        return Vec::new();
+    };
 
-    let file = editor
+    let Some(file) = editor
         .read(cx)
-        .file_at(editor.read(cx).selections.newest_anchor().head(), cx)?;
+        .file_at(editor.read(cx).selections.newest_anchor().head(), cx)
+    else {
+        return Vec::new();
+    };
     let project_path = ProjectPath {
         worktree_id: file.worktree_id(cx),
         path: file.path().clone(),
     };
 
     let git_store = workspace.project().read(cx).git_store();
-    let (repo, repo_path) = git_store
+    let Some((repo, repo_path)) = git_store
         .read(cx)
-        .repository_and_path_for_project_path(&project_path, cx)?;
-    Some((repo.read(cx).id, LogSource::Path(repo_path)))
+        .repository_and_path_for_project_path(&project_path, cx)
+    else {
+        return Vec::new();
+    };
+    vec![(repo.read(cx).id, LogSource::Path(repo_path))]
 }
 
 pub fn open_or_reuse_graph(
