@@ -93,12 +93,24 @@ impl InProcessSshConnection {
             ..Default::default()
         });
 
+        let connect_timeout =
+            std::time::Duration::from_secs(options.connection_timeout.unwrap_or(10) as u64);
         let handle = {
             let host = host.clone();
             Tokio::spawn_result(cx, async move {
-                russh::client::connect(config, (host.as_str(), port), ClientHandler)
-                    .await
-                    .map_err(|error| anyhow!("failed to connect to {host}:{port}: {error}"))
+                match tokio::time::timeout(
+                    connect_timeout,
+                    russh::client::connect(config, (host.as_str(), port), ClientHandler),
+                )
+                .await
+                {
+                    Ok(result) => result
+                        .map_err(|error| anyhow!("failed to connect to {host}:{port}: {error}")),
+                    Err(_) => Err(anyhow!(
+                        "connecting to {host}:{port} timed out after {}s. If the server is on                          your local network, make sure Zed is allowed to access the local                          network in the iPad's privacy settings.",
+                        connect_timeout.as_secs()
+                    )),
+                }
             })
             .await?
         };

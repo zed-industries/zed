@@ -45,7 +45,23 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
 
     settings::init(cx);
     use gpui::UpdateGlobal as _;
-    let user_settings = std::fs::read_to_string(paths::settings_file()).unwrap_or_default();
+    // Writes go through atomic renames inside this directory; without it the
+    // very first "save a connection" write fails and the setting is lost.
+    let settings_path = paths::settings_file();
+    if let Some(parent) = settings_path.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        log::error!("failed to create the settings directory: {error}");
+    }
+    if !settings_path.exists()
+        && let Err(error) = std::fs::write(
+            settings_path,
+            settings::initial_user_settings_content().as_bytes(),
+        )
+    {
+        log::error!("failed to create the settings file: {error}");
+    }
+    let user_settings = std::fs::read_to_string(settings_path).unwrap_or_default();
     settings::SettingsStore::update_global(cx, |store, cx| {
         // Baseline for touch devices, kept in the global layer so the user's
         // own settings file can override it without erasing it.

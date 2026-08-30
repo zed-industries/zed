@@ -396,7 +396,14 @@ impl ProjectPicker {
 
         let picker = cx.new(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx).embedded();
-            picker.set_query(&home_dir.to_string(), window, cx);
+            // End the query with a separator so the home directory's contents
+            // are listed immediately instead of a single collapsed entry.
+            let separator = home_dir.path_style().separators()[0];
+            let mut initial_query = home_dir.to_string();
+            if !initial_query.ends_with(separator) {
+                initial_query.push_str(separator);
+            }
+            picker.set_query(&initial_query, window, cx);
             picker
         });
 

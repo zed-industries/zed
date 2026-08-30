@@ -19,6 +19,7 @@ targets:
       path: Info.plist
       properties:
         CFBundleDisplayName: Zed
+        NSLocalNetworkUsageDescription: Zed connects to development servers on your local network for remote editing.
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
           UISceneConfigurations:
