@@ -234,13 +234,13 @@ impl ShellKind {
 
     fn to_cmd_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
-            if var_str.find(':').is_none() {
-                // If the input starts with "${", remove the trailing "}"
-                format!("%{}%", &var_str[..var_str.len() - 1])
-            } else {
+            match var_str.strip_suffix('}') {
                 // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
                 // which will result in the task failing to run in such cases.
-                input.into()
+                Some(var_name) if !var_name.is_empty() && !var_name.contains(':') => {
+                    format!("%{var_name}%")
+                }
+                _ => input.into(),
             }
         } else if let Some(var_str) = input.strip_prefix('$') {
             // If the input starts with "$", directly append to "$env:"
@@ -253,13 +253,13 @@ impl ShellKind {
 
     fn to_powershell_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
-            if var_str.find(':').is_none() {
-                // If the input starts with "${", remove the trailing "}"
-                format!("$env:{}", &var_str[..var_str.len() - 1])
-            } else {
+            match var_str.strip_suffix('}') {
                 // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
                 // which will result in the task failing to run in such cases.
-                input.into()
+                Some(var_name) if !var_name.is_empty() && !var_name.contains(':') => {
+                    format!("$env:{var_name}")
+                }
+                _ => input.into(),
             }
         } else if let Some(var_str) = input.strip_prefix('$') {
             // If the input starts with "$", directly append to "$env:"
@@ -941,6 +941,36 @@ mod tests {
             assert!(quoted.starts_with('\''));
             assert!(quoted.ends_with('\''));
             assert!(quoted.contains("O''Brien"));
+        }
+    }
+
+    #[test]
+    fn test_to_shell_variable() {
+        assert_eq!(ShellKind::PowerShell.to_shell_variable("${FOO}"), "$env:FOO");
+        assert_eq!(ShellKind::Pwsh.to_shell_variable("${FOO}"), "$env:FOO");
+        assert_eq!(ShellKind::Cmd.to_shell_variable("${FOO}"), "%FOO%");
+        assert_eq!(ShellKind::Nushell.to_shell_variable("${FOO}"), "$env.FOO");
+        assert_eq!(ShellKind::Posix.to_shell_variable("${FOO}"), "${FOO}");
+
+        assert_eq!(ShellKind::PowerShell.to_shell_variable("$FOO"), "$env:FOO");
+        assert_eq!(ShellKind::PowerShell.to_shell_variable("${日本}"), "$env:日本");
+        assert_eq!(
+            ShellKind::PowerShell.to_shell_variable("${FOO:-bar}"),
+            "${FOO:-bar}"
+        );
+    }
+
+    #[test]
+    fn test_to_shell_variable_malformed_is_passed_through() {
+        for input in ["${", "${FOO", "${café", "${}", "${日本"] {
+            for shell_kind in [
+                ShellKind::PowerShell,
+                ShellKind::Pwsh,
+                ShellKind::Cmd,
+                ShellKind::Nushell,
+            ] {
+                assert_eq!(shell_kind.to_shell_variable(input), input);
+            }
         }
     }
 }
