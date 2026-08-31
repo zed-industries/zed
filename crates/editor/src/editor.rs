@@ -8701,6 +8701,22 @@ impl Editor {
         blocks
     }
 
+    pub fn insert_above_blocks(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
+        autoscroll: Option<Autoscroll>,
+        cx: &mut Context<Self>,
+    ) -> Vec<CustomBlockId> {
+        let blocks = self.display_map.update(cx, |display_map, cx| {
+            display_map.insert_above_blocks(blocks, cx)
+        });
+        if let Some(autoscroll) = autoscroll {
+            self.request_autoscroll(autoscroll, cx);
+        }
+        cx.notify();
+        blocks
+    }
+
     pub fn resize_blocks(
         &mut self,
         heights: HashMap<CustomBlockId, u32>,
