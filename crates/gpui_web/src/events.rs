@@ -272,21 +272,24 @@ impl WebWindowInner {
             let position = pointer_position_in_element(&event);
 
             if event.pointer_type() == "touch" {
-                this.state.borrow_mut().mouse_position = position;
-                let completes_tap = match this.touch_tap_candidate.get() {
-                    Some((pointer_id, _)) if pointer_id == event.pointer_id() => {
+                let completed_tap_position = match this.touch_tap_candidate.get() {
+                    Some((pointer_id, start_position)) if pointer_id == event.pointer_id() => {
                         this.touch_tap_candidate.set(None);
-                        true
+                        Some(start_position)
                     }
-                    _ => false,
+                    _ => None,
                 };
+                // WebKit may report touch pointer-up coordinates at the origin.
+                // A completed tap never left the touch slop around its start.
+                let touch_end_position = completed_tap_position.unwrap_or(position);
+                this.state.borrow_mut().mouse_position = touch_end_position;
                 // A recognized tap is dispatched synchronously inside this
                 // call, so the text-input check below sees the state the tap
                 // produced.
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Ended,
-                    position,
+                    position: touch_end_position,
                     force: None,
                 }));
 
@@ -299,8 +302,8 @@ impl WebWindowInner {
                 // keyboard or IME focus at all.
                 let viewport_stable = this.gesture_start_visual_viewport_height.get()
                     == this.visual_viewport_height();
-                if completes_tap && viewport_stable {
-                    this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                if viewport_stable && let Some(tap_position) = completed_tap_position {
+                    this.sync_virtual_keyboard(this.pointer_targets_text_input(tap_position));
                 }
                 this.schedule_ime_mirror_sync();
                 return;
