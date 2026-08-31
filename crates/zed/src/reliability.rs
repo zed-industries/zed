@@ -321,25 +321,13 @@ async fn upload_minidump(
             .text("sentry[contexts][abort][message]", abort_message.clone());
     }
 
-    if let Some(is_staff) = &metadata
-        .user_info
-        .as_ref()
-        .and_then(|user_info| user_info.is_staff)
-    {
-        form = form.text(
-            "sentry[user][is_staff]",
-            if *is_staff { "true" } else { "false" },
-        );
+    for (key, value) in &metadata.tags {
+        form = form.text(key.clone(), value.clone());
     }
-
-    if let Some(metrics_id) = metadata
-        .user_info
-        .as_ref()
-        .and_then(|user_info| user_info.metrics_id.as_ref())
+    if !metadata.tags.contains_key(crashes::SENTRY_USER_ID)
+        && let Some(id) = client.telemetry().installation_id()
     {
-        form = form.text("sentry[user][id]", metrics_id.clone());
-    } else if let Some(id) = client.telemetry().installation_id() {
-        form = form.text("sentry[user][id]", format!("installation-{}", id))
+        form = form.text(crashes::SENTRY_USER_ID, format!("installation-{}", id))
     }
 
     ::telemetry::event!(
