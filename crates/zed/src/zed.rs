@@ -5539,6 +5539,49 @@ mod tests {
         );
     }
 
+    /// The chord has to survive every context-less binding that comes later in the same file: a
+    /// context-less match sits at the deepest depth and a tie goes to the later-added binding,
+    /// which is how `dev::ToggleFpsOverlay` once swallowed the old chord whenever an editor was
+    /// focused - and the action's own `Editor && mode == full` context means a swallowed chord
+    /// cannot fire anywhere at all.
+    #[gpui::test]
+    fn test_breadcrumb_navigation_chord_is_not_shadowed(cx: &mut TestAppContext) {
+        init_keymap_test(cx);
+
+        for (asset, keystroke) in [
+            ("keymaps/default-linux.json", "alt-shift-b"),
+            ("keymaps/default-windows.json", "alt-shift-b"),
+            ("keymaps/default-macos.json", "cmd-alt-shift-p"),
+        ] {
+            let resolved = cx.update(|cx| {
+                let mut bindings =
+                    settings::KeymapFile::load_asset_allow_partial_failure(asset, cx).unwrap();
+                for binding in &mut bindings {
+                    binding.set_meta(settings::KeybindSource::Default.meta());
+                }
+                gpui::Keymap::new(bindings)
+                    .bindings_for_input(
+                        &[gpui::Keystroke::parse(keystroke).unwrap()],
+                        &[
+                            gpui::KeyContext::parse("Workspace").unwrap(),
+                            gpui::KeyContext::parse("Pane").unwrap(),
+                            gpui::KeyContext::parse("Editor mode=full").unwrap(),
+                        ],
+                    )
+                    .0
+                    .iter()
+                    .map(|binding| binding.action().name().to_string())
+                    .collect::<Vec<_>>()
+            });
+            assert_eq!(
+                resolved.first().map(String::as_str),
+                Some("editor::OpenBreadcrumbNavigation"),
+                "{asset}: {keystroke} must open breadcrumb navigation with an editor focused, \
+                 got {resolved:?}"
+            );
+        }
+    }
+
     #[gpui::test]
     async fn test_base_keymap(cx: &mut gpui::TestAppContext) {
         let executor = cx.executor();

@@ -1113,7 +1113,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let menu_bounds = cx
@@ -1212,7 +1212,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let menu_bounds = cx
@@ -1314,7 +1314,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let menu_bounds = cx
@@ -1421,7 +1421,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let menu_bounds = cx
@@ -1523,7 +1523,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let menu_bounds = cx
@@ -1648,7 +1648,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.run_until_parked();
 
@@ -1767,7 +1767,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.run_until_parked();
 
@@ -2276,7 +2276,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let wide = cx
@@ -2291,7 +2291,7 @@ mod tests {
             .unwrap();
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let viewport = cx
@@ -2424,7 +2424,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let viewport = cx
@@ -2552,7 +2552,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let viewport = cx
@@ -2671,7 +2671,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let revealed = Rc::new(Cell::new(None));
@@ -2852,7 +2852,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let src_bounds = cx
@@ -3004,7 +3004,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let src_bounds = cx
@@ -4164,12 +4164,12 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("z z z");
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         host_window
@@ -4257,7 +4257,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         host_window
@@ -4272,7 +4272,7 @@ mod tests {
         cx.simulate_keystrokes("b");
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         host_window
             .read_with(cx, |host, cx| {
@@ -4373,12 +4373,12 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_input("be");
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         host_window
@@ -4471,7 +4471,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // root / some_directory / another_directory / a_rather_long_file_name.rs
@@ -4484,7 +4484,7 @@ mod tests {
         cx.simulate_resize(size(px(320.), px(600.)));
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         assert_eq!(
@@ -4582,7 +4582,7 @@ mod tests {
         cx.simulate_resize(size(px(320.), px(600.)));
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         assert_eq!(
             cx.debug_bounds("breadcrumb-segment-0"),
@@ -4690,7 +4690,7 @@ mod tests {
             window.focus(&menu.focus_handle(cx), cx);
         });
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // Walking out of a directory is a primary interaction and only the symbol arm was
@@ -4794,7 +4794,7 @@ mod tests {
         cx.simulate_resize(size(px(1400.), px(600.)));
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // Every other test reaches the menu through a test-only shim; this one goes through the
@@ -4916,7 +4916,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         assert_eq!(menu.read_with(cx, |menu, _| menu.selected_index()), Some(0));
@@ -4929,7 +4929,7 @@ mod tests {
         cx.simulate_click(chrome, gpui::Modifiers::none());
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         // Without this the test would still pass with the click landing outside the popup,
         // where nothing can steal the filter editor's focus in the first place.
@@ -5032,7 +5032,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("item_");
@@ -5107,7 +5107,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         assert_eq!(
@@ -5203,7 +5203,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let rows = menu.read_with(cx, |menu, _| menu.entry_names());
@@ -5714,7 +5714,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*menu_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         let dismissed = Rc::new(AtomicBool::new(false));
@@ -5933,7 +5933,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*menu_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("a");
@@ -6150,7 +6150,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("日本");
@@ -6261,7 +6261,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // Dispatched without parking in between: `simulate_input` drains the executor, which
@@ -6372,13 +6372,13 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("match");
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // What the picker is actually painting, which under a filter is not the listing order.
@@ -7037,7 +7037,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("alpha");
@@ -7071,7 +7071,7 @@ mod tests {
             );
         });
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.update(|window, cx| {
             window.dispatch_keystroke(gpui::Keystroke::parse("right").unwrap(), cx);
@@ -7195,7 +7195,7 @@ mod tests {
             window.focus(&menu.focus_handle(cx), cx);
         });
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_keystrokes("left");
@@ -7388,13 +7388,13 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_keystrokes("right");
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("right");
         cx.run_until_parked();
@@ -7481,7 +7481,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // "alpha.txt" is a plain file that is not the open buffer, so Right has nowhere to go.
@@ -7589,7 +7589,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("zeta");
@@ -7706,7 +7706,7 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*host_window, cx);
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("nest");
@@ -7722,7 +7722,7 @@ mod tests {
         });
 
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("right");
         cx.run_until_parked();
@@ -7848,7 +7848,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         cx.simulate_input("mai");
@@ -7868,7 +7868,7 @@ mod tests {
             .unwrap();
 
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("right");
         cx.run_until_parked();
@@ -7893,7 +7893,7 @@ mod tests {
             .unwrap();
 
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("left");
         cx.run_until_parked();
@@ -7999,7 +7999,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("alt-b");
         cx.run_until_parked();
@@ -8123,7 +8123,7 @@ mod tests {
             window.focus(&menu.focus_handle(cx), cx);
         });
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
@@ -8385,7 +8385,7 @@ mod tests {
             menu.apply_initial_selection_for_test(cx);
         });
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         menu.read_with(cx, |menu, _| {
             assert_eq!(menu.selected_index(), Some(2), "Gamma starts selected");
@@ -8516,7 +8516,7 @@ mod tests {
             window.focus(&menu.focus_handle(cx), cx);
         });
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_input("needle");
         cx.run_until_parked();
@@ -8630,7 +8630,7 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         // The whole point of the feature, and nothing covered it: confirming a symbol row must
@@ -8800,7 +8800,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         host_window
@@ -8846,7 +8846,7 @@ mod tests {
             .unwrap();
 
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("left");
         cx.run_until_parked();
@@ -8963,7 +8963,7 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
 
         host_window
@@ -9021,12 +9021,12 @@ mod tests {
             })
             .unwrap();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_input("lib");
         cx.run_until_parked();
         cx.update(|window, cx| {
-            let _ = window.draw(cx);
+            window.draw(cx).clear(cx);
         });
         cx.simulate_keystrokes("right");
         cx.run_until_parked();

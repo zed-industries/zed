@@ -145,7 +145,7 @@
       "ctrl-shift-backspace": "editor::GoToPreviousChange",
       "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
-      "ctrl-alt-shift-p": "editor::OpenBreadcrumbNavigation",
+      "alt-shift-b": "editor::OpenBreadcrumbNavigation",
       "ctrl-alt-f": "text_finder::Toggle",
     },
   },
