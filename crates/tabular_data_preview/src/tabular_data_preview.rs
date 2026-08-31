@@ -120,7 +120,8 @@ impl TabularDataPreviewPane {
         cx: &mut Context<Workspace>,
     ) {
         let target_pane = workspace.adjacent_pane_of(&origin_pane, window, cx);
-        Self::activate_or_add_preview(editor, target_pane, false, window, cx);
+        Self::activate_or_add_preview(editor.clone(), target_pane, false, window, cx);
+        editor.focus_handle(cx).focus(window, cx);
     }
 
     fn activate_or_add_preview(
@@ -264,15 +265,7 @@ impl TabularDataPreviewPane {
     }
 
     pub fn is_tabular_data_file(editor: &Entity<Editor>, cx: &App) -> bool {
-        editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())
-            .and_then(|file| file.path().extension())
-            .and_then(parser::TabularFormat::from_extension)
-            .is_some()
+        parser::TabularFormat::from_editor(editor, cx).is_some()
     }
 }
 
@@ -366,5 +359,60 @@ impl ColumnWidths {
                 )
             }),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use std::path::Path;
+    use util::path;
+    use workspace::AppState;
+
+    #[gpui::test]
+    async fn test_detects_tabular_files_outside_the_project(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({ "inside.csv": "a,b\n1,2\n", "inside.txt": "plain" }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/elsewhere"),
+            json!({ "outside.csv": "a,b\n1,2\n", "outside.txt": "plain" }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        for (abs_path, expected) in [
+            (path!("/project/inside.csv"), true),
+            (path!("/project/inside.txt"), false),
+            (path!("/elsewhere/outside.csv"), true),
+            (path!("/elsewhere/outside.txt"), false),
+        ] {
+            let buffer = project
+                .update(cx, |project, cx| project.open_local_buffer(abs_path, cx))
+                .await
+                .unwrap();
+            let (editor, _) = cx.add_window_view(|window, cx| {
+                Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+            });
+            let is_tabular =
+                cx.update(|cx| TabularDataPreviewPane::is_tabular_data_file(&editor, cx));
+            assert_eq!(is_tabular, expected, "{abs_path}");
+        }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            AppState::test(cx);
+            editor::init(cx);
+        });
     }
 }

@@ -2135,6 +2135,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "gpui_platform",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "language_model",
@@ -2144,6 +2145,7 @@ dependencies = [
  "project",
  "prompt_store",
  "rand 0.9.4",
+ "rpc",
  "serde_json",
  "settings",
  "text",
@@ -18007,9 +18009,12 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "project",
  "proptest",
+ "serde_json",
  "text",
  "ui",
+ "util",
  "workspace",
 ]
 

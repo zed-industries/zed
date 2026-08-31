@@ -10700,6 +10700,47 @@ async fn test_copy_file_location_from_multibuffer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_copy_file_name_for_external_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+    fs.insert_tree(path!("/elsewhere"), json!({ "external.csv": "a,b\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/elsewhere/external.csv"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name(&CopyFileName, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external.csv".to_string()),
+        "copy_file_name should work for a file outside the project"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name_without_extension(&CopyFileNameWithoutExtension, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external".to_string()),
+        "copy_file_name_without_extension should work for a file outside the project"
+    );
+}
+
+#[gpui::test]
 async fn test_copy_file_location_across_buffers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -45776,7 +45817,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
-    cx.update_editor(|editor, _, _| {
+    cx.update_editor(|editor, _, cx| {
         let bounds = size(px(1800.), px(900.));
         let settled = |width: f32, height: f32, editor_width: f32, bounds: Size<Pixels>| {
             Some(SettledScrollRange {
@@ -45785,7 +45826,13 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
                 editor_bounds_size: bounds,
             })
         };
-        editor.hold_scrollbar_range(true);
+        editor.set_search_results_status(
+            SearchResultsStatus {
+                pending: true,
+                ..SearchResultsStatus::default()
+            },
+            cx,
+        );
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1780.), px(100.)), px(1786.), bounds),
             settled(1780., 100., 1786., bounds),
@@ -45816,7 +45863,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             settled(1300., 160., 1276., resized_bounds),
             "after re-freezing on the resize, churn at the same bounds stays frozen again"
         );
-        editor.hold_scrollbar_range(false);
+        editor.set_search_results_status(SearchResultsStatus::default(), cx);
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
             None,
