@@ -8865,7 +8865,8 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let frozen_scroll_state = if self.editor.read(cx).scroll_range_hold.is_some() {
+                    let frozen_scroll_state = if self.editor.read(cx).search_results_hold.is_some()
+                    {
                         let is_rewrapping =
                             self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
                         self.editor.update(cx, |editor, _| {
