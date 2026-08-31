@@ -3,8 +3,8 @@ use std::{pin::Pin, str::FromStr as _, sync::Arc};
 use crate::responses as copilot_responses;
 use crate::{
     ChatLocation, ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, Function,
-    FunctionContent, ImageUrl, Model as CopilotChatModel, ModelVendor,
-    Request as CopilotChatRequest, ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
+    FunctionContent, ImageUrl, Model as CopilotChatModel, Request as CopilotChatRequest,
+    ResponseEvent, Tool, ToolCall, ToolCallContent, ToolChoice,
 };
 use anthropic::{
     AnthropicModelMode,
@@ -22,8 +22,8 @@ use language_model::{
     LanguageModelCostInfo, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, ProviderErrorCategory,
-    RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderErrorCategory, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use util::debug_panic;
 
@@ -105,17 +105,6 @@ impl LanguageModel for CopilotChatLanguageModel {
                 }
             })
             .collect()
-    }
-
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self.model.vendor() {
-            ModelVendor::OpenAI | ModelVendor::Anthropic => {
-                LanguageModelToolSchemaFormat::JsonSchema
-            }
-            ModelVendor::Google | ModelVendor::XAI | ModelVendor::Unknown => {
-                LanguageModelToolSchemaFormat::JsonSchemaSubset
-            }
-        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -241,12 +230,16 @@ impl LanguageModel for CopilotChatLanguageModel {
                     anthropic_beta,
                     cx.clone(),
                 );
+                let executor = cx.background_executor().clone();
 
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
                         let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                        Ok(mapper.map_stream(events).boxed())
+                        Ok(language_model::stream_in_background(
+                            mapper.map_stream(events).boxed(),
+                            executor,
+                        ))
                     })
                     .await
             });
@@ -269,11 +262,15 @@ impl LanguageModel for CopilotChatLanguageModel {
                     is_user_initiated,
                     cx.clone(),
                 );
+                let executor = cx.background_executor().clone();
                 request_limiter
                     .stream(async move {
                         let stream = request.await?;
                         let mapper = CopilotResponsesEventMapper::new();
-                        Ok(mapper.map_stream(stream).boxed())
+                        Ok(language_model::stream_in_background(
+                            mapper.map_stream(stream).boxed(),
+                            executor,
+                        ))
                     })
                     .await
             });
