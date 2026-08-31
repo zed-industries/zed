@@ -79,19 +79,30 @@ pub struct ResponseStreamError {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 pub struct ResponseStreamEvent {
-    /// Usage-only chunks from some providers omit `choices` entirely instead
-    /// of sending an empty array.
-    #[serde(default)]
+    /// Usage-only chunks from some providers omit `choices` entirely or send
+    /// an explicit `null` instead of an empty array.
+    #[serde(default, deserialize_with = "null_as_default")]
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub index: u32,
     pub delta: Option<ResponseMessageDelta>,
     pub finish_reason: Option<String>,
+}
+
+/// Deserializes a missing field or an explicit `null` as the type's default,
+/// honoring this module's leniency guarantee for fields that are not
+/// themselves optional.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Serialize, Deserialize, Debug, Default, Eq, PartialEq)]
@@ -115,7 +126,7 @@ pub struct ResponseMessageDelta {
 pub struct ToolCallChunk {
     /// Some providers omit the index; treating it as 0 merges the chunks into
     /// a single tool call, which is correct for the common single-call case.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub index: usize,
     pub id: Option<String>,
 
@@ -477,6 +488,22 @@ mod tests {
     #[test]
     fn parses_chunk_without_choices() {
         let event = expect_event(r#"{"usage":{"total_tokens":8}}"#);
+        assert!(event.choices.is_empty());
+        assert_eq!(event.usage.unwrap().total_tokens, Some(8));
+    }
+
+    #[test]
+    fn parses_explicit_nulls_for_non_optional_fields() {
+        let event = expect_event(
+            r#"{"choices":[{"index":null,"delta":{"tool_calls":[{"index":null,"id":"call_1","function":null}]},"finish_reason":null}],"usage":null}"#,
+        );
+        let choice = &event.choices[0];
+        assert_eq!(choice.index, 0);
+        let tool_call = &choice.delta.as_ref().unwrap().tool_calls.as_ref().unwrap()[0];
+        assert_eq!(tool_call.index, 0);
+        assert_eq!(tool_call.id.as_deref(), Some("call_1"));
+
+        let event = expect_event(r#"{"choices":null,"usage":{"total_tokens":8}}"#);
         assert!(event.choices.is_empty());
         assert_eq!(event.usage.unwrap().total_tokens, Some(8));
     }

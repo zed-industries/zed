@@ -32,7 +32,7 @@ use crate::provider::open_ai::{
     ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
-use language_model::chat_completion::ChatCompletionEventMapper;
+use language_model::chat_completion::{ChatCompletionEventMapper, ResponseStreamEvent};
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
     match effort.trim().to_ascii_lowercase().as_str() {
@@ -424,10 +424,8 @@ impl OpenCodeLanguageModel {
         http_client: Arc<dyn HttpClient>,
         extra_headers: CustomHeaders,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<futures::stream::BoxStream<'static, Result<open_ai::ResponseStreamEvent>>>,
-    > {
+    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
+    {
         // OpenAI crate appends /chat/completions to api_url, so we pass base + "/v1"
         let base_url = self.base_api_url(cx);
         let api_url: SharedString = format!("{base_url}/v1").into();
