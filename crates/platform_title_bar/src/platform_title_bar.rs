@@ -11,6 +11,7 @@ use settings::Settings;
 use smallvec::SmallVec;
 use std::mem;
 use ui::{
+    Tooltip,
     prelude::*,
     utils::{TRAFFIC_LIGHT_PADDING, platform_title_bar_height},
 };
@@ -285,6 +286,18 @@ impl Render for PlatformTitleBar {
             })
             .bg(titlebar_color)
             .content_stretch()
+            // iOS has no window chrome, so a window carrying a title bar needs
+            // an in-bar way back to whatever it covers.
+            .when(cfg!(target_os = "ios"), |this| {
+                this.child(
+                    IconButton::new("platform-title-bar-back", IconName::ArrowLeft)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Back"))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(Box::new(workspace::CloseWindow), cx);
+                        }),
+                )
+            })
             .child(
                 div()
                     .id(self.id.clone())

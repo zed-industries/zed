@@ -35,7 +35,6 @@ use std::{
 };
 
 const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
-const BACK_BUTTON_TAG: isize = 0x2ED;
 
 static METAL_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static VC_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
@@ -250,10 +249,6 @@ fn register_metal_view_class() -> &'static AnyClass {
             decl.add_method(
                 sel!(gpuiHandleScroll:),
                 handle_scroll_gesture as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
-            );
-            decl.add_method(
-                sel!(gpuiGoBack),
-                handle_go_back as unsafe extern "C" fn(*mut AnyObject, Sel),
             );
         }
 
@@ -546,49 +541,6 @@ fn register_text_input_view_class() -> &'static AnyClass {
     class!(GPUITextInputView)
 }
 
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct UIEdgeInsets {
-    top: f64,
-    left: f64,
-    bottom: f64,
-    right: f64,
-}
-
-unsafe impl objc2::encode::Encode for UIEdgeInsets {
-    const ENCODING: objc2::encode::Encoding = objc2::encode::Encoding::Struct(
-        "UIEdgeInsets",
-        &[
-            objc2::encode::Encoding::Double,
-            objc2::encode::Encoding::Double,
-            objc2::encode::Encoding::Double,
-            objc2::encode::Encoding::Double,
-        ],
-    );
-}
-
-/// Pins one layout anchor to another with a constant offset.
-unsafe fn activate_constraint(anchor: *mut AnyObject, target: *mut AnyObject, constant: f64) {
-    unsafe {
-        let constraint: *mut AnyObject =
-            msg_send![anchor, constraintEqualToAnchor: target, constant: constant];
-        let _: () = msg_send![constraint, setActive: true];
-    }
-}
-
-unsafe extern "C" fn handle_go_back(this: *mut AnyObject, _sel: Sel) {
-    unsafe {
-        let window_ptr: *mut std::ffi::c_void = {
-            #[allow(deprecated)]
-            *(*this).get_ivar(GPUI_WINDOW_IVAR)
-        };
-        if window_ptr.is_null() {
-            return;
-        }
-        (*(window_ptr as *const IosWindow)).request_close();
-    }
-}
-
 /// Whether a touch is a trackpad/mouse secondary (right) click.
 fn is_secondary_click(touch: *mut AnyObject, event: *mut AnyObject) -> bool {
     const UI_TOUCH_TYPE_INDIRECT_POINTER: i64 = 3;
@@ -858,106 +810,15 @@ impl IosWindow {
         }
 
         Self::install_scroll_recognizer(self.view);
-        if super::ffi::window_count() > 1 {
-            self.install_back_button();
-        }
         Self::register_keyboard_observers();
     }
 
     /// Secondary windows (settings, and anything else GPUI opens in its own
     /// window) cover the workspace on iOS and have no window chrome, so give
     /// them a native way back.
-    /// Removes the back button again, for windows that provide their own way
-    /// back (a workspace has history navigation in its toolbar).
-    pub(super) fn remove_back_button(&self) {
-        unsafe {
-            let button: *mut AnyObject = msg_send![self.view, viewWithTag: BACK_BUTTON_TAG];
-            if !button.is_null() {
-                let _: () = msg_send![button, removeFromSuperview];
-            }
-        }
-    }
-
-    fn install_back_button(&self) {
-        const UI_CONTROL_EVENT_TOUCH_UP_INSIDE: u64 = 1 << 6;
-        const BUTTON_HEIGHT: f64 = 34.0;
-
-        unsafe {
-            let button: *mut AnyObject = msg_send![class!(UIButton), buttonWithType: 1i64];
-            if button.is_null() {
-                return;
-            }
-
-            let title = super::util::nsstring("‹ Back");
-            let _: () = msg_send![button, setTitle: title, forState: 0u64];
-            let _: () = msg_send![button, setTag: BACK_BUTTON_TAG];
-
-            // A plain button floats over the content, so give it a pill that
-            // reads as a control and keep it inside the safe area.
-            let background: *mut AnyObject =
-                msg_send![class!(UIColor), secondarySystemBackgroundColor];
-            let _: () = msg_send![button, setBackgroundColor: background];
-            let label_color: *mut AnyObject = msg_send![class!(UIColor), labelColor];
-            let _: () = msg_send![button, setTintColor: label_color];
-            let layer: *mut AnyObject = msg_send![button, layer];
-            let _: () = msg_send![layer, setCornerRadius: BUTTON_HEIGHT / 2.0];
-            let _: () = msg_send![layer, setShadowOpacity: 0.15f32];
-            let _: () = msg_send![layer, setShadowRadius: 6.0f64];
-            let shadow_offset = super::cg_types::ObjcCGSize {
-                width: 0.0,
-                height: 1.0,
-            };
-            let _: () = msg_send![layer, setShadowOffset: shadow_offset];
-            let insets = UIEdgeInsets {
-                top: 0.0,
-                left: 14.0,
-                bottom: 0.0,
-                right: 14.0,
-            };
-            let _: () = msg_send![button, setContentEdgeInsets: insets];
-
-            let _: () = msg_send![button, addTarget: self.view, action: sel!(gpuiGoBack), forControlEvents: UI_CONTROL_EVENT_TOUCH_UP_INSIDE];
-            let _: () = msg_send![self.view, addSubview: button];
-
-            let _: () = msg_send![button, setTranslatesAutoresizingMaskIntoConstraints: false];
-            let guide: *mut AnyObject = msg_send![self.view, safeAreaLayoutGuide];
-            activate_constraint(
-                msg_send![button, leadingAnchor],
-                msg_send![guide, leadingAnchor],
-                12.0,
-            );
-            activate_constraint(
-                msg_send![button, topAnchor],
-                msg_send![guide, topAnchor],
-                12.0,
-            );
-            let height_anchor: *mut AnyObject = msg_send![button, heightAnchor];
-            let height: *mut AnyObject =
-                msg_send![height_anchor, constraintEqualToConstant: BUTTON_HEIGHT];
-            let _: () = msg_send![height, setActive: true];
-        }
-    }
-
     pub(super) fn make_key_and_visible(&self) {
         unsafe {
             let _: () = msg_send![self.window, makeKeyAndVisible];
-        }
-    }
-
-    fn request_close(&self) {
-        // Closing the only window would terminate the app; there is nothing to
-        // go back to in that case.
-        if super::ffi::window_count() <= 1 {
-            return;
-        }
-
-        let should_close = self
-            .should_close_callback
-            .borrow_mut()
-            .as_mut()
-            .map_or(true, |callback| callback());
-        if should_close && let Some(callback) = self.close_callback.borrow_mut().take() {
-            callback();
         }
     }
 

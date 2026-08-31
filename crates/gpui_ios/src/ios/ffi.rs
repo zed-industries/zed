@@ -94,19 +94,6 @@ pub(crate) fn make_last_window_key() {
     }
 }
 
-/// Removes the back button from the most recently created window. The app
-/// shell calls this for windows that host a workspace, which already has its
-/// own navigation.
-pub fn remove_back_button_from_current_window() {
-    unsafe {
-        if let Some(&window) = (*window_list().0.get()).last()
-            && let Some(window) = window.as_ref()
-        {
-            window.remove_back_button();
-        }
-    }
-}
-
 pub(crate) fn unregister_window(window: *const super::window::IosWindow) {
     unsafe {
         (*window_list().0.get()).retain(|registered_window| *registered_window != window);

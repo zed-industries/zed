@@ -188,11 +188,6 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
 
     cx.observe_new(
         |workspace: &mut Workspace, mut window, cx: &mut gpui::Context<Workspace>| {
-            // A workspace has its own back/forward navigation, so it does not
-            // need (and must not have) the platform back button, which would
-            // close the window.
-            gpui_ios::ios::ffi::remove_back_button_from_current_window();
-
             workspace.register_action(open_settings_file);
             // cmd-= / cmd-- are bound in the default keymap, but the actions
             // are handled by the zed crate, which this shell does not use.
