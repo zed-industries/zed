@@ -670,9 +670,13 @@ impl LanguageModel for OpenCodeLanguageModel {
                 };
                 let stream =
                     self.stream_anthropic(anthropic_request, http_client, extra_headers, cx);
+                let executor = cx.background_executor().clone();
                 async move {
                     let mapper = AnthropicEventMapper::new(PROVIDER_NAME, PROVIDER_ID);
-                    Ok(mapper.map_stream(stream.await?).boxed())
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream.await?).boxed(),
+                        executor,
+                    ))
                 }
                 .boxed()
             }
@@ -700,9 +704,13 @@ impl LanguageModel for OpenCodeLanguageModel {
                 };
                 let stream =
                     self.stream_openai_chat(openai_request, http_client, extra_headers, cx);
+                let executor = cx.background_executor().clone();
                 async move {
                     let mapper = OpenAiEventMapper::new();
-                    Ok(mapper.map_stream(stream.await?).boxed())
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream.await?).boxed(),
+                        executor,
+                    ))
                 }
                 .boxed()
             }
@@ -726,9 +734,13 @@ impl LanguageModel for OpenCodeLanguageModel {
                 };
                 let stream =
                     self.stream_openai_response(response_request, http_client, extra_headers, cx);
+                let executor = cx.background_executor().clone();
                 async move {
                     let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-                    Ok(mapper.map_stream(stream.await?).boxed())
+                    Ok(language_model::stream_in_background(
+                        mapper.map_stream(stream.await?).boxed(),
+                        executor,
+                    ))
                 }
                 .boxed()
             }
