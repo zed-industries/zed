@@ -15866,15 +15866,23 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        // Give focus to something representing whatever was focused before the
-        // modal was opened (e.g. a terminal panel, in the real bug this test guards).
-        let previously_focused_handle = workspace.update_in(cx, |_, window, cx| {
-            let handle = cx.focus_handle();
-            window.focus(&handle, cx);
-            handle
-        });
+        cx.executor().run_until_parked();
+
+        // Whatever the workspace naturally settles on focusing by default (e.g. the
+        // active pane's real focus target) represents "whatever was focused before
+        // the modal was opened" (a terminal panel, in the real bug this test guards).
+        // A hand-picked handle (a bare `cx.focus_handle()`, or the pane's own
+        // `Focusable::focus_handle`) doesn't survive the next render pass unless it's
+        // genuinely what the rendered tree tracks, so read the real default instead
+        // of fabricating one.
+        let previously_focused_handle = workspace
+            .update_in(cx, |_, window, cx| window.focused(cx))
+            .expect("workspace should focus something by default");
         workspace.update_in(cx, |_, window, _cx| {
-            assert!(previously_focused_handle.is_focused(window));
+            assert!(
+                previously_focused_handle.is_focused(window),
+                "the default focus target should still be focused on a second read"
+            );
         });
 
         // Open a modal whose construction steals focus for itself, mirroring a
