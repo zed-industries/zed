@@ -12307,9 +12307,6 @@ impl Render for ThreadView {
             }))
             .on_action(
                 cx.listener(|this, _: &ToggleThinkingEffortMenu, window, cx| {
-                    if this.thread.read(cx).status() != ThreadStatus::Idle {
-                        return;
-                    }
                     if let Some(config_options_view) = this.config_options_view.clone() {
                         let handled = config_options_view.update(cx, |view, cx| {
                             view.toggle_category_picker(
@@ -12405,9 +12402,6 @@ impl Render for ThreadView {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
-                if this.thread.read(cx).status() != ThreadStatus::Idle {
-                    return;
-                }
                 if let Some(config_options_view) = this.config_options_view.clone() {
                     let handled = config_options_view.update(cx, |view, cx| {
                         view.toggle_category_picker(
