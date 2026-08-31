@@ -321,12 +321,15 @@ impl X11Client {
                         // Insert the runnables as idle callbacks, so we make sure that user-input and X11
                         // events have higher priority and runnables are only worked off after the event
                         // callbacks.
-                        handle.insert_idle(|_| {
+                        handle.insert_idle(|client| {
                             let location = runnable.metadata().location;
                             let spawned = runnable.metadata().spawned;
                             profiler::update_running_task(spawned, location);
                             runnable.run();
                             profiler::save_task_timing();
+
+                            let xcb_connection = client.0.borrow().xcb_connection.clone();
+                            client.process_x11_events(&xcb_connection).log_err();
                         });
                     }
                 }
@@ -817,15 +820,19 @@ impl X11Client {
             Event::ClientMessage(event) => {
                 let window = self.get_window(event.window)?;
                 let [atom, arg1, arg2, arg3, arg4] = event.data.as_data32();
-                let mut state = self.0.borrow_mut();
+                let delete_window_atom = self.0.borrow().atoms.WM_DELETE_WINDOW;
 
-                if atom == state.atoms.WM_DELETE_WINDOW && window.should_close() {
-                    // window "x" button clicked by user
-                    // Rest of the close logic is handled in drop_window()
-                    drop(state);
-                    window.close();
-                    state = self.0.borrow_mut();
-                } else if atom == state.atoms._NET_WM_SYNC_REQUEST {
+                if atom == delete_window_atom {
+                    if window.should_close() {
+                        // window "x" button clicked by user
+                        // Rest of the close logic is handled in drop_window()
+                        window.close();
+                    }
+                    return Some(());
+                }
+
+                let mut state = self.0.borrow_mut();
+                if atom == state.atoms._NET_WM_SYNC_REQUEST {
                     window.state.borrow_mut().last_sync_counter =
                         Some(x11rb::protocol::sync::Int64 {
                             lo: arg2,

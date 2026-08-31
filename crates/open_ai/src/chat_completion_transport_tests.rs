@@ -129,7 +129,8 @@ fn transport_preserves_typed_send_and_deserialization_errors() {
     .expect_err("send error");
     assert!(matches!(
         error,
-        RequestError::HttpSend { provider, .. } if provider == "Compatible Provider"
+        RequestError::HttpSend { provider, host, .. }
+            if provider == "Compatible Provider" && host == "example.com"
     ));
 
     let client = FakeHttpClient::create(|_| async move {

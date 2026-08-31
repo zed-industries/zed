@@ -4,6 +4,8 @@ use ui::{SpinnerLabel, div, prelude::*};
 
 use crate::TabularDataPreviewPane;
 
+use super::settings::settings_popover_menu;
+
 impl Render for TabularDataPreviewPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -21,27 +23,39 @@ impl Render for TabularDataPreviewPane {
             .size_full()
             .bg(theme.colors().editor_background)
             .track_focus(&self.focus_handle)
-            .child(self.render_settings_panel(window, cx))
             .child({
                 let is_parsing = self.is_parsing;
                 if is_parsing || self.engine.contents.number_of_cols == 0 {
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .h_32()
-                        .text_ui(cx)
-                        .font_buffer(cx)
-                        .text_color(cx.theme().colors().text_muted)
-                        .when(is_parsing, |div| {
-                            div.child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(SpinnerLabel::new())
-                                    .child("Loading…"),
-                            )
-                        })
-                        .when(!is_parsing, |div| div.child("No data to display"))
+                    v_flex()
+                        .size_full()
+                        .child(
+                            // Settings stay reachable even before the table (and its own
+                            // header-embedded settings trigger) has anything to render.
+                            h_flex()
+                                .w_full()
+                                .justify_end()
+                                .p_1()
+                                .child(settings_popover_menu(cx.entity())),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_1()
+                                .items_center()
+                                .justify_center()
+                                .text_ui(cx)
+                                .font_buffer(cx)
+                                .text_color(cx.theme().colors().text_muted)
+                                .when(is_parsing, |div| {
+                                    div.child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(SpinnerLabel::new())
+                                            .child("Loading…"),
+                                    )
+                                })
+                                .when(!is_parsing, |div| div.child("No data to display")),
+                        )
                         .into_any_element()
                 } else {
                     self.create_table(&self.column_widths.widths, cx)

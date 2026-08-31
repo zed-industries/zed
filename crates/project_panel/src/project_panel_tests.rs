@@ -7,11 +7,15 @@ use git::{
     repository::{InitialGraphCommitData, LogSource, RepoPath},
 };
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
+use language::{
+    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
+    PointUtf16, Unclipped,
+};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
-use settings::{ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
+use settings::{FolderIndicator, ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -1103,7 +1107,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     );
 
     // Dismiss the rename editor when it loses focus.
-    workspace.update_in(cx, |_, window, _| window.blur());
+    workspace.update_in(cx, |_, window, cx| window.blur(cx));
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
         &[
@@ -6869,7 +6873,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
             "    > test"
         ]
     );
-    workspace.update_in(cx, |_, window, _| window.blur());
+    workspace.update_in(cx, |_, window, cx| window.blur(cx));
     cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
@@ -10536,6 +10540,90 @@ pub(crate) fn find_project_entry(
         }
         panic!("no worktree for path {path:?}");
     })
+}
+
+/// Each visible entry as `(filename, chevron, icon)`, with the icon-theme paths reduced
+/// to their file names so assertions read clearly.
+fn visible_entry_indicators(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, Option<String>, Option<String>)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            let indicator_name = |indicator: Option<SharedString>| {
+                indicator.map(|indicator| {
+                    indicator
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(indicator.as_ref())
+                        .to_string()
+                })
+            };
+
+            result.push((
+                details.filename.clone(),
+                indicator_name(details.chevron.clone()),
+                indicator_name(details.icon),
+            ));
+        });
+    });
+
+    result
+}
+
+fn set_folder_indicator(indicator: FolderIndicator, cx: &mut VisualTestContext) {
+    cx.update(|_, cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .folder_indicator = Some(indicator);
+            });
+        });
+    });
+}
+
+fn visible_entry_chevron_slots(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, bool)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.reserves_chevron_slot));
+        });
+    });
+
+    result
+}
+
+fn visible_entry_diagnostic_marks(
+    panel: &Entity<ProjectPanel>,
+    range: Range<usize>,
+    cx: &mut VisualTestContext,
+) -> Vec<(String, Option<DiagnosticMark>)> {
+    let mut result = Vec::new();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.for_each_visible_entry(range, window, cx, &mut |_, details, _, _| {
+            result.push((details.filename.clone(), details.diagnostic_mark));
+        });
+    });
+
+    result
+}
+
+fn mark_for(marks: &[(String, Option<DiagnosticMark>)], filename: &str) -> Option<DiagnosticMark> {
+    marks
+        .iter()
+        .find(|(name, _)| name == filename)
+        .and_then(|(_, mark)| *mark)
 }
 
 fn visible_entries_as_strings(
