@@ -11,10 +11,10 @@ use std::{
 use nucleo::Utf32Str;
 use nucleo::pattern::Pattern;
 
-use fuzzy::CharBag;
-
 use crate::matcher::{self, LENGTH_PENALTY};
-use crate::{Cancelled, Case, Query, case_penalty, count_case_mismatches, positions_from_sorted};
+use crate::{
+    Cancelled, Case, CharBag, Query, case_penalty, count_case_mismatches, positions_from_sorted,
+};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
@@ -287,6 +287,12 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         return Vec::new();
     };
 
+    #[cfg(target_family = "wasm")]
+    let num_cpus = {
+        drop(executor);
+        1
+    };
+    #[cfg(not(target_family = "wasm"))]
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
@@ -295,6 +301,58 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let mut config = nucleo::Config::DEFAULT;
     config.set_match_paths();
     let mut matchers = matcher::get_matchers(num_cpus, config);
+
+    let match_segment = |segment_idx: usize,
+                         results: &mut Vec<PathMatch>,
+                         matcher: &mut nucleo::Matcher,
+                         relative_to: &Option<Arc<RelPath>>| {
+        let segment_start = segment_idx * segment_size;
+        let segment_end = segment_start + segment_size;
+
+        let mut tree_start = 0;
+        for candidate_set in candidate_sets {
+            let tree_end = tree_start + candidate_set.len();
+
+            if tree_start < segment_end && segment_start < tree_end {
+                let start = tree_start.max(segment_start) - tree_start;
+                let end = tree_end.min(segment_end) - tree_start;
+                let candidates = candidate_set.candidates(start).take(end - start);
+
+                if path_match_helper(
+                    matcher,
+                    &query,
+                    candidates,
+                    results,
+                    candidate_set.id(),
+                    &candidate_set.prefix(),
+                    candidate_set.root_is_file(),
+                    relative_to,
+                    path_style,
+                    cancel_flag,
+                )
+                .is_err()
+                {
+                    break;
+                }
+            }
+
+            if tree_end >= segment_end {
+                break;
+            }
+            tree_start = tree_end;
+        }
+    };
+
+    #[cfg(target_family = "wasm")]
+    for (segment_idx, (results, matcher)) in segment_results
+        .iter_mut()
+        .zip(matchers.iter_mut())
+        .enumerate()
+    {
+        match_segment(segment_idx, results, matcher, relative_to);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, (results, matcher)) in segment_results
@@ -302,44 +360,10 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                 .zip(matchers.iter_mut())
                 .enumerate()
             {
-                let query = &query;
+                let match_segment = &match_segment;
                 let relative_to = relative_to.clone();
                 scope.spawn(async move {
-                    let segment_start = segment_idx * segment_size;
-                    let segment_end = segment_start + segment_size;
-
-                    let mut tree_start = 0;
-                    for candidate_set in candidate_sets {
-                        let tree_end = tree_start + candidate_set.len();
-
-                        if tree_start < segment_end && segment_start < tree_end {
-                            let start = tree_start.max(segment_start) - tree_start;
-                            let end = tree_end.min(segment_end) - tree_start;
-                            let candidates = candidate_set.candidates(start).take(end - start);
-
-                            if path_match_helper(
-                                matcher,
-                                query,
-                                candidates,
-                                results,
-                                candidate_set.id(),
-                                &candidate_set.prefix(),
-                                candidate_set.root_is_file(),
-                                &relative_to,
-                                path_style,
-                                cancel_flag,
-                            )
-                            .is_err()
-                            {
-                                break;
-                            }
-                        }
-
-                        if tree_end >= segment_end {
-                            break;
-                        }
-                        tree_start = tree_end;
-                    }
+                    match_segment(segment_idx, results, matcher, &relative_to);
                 });
             }
         })

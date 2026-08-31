@@ -10,11 +10,10 @@ use gpui::{BackgroundExecutor, SharedString};
 use nucleo::Utf32Str;
 
 use crate::{
-    Cancelled, Case, LengthPenalty, Query, case_penalty, count_case_mismatches,
+    Cancelled, Case, CharBag, LengthPenalty, Query, case_penalty, count_case_mismatches,
     matcher::{self, LENGTH_PENALTY},
     positions_from_sorted,
 };
-use fuzzy::CharBag;
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -117,6 +116,12 @@ where
         return empty_query_results(candidates, max_results);
     };
 
+    #[cfg(target_family = "wasm")]
+    let num_cpus = {
+        drop(executor);
+        1
+    };
+    #[cfg(not(target_family = "wasm"))]
     let num_cpus = executor.num_cpus().min(candidates.len());
     let base_size = candidates.len() / num_cpus;
     let remainder = candidates.len() % num_cpus;
@@ -127,6 +132,32 @@ where
     let config = nucleo::Config::DEFAULT;
     let mut matchers = matcher::get_matchers(num_cpus, config);
 
+    let match_segment =
+        |segment_idx: usize, results: &mut Vec<StringMatch>, matcher: &mut nucleo::Matcher| {
+            let segment_start = segment_idx * base_size + segment_idx.min(remainder);
+            let segment_end = (segment_idx + 1) * base_size + (segment_idx + 1).min(remainder);
+
+            match_string_helper(
+                &candidates[segment_start..segment_end],
+                &query,
+                matcher,
+                length_penalty,
+                results,
+                cancel_flag,
+            )
+            .ok();
+        };
+
+    #[cfg(target_family = "wasm")]
+    for (segment_idx, (results, matcher)) in segment_results
+        .iter_mut()
+        .zip(matchers.iter_mut())
+        .enumerate()
+    {
+        match_segment(segment_idx, results, matcher);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, (results, matcher)) in segment_results
@@ -134,21 +165,9 @@ where
                 .zip(matchers.iter_mut())
                 .enumerate()
             {
-                let query = &query;
+                let match_segment = &match_segment;
                 scope.spawn(async move {
-                    let segment_start = segment_idx * base_size + segment_idx.min(remainder);
-                    let segment_end =
-                        (segment_idx + 1) * base_size + (segment_idx + 1).min(remainder);
-
-                    match_string_helper(
-                        &candidates[segment_start..segment_end],
-                        query,
-                        matcher,
-                        length_penalty,
-                        results,
-                        cancel_flag,
-                    )
-                    .ok();
+                    match_segment(segment_idx, results, matcher);
                 });
             }
         })

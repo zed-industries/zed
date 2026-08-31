@@ -13,7 +13,6 @@ path = "src/fuzzy_nucleo.rs"
 doctest = false
 
 [dependencies]
-fuzzy.workspace = true
 nucleo.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
@@ -21,6 +20,7 @@ path.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+fuzzy.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 
 [[bench]]
