@@ -780,6 +780,8 @@ pub enum PlatformInput {
     ScrollWheel(ScrollWheelEvent),
     /// A pinch gesture was performed.
     Pinch(PinchEvent),
+    /// A long-press gesture recognized from touch input.
+    LongPress(crate::LongPressEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
@@ -799,6 +801,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
+            PlatformInput::LongPress(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
         }
@@ -816,6 +819,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::Pinch(_) => None,
+            PlatformInput::LongPress(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
         }
@@ -835,6 +839,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => "mouse_exited",
             PlatformInput::ScrollWheel(_) => "scroll_wheel",
             PlatformInput::Pinch(_) => "pinch",
+            PlatformInput::LongPress(_) => "long_press",
             PlatformInput::FileDrop(_) => "file_drop",
             PlatformInput::Touch(_) => "touch",
         }
