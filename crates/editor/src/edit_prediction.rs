@@ -1628,10 +1628,14 @@ impl Editor {
             return;
         };
 
-        let extension = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.path().extension()?.to_string()));
+        let extension = buffer.read(cx).file().and_then(|file| {
+            Some(
+                std::path::Path::new(file.file_name(cx))
+                    .extension()?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        });
 
         let event_type = match accepted {
             true => "Edit Prediction Accepted",
