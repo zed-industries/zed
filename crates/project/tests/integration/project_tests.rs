@@ -3265,10 +3265,14 @@ async fn test_selecting_a_language_clears_the_old_servers_diagnostics(
     buffer.update(cx, |buffer, _| {
         assert_eq!(diagnostic_messages(buffer), vec!["unused constant"]);
     });
+    project.update(cx, |project, cx| {
+        assert_eq!(project.diagnostic_summary(false, cx).error_count, 1);
+    });
 
-    // Selecting a language the server does not serve closes the document on it, and it will
-    // never revise what it published. Leaving that behind shows a verdict on a file the
-    // server is no longer looking at.
+    // Selecting a language the server does not serve detaches the buffer from it. A publish
+    // is applied by path with no regard for registration, so the diagnostics cannot be
+    // dropped while the server runs; a server left without any buffer is stopped instead,
+    // and the stop clears its diagnostics from the buffer and the project summary alike.
     project.update(cx, |project, cx| {
         project.set_language_for_buffer(&buffer, js_lang(), cx);
     });
@@ -3276,6 +3280,9 @@ async fn test_selecting_a_language_clears_the_old_servers_diagnostics(
 
     buffer.update(cx, |buffer, _| {
         assert_eq!(diagnostic_messages(buffer), Vec::<String>::new());
+    });
+    project.update(cx, |project, cx| {
+        assert_eq!(project.diagnostic_summary(false, cx).error_count, 0);
     });
 }
 

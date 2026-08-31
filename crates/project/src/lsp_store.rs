@@ -3235,8 +3235,10 @@ impl LocalLspStore {
         file_url: &lsp::Uri,
         cx: &mut App,
     ) {
+        let abs_path = file_url.to_file_path().ok();
         buffer.update(cx, |buffer, cx| {
-            let mut snapshots = self.buffer_snapshots.remove(&buffer.remote_id());
+            let buffer_id = buffer.remote_id();
+            let mut snapshots = self.buffer_snapshots.remove(&buffer_id);
 
             let mut detached_servers = Vec::new();
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
@@ -3250,11 +3252,19 @@ impl LocalLspStore {
                 }
             }
 
-            // A server that has been sent `didClose` publishes nothing further for this buffer,
-            // so whatever it said last would otherwise outlive the detachment.
             for server_id in detached_servers {
-                buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
-                buffer.set_completion_triggers(server_id, Default::default(), cx);
+                if let Some(opened_in_servers) = self.buffers_opened_in_servers.get_mut(&buffer_id)
+                {
+                    opened_in_servers.remove(&server_id);
+                }
+                if let Some(abs_path) = &abs_path
+                    && let Some(result_ids) =
+                        self.buffer_pull_diagnostics_result_ids.get_mut(&server_id)
+                {
+                    for result_ids in result_ids.values_mut() {
+                        result_ids.remove(abs_path);
+                    }
+                }
             }
         });
     }
@@ -5397,6 +5407,7 @@ impl LspStore {
         let buffer = buffer_entity.read(cx);
         let buffer_file = buffer.file().cloned();
         let buffer_id = buffer.remote_id();
+        let old_language = buffer.language().cloned();
         if let Some(local_store) = self.as_local_mut()
             && local_store.registered_buffers.contains_key(&buffer_id)
             && let Some(abs_path) =
@@ -5434,6 +5445,14 @@ impl LspStore {
         } else {
             None
         };
+
+        // A server the buffer detached from stays behind with whatever it published, and
+        // publishes are applied by path with no regard for registration, so its diagnostics
+        // cannot be dropped while it runs. Rebuilding the server tree stops every server no
+        // registered buffer maps to any more, and the stop path clears them everywhere.
+        if old_language.is_some_and(|old_language| !Arc::ptr_eq(&old_language, &new_language)) {
+            self.refresh_server_tree(cx);
+        }
 
         if settings.prettier.allowed
             && let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings)
