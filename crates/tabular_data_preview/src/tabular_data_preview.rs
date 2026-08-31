@@ -120,7 +120,8 @@ impl TabularDataPreviewPane {
         cx: &mut Context<Workspace>,
     ) {
         let target_pane = workspace.adjacent_pane_of(&origin_pane, window, cx);
-        Self::activate_or_add_preview(editor, target_pane, false, window, cx);
+        Self::activate_or_add_preview(editor.clone(), target_pane, false, window, cx);
+        editor.focus_handle(cx).focus(window, cx);
     }
 
     fn activate_or_add_preview(
