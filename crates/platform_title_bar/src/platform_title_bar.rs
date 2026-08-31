@@ -295,7 +295,12 @@ impl Render for PlatformTitleBar {
                         .icon_size(IconSize::Small)
                         .tooltip(Tooltip::text("Back"))
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(Box::new(workspace::CloseWindow), cx);
+                            // Close this window specifically: the CloseWindow
+                            // action closes whichever window reports itself
+                            // active, which is not necessarily this one.
+                            if cx.windows().len() > 1 {
+                                window.remove_window();
+                            }
                         }),
                 )
             })

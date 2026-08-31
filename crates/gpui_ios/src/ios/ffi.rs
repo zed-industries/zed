@@ -162,9 +162,13 @@ pub extern "C" fn gpui_ios_did_finish_launching(_app: *mut c_void) {
 
 fn notify_windows_active(is_active: bool) {
     unsafe {
-        for &window in &*window_list().0.get() {
+        let windows = &*window_list().0.get();
+        // Only the topmost window is on screen, so reporting every window as
+        // active makes window-targeted actions pick the wrong one.
+        for (index, &window) in windows.iter().enumerate() {
+            let is_topmost = index + 1 == windows.len();
             if let Some(window) = window.as_ref() {
-                window.notify_active_status_change(is_active);
+                window.notify_active_status_change(is_active && is_topmost);
             }
         }
     }
