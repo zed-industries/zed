@@ -184,6 +184,21 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     cx.observe_new(
         |workspace: &mut Workspace, mut window, cx: &mut gpui::Context<Workspace>| {
             workspace.register_action(open_settings_file);
+            // cmd-= / cmd-- are bound in the default keymap, but the actions
+            // are handled by the zed crate, which this shell does not use.
+            workspace.register_action(
+                |_, _: &zed_actions::IncreaseBufferFontSize, _window, cx| {
+                    theme_settings::increase_buffer_font_size(cx);
+                },
+            );
+            workspace.register_action(
+                |_, _: &zed_actions::DecreaseBufferFontSize, _window, cx| {
+                    theme_settings::decrease_buffer_font_size(cx);
+                },
+            );
+            workspace.register_action(|_, _: &zed_actions::ResetBufferFontSize, _window, cx| {
+                theme_settings::reset_buffer_font_size(cx);
+            });
             if let Some(window) = window.as_deref_mut() {
                 let touch_action_bar = cx.new(|_| TouchActionBar);
                 workspace.status_bar().update(cx, |status_bar, cx| {
@@ -341,6 +356,14 @@ impl gpui::Render for TouchActionBar {
                     .tooltip(ui::Tooltip::text("Command Palette"))
                     .on_click(|_, window, cx| {
                         window.dispatch_action(Box::new(zed_actions::command_palette::Toggle), cx);
+                    }),
+            )
+            .child(
+                ui::IconButton::new("touch-settings", ui::IconName::Settings)
+                    .icon_size(ui::IconSize::Small)
+                    .tooltip(ui::Tooltip::text("Open Settings"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(zed_actions::OpenSettingsFile), cx);
                     }),
             )
             .child(

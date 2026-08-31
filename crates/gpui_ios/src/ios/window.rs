@@ -15,15 +15,15 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, DevicePixels, DispatchEventResult, Edges, GpuSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
     PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, Scene, Size,
-    TextInputStateChange, TouchEvent, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowInsets, WindowParams, px, size,
+    TextInputStateChange, TouchEvent, TouchPhase, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowInsets, WindowParams, px, size,
 };
 use gpui_apple::metal_renderer::{Context as MetalContext, MetalRenderer};
 use objc2::encode::{Encode, Encoding, RefEncode};
 use objc2::runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel};
 use objc2::{class, msg_send, sel};
 
-use super::cg_types::ObjcCGRect;
+use super::cg_types::{ObjcCGPoint, ObjcCGRect};
 use parking_lot::Mutex;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, UiKitDisplayHandle, UiKitWindowHandle};
 use std::{
@@ -246,6 +246,10 @@ fn register_metal_view_class() -> &'static AnyClass {
                 touches_cancelled
                     as extern "C" fn(*mut AnyObject, Sel, *mut AnyObject, *mut AnyObject),
             );
+            decl.add_method(
+                sel!(gpuiHandleScroll:),
+                handle_scroll_gesture as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
+            );
         }
 
         decl.register();
@@ -403,9 +407,8 @@ fn register_text_input_view_class() -> &'static AnyClass {
                     // (@ on German is option-l), which arrive via insertText.
                     // Option still reaches the keymap for navigation keys
                     // below (e.g. alt-left for word movement).
-                    let has_shortcut_modifier = modifier_flags
-                        & (UI_KEY_MODIFIER_CONTROL | UI_KEY_MODIFIER_COMMAND)
-                        != 0;
+                    let has_shortcut_modifier =
+                        modifier_flags & (UI_KEY_MODIFIER_CONTROL | UI_KEY_MODIFIER_COMMAND) != 0;
                     // Keys that produce no text and are not already delivered
                     // through UIKeyInput (enter/tab via insertText, backspace
                     // via deleteBackward).
@@ -517,6 +520,67 @@ fn register_text_input_view_class() -> &'static AnyClass {
     });
 
     class!(GPUITextInputView)
+}
+
+/// Whether a touch is a trackpad/mouse secondary (right) click.
+fn is_secondary_click(touch: *mut AnyObject, event: *mut AnyObject) -> bool {
+    const UI_TOUCH_TYPE_INDIRECT_POINTER: i64 = 3;
+    const UI_EVENT_BUTTON_MASK_SECONDARY: i64 = 1 << 1;
+
+    if touch.is_null() || event.is_null() {
+        return false;
+    }
+    unsafe {
+        let touch_type: i64 = msg_send![touch, type];
+        if touch_type != UI_TOUCH_TYPE_INDIRECT_POINTER {
+            return false;
+        }
+        let responds: Bool = msg_send![event, respondsToSelector: sel!(buttonMask)];
+        if !responds.as_bool() {
+            return false;
+        }
+        let button_mask: i64 = msg_send![event, buttonMask];
+        button_mask & UI_EVENT_BUTTON_MASK_SECONDARY != 0
+    }
+}
+
+/// Turns a pan recognizer's translation into GPUI scroll events. iOS reports
+/// a running total, so deltas are derived by resetting the translation.
+unsafe extern "C" fn handle_scroll_gesture(
+    this: *mut AnyObject,
+    _sel: Sel,
+    recognizer: *mut AnyObject,
+) {
+    const UI_GESTURE_STATE_BEGAN: i64 = 1;
+    const UI_GESTURE_STATE_CHANGED: i64 = 2;
+    const UI_GESTURE_STATE_ENDED: i64 = 3;
+
+    unsafe {
+        let window_ptr: *mut std::ffi::c_void = {
+            #[allow(deprecated)]
+            *(*this).get_ivar(GPUI_WINDOW_IVAR)
+        };
+        if window_ptr.is_null() {
+            return;
+        }
+        let window = &*(window_ptr as *const IosWindow);
+
+        let state: i64 = msg_send![recognizer, state];
+        let phase = match state {
+            UI_GESTURE_STATE_BEGAN => TouchPhase::Started,
+            UI_GESTURE_STATE_CHANGED => TouchPhase::Moved,
+            _ => TouchPhase::Ended,
+        };
+
+        if state == UI_GESTURE_STATE_BEGAN || state == UI_GESTURE_STATE_CHANGED {
+            let translation: ObjcCGPoint = msg_send![recognizer, translationInView: this];
+            let zero = ObjcCGPoint { x: 0.0, y: 0.0 };
+            let _: () = msg_send![recognizer, setTranslation: zero, inView: this];
+            window.handle_scroll(translation.x, translation.y, phase);
+        } else if state == UI_GESTURE_STATE_ENDED {
+            window.handle_scroll(0.0, 0.0, phase);
+        }
+    }
 }
 
 /// Handle touch events from the GPUIMetalView
@@ -726,7 +790,36 @@ impl IosWindow {
             );
         }
 
+        Self::install_scroll_recognizer(self.view);
         Self::register_keyboard_observers();
+    }
+
+    /// Adds a pan recognizer limited to indirect pointers (trackpad/mouse) so
+    /// two-finger trackpad scrolling reaches GPUI. Direct touches keep going
+    /// through the ordinary touch path.
+    fn install_scroll_recognizer(view: *mut AnyObject) {
+        const UI_TOUCH_TYPE_INDIRECT_POINTER: i64 = 3;
+        const UI_SCROLL_TYPE_MASK_ALL: u64 = 3;
+
+        unsafe {
+            let recognizer: *mut AnyObject = msg_send![class!(UIPanGestureRecognizer), alloc];
+            let recognizer: *mut AnyObject = msg_send![
+                recognizer,
+                initWithTarget: view,
+                action: sel!(gpuiHandleScroll:)
+            ];
+            if recognizer.is_null() {
+                return;
+            }
+
+            let touch_types: *mut AnyObject =
+                msg_send![class!(NSNumber), numberWithLongLong: UI_TOUCH_TYPE_INDIRECT_POINTER];
+            let touch_types: *mut AnyObject =
+                msg_send![class!(NSArray), arrayWithObject: touch_types];
+            let _: () = msg_send![recognizer, setAllowedTouchTypes: touch_types];
+            let _: () = msg_send![recognizer, setAllowedScrollTypesMask: UI_SCROLL_TYPE_MASK_ALL];
+            let _: () = msg_send![view, addGestureRecognizer: recognizer];
+        }
     }
 
     fn register_keyboard_observers() {
@@ -786,9 +879,27 @@ impl IosWindow {
     }
 
     /// Delivers a UIKit touch through GPUI's platform-neutral touch API.
-    pub fn handle_touch(&self, touch: *mut AnyObject, _event: *mut AnyObject) {
+    pub fn handle_touch(&self, touch: *mut AnyObject, event: *mut AnyObject) {
         let position = touch_location_in_view(touch, self.view);
         self.mouse_position.set(position);
+
+        // A trackpad's secondary click arrives as an indirect-pointer touch
+        // with the secondary button set; route it to the right mouse button so
+        // context menus open.
+        if is_secondary_click(touch, event) {
+            let phase = touch_phase(touch);
+            let click = match phase {
+                super::events::UITouchPhase::Began => Some(true),
+                super::events::UITouchPhase::Ended | super::events::UITouchPhase::Cancelled => {
+                    Some(false)
+                }
+                _ => None,
+            };
+            if let Some(is_down) = click {
+                self.handle_secondary_click(position, is_down);
+            }
+            return;
+        }
 
         let event = TouchEvent {
             id: touch_id(touch),
@@ -798,6 +909,45 @@ impl IosWindow {
         };
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
             callback(PlatformInput::Touch(event));
+        }
+    }
+
+    fn handle_secondary_click(&self, position: gpui::Point<gpui::Pixels>, is_down: bool) {
+        let input = if is_down {
+            PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: gpui::MouseButton::Right,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            })
+        } else {
+            PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button: gpui::MouseButton::Right,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+            })
+        };
+        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+            callback(input);
+        }
+    }
+
+    /// Handles trackpad scrolling, which iOS delivers as an indirect-pointer
+    /// pan gesture rather than as touches.
+    pub fn handle_scroll(&self, delta_x: f64, delta_y: f64, phase: TouchPhase) {
+        let event = gpui::ScrollWheelEvent {
+            position: self.mouse_position.get(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(
+                gpui::px(delta_x as f32),
+                gpui::px(delta_y as f32),
+            )),
+            modifiers: Modifiers::default(),
+            touch_phase: phase,
+        };
+        if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
+            callback(PlatformInput::ScrollWheel(event));
         }
     }
 
