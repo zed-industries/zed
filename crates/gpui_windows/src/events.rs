@@ -161,7 +161,11 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_recovery(handle, wparam, lparam),
+            WM_NCDESTROY => {
+                self.state.destroyed.set(true);
+                None
+            }
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
@@ -1268,23 +1272,118 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
-        let devices = lparam.0 as *const DirectXDevices;
-        let devices = unsafe { &*devices };
-        if let Err(err) = self
-            .state
-            .renderer
-            .borrow_mut()
-            .handle_device_lost(&devices)
-        {
-            panic!("Device lost: {err}");
+    fn handle_device_recovery(
+        &self,
+        handle: HWND,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> Option<isize> {
+        if wparam.0 != self.validation_number || lparam.0 == 0 {
+            log::error!("gpui_device_loss invalid window recovery message");
+            return Some(0);
         }
-        // Make sure the first `draw_window` after recovery (whether it comes
-        // from the forced WM_GPUI_FORCE_UPDATE_WINDOW or a stray WM_PAINT in
-        // between) is treated as a forced render so it both clears
-        // `skip_draws` and bypasses the view cache.
-        self.state.force_render_pending.set(true);
+
+        let request = lparam.0 as *mut WindowDeviceRecoveryRequest;
+        // SAFETY: the validation token was checked above. The coordinator
+        // sends a pointer to a live stack request with synchronous
+        // `SendMessageW`, so it remains valid for this handler call.
+        let (generation, action) = unsafe {
+            let request = &*request;
+            (request.generation, request.action.clone())
+        };
+
+        let outcome = if self.state.destroyed.get() {
+            WindowDeviceRecoveryOutcome::Destroyed
+        } else {
+            match action {
+                WindowDeviceRecoveryAction::Suspend => self.suspend_renderer(generation),
+                WindowDeviceRecoveryAction::Recover(devices) => {
+                    self.recover_renderer(handle, generation, &devices)
+                }
+            }
+        };
+        // SAFETY: this is the same live synchronous request validated above;
+        // the sender reads the outcome only after `SendMessageW` returns.
+        unsafe { (*request).outcome = Some(outcome) };
         Some(0)
+    }
+
+    fn suspend_renderer(&self, generation: u64) -> WindowDeviceRecoveryOutcome {
+        let suspended = {
+            let Ok(mut renderer) = self.state.renderer.try_borrow_mut() else {
+                // The vsync-owned coordinator keeps this window pending and
+                // retries on its next tick after the current draw, present, or
+                // resize releases the renderer borrow.
+                return WindowDeviceRecoveryOutcome::Deferred;
+            };
+            renderer.suspend(generation)
+        };
+
+        let Some(suspended) = suspended else {
+            return WindowDeviceRecoveryOutcome::Stale;
+        };
+        suspended.release();
+        WindowDeviceRecoveryOutcome::Suspended
+    }
+
+    fn recover_renderer(
+        &self,
+        handle: HWND,
+        generation: u64,
+        devices: &DirectXDevices,
+    ) -> WindowDeviceRecoveryOutcome {
+        let snapshot = {
+            let Ok(renderer) = self.state.renderer.try_borrow() else {
+                return WindowDeviceRecoveryOutcome::Deferred;
+            };
+            let Some(snapshot) = renderer.recovery_snapshot(generation) else {
+                return WindowDeviceRecoveryOutcome::Stale;
+            };
+            snapshot
+        };
+
+        let candidate = match DirectXRenderer::build_recovery_candidate(snapshot, devices) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                return WindowDeviceRecoveryOutcome::Failed(format!(
+                    "window={:?} size={}x{} direct_composition={} error={error:#}",
+                    snapshot.hwnd,
+                    snapshot.width,
+                    snapshot.height,
+                    !snapshot.disable_direct_composition,
+                ));
+            }
+        };
+        if self.state.destroyed.get() {
+            return WindowDeviceRecoveryOutcome::Destroyed;
+        }
+
+        let commit = {
+            let Ok(mut renderer) = self.state.renderer.try_borrow_mut() else {
+                return WindowDeviceRecoveryOutcome::Deferred;
+            };
+            // This flag must be visible before the renderer becomes active. A
+            // normal WM_PAINT can arrive before the forced-update message.
+            self.state.force_render_pending.set(true);
+            renderer.commit_recovery(candidate)
+        };
+        if commit == DirectXRendererRecoveryCommit::Stale {
+            return WindowDeviceRecoveryOutcome::Stale;
+        }
+
+        // SAFETY: `handle` originated from this window procedure, the posted
+        // message contains no borrowed memory, and an invalidated handle is
+        // reported as a normal Win32 error.
+        unsafe {
+            PostMessageW(
+                Some(handle),
+                WM_GPUI_FORCE_UPDATE_WINDOW,
+                WPARAM(self.validation_number),
+                LPARAM(0),
+            )
+            .log_err();
+        }
+        WindowDeviceRecoveryOutcome::Active
     }
 
     fn handle_dm_pointer_hit_test(&self, wparam: WPARAM) -> Option<isize> {
@@ -1308,6 +1407,16 @@ impl WindowsWindowInner {
             unsafe { ValidateRect(Some(handle), None).ok().log_err() };
             return Some(0);
         };
+        let suspended = match self.state.renderer.try_borrow() {
+            Ok(renderer) => renderer.is_suspended(),
+            Err(_) => true,
+        };
+        if suspended {
+            // SAFETY: `handle` is the window currently dispatching this paint
+            // message; no pointer data crosses the FFI boundary.
+            unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+            return Some(0);
+        }
         let mut request_frame = self.state.callbacks.request_frame.take()?;
 
         self.state.direct_manipulation.update();
