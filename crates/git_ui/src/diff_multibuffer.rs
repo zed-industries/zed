@@ -394,6 +394,9 @@ impl DiffMultibuffer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Workspace items need edits and dirty-state events for autosave and tabs,
+        // including events whose local diff handling exits early below.
+        cx.emit(event.clone());
         match event {
             EditorEvent::SelectionsChanged { local: true } => {
                 // Only follow the git panel selection from the view the user is

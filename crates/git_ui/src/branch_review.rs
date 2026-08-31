@@ -838,13 +838,115 @@ mod tests {
     use super::*;
     use crate::branch_diff::BranchDiff;
     use fs::Fs as _;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, UpdateGlobal as _};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn native_diff_edits_autosave_and_invalidate_only_the_edited_file(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {"logs": {"refs": {"heads": {"feature": "branch created\n"}}}},
+                "src": {"a.txt": "reviewed a", "b.txt": "reviewed b", "clean.txt": "unchanged"}
+            }),
+        )
+        .await;
+        let git_dir = Path::new(path!("/project/.git"));
+        fs.set_branch_name(git_dir, Some("feature"));
+        fs.set_head_and_index_for_repo(
+            git_dir,
+            &[
+                ("src/a.txt", "reviewed a".into()),
+                ("src/b.txt", "reviewed b".into()),
+                ("src/clean.txt", "unchanged".into()),
+            ],
+        );
+        fs.set_merge_base_content_for_repo(
+            git_dir,
+            &[
+                ("src/a.txt", "base a".into()),
+                ("src/b.txt", "base b".into()),
+                ("src/clean.txt", "unchanged".into()),
+            ],
+        );
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let diff = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project.clone(), workspace.clone(), window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(diff.clone()), None, true, window, cx);
+            SettingsStore::update_global(cx, |settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(settings::AutosaveSetting::AfterDelay {
+                        milliseconds: 500.into(),
+                    });
+                });
+            });
+        });
+        let review = diff.read_with(cx, |diff, _| diff.review.clone());
+        let a = RepoPath::new("src/a.txt").unwrap();
+        let b = RepoPath::new("src/b.txt").unwrap();
+        review.update(cx, |review, cx| {
+            review.toggle_viewed(&a, cx);
+            review.toggle_viewed(&b, cx);
+            assert_eq!(review.viewed, 2);
+        });
+        let editor = diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
+        editor.update_in(cx, |editor, window, cx| {
+            cx.focus_self(window);
+            editor.insert("edited ", window, cx);
+        });
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| assert!(workspace::Item::is_dirty(diff, cx)));
+        assert_eq!(
+            fs.read_file_sync(path!("/project/src/a.txt")).unwrap(),
+            b"reviewed a"
+        );
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+        review.read_with(cx, |review, cx| {
+            assert!(!review.is_viewed(&a, cx));
+            assert!(review.is_viewed(&b, cx));
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+        diff.read_with(cx, |diff, cx| assert!(!workspace::Item::is_dirty(diff, cx)));
+        let saved =
+            String::from_utf8(fs.read_file_sync(path!("/project/src/a.txt")).unwrap()).unwrap();
+        assert!(saved.contains("edited "), "{saved:?}");
+        assert_eq!(
+            fs.read_file_sync(path!("/project/src/b.txt")).unwrap(),
+            b"reviewed b"
+        );
+        review.read_with(cx, |review, cx| {
+            assert!(!review.is_viewed(&a, cx));
+            assert!(review.is_viewed(&b, cx));
+        });
+    }
 
     #[gpui::test]
     async fn explicit_review_survives_refresh_and_selectively_invalidates_live_edits(
