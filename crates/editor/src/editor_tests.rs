@@ -39141,6 +39141,15 @@ async fn test_selecting_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
             first_buffer_start.to_display_point(&editor.display_snapshot(cx));
         editor.begin_selection(folded_buffer_position, false, 3, window, cx);
         editor.end_selection(window, cx);
+
+        // `assert_excerpts_with_selections` below compares heads only, so it cannot tell this
+        // apart from a selection that widened to cover everything the collapsed buffer hid.
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.newest::<Point>(&snapshot).range(),
+            Point::new(0, 0)..Point::new(1, 0),
+            "the triple click must select the clicked line, not the whole collapsed region"
+        );
     });
 
     cx.assert_excerpts_with_selections(indoc! {"
@@ -39162,6 +39171,89 @@ async fn test_selecting_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
         Xˇbeta
         [EXCERPT]
         gamma
+        delta
+        "});
+}
+
+/// The same click, but on the *second* buffer. Expanding a buffer replaces its collapsed row
+/// with a header row, which is not a position a display point can clip to, so a display point
+/// taken before the expansion cannot be reused after it: clipping it leftwards lands at the end
+/// of the previous buffer.
+#[gpui::test]
+async fn test_selecting_second_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let first_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([first_buffer_start..first_buffer_start]);
+        });
+        editor.fold_buffer(buffer_ids[1], cx);
+
+        let second_buffer_start = {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let excerpt = snapshot.excerpts_for_buffer(buffer_ids[1]).next().unwrap();
+            snapshot.anchor_in_excerpt(excerpt.context.start).unwrap()
+        };
+        let folded_buffer_position =
+            second_buffer_start.to_display_point(&editor.display_snapshot(cx));
+        editor.begin_selection(folded_buffer_position, false, 1, window, cx);
+        editor.end_selection(window, cx);
+
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[1], cx),
+            "clicking into a collapsed buffer must expand it"
+        );
+        let snapshot = editor.display_snapshot(cx);
+        assert!(
+            editor.selections.newest::<Point>(&snapshot).is_empty(),
+            "the click must leave a cursor, not a range"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        alpha
+        beta
+        [EXCERPT]
+        ˇgamma
+        delta
+        "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("X", window, cx);
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+        alpha
+        beta
+        [EXCERPT]
+        Xˇgamma
         delta
         "});
 }
@@ -39414,13 +39506,13 @@ async fn test_rewrap_in_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
     });
 }
 
-/// Two cursors inside the same collapsed buffer must stay cursors. They land on the same
-/// display row, so coalescing sees one selection; spanning it from the first cursor to the
-/// second would hand the next edit a range covering every line between them, which nobody
-/// selected. `Tab` and `Cut` both resolve their selections before opening a transaction, so
-/// they see this before the shared expansion in `start_transaction_at` can help.
+/// Two cursors inside the same collapsed buffer must stay two cursors, at the positions they
+/// actually hold. They land on the same display row, so coalescing in display coordinates would
+/// see one selection and act once where the expanded buffer acts twice. `Tab` and `Cut` both
+/// resolve their selections before opening a transaction, so they see this before the shared
+/// expansion in `start_transaction_at` can help.
 #[gpui::test]
-async fn test_two_cursors_in_folded_buffer_do_not_become_a_range(cx: &mut TestAppContext) {
+async fn test_two_cursors_in_folded_buffer_stay_two_cursors(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     async fn two_cursors_in_folded_buffer(
@@ -39505,19 +39597,25 @@ async fn test_two_cursors_in_folded_buffer_do_not_become_a_range(cx: &mut TestAp
         let (mut cx, buffer_id) = two_cursors_in_folded_buffer(cx, reversed).await;
         cx.update_editor(|editor, window, cx| {
             let snapshot = editor.display_snapshot(cx);
-            for selection in editor.selections.all::<Point>(&snapshot) {
-                assert!(
-                    selection.is_empty(),
-                    "coalescing two cursors must not build a range: {selection:?}, \
-                     reversed: {reversed:?}"
-                );
-            }
+            let selections = editor.selections.all::<Point>(&snapshot);
+            assert_eq!(
+                selections
+                    .iter()
+                    .map(|selection| selection.range())
+                    .collect::<Vec<_>>(),
+                vec![
+                    Point::new(0, 0)..Point::new(0, 0),
+                    Point::new(2, 0)..Point::new(2, 0)
+                ],
+                "the two cursors must resolve where they are, not merge or build a range, \
+                 reversed: {reversed:?}"
+            );
             editor.cut(&Cut, window, cx);
         });
         assert_eq!(
             text_of(&mut cx, buffer_id),
-            "beta\ngamma\n",
-            "cut must take the cursor's line, not everything between the two cursors, \
+            "beta\n",
+            "cut must take each cursor's line, the way it would with the buffer expanded, \
              reversed: {reversed:?}"
         );
     }
@@ -39527,8 +39625,8 @@ async fn test_two_cursors_in_folded_buffer_do_not_become_a_range(cx: &mut TestAp
         cx.update_editor(|editor, window, cx| editor.tab(&Tab, window, cx));
         assert_eq!(
             text_of(&mut cx, buffer_id),
-            "    alpha\nbeta\ngamma\n",
-            "tab must indent the cursor's line, not every line between the two cursors"
+            "    alpha\nbeta\n    gamma\n",
+            "tab must indent each cursor's line, the way it would with the buffer expanded"
         );
     }
 }
@@ -39760,6 +39858,88 @@ async fn test_dropping_text_on_folded_buffer_unfolds_it(cx: &mut TestAppContext)
         beta
         [EXCERPT]
 
+        delta
+        "});
+}
+
+/// The same drop, but onto the *second* buffer, where the display point taken before the
+/// expansion no longer describes the drop target afterwards.
+#[gpui::test]
+async fn test_dropping_text_on_second_folded_buffer_unfolds_it(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (editor, window_cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("alpha\nbeta\n", vec![Point::row_range(0..2)]),
+                ("gamma\ndelta\n", vec![Point::row_range(0..2)]),
+            ],
+            cx,
+        );
+        Editor::new(EditorMode::full(), multi_buffer, None, window, cx)
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), window_cx).await;
+    let buffer_ids = cx.multibuffer(|multi_buffer, cx| {
+        multi_buffer
+            .snapshot(cx)
+            .excerpts()
+            .map(|excerpt| excerpt.context.start.buffer_id)
+            .collect::<Vec<_>>()
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let first_buffer = snapshot.excerpts_for_buffer(buffer_ids[0]).next().unwrap();
+        let dragged_start = snapshot
+            .anchor_in_excerpt(first_buffer.context.start)
+            .unwrap();
+        let dragged_end = snapshot
+            .anchor_in_excerpt(
+                snapshot
+                    .buffer_for_id(buffer_ids[0])
+                    .unwrap()
+                    .anchor_after(Point::new(0, "alpha".len() as u32)),
+            )
+            .unwrap();
+
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+            selections.select_ranges([dragged_start..dragged_end]);
+        });
+        editor.fold_buffer(buffer_ids[1], cx);
+
+        let dragged = Selection {
+            id: 0,
+            start: dragged_start,
+            end: dragged_end,
+            reversed: false,
+            goal: SelectionGoal::None,
+        };
+        let drop_target = snapshot
+            .anchor_in_excerpt(
+                snapshot
+                    .excerpts_for_buffer(buffer_ids[1])
+                    .next()
+                    .unwrap()
+                    .context
+                    .start,
+            )
+            .unwrap()
+            .to_display_point(&editor.display_snapshot(cx));
+
+        editor.move_selection_on_drop(&dragged, drop_target, true, window, cx);
+
+        assert!(
+            !editor.is_buffer_folded(buffer_ids[1], cx),
+            "dropping into a collapsed buffer must expand it"
+        );
+    });
+
+    cx.assert_excerpts_with_selections(indoc! {"
+        [EXCERPT]
+
+        beta
+        [EXCERPT]
+        alphaˇgamma
         delta
         "});
 }

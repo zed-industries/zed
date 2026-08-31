@@ -789,9 +789,13 @@ impl Editor {
     }
 
     /// Expands the collapsed buffer that `position` points into, if there is one, and returns a
-    /// display snapshot together with `position` clipped against it. Expanding a buffer only
-    /// inserts rows at and below its collapsed row, so `position` keeps its row and now refers to
-    /// that buffer's first line.
+    /// display snapshot together with `position` resolved against it.
+    ///
+    /// The display row does not survive the expansion: while collapsed it holds a replacement
+    /// block, afterwards it holds the buffer's header, which is not a valid position to clip to.
+    /// The multibuffer point does survive - collapsing a buffer changes what is displayed, not
+    /// what the buffer contains - so the point is taken before the expansion and mapped back to a
+    /// display point after it.
     pub(super) fn unfold_buffer_at_display_point(
         &mut self,
         position: DisplayPoint,
@@ -799,9 +803,10 @@ impl Editor {
     ) -> (DisplaySnapshot, DisplayPoint) {
         let display_map = self.display_snapshot(cx);
         let position = display_map.clip_point(position, Bias::Left);
+        let point = position.to_point(&display_map);
         let folded_buffer_id = display_map
             .buffer_snapshot()
-            .point_to_buffer_point(position.to_point(&display_map))
+            .point_to_buffer_point(point)
             .map(|(buffer, _)| buffer.remote_id())
             .filter(|buffer_id| self.is_buffer_folded(*buffer_id, cx));
         let Some(buffer_id) = folded_buffer_id else {
@@ -809,7 +814,7 @@ impl Editor {
         };
         self.unfold_buffer(buffer_id, cx);
         let display_map = self.display_snapshot(cx);
-        let position = display_map.clip_point(position, Bias::Left);
+        let position = display_map.point_to_display_point(point, Bias::Left);
         (display_map, position)
     }
 

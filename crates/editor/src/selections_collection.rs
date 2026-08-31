@@ -252,12 +252,9 @@ impl SelectionsCollection {
 
     pub fn all_display(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<DisplayPoint>> {
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &snapshot)
-            .map(|(selection, _)| selection)
-            .peekable();
-        let mut pending_opt = resolve_selections_display(self.pending_anchor(), &snapshot)
-            .next()
-            .map(|(selection, _)| selection);
+        let mut disjoint =
+            resolve_selections_display(disjoint_anchors.iter(), &snapshot).peekable();
+        let mut pending_opt = resolve_selections_display(self.pending_anchor(), &snapshot).next();
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -311,7 +308,6 @@ impl SelectionsCollection {
         resolve_selections_display([self.newest_anchor()], &snapshot)
             .next()
             .unwrap()
-            .0
     }
 
     pub fn oldest_anchor(&self) -> &Selection<Anchor> {
@@ -1169,16 +1165,12 @@ fn resolve_selections_point<'a>(
 }
 
 /// Panics if passed selections are not in order
-/// Resolves the anchors to display positions, pairing each selection with the buffer point it
-/// was a cursor at, or `None` if it was a range. Collapsed content maps many buffer positions
-/// onto a single display position, so neither emptiness nor the cursor's position survives the
-/// trip into display coordinates.
+/// Resolves the anchors to display positions
 fn resolve_selections_display<'a>(
     selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     map: &'a DisplaySnapshot,
-) -> impl 'a + Iterator<Item = (Selection<DisplayPoint>, Option<Point>)> {
+) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
     let selections = resolve_selections_point(selections, map).map(move |s| {
-        let cursor_at = (s.start == s.end).then_some(s.start);
         let display_start = map.point_to_display_point(s.start, Bias::Left);
         let display_end = map.point_to_display_point(
             s.end,
@@ -1194,16 +1186,13 @@ fn resolve_selections_display<'a>(
             display_start,
             display_end
         );
-        (
-            Selection {
-                id: s.id,
-                start: display_start,
-                end: display_end,
-                reversed: s.reversed,
-                goal: s.goal,
-            },
-            cursor_at,
-        )
+        Selection {
+            id: s.id,
+            start: display_start,
+            end: display_end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
     });
     coalesce_selections(selections)
 }
@@ -1242,15 +1231,11 @@ where
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_convert, selections) =
-        coalesce_selections(resolve_selections_point(selections, map).map(|s| {
-            let cursor_at = (s.start == s.end).then_some(s.start);
-            (s, cursor_at)
-        }))
-        .tee();
+        coalesce_selections(resolve_selections_point(selections, map)).tee();
     let mut converted_endpoints = map
         .buffer_snapshot()
-        .dimensions_from_points::<D>(to_convert.flat_map(|(s, _)| [s.start, s.end]));
-    selections.map(move |(s, _)| {
+        .dimensions_from_points::<D>(to_convert.flat_map(|s| [s.start, s.end]));
+    selections.map(move |s| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
         Selection {
@@ -1271,30 +1256,52 @@ where
     D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
-    // Transforms `Anchor -> DisplayPoint -> Point -> DisplayPoint -> D`
+    // Transforms `Anchor -> Point -> DisplayPoint -> Point -> D`
     // todo(lw): We should be able to short circuit the `Anchor -> DisplayPoint -> Point` to `Anchor -> Point`
-    let (to_convert, selections) = resolve_selections_display(selections, map).tee();
-    let mut converted_endpoints =
-        map.buffer_snapshot()
-            .dimensions_from_points::<D>(to_convert.flat_map(|(s, cursor_at)| {
-                // A cursor inside a collapsed buffer keeps the position it actually holds. The
-                // round trip would otherwise bias its start to the beginning of that buffer and
-                // its end to the far edge of it, so the cursor would resolve to a range
-                // covering everything the buffer hides and the next edit would replace all of
-                // it. Ranges are left alone: wrapping them around the block is this function's
-                // documented job, and it is how a selection reaching a replacement block comes
-                // to cover it.
-                if let Some(point) = cursor_at
-                    && map.is_line_in_folded_buffer(MultiBufferRow(point.row))
-                {
-                    return [point, point];
-                }
-                let start = map.display_point_to_point(s.start, Bias::Left);
-                let end = map.display_point_to_point(s.end, Bias::Right);
-                assert!(start <= end, "start: {:?}, end: {:?}", start, end);
-                [start, end]
-            }));
-    selections.map(move |(s, _)| {
+    //
+    // Coalescing happens after the round trip rather than in display coordinates, so that it sees
+    // the same positions the caller will: collapsed content puts every position in a buffer on one
+    // display point, and coalescing there would merge cursors the expanded buffer keeps apart.
+    // This is also what the `has_collapsed_content` shortcut above does.
+    let wrapped_around_blocks = resolve_selections_point(selections, map).map(move |s| {
+        let (start, end) =
+            if s.start == s.end && map.is_line_in_folded_buffer(MultiBufferRow(s.start.row)) {
+                // A cursor inside a collapsed buffer keeps the position it actually holds. The round
+                // trip would otherwise bias its start to the beginning of that buffer and its end to
+                // the far edge of it, so the cursor would resolve to a range covering everything the
+                // buffer hides and the next edit would replace all of it. Ranges are left alone:
+                // wrapping them around the block is this function's documented job, and it is how a
+                // selection reaching a replacement block comes to cover it.
+                (s.start, s.start)
+            } else {
+                let display_start = map.point_to_display_point(s.start, Bias::Left);
+                let display_end = map.point_to_display_point(
+                    s.end,
+                    if s.start == s.end {
+                        Bias::Right
+                    } else {
+                        Bias::Left
+                    },
+                );
+                (
+                    map.display_point_to_point(display_start, Bias::Left),
+                    map.display_point_to_point(display_end, Bias::Right),
+                )
+            };
+        assert!(start <= end, "start: {:?}, end: {:?}", start, end);
+        Selection {
+            id: s.id,
+            start,
+            end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
+    });
+    let (to_convert, selections) = coalesce_selections(wrapped_around_blocks).tee();
+    let mut converted_endpoints = map
+        .buffer_snapshot()
+        .dimensions_from_points::<D>(to_convert.flat_map(|s| [s.start, s.end]));
+    selections.map(move |s| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
         assert!(start <= end, "start: {:?}, end: {:?}", start, end);
@@ -1309,12 +1316,12 @@ where
 }
 
 fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
-    selections: impl Iterator<Item = (Selection<D>, Option<Point>)>,
-) -> impl Iterator<Item = (Selection<D>, Option<Point>)> {
+    selections: impl Iterator<Item = Selection<D>>,
+) -> impl Iterator<Item = Selection<D>> {
     let mut selections = selections.peekable();
     iter::from_fn(move || {
-        let (mut selection, mut cursor_at) = selections.next()?;
-        while let Some((next_selection, next_cursor_at)) = selections.peek() {
+        let mut selection = selections.next()?;
+        while let Some(next_selection) = selections.peek() {
             if should_merge(
                 selection.start,
                 selection.end,
@@ -1322,23 +1329,11 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
                 next_selection.end,
                 true,
             ) {
-                // `reversed` records which end a range grew from, so it says nothing about
-                // two cursors: they merge as a cursor whatever it holds. Letting a mismatch
-                // truncate them instead would drop the buffer point below and leave a cursor
-                // that resolves to everything the collapsed buffer hides.
-                let both_are_cursors = cursor_at.is_some() && next_cursor_at.is_some();
-                if both_are_cursors || selection.reversed == next_selection.reversed {
+                if selection.reversed == next_selection.reversed {
                     selection.end = cmp::max(selection.end, next_selection.end);
-                    // Cursors that merge stay one cursor. Spanning from one to the next would
-                    // hand the next edit a range covering text nobody selected - collapsed
-                    // content puts every cursor in a buffer on the same display position, so
-                    // that range could be the whole buffer.
-                    cursor_at = cursor_at.filter(|_| next_cursor_at.is_some());
                     selections.next();
                 } else {
                     selection.end = cmp::max(selection.start, next_selection.start);
-                    // Truncated to something the buffer point no longer describes.
-                    cursor_at = None;
                     break;
                 }
             } else {
@@ -1352,7 +1347,7 @@ fn coalesce_selections<D: Ord + fmt::Debug + Copy>(
             selection.end,
             selection.reversed
         );
-        Some((selection, cursor_at))
+        Some(selection)
     })
 }
 
