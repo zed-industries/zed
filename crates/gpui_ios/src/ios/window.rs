@@ -402,6 +402,24 @@ fn register_text_input_view_class() -> &'static AnyClass {
                     let key_code: isize = msg_send![key, keyCode];
                     let modifier_flags: isize = msg_send![key, modifierFlags];
 
+                    // HID codes map to US positions, so ask UIKit for the
+                    // character this key produces on the user's layout (on a
+                    // German keyboard cmd-minus is the US slash position).
+                    let characters: *mut AnyObject = msg_send![key, charactersIgnoringModifiers];
+                    let layout_key = (!characters.is_null())
+                        .then(|| {
+                            let utf8: *const std::ffi::c_char = msg_send![characters, UTF8String];
+                            (!utf8.is_null())
+                                .then(|| {
+                                    std::ffi::CStr::from_ptr(utf8)
+                                        .to_string_lossy()
+                                        .into_owned()
+                                })
+                                .filter(|text| text.chars().count() == 1)
+                                .filter(|text| text.chars().all(|c| !c.is_control() && c != ' '))
+                        })
+                        .flatten();
+
                     // Option is deliberately not treated as a shortcut
                     // modifier: on many layouts option-combos type characters
                     // (@ on German is option-l), which arrive via insertText.
@@ -419,10 +437,11 @@ fn register_text_input_view_class() -> &'static AnyClass {
                             | 0x49..=0x52 // insert/home/pageup/delete/end/pagedown/arrows
                     );
                     if has_shortcut_modifier || is_navigation_key {
-                        window.handle_key_event(
+                        window.handle_key_event_with_key(
                             key_code as u32,
                             modifier_flags as u32,
                             is_key_down,
+                            layout_key,
                         );
                         handled = true;
                     }
@@ -1171,13 +1190,34 @@ impl IosWindow {
     }
 
     pub fn handle_key_event(&self, key_code: u32, modifier_flags: u32, is_key_down: bool) {
+        self.handle_key_event_with_key(key_code, modifier_flags, is_key_down, None);
+    }
+
+    /// `layout_key` is the character the pressed key produces on the user's
+    /// keyboard layout, which takes precedence over the US-centric mapping of
+    /// HID usage codes.
+    pub fn handle_key_event_with_key(
+        &self,
+        key_code: u32,
+        modifier_flags: u32,
+        is_key_down: bool,
+        layout_key: Option<String>,
+    ) {
         use super::text_input::{key_code_to_key_down, key_code_to_key_up};
 
-        let event = if is_key_down {
+        let mut event = if is_key_down {
             key_code_to_key_down(key_code, modifier_flags)
         } else {
             key_code_to_key_up(key_code, modifier_flags)
         };
+
+        if let Some(layout_key) = layout_key {
+            match &mut event {
+                PlatformInput::KeyDown(key_down) => key_down.keystroke.key = layout_key,
+                PlatformInput::KeyUp(key_up) => key_up.keystroke.key = layout_key,
+                _ => {}
+            }
+        }
 
         if let Some(callback) = self.input_callback.borrow_mut().as_mut() {
             callback(event);

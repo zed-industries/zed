@@ -159,6 +159,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     git_ui::init(cx);
     terminal_view::init(cx);
     recent_projects::init(cx);
+    settings_ui::init(cx);
 
     // Not every action referenced by the bundled keymap is registered in this
     // trimmed-down app, so tolerate individual binding failures.
@@ -359,11 +360,20 @@ impl gpui::Render for TouchActionBar {
                     }),
             )
             .child(
+                ui::IconButton::new("touch-project-panel", ui::IconName::FileTree)
+                    .icon_size(ui::IconSize::Small)
+                    .tooltip(ui::Tooltip::text("Toggle Project Panel"))
+                    .on_click(|_, window, cx| {
+                        window
+                            .dispatch_action(Box::new(zed_actions::project_panel::ToggleFocus), cx);
+                    }),
+            )
+            .child(
                 ui::IconButton::new("touch-settings", ui::IconName::Settings)
                     .icon_size(ui::IconSize::Small)
                     .tooltip(ui::Tooltip::text("Open Settings"))
                     .on_click(|_, window, cx| {
-                        window.dispatch_action(Box::new(zed_actions::OpenSettingsFile), cx);
+                        window.dispatch_action(Box::new(zed_actions::OpenSettings), cx);
                     }),
             )
             .child(
