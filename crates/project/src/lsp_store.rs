@@ -1579,7 +1579,7 @@ impl LocalLspStore {
                     buffer.forget_transaction(formatting_transaction.id);
                 }
                 project_transaction
-                    .0
+                    .buffers
                     .insert(cx.entity(), formatting_transaction);
             });
 
@@ -2321,7 +2321,8 @@ impl LocalLspStore {
                             .unwrap_or_default()
                     })?;
 
-                    if let Some(transaction) = project_transaction_command.0.remove(&buffer.handle)
+                    if let Some(transaction) =
+                        project_transaction_command.buffers.remove(&buffer.handle)
                     {
                         zlog::trace!(
                             logger =>
@@ -2346,12 +2347,12 @@ impl LocalLspStore {
                         });
                     }
 
-                    if project_transaction_command.0.is_empty() {
+                    if project_transaction_command.buffers.is_empty() {
                         continue;
                     }
 
                     let mut extra_buffers = String::new();
-                    for buffer in project_transaction_command.0.keys() {
+                    for buffer in project_transaction_command.buffers.keys() {
                         buffer.read_with(cx, |b, cx| {
                             let Some(path) = b.project_path(cx) else {
                                 return;
@@ -3340,7 +3341,7 @@ impl LocalLspStore {
                     cx,
                 )
                 .await?;
-                project_transaction.0.extend(new.0);
+                project_transaction.merge(new);
             }
 
             let Some(command) = action.lsp_action.command() else {
@@ -3383,11 +3384,10 @@ impl LocalLspStore {
 
             lsp_store.update(cx, |this, _| {
                 if let LspStoreMode::Local(mode) = &mut this.mode {
-                    project_transaction.0.extend(
+                    project_transaction.merge(
                         mode.last_workspace_edits_by_language_server
                             .remove(&language_server.server_id())
-                            .unwrap_or_default()
-                            .0,
+                            .unwrap_or_default(),
                     )
                 }
             })?;
@@ -3621,8 +3621,67 @@ impl LocalLspStore {
                         create_parents: true,
                     };
 
+                    // Resolved before the move, while the entry is still at the
+                    // source. `refresh_entry` below carries the id across, so it
+                    // still names this file afterwards.
+                    let moved_entry = this.update(cx, |this, cx| {
+                        let worktree_store = this.worktree_store();
+                        let worktree_store = worktree_store.read(cx);
+                        let old_path =
+                            worktree_store.project_path_for_absolute_path(&source_abs_path, cx)?;
+                        let new_path =
+                            worktree_store.project_path_for_absolute_path(&target_abs_path, cx)?;
+                        // Only a rename within one worktree keeps its entry id,
+                        // through the `refresh_entry` call below. Across
+                        // worktrees the watcher mints a new one, so the id
+                        // recorded here would name nothing by the time anyone
+                        // used it. Better to record no move than one that cannot
+                        // be acted on.
+                        if old_path.worktree_id != new_path.worktree_id {
+                            return None;
+                        }
+                        let entry_id = worktree_store.entry_for_path(&old_path, cx)?.id;
+                        Some((entry_id, old_path, new_path))
+                    });
+
+                    let ignore_if_exists = options.ignore_if_exists;
                     fs.rename(&source_abs_path, &target_abs_path, options)
                         .await?;
+
+                    // `Fs::rename` reports success without moving anything when
+                    // `ignore_if_exists` is set and the target is already there,
+                    // and a move that did not happen must not be recorded as one.
+                    let moved = if ignore_if_exists {
+                        match fs.metadata(&source_abs_path).await {
+                            // The source is still there, so nothing moved.
+                            Ok(Some(_)) => false,
+                            Ok(None) => true,
+                            // Claiming a move that did not happen is worse than
+                            // missing one, so an unreadable source is treated as
+                            // "did not move".
+                            Err(error) => {
+                                log::warn!(
+                                    "could not tell whether {source_abs_path:?} moved, \
+                                     leaving the rename unrecorded: {error}"
+                                );
+                                false
+                            }
+                        }
+                    } else {
+                        true
+                    };
+
+                    // Recorded before anything that can fail, so a later error
+                    // cannot leave the file moved with no record of it.
+                    if moved && let Some((entry_id, old_path, new_path)) = moved_entry {
+                        project_transaction
+                            .file_renames
+                            .push(crate::buffer_store::FileRename {
+                                entry_id,
+                                old_path,
+                                new_path,
+                            });
+                    }
 
                     // Preserve the entry id across the rename so an open buffer follows it
                     // to the new path, instead of being stranded at the old path when the
@@ -3787,7 +3846,9 @@ impl LocalLspStore {
                         })
                     });
                     if let Some(transaction) = transaction {
-                        project_transaction.0.insert(buffer_to_edit, transaction);
+                        project_transaction
+                            .buffers
+                            .insert(buffer_to_edit, transaction);
                     }
                 }
             }
@@ -11061,9 +11122,7 @@ impl LspStore {
                 // Await on tasks sequentially so that the order of application of edits is deterministic
                 // (at least with regards to the order of registration of language servers)
                 if let Some(transaction) = task.await {
-                    for (buffer, buffer_transaction) in transaction.0 {
-                        merged_transaction.0.insert(buffer, buffer_transaction);
-                    }
+                    merged_transaction.merge(transaction);
                 }
             }
             merged_transaction

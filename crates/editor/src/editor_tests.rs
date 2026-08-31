@@ -35688,7 +35688,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     // Applying the code lens command returns a project transaction containing the edits
     // sent by the language server in its `workspaceEdit` request.
     let transaction = apply.await.unwrap();
-    assert!(transaction.0.contains_key(&buffer));
+    assert!(transaction.buffers.contains_key(&buffer));
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "Xa");
         buffer.undo(cx);

@@ -23,6 +23,7 @@ mod document_links;
 mod document_symbols;
 mod editor_settings;
 mod element;
+mod file_rename_toast;
 mod fold;
 mod folding_ranges;
 mod git;
@@ -3551,8 +3552,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if transaction.0.is_empty() {
+        if transaction.buffers.is_empty() {
             return;
+        }
+
+        // Tracked here as well as in `open_project_transaction`, because the
+        // branch below skips that call when every edited buffer is already open.
+        // A workspace edit a server pushes on its own takes that branch, and it
+        // is exactly the case worth reporting.
+        if !transaction.file_renames.is_empty() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project.track_file_renames(&transaction, cx);
+                })
+            });
         }
 
         let edited_buffers_already_open = {
@@ -3564,7 +3577,7 @@ impl Editor {
                 .filter(|editor| editor.entity_id() != cx.entity_id())
                 .collect();
 
-            transaction.0.keys().all(|buffer| {
+            transaction.buffers.keys().all(|buffer| {
                 other_editors.iter().any(|editor| {
                     let multi_buffer = editor.read(cx).buffer();
                     multi_buffer.read(cx).is_singleton()
@@ -3597,7 +3610,17 @@ impl Editor {
         title: String,
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
-        let mut entries = transaction.0.into_iter().collect::<Vec<_>>();
+        // Remembered before the transaction is split up, so undoing any of the
+        // buffer transactions it produced can report the files it moved.
+        if !transaction.file_renames.is_empty() {
+            workspace.update(cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project.track_file_renames(&transaction, cx);
+                })
+            })?;
+        }
+
+        let mut entries = transaction.buffers.into_iter().collect::<Vec<_>>();
         cx.update(|_, cx| {
             entries.sort_unstable_by_key(|(buffer, _)| {
                 buffer.read(cx).file().map(|f| f.path().clone())
@@ -7851,6 +7874,11 @@ impl Editor {
             return;
         }
 
+        // Captured before the undo, because these are the transactions it is
+        // about to remove. Afterwards they are gone from the history and there
+        // is no way to ask what they were.
+        let before = self.transactions_at_top_of_undo_stacks(cx);
+
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
             let transaction = self.selection_history.transaction(transaction_id);
             if transaction.is_none() {
@@ -7869,7 +7897,69 @@ impl Editor {
             );
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
+            // A multibuffer undo only touches the buffers named in one history
+            // entry, so comparing against the state afterwards separates the
+            // buffers that were actually undone from those that were not.
+            let after = self.transactions_at_top_of_undo_stacks(cx);
+            let undone = before
+                .into_iter()
+                .filter(|(buffer_id, transaction_id)| after.get(buffer_id) != Some(transaction_id))
+                .collect::<Vec<_>>();
+            self.report_file_renames_left_behind(undone, window, cx);
         }
+    }
+
+    /// The transaction sitting on top of each of this editor's buffers' undo
+    /// stacks, which is what an undo will remove.
+    ///
+    /// A multibuffer undo can remove a range of transactions rather than only
+    /// the top one, so a rename recorded further down the stack is missed here.
+    /// That costs a notification rather than correctness, which is the right way
+    /// round for a guess.
+    fn transactions_at_top_of_undo_stacks(
+        &self,
+        cx: &App,
+    ) -> HashMap<text::BufferId, TransactionId> {
+        self.buffer
+            .read(cx)
+            .all_buffers()
+            .into_iter()
+            .filter_map(|buffer| {
+                let buffer = buffer.read(cx);
+                Some((
+                    buffer.remote_id(),
+                    buffer.peek_undo_stack()?.transaction_id(),
+                ))
+            })
+            .collect()
+    }
+
+    /// An LSP rename can move a file as well as edit it. Undo reverts the text
+    /// but leaves the file where the rename put it, so the two disagree until
+    /// someone does something about it. Rather than guess, say so and offer.
+    fn report_file_renames_left_behind(
+        &mut self,
+        undone: Vec<(text::BufferId, TransactionId)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        let Some(workspace) = self.workspace() else {
+            return;
+        };
+        let renames = project.read_with(cx, |project, _| {
+            undone.into_iter().find_map(|(buffer_id, transaction_id)| {
+                project.file_renames_for_transaction(buffer_id, transaction_id)
+            })
+        });
+        let Some(renames) = renames else {
+            return;
+        };
+        crate::file_rename_toast::show_files_left_renamed_toast(
+            &workspace, project, renames, window, cx,
+        );
     }
 
     pub fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
@@ -8432,7 +8522,7 @@ impl Editor {
                 if let Some(transaction) = transaction
                     && !buffer.is_singleton()
                 {
-                    buffer.push_transaction(&transaction.0, cx);
+                    buffer.push_transaction(&transaction.buffers, cx);
                 }
                 cx.notify();
             });
@@ -8503,7 +8593,7 @@ impl Editor {
                 if let Some(transaction) = transaction
                     && !buffer.is_singleton()
                 {
-                    buffer.push_transaction(&transaction.0, cx);
+                    buffer.push_transaction(&transaction.buffers, cx);
                 }
                 cx.notify();
             });

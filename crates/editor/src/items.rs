@@ -1060,7 +1060,7 @@ impl Item for Editor {
                 if let Some(transaction) = transaction
                     && !buffer.is_singleton()
                 {
-                    buffer.push_transaction(&transaction.0, cx);
+                    buffer.push_transaction(&transaction.buffers, cx);
                 }
             });
             Ok(())

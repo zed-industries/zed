@@ -4387,7 +4387,7 @@ async fn test_remote_apply_code_action_skips_unadvertised_command(
         })
         .await
         .expect("Unadvertised command must not be forwarded to executeCommand");
-    assert_eq!(transaction.0.len(), 0);
+    assert_eq!(transaction.buffers.len(), 0);
 }
 
 #[gpui::test]

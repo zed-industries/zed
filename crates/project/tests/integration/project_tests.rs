@@ -6344,7 +6344,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
     // Applying the code action returns a project transaction containing the edits
     // sent by the language server in its `workspaceEdit` request.
     let transaction = apply.await.unwrap();
-    assert!(transaction.0.contains_key(&buffer));
+    assert!(transaction.buffers.contains_key(&buffer));
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "Xa");
         buffer.undo(cx);
@@ -8421,7 +8421,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .next()
         .await
         .unwrap();
-    let mut transaction = response.await.unwrap().0;
+    let mut transaction = response.await.unwrap().buffers;
     assert_eq!(transaction.len(), 2);
     assert_eq!(
         transaction
@@ -8439,6 +8439,566 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
             .update(cx, |buffer, _| buffer.text()),
         "const TWO: usize = one::THREE + one::THREE;"
     );
+}
+
+// A "rename symbol" whose workspace edit also moves the file records the move on
+// the transaction. Undo reverts only the text, so this record is what lets the
+// editor tell the user the file is still under its new name.
+#[gpui::test]
+async fn test_rename_records_the_file_it_moved(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (buffer, project_transaction) =
+        perform_file_moving_rename_into(&project, path!("/dir/three.rs"), cx).await;
+
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let moved_entry_id = project.read_with(cx, |project, cx| {
+        project
+            .entry_for_path(
+                &ProjectPath {
+                    worktree_id,
+                    path: rel_path("three.rs").into(),
+                },
+                cx,
+            )
+            .unwrap()
+            .id
+    });
+
+    // The entry is named, not just the paths, so that acting on this later
+    // follows the file rather than whatever occupies the path by then.
+    assert_eq!(
+        project_transaction.file_renames,
+        vec![FileRename {
+            entry_id: moved_entry_id,
+            old_path: ProjectPath {
+                worktree_id,
+                path: rel_path("one.rs").into(),
+            },
+            new_path: ProjectPath {
+                worktree_id,
+                path: rel_path("three.rs").into(),
+            },
+        }],
+    );
+
+    // Tracked against every buffer transaction the edit produced, because undo
+    // is driven from whichever buffer the user happens to be in.
+    let transaction_id = project_transaction
+        .buffers
+        .values()
+        .next()
+        .expect("the rename should have edited a buffer")
+        .id;
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+    project.update(cx, |project, cx| {
+        project.track_file_renames(&project_transaction, cx);
+    });
+    let tracked = project.read_with(cx, |project, _| {
+        project.file_renames_for_transaction(buffer_id, transaction_id)
+    });
+    assert_eq!(
+        tracked.as_deref(),
+        Some(&project_transaction.file_renames),
+        "the moves should be reachable from the transaction that carried them"
+    );
+}
+
+// Moving the files back is a separate, user-initiated step. It must not go
+// through the request half of the file operations protocol, because those edits
+// would land on top of the text the undo restored and could not be undone in
+// turn. The notification half still has to be sent.
+#[gpui::test]
+async fn test_moving_renamed_files_back(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_buffer, project_transaction) =
+        perform_file_moving_rename_into(&project, path!("/dir/three.rs"), cx).await;
+
+    assert!(
+        fs.load(Path::new(path!("/dir/three.rs"))).await.is_ok(),
+        "precondition: the rename moved the file"
+    );
+
+    let renames = Arc::new(project_transaction.file_renames.clone());
+    project
+        .update(cx, |project, cx| {
+            project.move_renamed_files_back(renames, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(
+        fs.load(Path::new(path!("/dir/one.rs"))).await.is_ok(),
+        "the file should be back under its original name"
+    );
+    assert!(
+        fs.load(Path::new(path!("/dir/three.rs"))).await.is_err(),
+        "the file should no longer be under the renamed path"
+    );
+}
+
+// The edit created a directory to hold the file it moved. Moving back already
+// recreates the directory the edit emptied, so the one it created goes too.
+#[gpui::test]
+async fn test_moving_back_removes_the_directory_it_emptied(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_buffer, project_transaction) =
+        perform_file_moving_rename_into(&project, path!("/dir/moved/one.rs"), cx).await;
+
+    assert!(
+        fs.load(Path::new(path!("/dir/moved/one.rs"))).await.is_ok(),
+        "precondition: the rename moved the file into a directory it created"
+    );
+
+    let renames = Arc::new(project_transaction.file_renames.clone());
+    project
+        .update(cx, |project, cx| {
+            project.move_renamed_files_back(renames, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(
+        fs.load(Path::new(path!("/dir/one.rs"))).await.is_ok(),
+        "the file should be back where it started"
+    );
+    assert!(
+        fs.metadata(Path::new(path!("/dir/moved")))
+            .await
+            .unwrap()
+            .is_none(),
+        "the directory the edit created should be gone with it"
+    );
+}
+
+// Only a directory left with nothing in it is removed, since anything else in
+// there was not put there by the edit.
+#[gpui::test]
+async fn test_moving_back_keeps_a_directory_that_still_holds_something(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "moved": {
+                "kept.rs": "const KEPT: usize = 3;",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_buffer, project_transaction) =
+        perform_file_moving_rename_into(&project, path!("/dir/moved/one.rs"), cx).await;
+
+    let renames = Arc::new(project_transaction.file_renames.clone());
+    project
+        .update(cx, |project, cx| {
+            project.move_renamed_files_back(renames, cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/moved/kept.rs")))
+            .await
+            .unwrap(),
+        "const KEPT: usize = 3;",
+        "a directory that still holds something should be left alone"
+    );
+}
+
+// Moving back follows the entry that moved, so a file created at the path it
+// vacated is left alone.
+#[gpui::test]
+async fn test_moving_renamed_files_back_ignores_a_new_file_at_that_path(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_buffer, project_transaction) =
+        perform_file_moving_rename_into(&project, path!("/dir/three.rs"), cx).await;
+
+    // The renamed file is moved on again outside the editor, and something
+    // unrelated takes the path it vacated.
+    fs.rename(
+        Path::new(path!("/dir/three.rs")),
+        Path::new(path!("/dir/four.rs")),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+    fs.save(
+        Path::new(path!("/dir/three.rs")),
+        &"const BRAND_NEW: usize = 7;".into(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    cx.executor().run_until_parked();
+
+    let renames = Arc::new(project_transaction.file_renames.clone());
+    project
+        .update(cx, |project, cx| {
+            project.move_renamed_files_back(renames, cx)
+        })
+        .await
+        .ok();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/three.rs"))).await.unwrap(),
+        "const BRAND_NEW: usize = 7;",
+        "a file this edit never renamed must be left where it is"
+    );
+    // The entry that moved is the one that came back, wherever it had got to,
+    // and it brought its own contents rather than the newcomer's.
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/one.rs"))).await.unwrap(),
+        "const THREE: usize = 1;",
+        "the file that was renamed should be the one moved back"
+    );
+    assert!(
+        fs.load(Path::new(path!("/dir/four.rs"))).await.is_err(),
+        "the renamed file should have left the path it had moved on to"
+    );
+}
+
+// `Fs::rename` reports success without moving anything when `ignoreIfExists` is
+// set and the target already exists. Recording that as a move would point a
+// later "move back" at a file the rename never touched.
+#[gpui::test]
+async fn test_rename_that_did_not_move_is_not_recorded(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "three.rs": "const UNRELATED: usize = 9;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+    });
+    fake_server
+        .set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: None,
+                document_changes: Some(DocumentChanges::Operations(vec![
+                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                        text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                            uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            version: None,
+                        },
+                        edits: vec![lsp::Edit::Plain(lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                            "THREE".to_string(),
+                        ))],
+                    }),
+                    lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                        old_uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                        new_uri: Uri::from_file_path(path!("/dir/three.rs")).unwrap(),
+                        options: Some(lsp::RenameFileOptions {
+                            overwrite: None,
+                            ignore_if_exists: Some(true),
+                        }),
+                        annotation_id: None,
+                    })),
+                ])),
+                change_annotations: None,
+            }))
+        })
+        .next()
+        .await
+        .unwrap();
+    let project_transaction = response.await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(
+        project_transaction.file_renames.is_empty(),
+        "a rename that moved nothing must not be recorded as a move"
+    );
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/three.rs"))).await.unwrap(),
+        "const UNRELATED: usize = 9;",
+        "the pre-existing file should be untouched"
+    );
+    assert!(
+        fs.load(Path::new(path!("/dir/one.rs"))).await.is_ok(),
+        "the file that never moved should still be where it was"
+    );
+}
+
+// An edit spanning several files is tracked against every buffer it touched, so
+// undoing in any of them can report the move. The budget for how many edits are
+// kept is per edit, not per file, or a wide rename would trim its own entries as
+// it recorded them.
+#[gpui::test]
+async fn test_a_rename_across_files_is_tracked_from_each_of_them(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "two.rs": "const TWO: usize = one::ONE;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+    });
+    fake_server
+        .set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: None,
+                document_changes: Some(DocumentChanges::Operations(vec![
+                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                        text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                            uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            version: None,
+                        },
+                        edits: vec![lsp::Edit::Plain(lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                            "THREE".to_string(),
+                        ))],
+                    }),
+                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                        text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                            uri: Uri::from_file_path(path!("/dir/two.rs")).unwrap(),
+                            version: None,
+                        },
+                        edits: vec![lsp::Edit::Plain(lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 24), lsp::Position::new(0, 27)),
+                            "THREE".to_string(),
+                        ))],
+                    }),
+                    lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                        old_uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                        new_uri: Uri::from_file_path(path!("/dir/three.rs")).unwrap(),
+                        options: None,
+                        annotation_id: None,
+                    })),
+                ])),
+                change_annotations: None,
+            }))
+        })
+        .next()
+        .await
+        .unwrap();
+    let project_transaction = response.await.unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        project_transaction.buffers.len(),
+        2,
+        "precondition: the rename should have edited both files"
+    );
+
+    project.update(cx, |project, cx| {
+        project.track_file_renames(&project_transaction, cx);
+    });
+
+    let keys = project.read_with(cx, |_, cx| {
+        project_transaction
+            .buffers
+            .iter()
+            .map(|(buffer, transaction)| (buffer.read(cx).remote_id(), transaction.id))
+            .collect::<Vec<_>>()
+    });
+    for (buffer_id, transaction_id) in keys {
+        assert!(
+            project
+                .read_with(cx, |project, _| project
+                    .file_renames_for_transaction(buffer_id, transaction_id))
+                .is_some(),
+            "the move should be reachable from every buffer the edit touched"
+        );
+    }
+}
+
+/// Runs a "rename symbol" whose workspace edit both edits `one.rs` and moves it
+/// to `new_abs_path`, which is the shape this issue is about.
+async fn perform_file_moving_rename_into(
+    project: &Entity<Project>,
+    new_abs_path: &str,
+    cx: &mut gpui::TestAppContext,
+) -> (Entity<Buffer>, ProjectTransaction) {
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+    });
+    let new_abs_path = new_abs_path.to_owned();
+    fake_server
+        .set_request_handler::<lsp::request::Rename, _, _>(move |_params, _| {
+            let new_abs_path = new_abs_path.clone();
+            async move {
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: None,
+                    document_changes: Some(DocumentChanges::Operations(vec![
+                        lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                            text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                                uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                                version: None,
+                            },
+                            edits: vec![lsp::Edit::Plain(lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                                "THREE".to_string(),
+                            ))],
+                        }),
+                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(
+                            lsp::RenameFile {
+                                old_uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                                new_uri: Uri::from_file_path(&new_abs_path).unwrap(),
+                                options: None,
+                                annotation_id: None,
+                            },
+                        )),
+                    ])),
+                    change_annotations: None,
+                }))
+            }
+        })
+        .next()
+        .await
+        .unwrap();
+    let project_transaction = response.await.unwrap();
+    cx.executor().run_until_parked();
+    (buffer, project_transaction)
 }
 
 // Regression test for https://github.com/zed-industries/zed/issues/59077:

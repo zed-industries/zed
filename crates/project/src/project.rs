@@ -123,7 +123,7 @@ pub use snippet_provider;
 use snippet_provider::SnippetProvider;
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     ffi::OsString,
     future::Future,
     ops::{Not as _, Range},
@@ -136,7 +136,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, Point, Rope};
+use text::{Anchor, BufferId, Point, Rope, TransactionId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
@@ -163,7 +163,7 @@ pub use task_inventory::{
     Inventory, TaskContexts, TaskSourceKind,
 };
 
-pub use buffer_store::ProjectTransaction;
+pub use buffer_store::{FileRename, ProjectTransaction};
 pub use lsp_command::{CallHierarchyItem, IncomingCall, OutgoingCall};
 pub use lsp_store::{
     DiagnosticSummary, InvalidationStrategy, LanguageServerLogType, LanguageServerProgress,
@@ -172,6 +172,11 @@ pub use lsp_store::{
 };
 pub use toolchain_store::{ToolchainStore, Toolchains};
 const MAX_PROJECT_SEARCH_HISTORY_SIZE: usize = 500;
+
+/// How many workspace edits are kept available for the editor to report their
+/// file moves. Renames are rare, so this only needs to outlast the edits a user
+/// is realistically going to walk back.
+const MAX_TRACKED_FILE_RENAMES: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
 pub struct LocalProjectFlags {
@@ -215,6 +220,17 @@ pub enum OpenedBufferEvent {
 /// Can be either local (for the project opened on the same host) or remote.(for collab projects, browsed by multiple remote users).
 pub struct Project {
     active_entry: Option<ProjectEntryId>,
+    /// Files moved by workspace edits, against the buffer transaction the same
+    /// edit produced. Undoing that transaction reverts the text but leaves the
+    /// file where the edit put it, so this is what lets the editor say so.
+    ///
+    /// Keyed per buffer because a buffer's transaction ids are only unique
+    /// within that buffer. Bounded because a transaction stays undoable for as
+    /// long as it is in a buffer's history, which has no bound of its own.
+    file_renames: HashMap<(BufferId, TransactionId), Arc<Vec<FileRename>>>,
+    /// One entry per workspace edit, not per key, so that the budget below
+    /// counts edits rather than the files each one happened to touch.
+    file_rename_order: VecDeque<Arc<Vec<FileRename>>>,
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     dap_store: Entity<DapStore>,
@@ -1374,6 +1390,8 @@ impl Project {
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
+                file_renames: HashMap::default(),
+                file_rename_order: VecDeque::new(),
                 snippets,
                 languages,
                 collab_client: client,
@@ -1622,6 +1640,8 @@ impl Project {
                     }),
                 ],
                 active_entry: None,
+                file_renames: HashMap::default(),
+                file_rename_order: VecDeque::new(),
                 snippets,
                 languages,
                 collab_client: client,
@@ -1897,6 +1917,8 @@ impl Project {
                 lsp_store: lsp_store.clone(),
                 context_server_store,
                 active_entry: None,
+                file_renames: HashMap::default(),
+                file_rename_order: VecDeque::new(),
                 collaborators: Default::default(),
                 join_project_response_message_id: response.message_id,
                 languages,
@@ -2622,6 +2644,132 @@ impl Project {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.copy_entry(entry_id, new_project_path, cx)
         })
+    }
+
+    /// Remembers the files a workspace edit moved, against every buffer
+    /// transaction that edit produced.
+    ///
+    /// Undoing any of those transactions reverts the text and leaves the file
+    /// where the edit put it, which is the state the editor asks the user about.
+    pub fn track_file_renames(&mut self, transaction: &ProjectTransaction, cx: &App) {
+        // A move with no buffer edits has no transaction to hang off, so no undo
+        // can ever reach it. Recording it anyway would occupy a slot in the
+        // budget below for something that can never be reported.
+        if transaction.file_renames.is_empty() || transaction.buffers.is_empty() {
+            return;
+        }
+        let renames = Arc::new(transaction.file_renames.clone());
+        for (buffer, buffer_transaction) in &transaction.buffers {
+            let key = (buffer.read(cx).remote_id(), buffer_transaction.id);
+            self.file_renames.insert(key, renames.clone());
+        }
+        self.file_rename_order.push_back(renames);
+
+        // Evicting whole edits, rather than individual keys, is what stops an
+        // edit that touched a hundred files from evicting itself as it is being
+        // recorded. Which of its own keys survived would have depended on
+        // `HashMap` iteration order.
+        while self.file_rename_order.len() > MAX_TRACKED_FILE_RENAMES
+            && let Some(oldest) = self.file_rename_order.pop_front()
+        {
+            self.file_renames
+                .retain(|_, tracked| !Arc::ptr_eq(tracked, &oldest));
+        }
+    }
+
+    /// The files moved by the workspace edit that produced `transaction_id` in
+    /// `buffer_id`, if that edit moved any.
+    pub fn file_renames_for_transaction(
+        &self,
+        buffer_id: BufferId,
+        transaction_id: TransactionId,
+    ) -> Option<Arc<Vec<FileRename>>> {
+        self.file_renames.get(&(buffer_id, transaction_id)).cloned()
+    }
+
+    /// Moves the files in `renames` back to where they were before the edit.
+    ///
+    /// This is only ever called because someone asked for it, so unlike the
+    /// forward path it reports what it could not do rather than logging and
+    /// carrying on.
+    /// Moves the files in `renames` back to where they were before the edit.
+    ///
+    /// This goes through [`Self::rename_entry`], so the language servers are
+    /// told about the move and may update references to match, exactly as they
+    /// would for a rename done from the project panel. That is deliberate: the
+    /// user asked for this move, so it should behave like any other one they
+    /// ask for. It is also the only behaviour available on a remote project,
+    /// where the host runs `willRenameFiles` on its side regardless.
+    ///
+    /// Doing this automatically as part of undo would be a different matter,
+    /// since the edits come back applied with `push_to_history: false` and the
+    /// user never asked for them.
+    ///
+    /// Called only because someone clicked, so unlike the forward path it
+    /// reports what it could not do rather than logging and carrying on.
+    pub fn move_renamed_files_back(
+        &mut self,
+        renames: Arc<Vec<FileRename>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let fs = self.fs.clone();
+        cx.spawn(async move |project, cx| {
+            let mut failures = Vec::new();
+            // Reversed, so a chain like a -> b -> c unwinds cleanly.
+            for rename in renames.iter().rev() {
+                // The entry is followed rather than the path it sits at, so a
+                // file created at either end of the move since is left alone.
+                // A missing entry means the file was deleted, and moving it back
+                // is not something to attempt.
+                let entry_exists = project.read_with(cx, |project, cx| {
+                    project
+                        .worktree_store
+                        .read(cx)
+                        .worktree_and_entry_for_id(rename.entry_id, cx)
+                        .is_some()
+                })?;
+                if !entry_exists {
+                    failures.push(format!("{} is gone", rename.new_path.path.as_unix_str()));
+                    continue;
+                }
+
+                let renamed = project
+                    .update(cx, |project, cx| {
+                        project.rename_entry(rename.entry_id, rename.old_path.clone(), cx)
+                    })?
+                    .await;
+                if let Err(error) = renamed {
+                    failures.push(format!("{}: {error}", rename.old_path.path.as_unix_str()));
+                } else {
+                    remove_directory_left_empty(&fs, &project, rename, cx).await;
+                }
+            }
+            // The record described where the edit put these files, and it no
+            // longer does. Leaving it would offer the same move again on the
+            // next undo, when there is nothing left to move.
+            project
+                .update(cx, |project, _| {
+                    project.forget_file_renames(&renames);
+                })
+                .ok();
+
+            anyhow::ensure!(
+                failures.is_empty(),
+                "could not move {} file(s) back: {}",
+                failures.len(),
+                failures.join(", ")
+            );
+            Ok(())
+        })
+    }
+
+    /// Drops the record of `renames`, once the files are no longer where it says
+    /// they are.
+    fn forget_file_renames(&mut self, renames: &Arc<Vec<FileRename>>) {
+        self.file_renames
+            .retain(|_, tracked| !Arc::ptr_eq(tracked, renames));
+        self.file_rename_order
+            .retain(|tracked| !Arc::ptr_eq(tracked, renames));
     }
 
     /// Renames the project entry with given `entry_id`.
@@ -6975,4 +7123,61 @@ fn provide_inline_values(
     }
 
     variables
+}
+
+/// Removes the directory a moved-back file has just left, when nothing else
+/// ended up inside it. The edit created that directory to hold the file, and
+/// moving back already recreates the directory the edit emptied, so leaving
+/// this one behind would keep a trace of a move that no longer exists.
+///
+/// A directory that still holds something is left alone, and so is a worktree
+/// root. Failing to remove it is not worth reporting, since the file is back
+/// where it belongs either way.
+async fn remove_directory_left_empty(
+    fs: &Arc<dyn Fs>,
+    project: &WeakEntity<Project>,
+    rename: &FileRename,
+    cx: &mut AsyncApp,
+) {
+    let Some(parent) = rename.new_path.path.parent() else {
+        return;
+    };
+    if parent.is_empty() {
+        return;
+    }
+    let Ok(Some(abs_path)) = project.read_with(cx, |project, cx| {
+        Some(
+            project
+                .worktree_for_id(rename.new_path.worktree_id, cx)?
+                .read(cx)
+                .absolutize(parent),
+        )
+    }) else {
+        return;
+    };
+
+    match fs.read_dir(&abs_path).await {
+        Ok(mut entries) => {
+            if entries.next().await.is_some() {
+                return;
+            }
+        }
+        Err(error) => {
+            log::warn!("could not tell whether {abs_path:?} was left empty: {error}");
+            return;
+        }
+    }
+
+    if let Err(error) = fs
+        .remove_dir(
+            &abs_path,
+            RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+    {
+        log::warn!("could not remove the emptied directory {abs_path:?}: {error}");
+    }
 }

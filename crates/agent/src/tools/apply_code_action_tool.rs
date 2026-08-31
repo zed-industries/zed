@@ -118,7 +118,7 @@ impl AgentTool for ApplyCodeActionTool {
                 .await
                 .map_err(|e| format!("Failed to apply code action '{title}': {e}"))?;
 
-            if transaction.0.is_empty() {
+            if transaction.buffers.is_empty() {
                 return Ok(format!(
                     "Code action '{title}' was applied but made no changes.",
                 ));
@@ -126,10 +126,10 @@ impl AgentTool for ApplyCodeActionTool {
 
             let mut output = format!(
                 "Applied code action '{title}'. Modified {} file(s):\n",
-                transaction.0.len()
+                transaction.buffers.len()
             );
 
-            for (buffer, _) in &transaction.0 {
+            for (buffer, _) in &transaction.buffers {
                 buffer.read_with(cx, |buffer, cx| {
                     let path = buffer
                         .file()

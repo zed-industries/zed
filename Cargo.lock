@@ -5620,6 +5620,7 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
+ "notifications",
  "ordered-float 2.10.1",
  "parking_lot",
  "pretty_assertions",
