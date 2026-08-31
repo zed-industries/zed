@@ -5,9 +5,9 @@ mod strings;
 use fuzzy::CharBag;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 
-pub use paths::{
-    PathMatch, PathMatchCandidate, PathMatchCandidateSet, match_fixed_path_set, match_path_sets,
-};
+#[cfg(not(target_family = "wasm"))]
+pub use paths::match_path_sets;
+pub use paths::{PathMatch, PathMatchCandidate, PathMatchCandidateSet, match_fixed_path_set};
 pub use strings::{StringMatch, StringMatchCandidate, match_strings, match_strings_async};
 
 pub(crate) struct Cancelled;

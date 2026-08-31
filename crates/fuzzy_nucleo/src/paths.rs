@@ -1,3 +1,4 @@
+#[cfg(not(target_family = "wasm"))]
 use gpui::BackgroundExecutor;
 use path::{PathStyle, rel_path::RelPath};
 use std::{
@@ -261,6 +262,7 @@ pub fn match_fixed_path_set(
     results
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,

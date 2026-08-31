@@ -1,16 +1,15 @@
-use crate::{
-    CharBag,
-    char_bag::simple_lowercase,
-    matcher::{MatchCandidate, Matcher},
-};
+use crate::{CharBag, matcher::MatchCandidate};
+#[cfg(not(target_family = "wasm"))]
+use crate::{char_bag::simple_lowercase, matcher::Matcher};
+#[cfg(not(target_family = "wasm"))]
 use gpui::BackgroundExecutor;
+#[cfg(not(target_family = "wasm"))]
 use std::{
     borrow::Borrow,
-    cmp::{self, Ordering},
-    iter,
-    ops::Range,
+    cmp,
     sync::atomic::{self, AtomicBool},
 };
+use std::{cmp::Ordering, iter, ops::Range};
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -114,6 +113,7 @@ impl Ord for StringMatch {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub async fn match_strings<T>(
     candidates: &[T],
     query: &str,

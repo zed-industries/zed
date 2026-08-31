@@ -97,6 +97,7 @@ impl Ord for StringMatch {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub async fn match_strings_async<T>(
     candidates: &[T],
     query: &str,
@@ -163,6 +164,26 @@ where
     let mut results = segment_results.concat();
     gpui_util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
+}
+
+#[cfg(target_family = "wasm")]
+pub async fn match_strings_async<T>(
+    candidates: &[T],
+    query: &str,
+    case: Case,
+    length_penalty: LengthPenalty,
+    max_results: usize,
+    cancel_flag: &AtomicBool,
+    _executor: BackgroundExecutor,
+) -> Vec<StringMatch>
+where
+    T: Borrow<StringMatchCandidate> + Sync,
+{
+    if cancel_flag.load(atomic::Ordering::Acquire) {
+        return Vec::new();
+    }
+
+    match_strings(candidates, query, case, length_penalty, max_results)
 }
 
 pub fn match_strings<T>(

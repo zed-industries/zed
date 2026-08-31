@@ -1,11 +1,11 @@
+#[cfg(not(target_family = "wasm"))]
 use gpui::BackgroundExecutor;
 use path::{PathStyle, rel_path::RelPath};
+#[cfg(not(target_family = "wasm"))]
+use std::{cmp, sync::atomic};
 use std::{
-    cmp::{self, Ordering},
-    sync::{
-        Arc,
-        atomic::{self, AtomicBool},
-    },
+    cmp::Ordering,
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use crate::{
@@ -139,6 +139,7 @@ pub fn match_fixed_path_set(
     results
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
@@ -262,6 +263,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
 /// Compute the distance from a given path to some other path
 /// If there is no shared path, returns usize::MAX
+#[cfg(not(target_family = "wasm"))]
 fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
     let mut path_components = path.components();
     let mut relative_components = relative_to.components();
@@ -275,7 +277,7 @@ fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
     path_components.count() + relative_components.count() + 1
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_family = "wasm")))]
 mod tests {
     use path::rel_path::RelPath;
 
