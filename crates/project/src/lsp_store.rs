@@ -1619,7 +1619,7 @@ impl LocalLspStore {
                                 .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                                 .collect::<Vec<_>>()
                         };
-                    let settings = LanguageSettings::for_buffer(buffer, cx).into_owned();
+                    let settings = LanguageSettings::for_buffer(buffer, cx);
                     let request_timeout = ProjectSettings::get_global(cx)
                         .global_lsp_settings
                         .get_request_timeout();
@@ -4953,7 +4953,38 @@ impl LspStore {
                 self.on_buffer_reloaded(buffer, cx);
             }
 
+            language::BufferEvent::SettingsChanged => {
+                self.on_buffer_settings_changed(&buffer, cx);
+            }
+
             _ => {}
+        }
+    }
+
+    fn on_buffer_settings_changed(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) else {
+            return;
+        };
+        let buffer = buffer.read(cx);
+        if buffer.language().is_none() {
+            return;
+        }
+        let settings = LanguageSettings::for_buffer(buffer, cx);
+        if settings.prettier.allowed
+            && let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings)
+        {
+            let worktree_id = File::from_dyn(buffer.file()).map(|file| file.worktree_id(cx));
+            let prettier_plugins = prettier_plugins
+                .iter()
+                .map(|plugin| Arc::from(plugin.as_str()))
+                .collect::<Vec<_>>();
+            prettier_store.update(cx, |prettier_store, cx| {
+                prettier_store.install_default_prettier(
+                    worktree_id,
+                    prettier_plugins.into_iter(),
+                    cx,
+                )
+            })
         }
     }
 
@@ -5334,7 +5365,7 @@ impl LspStore {
 
         log::debug!("Parsed modeline settings: {:?}", modeline_settings);
 
-        buffer_handle.update(cx, |buffer, _cx| buffer.set_modeline(modeline_settings))
+        buffer_handle.update(cx, |buffer, cx| buffer.set_modeline(modeline_settings, cx))
     }
 
     fn detect_language_for_buffer(
@@ -5408,8 +5439,7 @@ impl LspStore {
             Some(&buffer_entity.read(cx)),
             Some(&new_language.name()),
             cx,
-        )
-        .into_owned();
+        );
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -5770,26 +5800,7 @@ impl LspStore {
     }
 
     fn on_settings_changed(&mut self, cx: &mut Context<Self>) {
-        let mut language_formatters_to_check = Vec::new();
-        for buffer in self.buffer_store.read(cx).buffers() {
-            let buffer = buffer.read(cx);
-            let settings = LanguageSettings::for_buffer(buffer, cx);
-            if buffer.language().is_some() {
-                let buffer_file = File::from_dyn(buffer.file());
-                language_formatters_to_check.push((
-                    buffer_file.map(|f| f.worktree_id(cx)),
-                    settings.into_owned(),
-                ));
-            }
-        }
-
         self.request_workspace_config_refresh();
-
-        if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
-            prettier_store.update(cx, |prettier_store, cx| {
-                prettier_store.on_settings_changed(language_formatters_to_check, cx)
-            })
-        }
 
         let new_semantic_token_rules = crate::project_settings::ProjectSettings::get_global(cx)
             .global_lsp_settings
