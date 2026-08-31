@@ -14,47 +14,91 @@ use crate::{
 
 type OllamaModelPicker = Picker<OllamaModelPickerDelegate>;
 
+const DEFAULT_OLLAMA_API_URL: &str = "http://localhost:11434";
+
+fn matches_for_query(models: &[SharedString], query: &str) -> Vec<StringMatch> {
+    let query_lower = query.to_lowercase();
+    models
+        .iter()
+        .enumerate()
+        .filter(|(_, model)| query.is_empty() || model.to_lowercase().contains(&query_lower))
+        .map(|(index, model)| StringMatch {
+            candidate_id: index,
+            string: model.to_string(),
+            positions: Vec::new(),
+            score: 0.0,
+        })
+        .collect()
+}
+
 struct OllamaModelPickerDelegate {
     models: Vec<SharedString>,
     filtered_models: Vec<StringMatch>,
     selected_index: usize,
     on_model_changed: Arc<dyn Fn(SharedString, &mut Window, &mut App) + 'static>,
+    loading: bool,
+    _fetch_models_task: Option<Task<()>>,
 }
 
 impl OllamaModelPickerDelegate {
     fn new(
         current_model: SharedString,
+        api_url: SharedString,
         on_model_changed: impl Fn(SharedString, &mut Window, &mut App) + 'static,
         cx: &mut Context<OllamaModelPicker>,
     ) -> Self {
-        let mut models = edit_prediction::ollama::fetch_models(cx);
-
-        let current_in_list = models.contains(&current_model);
-        if !current_model.is_empty() && !current_in_list {
-            models.insert(0, current_model.clone());
+        let mut models = Vec::new();
+        if !current_model.is_empty() {
+            models.push(current_model.clone());
         }
+        let filtered_models = matches_for_query(&models, "");
 
-        let selected_index = models
-            .iter()
-            .position(|model| *model == current_model)
-            .unwrap_or(0);
-
-        let filtered_models = models
-            .iter()
-            .enumerate()
-            .map(|(index, model)| StringMatch {
-                candidate_id: index,
-                string: model.to_string(),
-                positions: Vec::new(),
-                score: 0.0,
+        let loading = !api_url.is_empty();
+        let fetch_models_task = loading.then(|| {
+            let http_client = cx.http_client();
+            cx.spawn(async move |this, cx| {
+                let result = edit_prediction::ollama::fetch_models_from_server(
+                    http_client,
+                    api_url.as_ref(),
+                )
+                .await;
+                this.update(cx, move |picker, cx| {
+                    picker.delegate.loading = false;
+                    match result {
+                        Ok(mut fetched_models) => {
+                            if !current_model.is_empty()
+                                && !fetched_models.contains(&current_model)
+                            {
+                                fetched_models.insert(0, current_model.clone());
+                            }
+                            picker.delegate.models = fetched_models;
+                        }
+                        Err(error) => {
+                            log::warn!("Failed to fetch Ollama models from {api_url}: {error}");
+                        }
+                    }
+                    let query = picker.query(cx);
+                    picker.delegate.filtered_models =
+                        matches_for_query(&picker.delegate.models, &query);
+                    picker.delegate.selected_index = picker
+                        .delegate
+                        .models
+                        .iter()
+                        .position(|model| *model == current_model)
+                        .unwrap_or(0);
+                    cx.notify();
+                })
+                .ok();
             })
-            .collect();
+        });
 
         Self {
             models,
             filtered_models,
-            selected_index,
+            selected_index: 0,
             on_model_changed: Arc::new(on_model_changed),
+            loading,
+            _fetch_models_task: fetch_models_task,
         }
     }
 }
@@ -88,27 +132,21 @@ impl PickerDelegate for OllamaModelPickerDelegate {
         "Search models…".into()
     }
 
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        Some(if self.loading {
+            "Loading models…".into()
+        } else {
+            "No models found. Check your Ollama server URL.".into()
+        })
+    }
+
     fn update_matches(
         &mut self,
         query: String,
         _window: &mut Window,
         cx: &mut Context<OllamaModelPicker>,
     ) -> Task<()> {
-        let query_lower = query.to_lowercase();
-
-        self.filtered_models = self
-            .models
-            .iter()
-            .enumerate()
-            .filter(|(_, model)| query.is_empty() || model.to_lowercase().contains(&query_lower))
-            .map(|(index, model)| StringMatch {
-                candidate_id: index,
-                string: model.to_string(),
-                positions: Vec::new(),
-                score: 0.0,
-            })
-            .collect();
-
+        self.filtered_models = matches_for_query(&self.models, &query);
         self.selected_index = 0;
         cx.notify();
 
@@ -170,6 +208,25 @@ pub fn render_ollama_model_picker(
         .map(|m| m.0.clone().into())
         .unwrap_or_else(|| "".into());
 
+    let (_, api_url_value) = SettingsStore::global(cx).get_value_from_file(
+        file.to_settings(),
+        |settings: &settings::SettingsContent| {
+            settings
+                .project
+                .all_languages
+                .edit_predictions
+                .as_ref()?
+                .ollama
+                .as_ref()?
+                .api_url
+                .as_ref()
+        },
+    );
+    let api_url: SharedString = api_url_value
+        .filter(|api_url| !api_url.is_empty())
+        .map(|api_url| SharedString::new(api_url.clone()))
+        .unwrap_or_else(|| DEFAULT_OLLAMA_API_URL.into());
+
     let trigger_value: SharedString = if current_value.is_empty() {
         "Select a model…".into()
     } else {
@@ -188,8 +245,10 @@ pub fn render_ollama_model_picker(
             Some(cx.new(|cx| {
                 let file = file.clone();
                 let current_value = current_value.clone();
+                let api_url = api_url.clone();
                 let delegate = OllamaModelPickerDelegate::new(
                     current_value,
+                    api_url,
                     move |model_name, window, cx| {
                         update_settings_file(
                             file.clone(),

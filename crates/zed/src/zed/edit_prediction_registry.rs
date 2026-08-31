@@ -2,14 +2,11 @@ use client::{Client, UserStore};
 use codestral::{CodestralEditPredictionDelegate, load_codestral_api_key};
 use collections::HashMap;
 use copilot::CopilotEditPredictionDelegate;
-use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate};
+use edit_prediction::{EditPredictionModel, ZedEditPredictionDelegate, fim};
 use editor::{EditPredictionRequestTrigger, Editor};
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
-use language::{
-    ZetaVersion,
-    language_settings::{
-        EditPredictionPromptFormat, EditPredictionProvider, all_language_settings,
-    },
+use language::language_settings::{
+    EditPredictionPromptFormat, EditPredictionProvider, all_language_settings,
 };
 
 use settings::SettingsStore;
@@ -130,7 +127,7 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
 
             let mut format = custom_settings.prompt_format;
             if format == EditPredictionPromptFormat::Infer {
-                if let Some(inferred_format) = infer_prompt_format(&custom_settings.model) {
+                if let Some(inferred_format) = fim::infer_prompt_format(&custom_settings.model) {
                     format = inferred_format;
                 } else {
                     // todo: notify user that prompt format inference failed
@@ -155,28 +152,6 @@ fn edit_prediction_provider_config_for_settings(cx: &App) -> Option<EditPredicti
             EditPredictionModel::Mercury,
         )),
     }
-}
-
-fn infer_prompt_format(model: &str) -> Option<EditPredictionPromptFormat> {
-    let model_base = model.split(':').next().unwrap_or(model);
-
-    Some(match model_base {
-        "zeta2" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2),
-        "zeta2.1" => EditPredictionPromptFormat::Zeta(ZetaVersion::Zeta2_1),
-        model_base if model_base.to_ascii_lowercase().contains("sweep-next-edit") => {
-            EditPredictionPromptFormat::Sweep
-        }
-        "codellama" | "code-llama" => EditPredictionPromptFormat::CodeLlama,
-        "starcoder" | "starcoder2" | "starcoderbase" => EditPredictionPromptFormat::StarCoder,
-        "deepseek-coder" | "deepseek-coder-v2" => EditPredictionPromptFormat::DeepseekCoder,
-        "qwen2.5-coder" | "qwen-coder" | "qwen" => EditPredictionPromptFormat::Qwen,
-        "codegemma" => EditPredictionPromptFormat::CodeGemma,
-        "codestral" | "mistral" => EditPredictionPromptFormat::Codestral,
-        "glm" | "glm-4" | "glm-4.5" => EditPredictionPromptFormat::Glm,
-        _ => {
-            return None;
-        }
-    })
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -366,6 +341,50 @@ mod tests {
 
         let provider_name = config.map(|config| config.name());
         assert_eq!(provider_name, Some("Sweep Prompt"));
+
+        drop(app_state);
+    }
+
+    #[gpui::test]
+    async fn test_ollama_provider_routes_to_fim_model(cx: &mut TestAppContext) {
+        let app_state = cx.update(|cx| {
+            let app_state = AppState::test(cx);
+            client::init(&app_state.client, cx);
+            language_model::init(cx);
+            app_state
+        });
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store: &mut SettingsStore, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.edit_predictions =
+                        Some(settings::EditPredictionSettingsContent {
+                            provider: Some(EditPredictionProvider::Ollama),
+                            ollama: Some(settings::OllamaEditPredictionSettingsContent {
+                                api_url: Some("http://localhost:11434".to_string()),
+                                model: Some("qwen2.5-coder:3b".to_string().into()),
+                                prompt_format: Some(EditPredictionPromptFormatContent::Infer),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        });
+                });
+            });
+        });
+
+        let config = cx.update(|cx| edit_prediction_provider_config_for_settings(cx));
+        assert!(
+            matches!(
+                config,
+                Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Fim {
+                    format: EditPredictionPromptFormat::Qwen,
+                }))
+            ),
+            "expected qwen2.5-coder model to infer the Qwen FIM prompt format"
+        );
+
+        let provider_name = config.map(|config| config.name());
+        assert_eq!(provider_name, Some("FIM"));
 
         drop(app_state);
     }
