@@ -90,8 +90,8 @@ impl extension::Extension for WasmExtension {
         language_server_id: LanguageServerName,
         language_name: LanguageName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Command> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -117,8 +117,8 @@ impl extension::Extension for WasmExtension {
         language_server_id: LanguageServerName,
         language_name: LanguageName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Option<String>> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -142,8 +142,8 @@ impl extension::Extension for WasmExtension {
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Option<String>> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -166,8 +166,8 @@ impl extension::Extension for WasmExtension {
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Option<String>> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -189,8 +189,8 @@ impl extension::Extension for WasmExtension {
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Option<String>> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -213,8 +213,8 @@ impl extension::Extension for WasmExtension {
         language_server_id: LanguageServerName,
         target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Option<String>> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -239,8 +239,8 @@ impl extension::Extension for WasmExtension {
         language_server_id: LanguageServerName,
         target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        status_source: EntityId,
     ) -> Result<Option<String>> {
-        let status_source = worktree.language_server_status_source();
         self.call_with_language_server_status_source(status_source, move |extension, store| {
             async move {
                 let resource = store.data_mut().table.push(worktree)?;
@@ -883,7 +883,7 @@ impl WasmExtension {
 
     async fn call_with_language_server_status_source<T, Fn>(
         &self,
-        source: Option<EntityId>,
+        source: EntityId,
         f: Fn,
     ) -> Result<T>
     where
@@ -899,7 +899,7 @@ impl WasmExtension {
                 // The installation-status WIT methods do not receive a worktree, so expose the
                 // source through WasmState for the duration of this serialized extension call.
                 // Clear it before returning so failed calls cannot affect the next invocation.
-                store.data_mut().language_server_status_source = source;
+                store.data_mut().language_server_status_source = Some(source);
                 let result = f(extension, store).await;
                 store.data_mut().language_server_status_source = None;
                 result

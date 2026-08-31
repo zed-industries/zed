@@ -22,7 +22,7 @@ use extension::{
 };
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use futures::{AsyncReadExt, FutureExt, StreamExt, io::BufReader};
-use gpui::{AppContext as _, BackgroundExecutor, Entity, TaskExt, TestAppContext};
+use gpui::{AppContext as _, BackgroundExecutor, Entity, EntityId, TaskExt, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{
     BinaryStatus, LanguageConfig, LanguageMatcher, LanguageName, LanguageRegistry, QueryFiles,
@@ -4116,6 +4116,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _language_name: LanguageName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Command> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4125,6 +4126,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _language_name: LanguageName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4133,6 +4135,7 @@ impl Extension for FakeExtension {
         &self,
         _language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4141,6 +4144,7 @@ impl Extension for FakeExtension {
         &self,
         _language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4149,6 +4153,7 @@ impl Extension for FakeExtension {
         &self,
         _language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4158,6 +4163,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _target_language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }
@@ -4167,6 +4173,7 @@ impl Extension for FakeExtension {
         _language_server_id: LanguageServerName,
         _target_language_server_id: LanguageServerName,
         _worktree: Arc<dyn WorktreeDelegate>,
+        _language_server_status_source: EntityId,
     ) -> anyhow::Result<Option<String>> {
         anyhow::bail!("not supported by FakeExtension")
     }

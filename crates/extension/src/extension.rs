@@ -33,9 +33,6 @@ pub fn init(cx: &mut App) {
 pub trait WorktreeDelegate: Send + Sync + 'static {
     fn id(&self) -> u64;
     fn root_path(&self) -> String;
-    fn language_server_status_source(&self) -> Option<EntityId> {
-        None
-    }
     async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn which(&self, binary_name: String) -> Option<String>;
     async fn shell_env(&self) -> Vec<(String, String)>;
@@ -67,6 +64,7 @@ pub trait Extension: Send + Sync + 'static {
         language_server_id: LanguageServerName,
         language_name: LanguageName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Command>;
 
     async fn language_server_initialization_options(
@@ -74,24 +72,28 @@ pub trait Extension: Send + Sync + 'static {
         language_server_id: LanguageServerName,
         language_name: LanguageName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Option<String>>;
 
     async fn language_server_workspace_configuration(
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Option<String>>;
 
     async fn language_server_initialization_options_schema(
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Option<String>>;
 
     async fn language_server_workspace_configuration_schema(
         &self,
         language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Option<String>>;
 
     async fn language_server_additional_initialization_options(
@@ -99,6 +101,7 @@ pub trait Extension: Send + Sync + 'static {
         language_server_id: LanguageServerName,
         target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Option<String>>;
 
     async fn language_server_additional_workspace_configuration(
@@ -106,6 +109,7 @@ pub trait Extension: Send + Sync + 'static {
         language_server_id: LanguageServerName,
         target_language_server_id: LanguageServerName,
         worktree: Arc<dyn WorktreeDelegate>,
+        language_server_status_source: EntityId,
     ) -> Result<Option<String>>;
 
     async fn labels_for_completions(
