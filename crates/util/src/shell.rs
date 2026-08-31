@@ -235,11 +235,11 @@ impl ShellKind {
     fn to_cmd_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
             match var_str.strip_suffix('}') {
-                // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-                // which will result in the task failing to run in such cases.
                 Some(var_name) if !var_name.is_empty() && !var_name.contains(':') => {
                     format!("%{var_name}%")
                 }
+                // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+                // which will result in the task failing to run in such cases.
                 _ => input.into(),
             }
         } else if let Some(var_str) = input.strip_prefix('$') {
@@ -254,11 +254,11 @@ impl ShellKind {
     fn to_powershell_variable(input: &str) -> String {
         if let Some(var_str) = input.strip_prefix("${") {
             match var_str.strip_suffix('}') {
-                // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-                // which will result in the task failing to run in such cases.
                 Some(var_name) if !var_name.is_empty() && !var_name.contains(':') => {
                     format!("$env:{var_name}")
                 }
+                // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
+                // which will result in the task failing to run in such cases.
                 _ => input.into(),
             }
         } else if let Some(var_str) = input.strip_prefix('$') {
