@@ -119,6 +119,7 @@ pub enum Event {
     Reloaded,
     CapabilityChanged,
     LanguageChanged(BufferId, bool),
+    SettingsChanged,
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
@@ -2009,6 +2010,7 @@ impl MultiBuffer {
             BufferEvent::LanguageChanged(has_language) => {
                 Event::LanguageChanged(buffer_id, *has_language)
             }
+            BufferEvent::SettingsChanged => Event::SettingsChanged,
             BufferEvent::Reparsed => Event::Reparsed(buffer_id),
             BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             BufferEvent::CapabilityChanged => {
@@ -2134,7 +2136,7 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings(&self, cx: &App) -> Arc<LanguageSettings> {
         let snapshot = self.snapshot(cx);
         snapshot
             .excerpts
@@ -2144,15 +2146,11 @@ impl MultiBuffer {
             .unwrap_or_else(move || self.language_settings_at(MultiBufferOffset::default(), cx))
     }
 
-    pub fn language_settings_at<'a, T: ToOffset>(
-        &'a self,
-        point: T,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings_at<T: ToOffset>(&self, point: T, cx: &App) -> Arc<LanguageSettings> {
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
             LanguageSettings::for_buffer_at(buffer.read(cx), offset, cx)
         } else {
-            Cow::Borrowed(&AllLanguageSettings::get_global(cx).defaults)
+            AllLanguageSettings::get_global(cx).defaults.clone()
         }
     }
 
@@ -6165,7 +6163,7 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
-    fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    fn language_settings(&self, cx: &App) -> Arc<LanguageSettings> {
         self.excerpts
             .first()
             .map(|excerpt| excerpt.buffer_snapshot(self))
@@ -6173,15 +6171,11 @@ impl MultiBufferSnapshot {
             .unwrap_or_else(move || self.language_settings_at(MultiBufferOffset::ZERO, cx))
     }
 
-    pub fn language_settings_at<'a, T: ToOffset>(
-        &'a self,
-        point: T,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings_at<T: ToOffset>(&self, point: T, cx: &App) -> Arc<LanguageSettings> {
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             buffer.settings_at(offset, cx)
         } else {
-            Cow::Borrowed(&AllLanguageSettings::get_global(cx).defaults)
+            AllLanguageSettings::get_global(cx).defaults.clone()
         }
     }
 

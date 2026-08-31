@@ -326,14 +326,14 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     cx.executor().run_until_parked();
 
-    let settings_for = async |path: &str, cx: &mut TestAppContext| -> LanguageSettings {
+    let settings_for = async |path: &str, cx: &mut TestAppContext| -> Arc<LanguageSettings> {
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_buffer((worktree.read(cx).id(), rel_path(path)), cx)
             })
             .await
             .unwrap();
-        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned())
+        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx))
     };
 
     let settings_a = settings_for("a.rs", cx).await;
@@ -411,14 +411,14 @@ async fn test_external_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
 
     cx.executor().run_until_parked();
-    let settings_for = async |path: &str, cx: &mut TestAppContext| -> LanguageSettings {
+    let settings_for = async |path: &str, cx: &mut TestAppContext| -> Arc<LanguageSettings> {
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_buffer((worktree.read(cx).id(), rel_path(path)), cx)
             })
             .await
             .unwrap();
-        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned())
+        cx.update(|cx| LanguageSettings::for_buffer(&buffer.read(cx), cx))
     };
 
     let settings_rs = settings_for("main.rs", cx).await;
@@ -468,7 +468,7 @@ async fn test_internal_editorconfig_root_stops_traversal(cx: &mut gpui::TestAppC
         .await
         .unwrap();
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(buffer.read(cx), cx);
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(2));
     });
 }
@@ -757,7 +757,7 @@ async fn test_adding_worktree_discovers_external_editorconfigs(cx: &mut gpui::Te
         .unwrap();
 
     cx.update(|cx| {
-        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx).into_owned();
+        let settings = LanguageSettings::for_buffer(&buffer.read(cx), cx);
 
         // Test existing worktree has tab_size = 7
         assert_eq!(Some(settings.tab_size), NonZeroU32::new(7));

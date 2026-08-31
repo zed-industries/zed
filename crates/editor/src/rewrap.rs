@@ -203,7 +203,7 @@ impl Editor {
             }
 
             ranges.push((
-                language_settings.clone(),
+                language_settings,
                 Point::new(current_range_start, 0)
                     ..Point::new(prev_row, buffer.line_len(MultiBufferRow(prev_row))),
                 current_range_indent,
