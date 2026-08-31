@@ -1282,6 +1282,11 @@
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
     "notify_when_agent_waiting": "primary_screen",
+    // How to present the notification shown when a terminal thread rings the
+    // terminal bell.
+    // "pop_up" - Show Zed's own notification window (default)
+    // "system" - Post to the operating system's notification center
+    "terminal_notification_style": "pop_up",
     // When to play a sound when the agent has either completed
     // its response, or needs user input.
     // "never" - Never play the sound

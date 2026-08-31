@@ -76,15 +76,15 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
-    PlatformDisplay, Subscription, Task, TaskExt, WeakEntity, WindowHandle, prelude::*,
-    pulsating_between,
+    PlatformDisplay, Subscription, SystemNotification, Task, TaskExt, WeakEntity, WindowHandle,
+    prelude::*, pulsating_between,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
 use project::{Project, ProjectPath, Worktree};
 use settings::TerminalDockPosition;
-use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
+use settings::{AgentNotificationStyle, NotifyWhenAgentWaiting, Settings, update_settings_file};
 
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
@@ -180,6 +180,56 @@ impl TerminalId {
 impl fmt::Display for TerminalId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(formatter)
+    }
+}
+
+const TERMINAL_NOTIFICATION_TAG_PREFIX: &str = "agent-terminal:";
+
+fn terminal_notification_tag(terminal_id: TerminalId) -> SharedString {
+    format!("{TERMINAL_NOTIFICATION_TAG_PREFIX}{terminal_id}").into()
+}
+
+fn terminal_id_from_notification_tag(tag: &str) -> Option<TerminalId> {
+    TerminalId::from_key_string(tag.strip_prefix(TERMINAL_NOTIFICATION_TAG_PREFIX)?).ok()
+}
+
+/// The response arrives without a window, unlike the in-app pop-up, so the
+/// owning workspace has to be found by searching for the terminal.
+fn activate_terminal_for_notification(terminal_id: TerminalId, cx: &mut App) {
+    for window in cx.windows() {
+        let Some(handle) = window.downcast::<MultiWorkspace>() else {
+            continue;
+        };
+        let revealed = handle.update(cx, |multi_workspace, window, cx| {
+            let workspace = multi_workspace
+                .workspaces()
+                .find(|workspace| {
+                    workspace
+                        .read(cx)
+                        .panel::<AgentPanel>(cx)
+                        .is_some_and(|panel| panel.read(cx).terminals.contains_key(&terminal_id))
+                })
+                .cloned()?;
+
+            window.activate_window();
+            multi_workspace.activate(workspace.clone(), None, window, cx);
+            workspace.update(cx, |workspace, cx| {
+                workspace.reveal_panel::<AgentPanel>(window, cx);
+                if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                    // `activate_terminal` retracts the notification on its way.
+                    panel.update(cx, |panel, cx| {
+                        panel.activate_terminal(terminal_id, true, window, cx)
+                    });
+                }
+                workspace.focus_panel::<AgentPanel>(window, cx);
+            });
+            Some(())
+        });
+
+        if matches!(revealed, Ok(Some(()))) {
+            cx.activate(true);
+            return;
+        }
     }
 }
 
@@ -370,6 +420,12 @@ struct SerializedActiveThread {
 }
 
 pub fn init(cx: &mut App) {
+    cx.on_system_notification_response(|response, cx| {
+        if let Some(terminal_id) = terminal_id_from_notification_tag(&response.tag) {
+            activate_terminal_for_notification(terminal_id, cx);
+        }
+    });
+
     cx.observe_new(
         |workspace: &mut Workspace, _window, _cx: &mut Context<Workspace>| {
             workspace
@@ -2689,21 +2745,56 @@ impl AgentPanel {
             return;
         }
         let settings = AgentSettings::get_global(cx);
-        match settings.notify_when_agent_waiting {
-            NotifyWhenAgentWaiting::PrimaryScreen => {
+        match (
+            settings.terminal_notification_style,
+            settings.notify_when_agent_waiting,
+        ) {
+            // Matched first: turning notifications off wins over the channel.
+            (_, NotifyWhenAgentWaiting::Never) => {}
+            (AgentNotificationStyle::System, _) => {
+                self.post_terminal_system_notification(terminal_id, &title, cx);
+            }
+            (AgentNotificationStyle::PopUp, NotifyWhenAgentWaiting::PrimaryScreen) => {
                 window.request_attention();
                 if let Some(primary) = cx.primary_display() {
                     self.pop_up_terminal_notification(terminal_id, &title, primary, window, cx);
                 }
             }
-            NotifyWhenAgentWaiting::AllScreens => {
+            (AgentNotificationStyle::PopUp, NotifyWhenAgentWaiting::AllScreens) => {
                 window.request_attention();
                 for screen in cx.displays() {
                     self.pop_up_terminal_notification(terminal_id, &title, screen, window, cx);
                 }
             }
-            NotifyWhenAgentWaiting::Never => {}
         }
+    }
+
+    fn post_terminal_system_notification(
+        &self,
+        terminal_id: TerminalId,
+        title: &SharedString,
+        cx: &mut App,
+    ) {
+        let body = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| {
+                workspace
+                    .read(cx)
+                    .project()
+                    .read(cx)
+                    .visible_worktrees(cx)
+                    .next()
+                    .map(|worktree| worktree.read(cx).root_name_str().to_string())
+            })
+            .unwrap_or_default();
+
+        cx.show_system_notification(SystemNotification {
+            tag: terminal_notification_tag(terminal_id),
+            title: title.clone(),
+            body: body.into(),
+            actions: Vec::new(),
+        });
     }
 
     fn pop_up_terminal_notification(
@@ -2824,6 +2915,8 @@ impl AgentPanel {
     }
 
     fn dismiss_terminal_notifications(&mut self, terminal_id: TerminalId, cx: &mut App) {
+        cx.dismiss_system_notification(&terminal_notification_tag(terminal_id));
+
         let Some(terminal) = self.terminals.get_mut(&terminal_id) else {
             return;
         };
@@ -9388,6 +9481,20 @@ mod tests {
         cx: &mut TestAppContext,
         threads_list_active: bool,
     ) -> (Entity<AgentPanel>, VisualTestContext) {
+        setup_visible_panel_with(cx, threads_list_active, AgentNotificationStyle::PopUp).await
+    }
+
+    async fn setup_visible_panel_with_system_notifications(
+        cx: &mut TestAppContext,
+    ) -> (Entity<AgentPanel>, VisualTestContext) {
+        setup_visible_panel_with(cx, true, AgentNotificationStyle::System).await
+    }
+
+    async fn setup_visible_panel_with(
+        cx: &mut TestAppContext,
+        threads_list_active: bool,
+        notification_style: AgentNotificationStyle,
+    ) -> (Entity<AgentPanel>, VisualTestContext) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -9395,10 +9502,16 @@ mod tests {
             AgentSettings::override_global(
                 AgentSettings {
                     notify_when_agent_waiting: NotifyWhenAgentWaiting::PrimaryScreen,
+                    terminal_notification_style: notification_style,
                     ..AgentSettings::get_global(cx).clone()
                 },
                 cx,
             );
+            if notification_style == AgentNotificationStyle::System {
+                // The test platform drops notifications until the app has an
+                // identity, mirroring the AppUserModelID that Windows requires.
+                cx.set_app_identity("dev.zed.Zed-Test", "Zed");
+            }
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -10514,6 +10627,124 @@ mod tests {
             cx.windows()
                 .iter()
                 .all(|window| window.downcast::<AgentNotification>().is_none())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_bell_posts_system_notification(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel_with_system_notifications(cx).await;
+
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        let delivered = cx.delivered_system_notifications();
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(
+            delivered[0].tag,
+            terminal_notification_tag(first_terminal_id)
+        );
+        assert_eq!(delivered[0].title, "Build");
+
+        assert!(
+            cx.windows()
+                .iter()
+                .all(|window| window.downcast::<AgentNotification>().is_none()),
+            "the system notification should replace the pop-up, not accompany it"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_never_suppresses_system_notifications(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel_with_system_notifications(cx).await;
+        cx.update(|_window, cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    notify_when_agent_waiting: NotifyWhenAgentWaiting::Never,
+                    ..AgentSettings::get_global(cx).clone()
+                },
+                cx,
+            );
+        });
+
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.delivered_system_notifications().is_empty(),
+            "turning notifications off has to win over the delivery channel"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_system_notification_response_activates_terminal(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_visible_panel_with_system_notifications(cx).await;
+
+        let first_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Build", true, window, cx)
+            })
+            .expect("first test terminal should be inserted");
+        let second_terminal_id = panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.insert_test_terminal("Server", true, window, cx)
+            })
+            .expect("second test terminal should be inserted");
+        cx.run_until_parked();
+
+        panel.update(&mut cx, |panel, cx| {
+            panel.emit_test_terminal_bell(first_terminal_id, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(panel.active_terminal_id(), Some(second_terminal_id));
+        });
+
+        cx.simulate_system_notification_response(gpui::SystemNotificationResponse {
+            tag: terminal_notification_tag(first_terminal_id),
+            action_id: None,
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _cx| {
+            assert_eq!(
+                panel.active_terminal_id(),
+                Some(first_terminal_id),
+                "clicking the notification should reveal the terminal it was posted for"
+            );
+        });
+        assert!(
+            cx.dismissed_system_notifications()
+                .contains(&terminal_notification_tag(first_terminal_id)),
+            "revealing the terminal should retract its notification"
         );
     }
 

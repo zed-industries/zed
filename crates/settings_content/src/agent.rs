@@ -275,6 +275,11 @@ pub struct AgentSettingsContent {
     ///
     /// Default: "primary_screen"
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
+    /// How to present the notification shown when a terminal thread rings the
+    /// terminal bell.
+    ///
+    /// Default: "pop_up"
+    pub terminal_notification_style: Option<AgentNotificationStyle>,
     /// When to play a sound when the agent has either completed its response, or needs user input.
     ///
     /// Default: never
@@ -558,6 +563,28 @@ pub enum NotifyWhenAgentWaiting {
     PrimaryScreen,
     AllScreens,
     Never,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentNotificationStyle {
+    /// Show Zed's own notification window.
+    #[default]
+    PopUp,
+    /// Post to the operating system's notification center.
+    System,
 }
 
 #[derive(
