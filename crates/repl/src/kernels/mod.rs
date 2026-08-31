@@ -438,6 +438,7 @@ pub fn python_env_kernel_specifications(
         .map(|w| w.read(cx).abs_path());
 
     let background_executor = cx.background_executor().clone();
+    let fs = project.read(cx).fs().clone();
 
     async move {
         let (toolchains, user_toolchains) = if let Some(Toolchains {
@@ -457,6 +458,7 @@ pub fn python_env_kernel_specifications(
             .chain(toolchains.toolchains)
             .map(|toolchain| {
                 let wsl_distro = wsl_distro.clone();
+                let fs = fs.clone();
                 background_executor.spawn(async move {
                     // For remote projects, we assume python is available assuming toolchain is reported.
                     // We can skip the `ipykernel` check or run it remotely.
@@ -515,6 +517,7 @@ pub fn python_env_kernel_specifications(
                         .unwrap_or(false);
 
                     let mut env = HashMap::new();
+                    let mut venv_root = None;
                     if let Some(python_bin_dir) = PathBuf::from(&python_path).parent() {
                         if let Some(path_var) = std::env::var_os("PATH") {
                             let mut paths = std::env::split_paths(&path_var).collect::<Vec<_>>();
@@ -524,20 +527,48 @@ pub fn python_env_kernel_specifications(
                             }
                         }
 
-                        if let Some(venv_root) = python_bin_dir.parent() {
-                            env.insert("VIRTUAL_ENV".to_string(), venv_root.to_string_lossy().to_string());
+                        if let Some(root) = python_bin_dir.parent() {
+                            env.insert("VIRTUAL_ENV".to_string(), root.to_string_lossy().to_string());
+                            venv_root = Some(root.to_path_buf());
                         }
                     }
+
+                    // Prefer the name of a kernelspec already installed in the venv (e.g. via
+                    // `ipykernel install`), so external tools like `jupyter execute` and
+                    // nbconvert - which resolve kernels by `name`, not `display_name` - can find
+                    // it too. Otherwise fall back to the toolchain's own name.
+                    let kernel_name: String = if let Some(venv_root) = venv_root.as_deref() {
+                        installed_kernel_name_for_venv(venv_root, fs.as_ref()).await
+                    } else {
+                        None
+                    }
+                    .unwrap_or_else(|| toolchain.name.to_string());
 
                     log::info!("Preparing Python kernel for toolchain: {}", toolchain.name);
                     log::info!("Python path: {}", python_path);
                     if let Some(path) = env.get("PATH") {
-                         log::info!("Kernel PATH: {}", path);
+                        log::info!("Kernel PATH: {}", path);
                     } else {
-                         log::info!("Kernel PATH not set in env");
+                        log::info!("Kernel PATH not set in env");
                     }
                     if let Some(venv) = env.get("VIRTUAL_ENV") {
-                         log::info!("Kernel VIRTUAL_ENV: {}", venv);
+                        log::info!("Kernel VIRTUAL_ENV: {}", venv);
+                    }
+
+                    // TODO: the fallback above can still produce an illegal name (toolchain
+                    // display names often contain spaces/parens/etc) when no kernelspec is
+                    // installed - sanitize it or auto-register a kernelspec instead of only
+                    // warning. Jupyter kernel names may only contain ASCII letters, numbers,
+                    // and - . _ (hyphen, period, underscore):
+                    // https://jupyter-client.readthedocs.io/en/latest/kernels.html#kernel-specs
+                    if !kernel_name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
+                    {
+                        log::warn!(
+                            "Kernel name '{}' contains illegal characters. Kernel names can only contain ASCII letters and numbers and these separators: - . _ (hyphen, period, and underscore). Some tools may not be able to resolve this kernel.",
+                            kernel_name
+                        );
                     }
 
                     let kernelspec = JupyterKernelspec {
@@ -556,7 +587,7 @@ pub fn python_env_kernel_specifications(
                     };
 
                     Some(KernelSpecification::PythonEnv(PythonEnvKernelSpecification {
-                        name: toolchain.name.to_string(),
+                        name: kernel_name,
                         path: PathBuf::from(&python_path),
                         kernelspec,
                         has_ipykernel,

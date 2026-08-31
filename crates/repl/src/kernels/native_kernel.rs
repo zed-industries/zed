@@ -353,6 +353,21 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelS
     Ok(valid_kernelspecs)
 }
 
+/// Look for the name of a kernelspec already installed inside a Python environment's own
+/// `share/jupyter/kernels` directory (as created by e.g. `ipykernel install`).
+pub(crate) async fn installed_kernel_name_for_venv(
+    venv_prefix: &std::path::Path,
+    fs: &dyn Fs,
+) -> Option<String> {
+    let kernels_dir = venv_prefix.join("share").join("jupyter").join("kernels");
+    let mut kernelspecs = read_kernels_dir(kernels_dir, fs).await.ok()?;
+    kernelspecs.sort_by(|a, b| a.name.cmp(&b.name));
+    kernelspecs
+        .into_iter()
+        .find(|spec| spec.kernelspec.language.eq_ignore_ascii_case("python"))
+        .map(|spec| spec.name)
+}
+
 pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKernelSpecification>> {
     let mut data_dirs = dirs::data_dirs();
 
