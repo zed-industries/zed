@@ -7,8 +7,7 @@ use language_core::{LanguageConfig, LanguageQueries, QueryFile, QueryFileContent
 // them; see the `assets` crate for the rationale.
 util::fs_embed! {
     struct GrammarDir,
-    folder = "src/",
-    dev = "crates/grammars/src",
+    "crates/grammars/src",
     exclude = ["*.rs"],
 }
 

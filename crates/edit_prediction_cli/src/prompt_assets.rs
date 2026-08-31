@@ -29,8 +29,7 @@ pub fn get_prompt(name: &'static str) -> Cow<'static, str> {
     // Dev builds read prompts from the checkout at runtime (no baked path).
     util::fs_embed! {
         struct EmbeddedPrompts,
-        folder = "src/prompts",
-        dev = "crates/edit_prediction_cli/src/prompts",
+        "crates/edit_prediction_cli/src/prompts",
     }
 
     match EmbeddedPrompts::get(name) {

@@ -15,7 +15,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["rand", "util_macros", "path/test-support"]
+test-support = ["rand", "path/test-support"]
 
 [dependencies]
 anyhow.workspace = true
@@ -40,7 +40,7 @@ tempfile.workspace = true
 unicase.workspace = true
 url.workspace = true
 percent-encoding.workspace = true
-util_macros = { workspace = true, optional = true }
+util_macros.workspace = true
 gpui_util.workspace = true
 path = { workspace = true, features = ["serde"] }
 
