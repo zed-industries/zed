@@ -8547,10 +8547,11 @@ async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
     });
 }
 
-/// What rust-analyzer registers: it wants to be told before any Rust file, or
-/// any folder, moves.
-fn watched_rust_file_renames() -> lsp::FileOperationRegistrationOptions {
-    lsp::FileOperationRegistrationOptions {
+/// A server that answers renames. With `watch_renames` it also asks to be told
+/// before and after a Rust file moves, the way rust-analyzer asks to be told
+/// before one.
+fn rename_capabilities(watch_renames: bool) -> lsp::ServerCapabilities {
+    let watched = lsp::FileOperationRegistrationOptions {
         filters: vec![FileOperationFilter {
             scheme: Some("file".to_owned()),
             pattern: lsp::FileOperationPattern {
@@ -8559,18 +8560,14 @@ fn watched_rust_file_renames() -> lsp::FileOperationRegistrationOptions {
                 options: None,
             },
         }],
-    }
-}
-
-fn rename_capabilities(
-    will_rename: Option<lsp::FileOperationRegistrationOptions>,
-) -> lsp::ServerCapabilities {
+    };
     lsp::ServerCapabilities {
         rename_provider: Some(lsp::OneOf::Left(true)),
-        workspace: will_rename.map(|will_rename| lsp::WorkspaceServerCapabilities {
+        workspace: watch_renames.then(|| lsp::WorkspaceServerCapabilities {
             workspace_folders: None,
             file_operations: Some(lsp::WorkspaceFileOperationsServerCapabilities {
-                will_rename: Some(will_rename),
+                will_rename: Some(watched.clone()),
+                did_rename: Some(watched),
                 ..Default::default()
             }),
         }),
@@ -8603,7 +8600,7 @@ async fn test_workspace_edit_asks_what_the_move_changes(cx: &mut gpui::TestAppCo
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: rename_capabilities(Some(watched_rust_file_renames())),
+            capabilities: rename_capabilities(true),
             ..Default::default()
         },
     );
@@ -8678,6 +8675,20 @@ async fn test_workspace_edit_asks_what_the_move_changes(cx: &mut gpui::TestAppCo
         }
     });
 
+    let told_after_the_move = Arc::new(OnceLock::new());
+    fake_server.handle_notification::<DidRenameFiles, _>({
+        let told_after_the_move = told_after_the_move.clone();
+        move |params, _| {
+            assert_eq!(params.files.len(), 1);
+            told_after_the_move
+                .set((
+                    params.files[0].old_uri.clone(),
+                    params.files[0].new_uri.clone(),
+                ))
+                .ok();
+        }
+    });
+
     let transaction = project
         .update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), 4, "glyphs".to_string(), cx)
@@ -8686,6 +8697,14 @@ async fn test_workspace_edit_asks_what_the_move_changes(cx: &mut gpui::TestAppCo
         .unwrap();
     cx.executor().run_until_parked();
 
+    assert_eq!(
+        told_after_the_move.get(),
+        Some(&(
+            uri!("file:///dir/clock.rs").to_owned(),
+            uri!("file:///dir/glyphs.rs").to_owned()
+        )),
+        "the server should have been told the move happened"
+    );
     assert_eq!(
         asked_before_the_move.get(),
         Some(&true),
@@ -8734,7 +8753,7 @@ async fn test_workspace_edit_does_not_ask_a_server_that_is_not_watching(
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: rename_capabilities(None),
+            capabilities: rename_capabilities(false),
             ..Default::default()
         },
     );
@@ -8811,7 +8830,7 @@ async fn test_workspace_edit_does_not_ask_about_the_moves_an_answer_makes(
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: rename_capabilities(Some(watched_rust_file_renames())),
+            capabilities: rename_capabilities(true),
             ..Default::default()
         },
     );

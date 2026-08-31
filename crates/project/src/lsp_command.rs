@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
+    lsp_store::{FileMoveNotifications, LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -1204,7 +1204,7 @@ impl LspCommand for PerformRename {
                 lsp_store,
                 edit,
                 self.push_to_history,
-                true,
+                FileMoveNotifications::Send,
                 lsp_server,
                 &mut cx,
             )

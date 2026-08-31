@@ -298,6 +298,16 @@ pub struct DocumentDiagnostics {
     version: Option<i32>,
 }
 
+/// Whether applying a workspace edit tells the language servers about the
+/// files it moves.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FileMoveNotifications {
+    Send,
+    /// Used while applying what a server answered, so a reply that itself moves
+    /// a file cannot send the question round again.
+    Suppress,
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     pub worktree_store: Entity<WorktreeStore>,
@@ -3336,7 +3346,7 @@ impl LocalLspStore {
                     lsp_store.upgrade().context("project dropped")?,
                     edit.clone(),
                     push_to_history,
-                    true,
+                    FileMoveNotifications::Send,
                     language_server.clone(),
                     cx,
                 )
@@ -3523,16 +3533,11 @@ impl LocalLspStore {
     }
 
     /// Applies `edit`, which may move files as well as change their contents.
-    ///
-    /// `send_will_rename` asks the language servers what should change when a
-    /// file moves. It is off when this is already being called to apply what a
-    /// server answered, so that a reply which itself moves a file cannot send
-    /// the question round again.
     pub(crate) async fn deserialize_workspace_edit(
         this: Entity<LspStore>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
-        send_will_rename: bool,
+        file_moves: FileMoveNotifications,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncApp,
     ) -> Result<ProjectTransaction> {
@@ -3596,6 +3601,30 @@ impl LocalLspStore {
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
 
+                    // Read from the filesystem rather than the worktree, so a
+                    // file the scan has not reached yet is still reported. A
+                    // symlink counts as a file, since moving one moves the link
+                    // and not what it points at.
+                    let move_to_report = match file_moves {
+                        FileMoveNotifications::Send => {
+                            let is_dir = fs
+                                .metadata(&source_abs_path)
+                                .await
+                                .ok()
+                                .flatten()
+                                .is_some_and(|metadata| metadata.is_dir && !metadata.is_symlink);
+                            this.update(cx, |this, cx| {
+                                let worktree_id = this
+                                    .worktree_store()
+                                    .read(cx)
+                                    .project_path_for_absolute_path(&source_abs_path, cx)?
+                                    .worktree_id;
+                                Some((worktree_id, is_dir))
+                            })
+                        }
+                        FileMoveNotifications::Suppress => None,
+                    };
+
                     // A server that registered `willRenameFiles` may be holding
                     // the text edits for this move rather than sending them here,
                     // to keep a client that asks as well from applying them twice.
@@ -3604,28 +3633,24 @@ impl LocalLspStore {
                     // is left behind. Asked before the move, as the spec says to
                     // and as the servers expect, since they answer from where the
                     // file is now.
-                    if send_will_rename {
-                        let renamed_entry = this.update(cx, |this, cx| {
-                            let worktree_store = this.worktree_store();
-                            let worktree_store = worktree_store.read(cx);
-                            let project_path = worktree_store
-                                .project_path_for_absolute_path(&source_abs_path, cx)?;
-                            let is_dir = worktree_store.entry_for_path(&project_path, cx)?.is_dir();
-                            Some((project_path.worktree_id, is_dir))
-                        });
-                        if let Some((worktree_id, is_dir)) = renamed_entry {
-                            let transaction = LspStore::will_rename_entry(
-                                this.downgrade(),
-                                worktree_id,
-                                &source_abs_path,
-                                &target_abs_path,
-                                is_dir,
-                                push_to_history,
-                                cx.clone(),
-                            )
-                            .await;
-                            project_transaction.0.extend(transaction.0);
-                        }
+                    if let Some((worktree_id, is_dir)) = move_to_report {
+                        let transaction = LspStore::will_rename_entry(
+                            this.downgrade(),
+                            worktree_id,
+                            &source_abs_path,
+                            &target_abs_path,
+                            is_dir,
+                            push_to_history,
+                            cx.clone(),
+                        )
+                        .await;
+                        // `extend` lets the later entry win, so an answer that
+                        // edits a buffer this workspace edit already edited
+                        // replaces that earlier transaction instead of joining
+                        // it, and undo would reach only half the change. A
+                        // server that withholds its edits until asked, which is
+                        // the only reason to ask, does not send both.
+                        project_transaction.0.extend(transaction.0);
                     }
 
                     // An LSP "rename symbol" can also rename the file, with the text edit
@@ -3662,7 +3687,24 @@ impl LocalLspStore {
                     };
 
                     fs.rename(&source_abs_path, &target_abs_path, options)
-                        .await?;
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "moving {source_abs_path:?} to {target_abs_path:?}. \
+                                 Any edits that came with the move are already applied"
+                            )
+                        })?;
+
+                    if let Some((worktree_id, is_dir)) = move_to_report {
+                        this.update(cx, |this, _| {
+                            this.did_rename_entry(
+                                worktree_id,
+                                &source_abs_path,
+                                &target_abs_path,
+                                is_dir,
+                            );
+                        });
+                    }
 
                     // Preserve the entry id across the rename so an open buffer follows it
                     // to the new path, instead of being stranded at the old path when the
@@ -3850,7 +3892,7 @@ impl LocalLspStore {
             this.clone(),
             params.edit,
             true,
-            true,
+            FileMoveNotifications::Send,
             language_server.clone(),
             cx,
         )
@@ -6087,7 +6129,7 @@ impl LspStore {
                         this.upgrade().context("no app present")?,
                         edit.clone(),
                         push_to_history,
-                        true,
+                        FileMoveNotifications::Send,
                         lang_server.clone(),
                         cx,
                     )
@@ -11103,7 +11145,7 @@ impl LspStore {
                                 this.upgrade()?,
                                 edit,
                                 push_to_history,
-                                false,
+                                FileMoveNotifications::Suppress,
                                 language_server.clone(),
                                 cx,
                             )
