@@ -3,6 +3,10 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
+pub use language_model_core::chat_completion::{
+    ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamError, ResponseStreamEvent,
+    ResponseStreamResult, ToolCallChunk, Usage,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{convert::TryFrom, time::Duration};
@@ -231,46 +235,6 @@ pub struct ChatCompletionRequest {
     pub tool_choice: Option<ToolChoice>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChatResponse {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<ChoiceDelta>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ChoiceDelta {
-    pub index: u32,
-    pub delta: ResponseMessageDelta,
-    pub finish_reason: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ToolCallChunk {
-    pub index: usize,
-    pub id: Option<String>,
-
-    // There is also an optional `type` field that would determine if a
-    // function is there. Sometimes this streams in with the `function` before
-    // it streams in the `type`
-    pub function: Option<FunctionChunk>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct FunctionChunk {
-    pub name: Option<String>,
-    pub arguments: Option<String>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Usage {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-}
-
 #[derive(Debug, Default, Clone, Deserialize, PartialEq)]
 #[serde(transparent)]
 pub struct Capabilities(Vec<String>);
@@ -283,27 +247,6 @@ impl Capabilities {
     pub fn supports_images(&self) -> bool {
         self.0.iter().any(|cap| cap == "vision")
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct LmStudioError {
-    pub message: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: LmStudioError },
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct ResponseStreamEvent {
-    pub created: u32,
-    pub model: String,
-    pub object: String,
-    pub choices: Vec<ChoiceDelta>,
-    pub usage: Option<Usage>,
 }
 
 #[derive(Deserialize)]
@@ -350,56 +293,6 @@ pub enum CompatibilityType {
     Mlx,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ResponseMessageDelta {
-    pub role: Option<Role>,
-    pub content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCallChunk>>,
-}
-
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    api_key: Option<&str>,
-    request: ChatCompletionRequest,
-    extra_headers: &CustomHeaders,
-) -> Result<ChatResponse> {
-    let uri = format!("{api_url}/chat/completions");
-    let mut request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
-    }
-
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder
-        .extra_headers(extra_headers)
-        .body(AsyncBody::from(serialized_request))?;
-
-    let mut response = client.send(request).await?;
-    if response.status().is_success() {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-        let response_message: ChatResponse = serde_json::from_slice(&body)?;
-        Ok(response_message)
-    } else {
-        let mut body = Vec::new();
-        response.body_mut().read_to_end(&mut body).await?;
-        let body_str = std::str::from_utf8(&body)?;
-        anyhow::bail!(
-            "Failed to connect to API: {} {}",
-            response.status(),
-            body_str
-        );
-    }
-}
-
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -432,9 +325,9 @@ pub async fn stream_chat_completion(
                         if line == "[DONE]" {
                             None
                         } else {
-                            match serde_json::from_str(line) {
+                            match serde_json::from_str::<ResponseStreamResult>(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error, .. }) => {
+                                Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => Some(Err(anyhow!(error))),

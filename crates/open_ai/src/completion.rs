@@ -796,15 +796,17 @@ impl OpenAiEventMapper {
         }
     }
 
-    pub fn map_stream(
+    pub fn map_stream<E>(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent, E>>>>,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    where
+        E: Into<LanguageModelCompletionError>,
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -814,28 +816,8 @@ impl OpenAiEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
-        if let Some(usage) = event.usage
-            && let Some(prompt_tokens) = usage.prompt_tokens
-            && let Some(completion_tokens) = usage.completion_tokens
-        {
-            let cache_creation_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .and_then(|details| details.cache_write_tokens)
-                .unwrap_or(0);
-            let cache_read_input_tokens = usage
-                .prompt_tokens_details
-                .as_ref()
-                .and_then(|details| details.cached_tokens)
-                .unwrap_or(0);
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: prompt_tokens
-                    .saturating_sub(cache_creation_input_tokens)
-                    .saturating_sub(cache_read_input_tokens),
-                output_tokens: completion_tokens,
-                cache_creation_input_tokens,
-                cache_read_input_tokens,
-            })));
+        if let Some(token_usage) = event.usage.as_ref().and_then(|usage| usage.token_usage()) {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)));
         }
 
         let Some(choice) = event.choices.first() else {
@@ -936,8 +918,13 @@ impl OpenAiEventMapper {
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
+            Some("length") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    StopReason::MaxTokens,
+                )));
+            }
             Some(stop_reason) => {
-                log::error!("Unexpected OpenAI stop_reason: {stop_reason:?}",);
+                log::error!("Unexpected chat completion stop_reason: {stop_reason:?}",);
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             None => {}
@@ -1775,7 +1762,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk,
+        ChoiceDelta, FunctionChunk, ResponseMessageDelta, ResponseStreamEvent, ToolCallChunk, Usage,
     };
 
     fn map_response_events(events: Vec<ResponsesStreamEvent>) -> Vec<LanguageModelCompletionEvent> {
@@ -4329,7 +4316,6 @@ mod tests {
             choices: vec![ChoiceDelta {
                 index: 0,
                 delta: Some(ResponseMessageDelta {
-                    role: None,
                     content: None,
                     reasoning: Some("thinking".into()),
                     tool_calls: None,
@@ -4348,6 +4334,116 @@ mod tests {
                 signature: None,
             }]
         );
+    }
+
+    #[test]
+    fn stream_maps_length_finish_reason_to_max_tokens_stop() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: None,
+                finish_reason: Some("length".into()),
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)]
+        );
+    }
+
+    #[test]
+    fn chunk_without_choices_or_usage_maps_to_no_events() {
+        let mut mapper = OpenAiEventMapper::new();
+        assert!(mapper.map_event(ResponseStreamEvent::default()).is_empty());
+    }
+
+    #[test]
+    fn usage_update_precedes_text_and_stop_events_from_the_same_chunk() {
+        let mut mapper = OpenAiEventMapper::new();
+        let events = mapper.map_event(ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    content: Some("Hello!".to_string()),
+                    ..Default::default()
+                }),
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: Some(11),
+                completion_tokens: Some(7),
+                total_tokens: Some(18),
+                prompt_tokens_details: None,
+            }),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 11,
+                    output_tokens: 7,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })),
+                Ok(LanguageModelCompletionEvent::Text(text)),
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
+            ] if text == "Hello!"
+        ));
+    }
+
+    #[test]
+    fn usage_update_precedes_tool_use_and_stop_events_from_the_same_chunk() {
+        let mut mapper = OpenAiEventMapper::new();
+        let events = mapper.map_event(ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    tool_calls: Some(vec![ToolCallChunk {
+                        index: 0,
+                        id: Some("tool-call-id".to_string()),
+                        function: Some(FunctionChunk {
+                            name: Some("test_tool".to_string()),
+                            arguments: Some(r#"{"value":1}"#.to_string()),
+                            thought_signature: None,
+                        }),
+                    }]),
+                    ..Default::default()
+                }),
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: Some(Usage {
+                prompt_tokens: Some(13),
+                completion_tokens: Some(5),
+                total_tokens: Some(18),
+                prompt_tokens_details: None,
+            }),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 13,
+                    output_tokens: 5,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })),
+                Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    is_input_complete: false,
+                    ..
+                })),
+                Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id,
+                    name,
+                    is_input_complete: true,
+                    ..
+                })),
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
+            ] if id.to_string() == "tool-call-id" && name.as_ref() == "test_tool"
+        ));
     }
 
     #[test]
@@ -4454,6 +4550,34 @@ mod tests {
         );
     }
 
+    // OpenRouter sends an empty `reasoning_details` array in the finish chunk;
+    // it must not wipe out details accumulated from earlier chunks.
+    #[test]
+    fn reasoning_details_accumulator_ignores_null_and_empty_array_chunks() {
+        let mut accumulator = ReasoningDetailsAccumulator::default();
+        assert!(
+            accumulator
+                .push(json!([{"index": 0, "type": "reasoning.text", "text": "thinking"}]))
+                .is_some()
+        );
+        assert!(
+            accumulator
+                .push(
+                    json!([{"index": 0, "type": "reasoning.encrypted", "data": "encrypted-blob"}])
+                )
+                .is_some()
+        );
+
+        assert_eq!(accumulator.push(json!([])), None);
+        assert_eq!(accumulator.push(serde_json::Value::Null), None);
+
+        let details = accumulator
+            .push(json!([{"index": 0, "text": " more"}]))
+            .expect("accumulated reasoning details");
+        assert_eq!(details[0]["text"], "thinking more");
+        assert_eq!(details[0]["data"], "encrypted-blob");
+    }
+
     #[test]
     fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
         // DashScope sends id="" and name="" in subsequent tool_calls delta
@@ -4466,7 +4590,6 @@ mod tests {
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: Some(ResponseMessageDelta {
-                        role: None,
                         content: None,
                         reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
@@ -4490,7 +4613,6 @@ mod tests {
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: Some(ResponseMessageDelta {
-                        role: None,
                         content: None,
                         reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
@@ -4513,7 +4635,6 @@ mod tests {
                 choices: vec![ChoiceDelta {
                     index: 0,
                     delta: Some(ResponseMessageDelta {
-                        role: None,
                         content: None,
                         reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {

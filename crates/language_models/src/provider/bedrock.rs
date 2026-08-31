@@ -1210,22 +1210,10 @@ async fn resolve_mantle_auth(
     }
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum MantleChatStreamResult {
-    Ok(ResponseStreamEvent),
-    Err { error: MantleChatStreamError },
-}
-
-#[derive(Deserialize)]
-struct MantleChatStreamError {
-    message: String,
-}
-
 fn parse_mantle_chat_stream_line(line: &str) -> Result<ResponseStreamEvent> {
-    match serde_json::from_str(line) {
-        Ok(MantleChatStreamResult::Ok(response)) => Ok(response),
-        Ok(MantleChatStreamResult::Err { error }) => Err(anyhow!(error.message)),
+    match serde_json::from_str::<open_ai::ResponseStreamResult>(line) {
+        Ok(open_ai::ResponseStreamResult::Ok(response)) => Ok(response),
+        Ok(open_ai::ResponseStreamResult::Err { error }) => Err(anyhow!(error.message)),
         Err(error) => {
             log::error!(
                 "Failed to parse Mantle chat completion stream event: `{}`\nResponse: `{}`",
