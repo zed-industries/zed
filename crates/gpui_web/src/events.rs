@@ -218,6 +218,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Started,
                     position,
+                    predicted_position: None,
                     force: None,
                 }));
                 // Keyboard and IME focus intentionally do not change here:
@@ -287,6 +288,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Ended,
                     position,
+                    predicted_position: None,
                     force: None,
                 }));
 
@@ -394,6 +396,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Cancelled,
                     position: pointer_position_in_element(&event),
+                    predicted_position: None,
                     force: None,
                 }));
             } else {
@@ -523,6 +526,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Moved,
                     position,
+                    predicted_position: predicted_pointer_position(&event, position),
                     force: None,
                 }));
                 return;
@@ -1297,6 +1301,63 @@ fn compute_key_char(
 fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
     let mouse_event: &web_sys::MouseEvent = event.as_ref();
     mouse_position_in_element(mouse_event)
+}
+
+/// How far ahead of the raw pointer position predictions may reach.
+///
+/// Browsers predict much further (Chrome offers samples out to 25ms), but
+/// prediction error grows with the horizon and surfaces as jitter: the
+/// emitted pan deltas gain a term proportional to lead x change in velocity,
+/// which at long leads visibly reverses direction mid-drag. Measurements
+/// show leads up to ~10ms track at or below the raw stream's frame-to-frame
+/// variation; AOSP similarly caps touch resampling extrapolation at 8ms
+/// (`RESAMPLE_MAX_PREDICTION` in `InputTransport.cpp`).
+const MAX_PREDICTION_LEAD_MS: f64 = 10.;
+
+/// The predicted pointer position closest to [`MAX_PREDICTION_LEAD_MS`]
+/// ahead of `event`, from `getPredictedEvents()`, or `None` when the browser
+/// offers no prediction (Safari lacks the method, Firefox returns an empty
+/// array). A prediction further out than the cap is linearly scaled back to
+/// it.
+///
+/// Accessed through `Reflect` because calling a missing method through the
+/// web-sys binding would throw, and predicted events' `offsetX`/`offsetY`
+/// are unreliable across browsers (their target may be detached), so the
+/// position is derived from the client-coordinate delta against the parent
+/// event, anchored to the parent's element-relative `position`.
+fn predicted_pointer_position(
+    event: &web_sys::PointerEvent,
+    position: Point<Pixels>,
+) -> Option<Point<Pixels>> {
+    let method = js_sys::Reflect::get(event, &JsValue::from_str("getPredictedEvents")).ok()?;
+    let method = method.dyn_ref::<js_sys::Function>()?;
+    let predicted_events: js_sys::Array = method.call0(event).ok()?.dyn_into().ok()?;
+    let mut best: Option<(f64, web_sys::PointerEvent)> = None;
+    for predicted in predicted_events.iter() {
+        let Ok(predicted) = predicted.dyn_into::<web_sys::PointerEvent>() else {
+            continue;
+        };
+        let lead = predicted.time_stamp() - event.time_stamp();
+        if lead <= 0. {
+            continue;
+        }
+        let distance_to_cap = (lead - MAX_PREDICTION_LEAD_MS).abs();
+        if best
+            .as_ref()
+            .is_none_or(|(best_distance, _)| distance_to_cap < *best_distance)
+        {
+            best = Some((distance_to_cap, predicted));
+        }
+    }
+    let (_, predicted) = best?;
+    let lead = predicted.time_stamp() - event.time_stamp();
+    let scale = (MAX_PREDICTION_LEAD_MS / lead).min(1.) as f32;
+    let event: &web_sys::MouseEvent = event.as_ref();
+    let predicted: &web_sys::MouseEvent = predicted.as_ref();
+    Some(point(
+        position.x + px((predicted.client_x() - event.client_x()) as f32 * scale),
+        position.y + px((predicted.client_y() - event.client_y()) as f32 * scale),
+    ))
 }
 
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
