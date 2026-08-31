@@ -559,7 +559,6 @@ impl EditPredictionButton {
         cx.observe_global::<EditPredictionStore>(move |_, cx| cx.notify())
             .detach();
 
-        edit_prediction::ollama::ensure_authenticated(cx); 
         let mercury_api_token_task = edit_prediction::mercury::load_mercury_api_token(cx);
         let open_ai_compatible_api_token_task =
             edit_prediction::open_ai_compatible::load_open_ai_compatible_api_token(cx);
