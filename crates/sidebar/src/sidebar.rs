@@ -3429,9 +3429,7 @@ impl Sidebar {
                         self.apply_thread_rename(thread_id, new_title, window, cx);
                     }
                     RenameTarget::Terminal(terminal_id) => {
-                        TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                            store.rename_terminal(terminal_id, new_title, cx);
-                        });
+                        self.apply_terminal_rename(terminal_id, new_title, cx);
                     }
                 }
             }
@@ -3471,6 +3469,37 @@ impl Sidebar {
         if !found {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| {
                 store.set_title_override(thread_id, title, cx);
+            });
+        }
+    }
+
+    fn apply_terminal_rename(
+        &mut self,
+        terminal_id: TerminalId,
+        title: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.contents.entries.iter().find_map(|entry| {
+            let ListEntry::Terminal(terminal) = entry else {
+                return None;
+            };
+            (terminal.metadata.terminal_id == terminal_id).then(|| terminal.workspace.clone())
+        });
+        let renamed_live_terminal = match workspace {
+            Some(ThreadEntryWorkspace::Open(workspace)) => workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|agent_panel| {
+                    agent_panel.update(cx, |agent_panel, cx| {
+                        agent_panel.rename_terminal(terminal_id, title.clone(), cx)
+                    })
+                }),
+            Some(ThreadEntryWorkspace::Closed { .. }) | None => false,
+        };
+
+        if !renamed_live_terminal {
+            TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
+                store.rename_terminal(terminal_id, title, cx);
             });
         }
     }

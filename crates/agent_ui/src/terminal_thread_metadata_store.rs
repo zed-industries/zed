@@ -11,7 +11,7 @@ use db::{
     sqlez_macros::sql,
 };
 use futures::{FutureExt, future::Shared};
-use gpui::{AppContext as _, Entity, EventEmitter, Global, Task};
+use gpui::{AppContext as _, Entity, Global, Task};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::{App, Context, SharedString};
 use util::ResultExt as _;
@@ -78,12 +78,6 @@ impl TerminalThreadMetadata {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct TerminalThreadCustomTitleChanged {
-    pub terminal_id: TerminalId,
-    pub custom_title: Option<SharedString>,
-}
-
 pub(crate) fn compose_terminal_thread_title(
     terminal_title: &str,
     custom_title: Option<&str>,
@@ -103,6 +97,19 @@ pub(crate) fn terminal_title_without_prefix(title: &str) -> &str {
     terminal_title_prefix(title)
         .map(|prefix| &title[prefix.len()..])
         .unwrap_or(title)
+}
+
+pub(crate) fn normalize_terminal_custom_title(
+    terminal_title: &str,
+    edited_title: SharedString,
+) -> Option<SharedString> {
+    if edited_title.trim().is_empty()
+        || edited_title == terminal_title_without_prefix(terminal_title)
+    {
+        None
+    } else {
+        Some(edited_title)
+    }
 }
 
 pub fn terminal_title_prefix(title: &str) -> Option<&str> {
@@ -285,23 +292,13 @@ impl TerminalThreadMetadataStore {
         let Some(mut metadata) = self.entry(terminal_id).cloned() else {
             return;
         };
-        let custom_title = if title.trim().is_empty()
-            || title == terminal_title_without_prefix(metadata.title.as_ref())
-        {
-            None
-        } else {
-            Some(title)
-        };
+        let custom_title = normalize_terminal_custom_title(metadata.title.as_ref(), title);
         if metadata.custom_title == custom_title {
             return;
         }
 
-        metadata.custom_title = custom_title.clone();
+        metadata.custom_title = custom_title;
         self.save_internal(metadata);
-        cx.emit(TerminalThreadCustomTitleChanged {
-            terminal_id,
-            custom_title,
-        });
         cx.notify();
     }
 
@@ -480,8 +477,6 @@ impl TerminalThreadMetadataStore {
         );
     }
 }
-
-impl EventEmitter<TerminalThreadCustomTitleChanged> for TerminalThreadMetadataStore {}
 
 struct TerminalThreadMetadataDb(ThreadSafeConnection);
 
