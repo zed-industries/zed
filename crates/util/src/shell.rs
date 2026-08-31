@@ -946,14 +946,20 @@ mod tests {
 
     #[test]
     fn test_to_shell_variable() {
-        assert_eq!(ShellKind::PowerShell.to_shell_variable("${FOO}"), "$env:FOO");
+        assert_eq!(
+            ShellKind::PowerShell.to_shell_variable("${FOO}"),
+            "$env:FOO"
+        );
         assert_eq!(ShellKind::Pwsh.to_shell_variable("${FOO}"), "$env:FOO");
         assert_eq!(ShellKind::Cmd.to_shell_variable("${FOO}"), "%FOO%");
         assert_eq!(ShellKind::Nushell.to_shell_variable("${FOO}"), "$env.FOO");
         assert_eq!(ShellKind::Posix.to_shell_variable("${FOO}"), "${FOO}");
 
         assert_eq!(ShellKind::PowerShell.to_shell_variable("$FOO"), "$env:FOO");
-        assert_eq!(ShellKind::PowerShell.to_shell_variable("${日本}"), "$env:日本");
+        assert_eq!(
+            ShellKind::PowerShell.to_shell_variable("${日本}"),
+            "$env:日本"
+        );
         assert_eq!(
             ShellKind::PowerShell.to_shell_variable("${FOO:-bar}"),
             "${FOO:-bar}"
