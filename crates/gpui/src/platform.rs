@@ -250,6 +250,13 @@ pub trait Platform: 'static {
     fn thermal_state(&self) -> ThermalState;
     fn on_thermal_state_change(&self, callback: Box<dyn FnMut()>);
 
+    /// Returns whether the operating system is conserving energy by reducing
+    /// the performance available to applications.
+    fn low_power_mode_enabled(&self) -> bool {
+        false
+    }
+    fn on_low_power_mode_change(&self, _callback: Box<dyn FnMut()>) {}
+
     /// Sets the application's process-wide identity and user-visible name.
     ///
     /// The identifier is used for platform identity mechanisms such as the

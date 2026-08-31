@@ -760,6 +760,7 @@ pub struct App {
     pub(crate) reduce_motion: bool,
     /// Origin of the shared clock that phase-locks synced repeating animations.
     pub(crate) synced_animation_epoch: Instant,
+    low_power_mode_enabled: bool,
     /// Whether the app was created by [`Application::new_inaccessible`]. No
     /// accesskit APIs will be called when this flag is set.
     pub(crate) accessibility_force_disabled: bool,
@@ -795,6 +796,7 @@ impl App {
         let entities = EntityMap::new();
         let keyboard_layout = platform.keyboard_layout();
         let keyboard_mapper = platform.keyboard_mapper();
+        let low_power_mode_enabled = platform.low_power_mode_enabled();
 
         #[cfg(any(test, feature = "leak-detection"))]
         let _ref_counts = entities.ref_counts_drop_handle();
@@ -862,6 +864,7 @@ impl App {
                 cursor_hide_mode: CursorHideMode::default(),
                 reduce_motion: false,
                 synced_animation_epoch,
+                low_power_mode_enabled,
                 accessibility_force_disabled: false,
 
                 #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -911,6 +914,16 @@ impl App {
                     cx.system_wake_observers
                         .clone()
                         .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
+
+        platform.on_low_power_mode_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let low_power_mode_enabled = app.borrow().platform.low_power_mode_enabled();
+                    app.borrow_mut().low_power_mode_enabled = low_power_mode_enabled;
                 }
             }
         }));
@@ -1428,6 +1441,11 @@ impl App {
     /// Returns the current text rendering mode for the application.
     pub fn text_rendering_mode(&self) -> TextRenderingMode {
         self.text_rendering_mode.get()
+    }
+
+    /// Returns whether the operating system has enabled its low power mode.
+    pub fn low_power_mode_enabled(&self) -> bool {
+        self.low_power_mode_enabled
     }
 
     /// Writes data to the platform clipboard.
