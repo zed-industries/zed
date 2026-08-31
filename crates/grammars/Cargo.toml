@@ -15,6 +15,7 @@ anyhow.workspace = true
 language_core.workspace = true
 rust-embed.workspace = true
 toml.workspace = true
+util.workspace = true
 
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-bash = { workspace = true, optional = true }
