@@ -2037,6 +2037,19 @@ impl Window {
         }
     }
 
+    /// Schedule another frame without invalidating cached prepaint/paint state
+    /// for views outside of `dirty_views`. Unlike [`Window::refresh`], this
+    /// doesn't set `refreshing`, so per-view cache reuse (see `View::render`)
+    /// stays intact for everything except views that were explicitly marked
+    /// dirty. Used when something outside the normal view tree needs another
+    /// frame, such as an active drag following the cursor, which is drawn
+    /// unconditionally each frame regardless of view caching.
+    pub(crate) fn request_redraw(&mut self) {
+        if self.invalidator.not_drawing() {
+            self.invalidator.set_dirty(true);
+        }
+    }
+
     /// Close this window.
     pub fn remove_window(&mut self) {
         self.removed = true;
@@ -5298,13 +5311,16 @@ impl Window {
         if cx.has_active_drag() {
             if event.is::<MouseMoveEvent>() {
                 // If this was a mouse move event, redraw the window so that the
-                // active drag can follow the mouse cursor.
-                self.refresh();
+                // active drag can follow the mouse cursor. The drag element is
+                // rebuilt unconditionally each frame (see `Window::draw`), so
+                // this doesn't need to bypass the cache for the rest of the view
+                // tree the way `refresh()` does.
+                self.request_redraw();
             } else if event.is::<MouseUpEvent>() {
                 // If this was a mouse up event, cancel the active drag and redraw
                 // the window.
                 cx.active_drag = None;
-                self.refresh();
+                self.request_redraw();
             }
         }
 
@@ -6990,12 +7006,12 @@ mod tests {
     };
 
     use crate::{
-        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty,
+        AnyWindowHandle, AppContext as _, Bounds, Context, DragMoveEvent, Empty, Entity,
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
         InputEvent as _, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
         MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, Window, WindowAppearance,
-        WindowOptions, canvas, div, point, px, size,
+        StatefulInteractiveElement as _, StyleRefinement, Styled, TestAppContext, Window,
+        WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
@@ -7636,6 +7652,250 @@ mod tests {
         assert_eq!(
             cx.test_window(failed.window).external_drag_files(),
             [(failed_path, true)]
+        );
+    }
+
+    struct CountingView {
+        render_count: Rc<Cell<usize>>,
+    }
+
+    impl Render for CountingView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.render_count.set(self.render_count.get() + 1);
+            div().size_full()
+        }
+    }
+
+    struct DraggableView {
+        cached_sibling: Entity<CountingView>,
+    }
+
+    impl Render for DraggableView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .child(
+                    div()
+                        .id("drag-handle")
+                        .size_full()
+                        .on_drag((), |_, _, _, cx| cx.new(|_| Empty)),
+                )
+                .child(
+                    self.cached_sibling
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                )
+        }
+    }
+
+    /// Regression test for a bug where every mouse-move during an active
+    /// drag called `Window::refresh`, which forces `!window.refreshing` to
+    /// fail for every cached view in the window (see `ViewElement::prepaint`),
+    /// discarding their cached prepaint state and re-rendering the whole tree
+    /// on every pixel the cursor moved. Cached views (opted in via
+    /// `Entity::cached`, e.g. panes and dock panels) must keep reusing their
+    /// cached render output while an unrelated drag element follows the
+    /// cursor.
+    #[gpui::test]
+    fn active_drag_does_not_invalidate_cached_sibling_views(cx: &mut TestAppContext) {
+        let render_count = Rc::new(Cell::new(0));
+        let window = cx.add_window({
+            let render_count = render_count.clone();
+            move |_, cx| DraggableView {
+                cached_sibling: cx.new(|_| CountingView { render_count }),
+            }
+        });
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+        assert!(render_count.get() > 0);
+
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_event(
+                MouseDownEvent {
+                    position: point(px(10.), px(10.)),
+                    button: MouseButton::Left,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }
+                .to_platform_input(),
+                cx,
+            );
+            window.dispatch_event(
+                MouseMoveEvent {
+                    position: point(px(20.), px(20.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Default::default(),
+                }
+                .to_platform_input(),
+                cx,
+            );
+            assert!(cx.active_drag.is_some());
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+
+        let render_count_after_drag_start = render_count.get();
+
+        cx.update_window(window.into(), |_, window, cx| {
+            for offset in 0..5 {
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(30. + offset as f32), px(30. + offset as f32)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+            }
+            window.draw(cx).clear(cx);
+        })
+        .unwrap();
+
+        assert_eq!(
+            render_count.get(),
+            render_count_after_drag_start,
+            "cached sibling view re-rendered even though only the drag element's position changed"
+        );
+    }
+
+    /// Manual perf comparison, not a correctness test: measures wall-clock
+    /// time and cached-pane render counts for a simulated drag with several
+    /// heavy cached panes (representative of `pane_group.rs`/`dock.rs`),
+    /// contrasting the current `request_redraw` behavior on every mouse-move
+    /// against the pre-fix behavior of calling `refresh()` on every
+    /// mouse-move (which busts every `.cached()` view's prepaint cache).
+    /// Run with: cargo test -p gpui --lib window::tests::bench_cached_pane_cost_during_drag -- --ignored --nocapture
+    #[gpui::test]
+    #[ignore = "manual perf benchmark; timing is environment-dependent"]
+    fn bench_cached_pane_cost_during_drag(cx: &mut TestAppContext) {
+        const PANE_COUNT: usize = 8;
+        const LINES_PER_PANE: usize = 40;
+        const MOUSE_MOVES: usize = 200;
+
+        struct HeavyPaneView {
+            render_count: Rc<Cell<usize>>,
+        }
+
+        impl Render for HeavyPaneView {
+            fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+                self.render_count.set(self.render_count.get() + 1);
+                div().size_full().children((0..LINES_PER_PANE).map(|i| {
+                    div().child(format!(
+                        "line {i}: the quick brown fox jumps over the lazy dog {i}"
+                    ))
+                }))
+            }
+        }
+
+        struct BenchRoot {
+            panes: Vec<Entity<HeavyPaneView>>,
+        }
+
+        impl Render for BenchRoot {
+            fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .child(
+                        div()
+                            .id("drag-handle")
+                            .size_full()
+                            .on_drag((), |_, _, _, cx| cx.new(|_| Empty)),
+                    )
+                    .children(self.panes.iter().map(|pane| {
+                        pane.clone().cached(StyleRefinement::default().size_full())
+                    }))
+            }
+        }
+
+        fn run(cx: &mut TestAppContext, simulate_pre_fix_refresh: bool) -> (std::time::Duration, usize) {
+            let render_count = Rc::new(Cell::new(0));
+            let panes: Vec<_> = (0..PANE_COUNT)
+                .map(|_| {
+                    let render_count = render_count.clone();
+                    cx.new(|_| HeavyPaneView { render_count })
+                })
+                .collect();
+            let window = cx.add_window(move |_, _| BenchRoot { panes });
+
+            // Warm up: initial draw, then start a drag so the rest of the
+            // moves go through the same `has_active_drag()` path production
+            // code takes.
+            cx.update_window(window.into(), |_, window, cx| {
+                window.draw(cx).clear(cx);
+                window.dispatch_event(
+                    MouseDownEvent {
+                        position: point(px(10.), px(10.)),
+                        button: MouseButton::Left,
+                        modifiers: Default::default(),
+                        click_count: 1,
+                        first_mouse: false,
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                window.dispatch_event(
+                    MouseMoveEvent {
+                        position: point(px(20.), px(20.)),
+                        pressed_button: Some(MouseButton::Left),
+                        modifiers: Default::default(),
+                    }
+                    .to_platform_input(),
+                    cx,
+                );
+                assert!(cx.active_drag.is_some());
+                window.draw(cx).clear(cx);
+            })
+            .unwrap();
+
+            render_count.set(0);
+
+            let start = std::time::Instant::now();
+            cx.update_window(window.into(), |_, window, cx| {
+                for i in 0..MOUSE_MOVES {
+                    // `dispatch_event` already takes the fixed `request_redraw`
+                    // path internally (see `dispatch_mouse_event`). To measure
+                    // the pre-fix behavior for comparison, we additionally call
+                    // `refresh()` here, exactly as the old code did on every
+                    // mouse-move during an active drag.
+                    window.dispatch_event(
+                        MouseMoveEvent {
+                            position: point(px(30. + (i % 100) as f32), px(30.)),
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Default::default(),
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                    if simulate_pre_fix_refresh {
+                        window.refresh();
+                    }
+                    window.draw(cx).clear(cx);
+                }
+            })
+            .unwrap();
+            let elapsed = start.elapsed();
+
+            (elapsed, render_count.get())
+        }
+
+        let (fixed_elapsed, fixed_renders) = run(cx, false);
+        let (old_elapsed, old_renders) = run(cx, true);
+
+        println!(
+            "fixed (request_redraw):     {fixed_elapsed:?} total, {fixed_renders} cached-pane renders across {MOUSE_MOVES} moves ({PANE_COUNT} panes)"
+        );
+        println!(
+            "pre-fix (refresh on move):  {old_elapsed:?} total, {old_renders} cached-pane renders across {MOUSE_MOVES} moves ({PANE_COUNT} panes)"
+        );
+        println!(
+            "speedup: {:.1}x wall time, {:.1}x fewer cached-pane renders",
+            old_elapsed.as_secs_f64() / fixed_elapsed.as_secs_f64().max(1e-9),
+            old_renders as f64 / fixed_renders.max(1) as f64
         );
     }
 
