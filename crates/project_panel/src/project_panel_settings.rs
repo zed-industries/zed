@@ -3,8 +3,9 @@ use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DockSide, FolderIndicator, IntoGpui, ProjectPanelEntrySpacing, ProjectPanelSortMode,
-    ProjectPanelSortOrder, RegisterSetting, Settings, ShowDiagnostics, ShowIndentGuides,
+    DockSide, ExternalLibrariesRemoval, FolderIndicator, IntoGpui, ProjectPanelEntrySpacing,
+    ProjectPanelSortMode, ProjectPanelSortOrder, RegisterSetting, Settings, ShowDiagnostics,
+    ShowIndentGuides,
 };
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
@@ -35,6 +36,8 @@ pub struct ProjectPanelSettings {
     pub sort_order: ProjectPanelSortOrder,
     pub diagnostic_badges: bool,
     pub git_status_indicator: bool,
+    pub show_external_libraries: bool,
+    pub external_libraries_removal: ExternalLibrariesRemoval,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -142,6 +145,10 @@ impl Settings for ProjectPanelSettings {
             sort_order: project_panel.sort_order.unwrap(),
             diagnostic_badges: project_panel.diagnostic_badges.unwrap(),
             git_status_indicator: project_panel.git_status_indicator.unwrap(),
+            show_external_libraries: project_panel.show_external_libraries.unwrap(),
+            external_libraries_removal: project_panel
+                .external_libraries_removal
+                .unwrap_or_default(),
         }
     }
 }

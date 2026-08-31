@@ -1219,6 +1219,14 @@ struct CargoMetadata {
 #[derive(Debug, serde::Deserialize)]
 struct CargoPackage {
     id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    version: String,
+    /// `None` for workspace members and path dependencies; `Some(..)` for
+    /// registry/git dependencies.
+    #[serde(default)]
+    source: Option<String>,
     targets: Vec<CargoTarget>,
     manifest_path: Arc<Path>,
 }
@@ -1294,6 +1302,95 @@ async fn target_info_from_abs_path(
 
     let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
     Ok(target_info_from_metadata(metadata, abs_path))
+}
+
+/// Lists the external Rust dependencies of a project by invoking
+/// `cargo metadata` (with dependencies) and mapping each registry/git package
+/// to a [`Dependency`].
+pub struct RustDependencyLister;
+
+#[async_trait]
+impl DependencyLister for RustDependencyLister {
+    fn language_name(&self) -> LanguageName {
+        LanguageName::new_static("Rust")
+    }
+
+    async fn list(&self, project_root: PathBuf) -> Result<Vec<Dependency>> {
+        if !project_root.join("Cargo.toml").is_file() {
+            return Ok(Vec::new());
+        }
+
+        let output = new_command("cargo")
+            .current_dir(&project_root)
+            .arg("metadata")
+            .arg("--format-version")
+            .arg("1")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            let stderr_msg = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("Cargo metadata failed\n {stderr_msg}");
+        }
+
+        let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)?;
+
+        let dependencies = metadata
+            .packages
+            .into_iter()
+            // Workspace members and path dependencies have `source == None`;
+            // only registry/git dependencies are "external libraries".
+            .filter_map(|package| {
+                let source = package.source.clone()?;
+                Some((package, source))
+            })
+            .filter_map(|(package, source)| {
+                let source_path = package.manifest_path.parent()?.to_path_buf();
+                let source = if source.starts_with("git+") {
+                    let (repo, rev) = parse_git_source(&source);
+                    DependencySource::Git { repo, rev }
+                } else {
+                    DependencySource::Registry
+                };
+                Some(Dependency {
+                    name: package.name.into(),
+                    version: if package.version.is_empty() {
+                        None
+                    } else {
+                        Some(package.version.into())
+                    },
+                    source,
+                    source_path,
+                })
+            })
+            .collect();
+
+        Ok(dependencies)
+    }
+}
+
+/// Parses a cargo `source` string of the form `git+<repo>?<rev>#<hash>` into
+/// its `(repo, rev)` components.
+fn parse_git_source(source: &str) -> (String, String) {
+    let rest = source.strip_prefix("git+").unwrap_or(source);
+    let (repo, rev) = match rest.split_once('#') {
+        Some((before, hash)) => (before, hash.to_string()),
+        None => (rest, String::new()),
+    };
+    // `repo` may contain a `?rev=...` or `?branch=...` query.
+    let repo = match repo.split_once('?') {
+        Some((base, query)) => {
+            if query.is_empty() {
+                base
+            } else {
+                repo
+            }
+        }
+        None => repo,
+    };
+    (repo.to_string(), rev)
 }
 
 fn target_info_from_metadata(

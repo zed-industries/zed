@@ -926,6 +926,16 @@
     "diagnostic_badges": false,
     // Whether to show the git status indicator next to file names in the project panel.
     "git_status_indicator": false,
+    // Whether to show an "External Libraries" section listing the project's
+    // dependencies (e.g. Rust crates) so their source can be browsed in the project panel.
+    "show_external_libraries": false,
+    // Controls when external libraries are removed from the project panel's
+    // "External Libraries" section.
+    // 1. Remove a library automatically when its last open buffer closes:
+    //    "auto_remove"
+    // 2. Keep libraries listed until removed manually via the context menu:
+    //    "manual_remove"
+    "external_libraries_removal": "auto_remove",
     // Whether to enable drag-and-drop operations in the project panel.
     "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window;

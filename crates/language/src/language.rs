@@ -8,6 +8,7 @@
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
 mod available_languages;
 mod buffer;
+mod dependency;
 mod diagnostic;
 mod diagnostic_set;
 mod file_content;
@@ -33,6 +34,7 @@ pub use crate::language_settings::{
     AutoIndentMode, EditPredictionPromptFormat, EditPredictionsMode, IndentGuideSettings,
     ZetaVersion,
 };
+pub use dependency::{Dependency, DependencyLister, DependencySource};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};

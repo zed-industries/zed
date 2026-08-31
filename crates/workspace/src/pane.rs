@@ -4565,9 +4565,12 @@ impl Render for Pane {
                     pane.project
                         .update(cx, |project, cx| {
                             if let Some(entry_id) = entry_id
-                                && project
-                                    .worktree_for_entry(entry_id, cx)
-                                    .is_some_and(|worktree| worktree.read(cx).is_visible())
+                                && project.worktree_for_entry(entry_id, cx).is_some_and(
+                                    |worktree| {
+                                        let worktree = worktree.read(cx);
+                                        worktree.is_visible() || worktree.is_single_file()
+                                    },
+                                )
                             {
                                 return cx.emit(project::Event::RevealInProjectPanel(entry_id));
                             }

@@ -7,6 +7,8 @@ pub mod connection_manager;
 pub mod context_server_store;
 pub mod debounced_delay;
 pub mod debugger;
+pub mod dependency_providers_store;
+pub mod external_libraries_store;
 pub mod git_store;
 pub mod image_store;
 pub mod lsp_command;
@@ -85,6 +87,8 @@ pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
+pub use dependency_providers_store::DependencyProvidersStore;
+pub use external_libraries_store::{ExternalLibrariesEvent, ExternalLibrariesStore};
 use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
     Task, TaskExt, WeakEntity, Window,
@@ -102,7 +106,7 @@ use lsp::{
 };
 pub use lsp_command::EditPredictionDefinition;
 use lsp_command::*;
-use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
+pub use lsp_store::{CompletionDocumentation, LspFormatTarget, OpenLspBufferHandle};
 pub use manifest_tree::ManifestProvidersStore;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -251,6 +255,7 @@ pub struct Project {
     environment: Entity<ProjectEnvironment>,
     settings_observer: Entity<SettingsObserver>,
     toolchain_store: Option<Entity<ToolchainStore>>,
+    external_libraries_store: Option<Entity<ExternalLibrariesStore>>,
     agent_location: Option<AgentLocation>,
     downloading_files: Arc<Mutex<HashMap<(WorktreeId, String), DownloadingFile>>>,
     last_worktree_paths: WorktreePaths,
@@ -1360,6 +1365,10 @@ impl Project {
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
+            let external_libraries_store = Some(cx.new(|cx| {
+                ExternalLibrariesStore::new(worktree_store.clone(), buffer_store.clone(), cx)
+            }));
+
             Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -1401,6 +1410,8 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+
+                external_libraries_store,
 
                 agent_location: None,
                 downloading_files: Default::default(),
@@ -1644,6 +1655,7 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
 
                 toolchain_store: Some(toolchain_store),
+                external_libraries_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
@@ -1932,6 +1944,7 @@ impl Project {
                 environment,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
+                external_libraries_store: None,
                 agent_location: None,
                 downloading_files: Default::default(),
                 last_worktree_paths: WorktreePaths::default(),
@@ -4270,6 +4283,12 @@ impl Project {
 
     pub fn toolchain_store(&self) -> Option<Entity<ToolchainStore>> {
         self.toolchain_store.clone()
+    }
+
+    /// Returns the [`ExternalLibrariesStore`], if this project has one
+    /// (local projects only).
+    pub fn external_libraries_store(&self) -> Option<Entity<ExternalLibrariesStore>> {
+        self.external_libraries_store.clone()
     }
     pub fn activate_toolchain(
         &self,

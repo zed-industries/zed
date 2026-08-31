@@ -5159,7 +5159,7 @@ fn window_and_layout_page() -> SettingsPage {
 }
 
 fn panels_page() -> SettingsPage {
-    fn project_panel_section() -> [SettingsPageItem; 29] {
+    fn project_panel_section() -> [SettingsPageItem; 31] {
         [
             SettingsPageItem::SectionHeader("Project Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5541,6 +5541,54 @@ fn panels_page() -> SettingsPage {
                             .project_panel
                             .get_or_insert_default()
                             .git_status_indicator = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "External Libraries",
+                description: "Show an \"External Libraries\" section listing the project's dependencies \
+                     (e.g. Rust crates) so their source can be browsed in the project panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.show_external_libraries"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .show_external_libraries
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .show_external_libraries = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "External Libraries Removal",
+                description: "When external libraries are removed from the project panel: automatically \
+                     when their last open buffer closes, or only manually via the context menu.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("project_panel.external_libraries_removal"),
+                    pick: |settings_content| {
+                        settings_content
+                            .project_panel
+                            .as_ref()?
+                            .external_libraries_removal
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .project_panel
+                            .get_or_insert_default()
+                            .external_libraries_removal = value;
                     },
                 }),
                 metadata: None,

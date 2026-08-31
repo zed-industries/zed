@@ -853,6 +853,19 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: false
     pub git_status_indicator: Option<bool>,
+    /// Whether to show an "External Libraries" section in the project panel,
+    /// listing the project's dependencies (e.g. Rust crates) so their source
+    /// can be browsed directly.
+    ///
+    /// Default: false
+    pub show_external_libraries: Option<bool>,
+    /// Controls when external libraries are removed from the project panel's
+    /// "External Libraries" section. With `auto_remove`, a library is removed
+    /// as soon as its last open buffer closes. With `manual_remove`, libraries
+    /// stay listed until removed via the context menu.
+    ///
+    /// Default: auto_remove
+    pub external_libraries_removal: Option<ExternalLibrariesRemoval>,
 }
 
 #[derive(
@@ -988,6 +1001,30 @@ impl From<ProjectPanelSortOrder> for util::paths::SortOrder {
             ProjectPanelSortOrder::Unicode => Self::Unicode,
         }
     }
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ExternalLibrariesRemoval {
+    /// Remove a library automatically when its last open buffer closes.
+    #[default]
+    AutoRemove,
+    /// Keep libraries listed until they are removed manually via the
+    /// project panel's context menu.
+    ManualRemove,
 }
 
 #[with_fallible_options]

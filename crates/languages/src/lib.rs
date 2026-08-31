@@ -326,6 +326,12 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     for provider in manifest_providers {
         project::ManifestProvidersStore::global(cx).register(provider);
     }
+
+    let dependency_providers: [Arc<dyn DependencyLister>; 1] =
+        [Arc::new(rust::RustDependencyLister)];
+    for provider in dependency_providers {
+        project::DependencyProvidersStore::global(cx).register(provider);
+    }
 }
 
 #[derive(Default)]

@@ -8,14 +8,17 @@ use git::{
 };
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use language::{
-    Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind, LanguageServerId,
-    PointUtf16, Unclipped,
+    BufferId, Diagnostic, DiagnosticEntry, DiagnosticMessage, DiagnosticSourceKind,
+    LanguageServerId, PointUtf16, Unclipped,
 };
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
-use settings::{FolderIndicator, ProjectPanelAutoOpenSettings, SettingsStore, SplicingVec};
+use settings::{
+    ExternalLibrariesRemoval, FolderIndicator, ProjectPanelAutoOpenSettings, SettingsStore,
+    SplicingVec,
+};
 use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -5674,11 +5677,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     );
 
     for file_entry in [dir_1_file, dir_2_file, gitignored_dir_file] {
-        panel.update(cx, |panel, cx| {
-            panel.project.update(cx, |_, cx| {
-                cx.emit(project::Event::ActiveEntryChanged(Some(file_entry)))
-            })
-        });
+        set_active_project_entry(&panel, file_entry, cx);
         cx.run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..20, cx),
@@ -5704,11 +5703,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         })
     });
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::ActiveEntryChanged(Some(dir_1_file)))
-        })
-    });
+    set_active_project_entry(&panel, dir_1_file, cx);
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5726,11 +5721,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         "When auto reveal is enabled, not ignored dir_1 entry should be revealed"
     );
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::ActiveEntryChanged(Some(dir_2_file)))
-        })
-    });
+    set_active_project_entry(&panel, dir_2_file, cx);
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5751,13 +5742,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         "When auto reveal is enabled, not ignored dir_2 entry should be revealed"
     );
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::ActiveEntryChanged(Some(
-                gitignored_dir_file,
-            )))
-        })
-    });
+    set_active_project_entry(&panel, gitignored_dir_file, cx);
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5806,11 +5791,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         "When a gitignored entry is explicitly revealed, it should be shown in the project tree"
     );
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::ActiveEntryChanged(Some(dir_2_file)))
-        })
-    });
+    set_active_project_entry(&panel, dir_2_file, cx);
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5834,13 +5815,7 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
         "After switching to dir_2_file, it should be selected and marked"
     );
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::ActiveEntryChanged(Some(
-                gitignored_dir_file,
-            )))
-        })
-    });
+    set_active_project_entry(&panel, gitignored_dir_file, cx);
     cx.run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
@@ -5960,13 +5935,7 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
         })
     });
 
-    panel.update(cx, |panel, cx| {
-        panel.project.update(cx, |_, cx| {
-            cx.emit(project::Event::ActiveEntryChanged(Some(
-                always_included_but_ignored_dir_file,
-            )))
-        })
-    });
+    set_active_project_entry(&panel, always_included_but_ignored_dir_file, cx);
     cx.run_until_parked();
 
     assert_eq!(
@@ -6585,6 +6554,372 @@ async fn test_reveal_in_project_panel_fallback(cx: &mut gpui::TestAppContext) {
             panel.focus_handle(cx).is_focused(window),
             "Project panel should be focused even for an unsaved buffer."
         );
+    });
+}
+
+#[gpui::test]
+async fn test_reveal_active_entry_in_external_library(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // `auto_reveal_entries` defaults to `true`; surface the external libraries
+    // section so the surfaced library worktree renders.
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .show_external_libraries = Some(true);
+            });
+        })
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", json!({ "main.py": "" })).await;
+    fs.insert_tree(
+        "/external_lib",
+        json!({
+            "Cargo.toml": "",
+            "src": { "lib.rs": "" },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v project", "      main.py"]
+    );
+
+    // Simulate the first Go to Definition into an external crate: a
+    // single-file invisible worktree is created at the target file.
+    let (single_file_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/external_lib/src/lib.rs", false, cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    let external_entry = single_file_worktree.read_with(cx, |worktree, _| {
+        worktree
+            .snapshot()
+            .root_entry()
+            .expect("single-file worktree has a root file entry")
+            .id
+    });
+
+    let store = project.read_with(cx, |project, _| {
+        project
+            .external_libraries_store()
+            .expect("local project has an external libraries store")
+    });
+
+    // Mark the library root as pending, mirroring the real flow where the
+    // buffer's addition starts creating the library directory worktree before
+    // the editor activates.
+    store.update(cx, |store, _| {
+        store.mark_library_pending_for_test("/external_lib".into())
+    });
+
+    // The active entry becomes the external file. No library directory
+    // worktree has been surfaced yet, so the reveal must defer (and must not
+    // disturb the current selection).
+    let worktree_id = single_file_worktree.read_with(cx, |worktree, _| worktree.id());
+    project.update(cx, |project, cx| {
+        project.set_active_path(
+            Some(ProjectPath {
+                worktree_id,
+                path: rel_path("").into(),
+            }),
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v project", "      main.py"],
+        "external entry should not be revealed before its library is loaded"
+    );
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.pending_reveal),
+        Some((external_entry, true)),
+        "the reveal should be deferred until the library tree loads"
+    );
+
+    // Simulate the library directory worktree being surfaced and scanned.
+    let (library_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/external_lib", false, cx)
+        })
+        .await
+        .unwrap();
+    library_worktree
+        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+    let library_root =
+        library_worktree.read_with(cx, |worktree, _| worktree.abs_path().to_path_buf());
+    store.update(cx, |store, cx| {
+        store.register_library_worktree_for_test(library_root, library_worktree.clone(), cx)
+    });
+
+    // Surfacing the library emits `LibrariesChanged`, which retries the
+    // deferred reveal and should resolve + select the active file.
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project",
+            "      main.py",
+            "v external_lib",
+            "    v src",
+            "          lib.rs  <== selected  <== marked",
+            "      Cargo.toml",
+        ],
+        "once the library tree is loaded the active file should be revealed"
+    );
+    assert_eq!(
+        panel.read_with(cx, |panel, _| panel.pending_reveal),
+        None,
+        "the deferred reveal should be cleared once it resolves"
+    );
+}
+
+/// Sets up a project at `/project` with a surfaced external library at
+/// `/external_lib` and returns the panel, the library worktree, the external
+/// libraries store and a visual test context for the panel's window.
+async fn external_libraries_test_harness(
+    cx: &mut gpui::TestAppContext,
+) -> (
+    Entity<ProjectPanel>,
+    Entity<worktree::Worktree>,
+    Entity<project::ExternalLibrariesStore>,
+    VisualTestContext,
+) {
+    init_test(cx);
+    cx.update(|cx| {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                let project_panel = settings.project_panel.get_or_insert_default();
+                project_panel.show_external_libraries = Some(true);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project", json!({ "main.py": "" })).await;
+    fs.insert_tree(
+        "/external_lib",
+        json!({
+            "Cargo.toml": "",
+            "src": { "lib.rs": "" },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+    let (library_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/external_lib", false, cx)
+        })
+        .await
+        .unwrap();
+    library_worktree
+        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+        .await;
+
+    let store = project.read_with(cx, |project, _| {
+        project
+            .external_libraries_store()
+            .expect("local project has an external libraries store")
+    });
+    let library_root =
+        library_worktree.read_with(cx, |worktree, _| worktree.abs_path().to_path_buf());
+    store.update(cx, |store, cx| {
+        store.register_library_worktree_for_test(library_root, library_worktree.clone(), cx)
+    });
+
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let mut cx = VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(&mut cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    (panel, library_worktree, store, cx)
+}
+
+#[gpui::test]
+async fn test_external_library_removal_setting(cx: &mut gpui::TestAppContext) {
+    let (panel, library_worktree, store, mut cx) = external_libraries_test_harness(cx).await;
+
+    let set_removal = |cx: &mut VisualTestContext, removal| {
+        cx.update(|_, cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project_panel
+                        .get_or_insert_default()
+                        .external_libraries_removal = Some(removal);
+                });
+            });
+        });
+    };
+
+    set_removal(&mut cx, ExternalLibrariesRemoval::ManualRemove);
+
+    let library_root =
+        library_worktree.read_with(&cx, |worktree, _| worktree.abs_path().to_path_buf());
+    let buffer_id = BufferId::new(1).unwrap();
+    store.update(&mut cx, |store, _| {
+        store.track_buffer_for_test(&library_root, buffer_id)
+    });
+
+    // With `manual_remove`, dropping the library's last buffer keeps the
+    // library listed.
+    store.update(&mut cx, |store, cx| {
+        store.simulate_buffer_dropped_for_test(buffer_id, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, &mut cx),
+        &[
+            "v project",
+            "      main.py",
+            "v external_lib",
+            "    > src",
+            "      Cargo.toml",
+        ],
+        "manual_remove should keep the library after its last buffer closes"
+    );
+
+    // Switching to `auto_remove` makes the next dropped buffer remove the
+    // library.
+    set_removal(&mut cx, ExternalLibrariesRemoval::AutoRemove);
+    let buffer_id = BufferId::new(2).unwrap();
+    store.update(&mut cx, |store, _| {
+        store.track_buffer_for_test(&library_root, buffer_id)
+    });
+    store.update(&mut cx, |store, cx| {
+        store.simulate_buffer_dropped_for_test(buffer_id, cx)
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, &mut cx),
+        &["v project", "      main.py"],
+        "auto_remove should drop the library once its last buffer closes"
+    );
+}
+
+#[gpui::test]
+async fn test_navigation_crosses_into_external_libraries(cx: &mut gpui::TestAppContext) {
+    let (panel, library_worktree, _store, mut cx) = external_libraries_test_harness(cx).await;
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, &mut cx),
+        &[
+            "v project",
+            "      main.py",
+            "v external_lib",
+            "    > src",
+            "      Cargo.toml",
+        ]
+    );
+    assert_eq!(
+        panel.read_with(&cx, |panel, _| panel.state.external_worktrees_start),
+        Some(1),
+        "the external section should start at the second worktree block"
+    );
+    assert_eq!(
+        panel.read_with(&cx, |panel, _| panel.external_entries_len()),
+        3,
+        "the external section should hold the library's three visible entries"
+    );
+
+    // Select the last project entry, then move down across the section
+    // boundary into the external libraries section.
+    panel.update_in(&mut cx, |panel, _, cx| {
+        let worktree = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .expect("project worktree");
+        let entry = worktree
+            .read(cx)
+            .entry_for_path(rel_path("main.py"))
+            .expect("main.py entry");
+        panel.selection = Some(SelectedEntry {
+            worktree_id: worktree.read(cx).id(),
+            entry_id: entry.id,
+        });
+    });
+    panel.update_in(&mut cx, |panel, window, cx| {
+        panel.select_next(&SelectNext, window, cx)
+    });
+    let selection = panel.read_with(&cx, |panel, _| panel.selection);
+    let expected = library_worktree.read_with(&cx, |worktree, _| {
+        let root = worktree.root_entry().expect("library root entry");
+        SelectedEntry {
+            worktree_id: worktree.id(),
+            entry_id: root.id,
+        }
+    });
+    assert_eq!(
+        selection,
+        Some(expected),
+        "select_next should cross from the project entries into the external libraries section"
+    );
+
+    // And back up across the boundary.
+    panel.update_in(&mut cx, |panel, window, cx| {
+        panel.select_previous(&SelectPrevious, window, cx)
+    });
+    let selected_filename = panel.read_with(&cx, |panel, cx| {
+        panel
+            .selected_entry(cx)
+            .map(|(_, entry)| entry.path.file_name().unwrap().to_string())
+    });
+    assert_eq!(
+        selected_filename.as_deref(),
+        Some("main.py"),
+        "select_previous should cross back from the external libraries section"
+    );
+}
+
+#[gpui::test]
+async fn test_external_libraries_pane_resize(cx: &mut gpui::TestAppContext) {
+    let (panel, _library_worktree, _store, mut cx) = external_libraries_test_harness(cx).await;
+
+    panel.update_in(&mut cx, |panel, _, cx| {
+        assert_eq!(
+            panel.external_libraries_pane_height, None,
+            "the split should start out dividing the panel evenly"
+        );
+
+        // Dragging the divider to 150px above the bottom of a 600px panel
+        // sizes the external libraries section to a quarter of the panel.
+        panel.set_external_libraries_pane_height(px(150.), px(600.), cx);
+        assert_eq!(panel.external_libraries_pane_height, Some(0.25));
+
+        // Both sections keep a minimum size, so the height is clamped when
+        // the divider is dragged past either of them.
+        panel.set_external_libraries_pane_height(px(10.), px(600.), cx);
+        assert_eq!(panel.external_libraries_pane_height, Some(60. / 600.));
+        panel.set_external_libraries_pane_height(px(590.), px(600.), cx);
+        assert_eq!(panel.external_libraries_pane_height, Some(540. / 600.));
+
+        // Panels too small to fit two sections at the minimum size ignore
+        // resizing altogether.
+        panel.set_external_libraries_pane_height(px(10.), px(100.), cx);
+        assert_eq!(panel.external_libraries_pane_height, Some(540. / 600.));
     });
 }
 
@@ -10624,6 +10959,37 @@ fn mark_for(marks: &[(String, Option<DiagnosticMark>)], filename: &str) -> Optio
         .iter()
         .find(|(name, _)| name == filename)
         .and_then(|(_, mark)| *mark)
+}
+
+/// Sets the project's active entry by id, mirroring how the workspace drives
+/// `Project::set_active_path` in production (which both updates
+/// `project.active_entry()` and emits `ActiveEntryChanged`). Use this instead
+/// of emitting `ActiveEntryChanged` directly, since the panel's
+/// `reveal_active_entry` reads `project.active_entry()` rather than the event
+/// payload.
+fn set_active_project_entry(
+    panel: &Entity<ProjectPanel>,
+    entry_id: ProjectEntryId,
+    cx: &mut VisualTestContext,
+) {
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.clone();
+        let project_path = {
+            let p = project.read(cx);
+            let worktree = p
+                .worktree_for_entry(entry_id, cx)
+                .expect("entry has a worktree");
+            let worktree_id = worktree.read(cx).id();
+            let path = worktree
+                .read(cx)
+                .entry_for_id(entry_id)
+                .expect("entry exists")
+                .path
+                .clone();
+            ProjectPath { worktree_id, path }
+        };
+        project.update(cx, |p, cx| p.set_active_path(Some(project_path), cx));
+    });
 }
 
 fn visible_entries_as_strings(
