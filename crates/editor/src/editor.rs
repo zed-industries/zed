@@ -8797,7 +8797,7 @@ impl Editor {
     ) {
         if let Some(file_stem) = self.active_buffer(cx).and_then(|buffer| {
             let file = buffer.read(cx).file()?;
-            file.path().file_stem()
+            Path::new(file.file_name(cx)).file_stem()?.to_str()
         }) {
             cx.write_to_clipboard(ClipboardItem::new_string(file_stem.to_string()));
         }
