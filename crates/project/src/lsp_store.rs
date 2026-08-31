@@ -3336,6 +3336,7 @@ impl LocalLspStore {
                     lsp_store.upgrade().context("project dropped")?,
                     edit.clone(),
                     push_to_history,
+                    true,
                     language_server.clone(),
                     cx,
                 )
@@ -3521,10 +3522,17 @@ impl LocalLspStore {
         })
     }
 
+    /// Applies `edit`, which may move files as well as change their contents.
+    ///
+    /// `send_will_rename` asks the language servers what should change when a
+    /// file moves. It is off when this is already being called to apply what a
+    /// server answered, so that a reply which itself moves a file cannot send
+    /// the question round again.
     pub(crate) async fn deserialize_workspace_edit(
         this: Entity<LspStore>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
+        send_will_rename: bool,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncApp,
     ) -> Result<ProjectTransaction> {
@@ -3587,6 +3595,38 @@ impl LocalLspStore {
                         .new_uri
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
+
+                    // A server that registered `willRenameFiles` may be holding
+                    // the text edits for this move rather than sending them here,
+                    // to keep a client that asks as well from applying them twice.
+                    // rust-analyzer does that for every module rename, so unless
+                    // we ask, the file moves and every reference to the old name
+                    // is left behind. Asked before the move, as the spec says to
+                    // and as the servers expect, since they answer from where the
+                    // file is now.
+                    if send_will_rename {
+                        let renamed_entry = this.update(cx, |this, cx| {
+                            let worktree_store = this.worktree_store();
+                            let worktree_store = worktree_store.read(cx);
+                            let project_path = worktree_store
+                                .project_path_for_absolute_path(&source_abs_path, cx)?;
+                            let is_dir = worktree_store.entry_for_path(&project_path, cx)?.is_dir();
+                            Some((project_path.worktree_id, is_dir))
+                        });
+                        if let Some((worktree_id, is_dir)) = renamed_entry {
+                            let transaction = LspStore::will_rename_entry(
+                                this.downgrade(),
+                                worktree_id,
+                                &source_abs_path,
+                                &target_abs_path,
+                                is_dir,
+                                push_to_history,
+                                cx.clone(),
+                            )
+                            .await;
+                            project_transaction.0.extend(transaction.0);
+                        }
+                    }
 
                     // An LSP "rename symbol" can also rename the file, with the text edit
                     // applied only to the in-memory buffer. Persist it before renaming, or
@@ -3809,6 +3849,7 @@ impl LocalLspStore {
         let transaction = Self::deserialize_workspace_edit(
             this.clone(),
             params.edit,
+            true,
             true,
             language_server.clone(),
             cx,
@@ -6046,6 +6087,7 @@ impl LspStore {
                         this.upgrade().context("no app present")?,
                         edit.clone(),
                         push_to_history,
+                        true,
                         lang_server.clone(),
                         cx,
                     )
@@ -10487,6 +10529,7 @@ impl LspStore {
             &old_abs_path,
             &new_abs_path,
             old_entry.is_dir(),
+            false,
             cx.clone(),
         )
         .await;
@@ -10997,12 +11040,18 @@ impl LspStore {
         });
     }
 
+    /// Asks every language server watching for it what should change when
+    /// `old_path` moves to `new_path`, and applies what they answer.
+    ///
+    /// Call this before the move. The servers answer from where the file is
+    /// now, and the spec has the request going out first.
     pub(super) fn will_rename_entry(
         this: WeakEntity<Self>,
         worktree_id: WorktreeId,
         old_path: &Path,
         new_path: &Path,
         is_dir: bool,
+        push_to_history: bool,
         cx: AsyncApp,
     ) -> Task<ProjectTransaction> {
         let old_uri = lsp::Uri::from_file_path(old_path)
@@ -11053,6 +11102,7 @@ impl LspStore {
                             LocalLspStore::deserialize_workspace_edit(
                                 this.upgrade()?,
                                 edit,
+                                push_to_history,
                                 false,
                                 language_server.clone(),
                                 cx,

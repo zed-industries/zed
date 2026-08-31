@@ -1204,6 +1204,7 @@ impl LspCommand for PerformRename {
                 lsp_store,
                 edit,
                 self.push_to_history,
+                true,
                 lsp_server,
                 &mut cx,
             )
