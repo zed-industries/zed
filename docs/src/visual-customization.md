@@ -608,7 +608,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "auto_fold_dirs": true,       // Fold dirs with single subdir
     "scrollbar": {                // Project panel scrollbar settings
       "show": null                // Show/hide: (auto, system, always, never)
-    }
+    },
+    "multi_buffer_hide_symbols": false  // Hide symbols in multi-buffer views (show only files)
   }
 ```
 

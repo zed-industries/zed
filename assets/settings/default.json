@@ -1008,6 +1008,11 @@
     // Default depth to expand outline items in the current file.
     // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
     "expand_outlines_with_depth": 100,
+    // Whether to hide symbols, excerpts and search matches in the outline panel
+    // when a multi-buffer view (e.g. a diff or search results) is active,
+    // showing only files and directories.
+    // Does not affect single-file views.
+    "multi_buffer_hide_symbols": false,
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
