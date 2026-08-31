@@ -93,12 +93,6 @@ gpui::actions!(
     ]
 );
 
-#[derive(Clone, Debug, PartialEq, gpui::Action)]
-#[action(namespace = agents_sidebar, no_json, no_register)]
-struct RenameTerminalThread {
-    terminal_id: TerminalId,
-}
-
 gpui::actions!(
     dev,
     [
@@ -5759,31 +5753,6 @@ impl Sidebar {
         self.start_renaming_entry(ix, target, title, window, cx);
     }
 
-    fn rename_terminal_thread(
-        &mut self,
-        action: &RenameTerminalThread,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((ix, terminal)) =
-            self.contents
-                .entries
-                .iter()
-                .enumerate()
-                .find_map(|(ix, entry)| {
-                    let ListEntry::Terminal(terminal) = entry else {
-                        return None;
-                    };
-                    (terminal.metadata.terminal_id == action.terminal_id).then_some((ix, terminal))
-                })
-        else {
-            return;
-        };
-        let target = RenameTarget::Terminal(action.terminal_id);
-        let title = terminal.metadata.editable_title();
-        self.start_renaming_entry(ix, target, title, window, cx);
-    }
-
     fn record_thread_access(&mut self, id: &ThreadId) {
         self.thread_last_accessed.insert(*id, Utc::now());
     }
@@ -6659,15 +6628,28 @@ impl Sidebar {
 
         let context_menu_id = SharedString::from(format!("terminal-context-menu-{ix}"));
         let terminal_id = terminal.metadata.terminal_id;
+        let rename_title = terminal.metadata.editable_title();
+        let sidebar = cx.weak_entity();
 
         right_click_menu(context_menu_id)
             .trigger(move |_, _, _| terminal_item)
             .menu(move |window, cx| {
+                let sidebar = sidebar.clone();
+                let rename_title = rename_title.clone();
                 ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                    menu.action(
-                        "Rename Title",
-                        RenameTerminalThread { terminal_id }.boxed_clone(),
-                    )
+                    menu.entry("Rename Title", None, move |window, cx| {
+                        sidebar
+                            .update(cx, |sidebar, cx| {
+                                sidebar.start_renaming_entry(
+                                    ix,
+                                    RenameTarget::Terminal(terminal_id),
+                                    rename_title.clone(),
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .ok();
+                    })
                 })
             })
             .into_any_element()
@@ -7913,7 +7895,6 @@ impl Render for Sidebar {
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::archive_selected_thread))
             .on_action(cx.listener(Self::rename_selected_thread))
-            .on_action(cx.listener(Self::rename_terminal_thread))
             .on_action(cx.listener(Self::new_thread_in_group))
             .on_action(cx.listener(Self::new_terminal_thread))
             .on_action(cx.listener(Self::toggle_archive))

@@ -5262,7 +5262,7 @@ async fn test_rename_selected_thread_action_renames_selected_thread(cx: &mut Tes
 }
 
 #[gpui::test]
-async fn test_terminal_context_menu_action_renames_terminal(cx: &mut TestAppContext) {
+async fn test_rename_selected_thread_action_renames_terminal(cx: &mut TestAppContext) {
     let project = init_test_project_with_agent_panel("/my-project", cx).await;
     let (multi_workspace, cx) =
         cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -5275,8 +5275,26 @@ async fn test_terminal_context_menu_action_renames_terminal(cx: &mut TestAppCont
         .expect("test terminal should be inserted");
     cx.run_until_parked();
 
+    let entry_ix = sidebar.read_with(cx, |sidebar, _cx| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry,
+                    ListEntry::Terminal(terminal)
+                        if terminal.metadata.terminal_id == terminal_id
+                )
+            })
+            .expect("sidebar should have a terminal entry")
+    });
+
     focus_sidebar(&sidebar, cx);
-    cx.dispatch_action(RenameTerminalThread { terminal_id });
+    sidebar.update_in(cx, |sidebar, _window, _cx| {
+        sidebar.selection = Some(entry_ix);
+    });
+    cx.dispatch_action(RenameSelectedThread);
     cx.run_until_parked();
 
     let renamed_title = "Renamed Terminal";
