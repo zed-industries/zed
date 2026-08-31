@@ -3269,10 +3269,6 @@ async fn test_selecting_a_language_clears_the_old_servers_diagnostics(
         assert_eq!(project.diagnostic_summary(false, cx).error_count, 1);
     });
 
-    // Selecting a language the server does not serve detaches the buffer from it. A publish
-    // is applied by path with no regard for registration, so the diagnostics cannot be
-    // dropped while the server runs; a server left without any buffer is stopped instead,
-    // and the stop clears its diagnostics from the buffer and the project summary alike.
     project.update(cx, |project, cx| {
         project.set_language_for_buffer(&buffer, js_lang(), cx);
     });
@@ -3284,6 +3280,155 @@ async fn test_selecting_a_language_clears_the_old_servers_diagnostics(
     project.update(cx, |project, cx| {
         assert_eq!(project.diagnostic_summary(false, cx).error_count, 0);
     });
+}
+
+#[gpui::test]
+async fn test_selecting_a_language_clears_diagnostics_when_the_server_keeps_other_buffers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({ "a.rs": "const A: i32 = 1;", "b.rs": "const B: i32 = 2;" }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(rust_lang());
+    language_registry.add(js_lang());
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (buffer_a, _handle_a) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let (buffer_b, _handle_b) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/b.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    let mut shutdown_requests = fake_server
+        .set_request_handler::<lsp::request::Shutdown, _, _>(|_, _| future::ready(Ok(())));
+    for (path, message) in [
+        (path!("/dir/a.rs"), "unused constant A"),
+        (path!("/dir/b.rs"), "unused constant B"),
+    ] {
+        fake_server.notify::<lsp::notification::PublishDiagnostics>(
+            lsp::PublishDiagnosticsParams {
+                uri: lsp::Uri::from_file_path(path).unwrap(),
+                version: None,
+                diagnostics: vec![lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 7)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: lsp::DiagnosticMessage::String(message.to_string()),
+                    ..Default::default()
+                }],
+            },
+        );
+    }
+    cx.executor().run_until_parked();
+
+    let diagnostic_messages = |buffer: &Buffer| {
+        buffer
+            .snapshot()
+            .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+            .map(|entry| entry.diagnostic.message.to_string())
+            .collect::<Vec<_>>()
+    };
+
+    buffer_a.update(cx, |buffer, _| {
+        assert_eq!(diagnostic_messages(buffer), vec!["unused constant A"]);
+    });
+    project.update(cx, |project, cx| {
+        assert_eq!(project.diagnostic_summary(false, cx).error_count, 2);
+    });
+
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer_a, js_lang(), cx);
+    });
+    cx.executor().run_until_parked();
+
+    buffer_a.update(cx, |buffer, _| {
+        assert_eq!(diagnostic_messages(buffer), Vec::<String>::new());
+    });
+    buffer_b.update(cx, |buffer, _| {
+        assert_eq!(diagnostic_messages(buffer), vec!["unused constant B"]);
+    });
+    project.update(cx, |project, cx| {
+        assert_eq!(project.diagnostic_summary(false, cx).error_count, 1);
+    });
+    assert!(
+        shutdown_requests.next().now_or_never().flatten().is_none(),
+        "the server still serves b.rs and must not be stopped"
+    );
+}
+
+#[gpui::test]
+async fn test_registry_reload_detaches_buffers_from_language_servers(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "const A: i32 = 1;" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.register_test_language(LanguageConfig {
+        name: "Rust".into(),
+        matcher: Arc::new(LanguageMatcher {
+            path_suffixes: vec!["rs".to_string()],
+            ..LanguageMatcher::default()
+        }),
+        ..LanguageConfig::default()
+    });
+    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
+
+    let (_buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let mut fake_server = fake_servers.next().await.unwrap();
+    let open_notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        open_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap()
+    );
+
+    language_registry.reload();
+    cx.executor().run_until_parked();
+
+    let close_notification = fake_server
+        .receive_notification::<lsp::notification::DidCloseTextDocument>()
+        .await;
+    assert_eq!(
+        close_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap()
+    );
+    let reopen_notification = fake_server
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+    assert_eq!(
+        reopen_notification.text_document.uri,
+        lsp::Uri::from_file_path(path!("/dir/a.rs")).unwrap()
+    );
 }
 
 #[gpui::test]
@@ -4449,6 +4594,66 @@ async fn test_diagnostic_summaries_cleared_on_worktree_entry_removal(
                 error_count: 0,
                 warning_count: 1,
             },
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_stored_diagnostics_not_replayed_after_entry_removal(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one" }))
+        .await;
+
+    let project = Project::test(fs.clone(), [Path::new(path!("/dir"))], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
+            .update_diagnostic_entries(
+                LanguageServerId(0),
+                Path::new(path!("/dir/a.rs")).to_owned(),
+                None,
+                None,
+                vec![DiagnosticEntry::new(
+                    Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
+                    Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        is_primary: true,
+                        message: "error in a".into(),
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
+                    },
+                )],
+                cx,
+            )
+            .unwrap();
+    });
+
+    fs.remove_file(path!("/dir/a.rs").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    fs.insert_file(path!("/dir/a.rs"), "one".as_bytes().to_vec())
+        .await;
+    cx.executor().run_until_parked();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| {
+        assert_eq!(
+            buffer
+                .snapshot()
+                .diagnostics_in_range::<_, usize>(0..buffer.len(), false)
+                .map(|entry| entry.diagnostic.message.to_string())
+                .collect::<Vec<_>>(),
+            Vec::<String>::new(),
         );
     });
 }
