@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{App, AsyncApp, Entity};
 use language::Buffer;
@@ -38,12 +38,15 @@ pub struct ExpandAbbreviationParams {
 pub struct ExpandAbbreviationOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<EmmetOutputOptions>,
+    pub options: EmmetOutputOptions,
 }
 
 #[derive(Deserialize, Serialize, Debug, Default, PartialEq, Eq)]
 pub struct EmmetOutputOptions {
+    #[serde(rename = "output.indent")]
+    pub indent: String,
+    #[serde(rename = "output.baseIndent")]
+    pub base_indent: String,
     #[serde(rename = "comment.enabled", skip_serializing_if = "Option::is_none")]
     pub comment_enabled: Option<bool>,
     #[serde(rename = "bem.enabled", skip_serializing_if = "Option::is_none")]
@@ -52,12 +55,14 @@ pub struct EmmetOutputOptions {
     pub inline_break: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ExpandAbbreviation {
     pub abbreviation: String,
     pub text: Option<Vec<String>>,
     pub language: String,
     pub server_id: LanguageServerId,
+    pub indent: String,
+    pub base_indent: String,
     pub comment_filter: bool,
     pub bem_filter: bool,
 }
@@ -98,13 +103,13 @@ impl LspCommand for ExpandAbbreviation {
             language: self.language.clone(),
             options: ExpandAbbreviationOptions {
                 text: self.text.clone(),
-                options: (self.comment_filter || self.bem_filter || multiline).then(|| {
-                    EmmetOutputOptions {
-                        comment_enabled: self.comment_filter.then_some(true),
-                        bem_enabled: self.bem_filter.then_some(true),
-                        inline_break: multiline.then_some(1),
-                    }
-                }),
+                options: EmmetOutputOptions {
+                    indent: self.indent.clone(),
+                    base_indent: self.base_indent.clone(),
+                    comment_enabled: self.comment_filter.then_some(true),
+                    bem_enabled: self.bem_filter.then_some(true),
+                    inline_break: multiline.then_some(1),
+                },
             },
         })
     }
@@ -127,7 +132,9 @@ impl LspCommand for ExpandAbbreviation {
             abbreviation: self.abbreviation.clone(),
             text: self.text.clone().unwrap_or_default(),
             language: self.language.clone(),
-            server_id: Some(self.server_id.to_proto()),
+            server_id: self.server_id.to_proto(),
+            indent: self.indent.clone(),
+            base_indent: self.base_indent.clone(),
             comment_filter: self.comment_filter,
             bem_filter: self.bem_filter,
         }
@@ -143,9 +150,9 @@ impl LspCommand for ExpandAbbreviation {
             abbreviation: message.abbreviation,
             text: (!message.text.is_empty()).then_some(message.text),
             language: message.language,
-            server_id: LanguageServerId::from_proto(
-                message.server_id.context("missing server_id")?,
-            ),
+            server_id: LanguageServerId::from_proto(message.server_id),
+            indent: message.indent,
+            base_indent: message.base_indent,
             comment_filter: message.comment_filter,
             bem_filter: message.bem_filter,
         })

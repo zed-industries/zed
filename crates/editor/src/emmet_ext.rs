@@ -2,8 +2,8 @@ use std::ops::Range;
 use std::time::Duration;
 
 use futures::future::join_all;
-use gpui::{App, AsyncWindowContext, Context, Entity, Global, Task, Window};
-use language::Buffer;
+use gpui::{App, AsyncWindowContext, Context, Entity, Global, SharedString, Task, Window};
+use language::{Buffer, Language};
 use lsp::LanguageServerId;
 use multi_buffer::{
     Anchor, MultiBufferOffset, MultiBufferRow, MultiBufferSnapshot, ToOffset, ToPoint,
@@ -14,11 +14,11 @@ use snippet::Snippet;
 use text::Point;
 use util::ResultExt as _;
 
-use crate::actions::SelectAll;
 use crate::scroll::Autoscroll;
 use crate::{Editor, InlineInputPreview, WrapWithAbbreviation, element::register_action};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
+const MAX_HISTORY_ENTRIES: usize = 20;
 
 const ELEMENT_NODE_KINDS: [&str; 5] = [
     "element",
@@ -36,7 +36,7 @@ const TAG_NODE_KINDS: [&str; 5] = [
     "jsx_closing_element",
 ];
 
-const STYLESHEET_LANGUAGE_IDS: [&str; 5] = ["css", "scss", "less", "sass", "stylus"];
+const STYLESHEET_LANGUAGE_IDS: [&str; 6] = ["css", "sass", "scss", "less", "sss", "stylus"];
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct WrapFilters {
@@ -45,9 +45,10 @@ struct WrapFilters {
     bem: bool,
 }
 
-struct LastWrapAbbreviation(String);
+#[derive(Default)]
+struct WrapAbbreviationHistory(Vec<SharedString>);
 
-impl Global for LastWrapAbbreviation {}
+impl Global for WrapAbbreviationHistory {}
 
 pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) {
     let editor_ref = editor.read(cx);
@@ -61,17 +62,17 @@ pub fn apply_related_actions(editor: &Entity<Editor>, window: &mut Window, cx: &
     {
         return;
     }
-    let has_emmet_adapter = match editor_ref.buffer().read(cx).as_singleton() {
-        Some(buffer) => buffer.read(cx).language().is_some_and(|language| {
-            project
-                .languages()
-                .lsp_adapters(&language.name())
-                .into_iter()
-                .any(|adapter| adapter.name() == EMMET_SERVER_NAME)
-        }),
-        None => true,
-    };
-    if has_emmet_adapter {
+    let supports_wrap = editor_ref
+        .buffer()
+        .read(cx)
+        .all_buffers_iter()
+        .any(|buffer| {
+            buffer
+                .read(cx)
+                .language()
+                .is_some_and(|language| language_supports_wrap(language, project))
+        });
+    if supports_wrap {
         register_action(editor, window, wrap_with_abbreviation);
     }
 }
@@ -103,7 +104,6 @@ pub fn wrap_with_abbreviation(
         offset_ranges.push(trim_whitespace(range, &snapshot));
     }
     offset_ranges.sort_by_key(|range| (range.start, range.end));
-    offset_ranges.dedup();
     let mut merged_ranges = Vec::<Range<MultiBufferOffset>>::with_capacity(offset_ranges.len());
     for range in offset_ranges {
         match merged_ranges.last_mut() {
@@ -120,17 +120,25 @@ pub fn wrap_with_abbreviation(
     if ranges.is_empty() {
         return;
     }
-    if build_wrap_targets(editor, &ranges, WrapFilters::default(), cx).is_empty() {
+    if !ranges
+        .iter()
+        .any(|range| resolve_wrap_target(editor, range, cx).is_some())
+    {
         log_unavailable();
         return;
     }
 
-    let position = editor.selections.newest_anchor().head();
+    let position = inline_input_position(&ranges, editor, &snapshot);
+    let history = cx
+        .try_global::<WrapAbbreviationHistory>()
+        .map(|history| history.0.clone())
+        .unwrap_or_default();
     let confirm_ranges = ranges.clone();
     let preview_ranges = ranges;
     editor.show_inline_input(
         "Emmet abbreviation, e.g. ul>li*",
         position,
+        history,
         move |editor, text, window, cx| {
             wrap_targets_in_expanded_abbreviation(editor, &confirm_ranges, text, window, cx)
         },
@@ -140,17 +148,28 @@ pub fn wrap_with_abbreviation(
         window,
         cx,
     );
-    if let Some(last_abbreviation) = cx
-        .try_global::<LastWrapAbbreviation>()
-        .map(|last| last.0.clone())
-        && let Some(state) = editor.pending_inline_input()
-    {
-        let input = state.editor.clone();
-        input.update(cx, |input, cx| {
-            input.set_text(last_abbreviation, window, cx);
-            input.select_all(&SelectAll, window, cx);
-        });
-    }
+}
+
+fn inline_input_position(
+    ranges: &[Range<Anchor>],
+    editor: &Editor,
+    snapshot: &MultiBufferSnapshot,
+) -> Anchor {
+    let newest_head = editor.selections.newest_anchor().head().to_offset(snapshot);
+    let range = ranges
+        .iter()
+        .find(|range| {
+            let range = range.start.to_offset(snapshot)..range.end.to_offset(snapshot);
+            range.contains(&newest_head) || range.end == newest_head
+        })
+        .or(ranges.last());
+    let Some(range) = range else {
+        return editor.selections.newest_anchor().head();
+    };
+    let start_column = range.start.to_point(snapshot).column;
+    let end_row = MultiBufferRow(range.end.to_point(snapshot).row);
+    let column = start_column.min(snapshot.line_len(end_row));
+    snapshot.anchor_before(Point::new(end_row.0, column))
 }
 
 struct WrapTarget {
@@ -159,78 +178,88 @@ struct WrapTarget {
     buffer: Entity<Buffer>,
     server_id: LanguageServerId,
     language: String,
+    indent: String,
+    base_indent: String,
 }
 
-fn build_wrap_targets(
+struct WrapTargetServer {
+    buffer: Entity<Buffer>,
+    server_id: LanguageServerId,
+    language: String,
+}
+
+fn language_supports_wrap(language: &Language, project: &Project) -> bool {
+    project
+        .languages()
+        .lsp_adapter(&language.name(), &EMMET_SERVER_NAME)
+        .is_some_and(|adapter| {
+            !STYLESHEET_LANGUAGE_IDS.contains(&adapter.language_id(&language.name()).as_str())
+        })
+}
+
+fn resolve_wrap_target(
     editor: &Editor,
-    ranges: &[Range<Anchor>],
-    filters: WrapFilters,
+    range: &Range<Anchor>,
     cx: &App,
-) -> Vec<WrapTarget> {
-    let Some(project) = editor.project.clone() else {
-        return Vec::new();
-    };
-    let lsp_store = project.read(cx).lsp_store();
+) -> Option<WrapTargetServer> {
+    let project = editor.project.as_ref()?.read(cx);
     let multi_buffer = editor.buffer().read(cx);
-    let snapshot = multi_buffer.snapshot(cx);
-    let mut targets = Vec::new();
-    for range in ranges.iter().cloned() {
-        let Some((buffer, start)) = multi_buffer.text_anchor_for_position(range.start, cx) else {
-            continue;
-        };
-        let Some((end_buffer, _)) = multi_buffer.text_anchor_for_position(range.end, cx) else {
-            continue;
-        };
-        if buffer != end_buffer {
-            continue;
-        }
-        let Some(server_id) =
-            project
-                .read(cx)
-                .language_server_id_for_name(buffer.read(cx), &EMMET_SERVER_NAME, cx)
-        else {
-            continue;
-        };
-        let Some(language) = buffer
-            .read(cx)
-            .language_at(start)
-            .or_else(|| buffer.read(cx).language().cloned())
-        else {
-            continue;
-        };
-        let Some(adapter) = lsp_store.read(cx).language_server_adapter_for_id(server_id) else {
-            continue;
-        };
-        let language = adapter.language_id(&language.name());
-        if STYLESHEET_LANGUAGE_IDS.contains(&language.as_str()) {
-            continue;
-        }
-        let text = snapshot.text_for_range(range.clone()).collect::<String>();
-        targets.push(WrapTarget {
-            text: selection_lines(&text, range.start, filters.trim, &snapshot),
-            range,
-            buffer,
-            server_id,
-            language,
-        });
+    let (buffer, start) = multi_buffer.text_anchor_for_position(range.start, cx)?;
+    let (end_buffer, _) = multi_buffer.text_anchor_for_position(range.end, cx)?;
+    if buffer != end_buffer {
+        return None;
     }
-    targets
+    let server_id = project.language_server_id_for_name(buffer.read(cx), &EMMET_SERVER_NAME, cx)?;
+    let language = buffer
+        .read(cx)
+        .language_at(start)
+        .or_else(|| buffer.read(cx).language().cloned())?;
+    let adapter = project
+        .lsp_store()
+        .read(cx)
+        .language_server_adapter_for_id(server_id)?;
+    let language = adapter.language_id(&language.name());
+    if STYLESHEET_LANGUAGE_IDS.contains(&language.as_str()) {
+        return None;
+    }
+    Some(WrapTargetServer {
+        buffer,
+        server_id,
+        language,
+    })
 }
 
-fn selection_lines(
-    text: &str,
-    range_start: Anchor,
-    trim_markers: bool,
+fn build_wrap_target(
+    editor: &Editor,
+    range: &Range<Anchor>,
+    filters: WrapFilters,
     snapshot: &MultiBufferSnapshot,
-) -> Option<Vec<String>> {
+    cx: &App,
+) -> Option<WrapTarget> {
+    let server = resolve_wrap_target(editor, range, cx)?;
+    let text = snapshot.text_for_range(range.clone()).collect::<String>();
+    let settings = snapshot.language_settings_at(range.start, cx);
+    let indent = if settings.hard_tabs {
+        "\t".to_string()
+    } else {
+        " ".repeat(settings.tab_size.get() as usize)
+    };
+    let base_indent = base_indent_for(range.start, snapshot);
+    Some(WrapTarget {
+        text: selection_lines(&text, &base_indent, filters.trim),
+        range: range.clone(),
+        buffer: server.buffer,
+        server_id: server.server_id,
+        language: server.language,
+        indent,
+        base_indent,
+    })
+}
+
+fn selection_lines(text: &str, base_indent: &str, trim_markers: bool) -> Option<Vec<String>> {
     if text.is_empty() {
         return None;
     }
-    let row = MultiBufferRow(range_start.to_point(snapshot).row);
-    let base_indent = snapshot
-        .indent_size_for_line(row)
-        .chars()
-        .collect::<String>();
     let lines = text
         .split('\n')
         .enumerate()
@@ -239,7 +268,7 @@ fn selection_lines(
             let line = if ix == 0 {
                 line
             } else {
-                line.strip_prefix(&base_indent).unwrap_or(line)
+                line.strip_prefix(base_indent).unwrap_or(line)
             };
             let line = if trim_markers {
                 trim_list_marker(line)
@@ -301,7 +330,11 @@ fn wrap_targets_in_expanded_abbreviation(
     let (abbreviation, filters) = parse_abbreviation(&input)?;
     let project = editor.project.clone()?;
 
-    let targets = build_wrap_targets(editor, ranges, filters, cx);
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let targets = ranges
+        .iter()
+        .filter_map(|range| build_wrap_target(editor, range, filters, &snapshot, cx))
+        .collect::<Vec<_>>();
     if targets.is_empty() {
         log_unavailable();
         editor.take_inline_input(window, cx);
@@ -341,17 +374,15 @@ fn wrap_targets_in_expanded_abbreviation(
                     editor.set_inline_input_preview(Some(InlineInputPreview::Error(message)), cx);
                     return anyhow::Ok(());
                 }
-                cx.set_global(LastWrapAbbreviation(input.clone()));
-                if let Some(state) = editor.take_inline_input(window, cx)
-                    && let Some(confirm_task) = state.confirm_task
+                remember_abbreviation(SharedString::from(input), cx);
+                if let Some(mut state) = editor.take_inline_input(window, cx)
+                    && let Some(confirm_task) = state.take_confirm_task()
                 {
                     confirm_task.detach();
                 }
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 if let [(range, expansion)] = expansions.as_slice() {
-                    let expansion =
-                        normalize_expansion_indentation(expansion, range.start, &snapshot, cx);
-                    if let Ok(snippet) = Snippet::parse(&expansion) {
+                    if let Ok(snippet) = Snippet::parse(expansion) {
                         let range =
                             range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
                         editor.insert_snippet_with_autoindent(
@@ -366,10 +397,7 @@ fn wrap_targets_in_expanded_abbreviation(
                 }
                 let edits = expansions
                     .into_iter()
-                    .map(|(range, expansion)| {
-                        let text = expansion_text(&expansion, range.start, &snapshot, cx);
-                        (range, text)
-                    })
+                    .map(|(range, expansion)| (range, expansion_text(&expansion)))
                     .collect::<Vec<_>>();
                 editor.transact(window, cx, |editor, _, cx| {
                     editor.buffer().update(cx, |buffer, cx| {
@@ -399,14 +427,15 @@ fn update_expansion_preview(
         editor.set_inline_input_preview(None, cx);
         return None;
     };
-    let Some(target) = build_wrap_targets(editor, ranges, filters, cx)
-        .into_iter()
-        .next()
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let Some(mut target) = ranges
+        .iter()
+        .find_map(|range| build_wrap_target(editor, range, filters, &snapshot, cx))
     else {
         editor.set_inline_input_preview(None, cx);
         return None;
     };
-    let target_range = target.range.clone();
+    target.base_indent.clear();
 
     Some(cx.spawn_in(window, async move |editor, cx| {
         cx.background_executor().timer(PREVIEW_DEBOUNCE).await;
@@ -414,15 +443,7 @@ fn update_expansion_preview(
         editor
             .update(cx, |editor, cx| {
                 let preview = match result {
-                    Ok(Some(expansion)) => {
-                        let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        InlineInputPreview::Text(expansion_text(
-                            &expansion,
-                            target_range.start,
-                            &snapshot,
-                            cx,
-                        ))
-                    }
+                    Ok(Some(expansion)) => InlineInputPreview::Text(expansion_text(&expansion)),
                     Ok(None) => InlineInputPreview::Error(format!(
                         "No Emmet expansion for {abbreviation:?}"
                     )),
@@ -452,6 +473,8 @@ fn request_expansion(
                 text: target.text,
                 language: target.language,
                 server_id: target.server_id,
+                indent: target.indent,
+                base_indent: target.base_indent,
                 comment_filter: filters.comment,
                 bem_filter: filters.bem,
             },
@@ -460,72 +483,77 @@ fn request_expansion(
     })
 }
 
-fn expansion_text(
-    expansion: &str,
-    range_start: Anchor,
-    snapshot: &MultiBufferSnapshot,
-    cx: &App,
-) -> String {
-    let expansion = normalize_expansion_indentation(expansion, range_start, snapshot, cx);
-    Snippet::parse(&expansion)
+fn expansion_text(expansion: &str) -> String {
+    Snippet::parse(expansion)
         .map(|snippet| snippet.text)
-        .unwrap_or(expansion)
+        .unwrap_or_else(|_| expansion.to_string())
+}
+
+fn remember_abbreviation(abbreviation: SharedString, cx: &mut App) {
+    let history = &mut cx.default_global::<WrapAbbreviationHistory>().0;
+    history.retain(|entry| *entry != abbreviation);
+    history.insert(0, abbreviation);
+    history.truncate(MAX_HISTORY_ENTRIES);
 }
 
 fn log_unavailable() {
     log::info!("Wrapping with an Emmet abbreviation is not available for the selected text");
 }
 
-fn normalize_expansion_indentation(
-    expansion: &str,
-    range_start: Anchor,
+fn base_indent_for(range_start: Anchor, snapshot: &MultiBufferSnapshot) -> String {
+    let row = MultiBufferRow(range_start.to_point(snapshot).row);
+    snapshot.indent_size_for_line(row).chars().collect()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkupNode {
+    Element,
+    Tag,
+    Other,
+}
+
+struct MarkupAncestors<'a> {
+    snapshot: &'a MultiBufferSnapshot,
+    range: Option<Range<MultiBufferOffset>>,
+}
+
+impl Iterator for MarkupAncestors<'_> {
+    type Item = (MarkupNode, Range<MultiBufferOffset>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let current = self.range.take()?;
+        let (node, node_range) = self.snapshot.syntax_ancestor(current.clone())?;
+        if node_range != current {
+            self.range = Some(node_range.clone());
+        }
+        let kind = node.kind();
+        let markup_node = if ELEMENT_NODE_KINDS.contains(&kind) {
+            MarkupNode::Element
+        } else if TAG_NODE_KINDS.contains(&kind) {
+            MarkupNode::Tag
+        } else {
+            MarkupNode::Other
+        };
+        Some((markup_node, node_range))
+    }
+}
+
+fn markup_ancestors(
+    position: MultiBufferOffset,
     snapshot: &MultiBufferSnapshot,
-    cx: &App,
-) -> String {
-    if !expansion.contains('\n') {
-        return expansion.to_string();
+) -> MarkupAncestors<'_> {
+    MarkupAncestors {
+        snapshot,
+        range: Some(position..position),
     }
-    let start_point = range_start.to_point(snapshot);
-    let base_indent = snapshot
-        .indent_size_for_line(MultiBufferRow(start_point.row))
-        .chars()
-        .collect::<String>();
-    let settings = snapshot.language_settings_at(range_start, cx);
-    let indent_unit = if settings.hard_tabs {
-        "\t".to_string()
-    } else {
-        " ".repeat(settings.tab_size.get() as usize)
-    };
-    let mut normalized = String::new();
-    for (ix, line) in expansion.split('\n').enumerate() {
-        if ix > 0 {
-            normalized.push('\n');
-            normalized.push_str(&base_indent);
-        }
-        let tabs = line.chars().take_while(|ch| *ch == '\t').count();
-        for _ in 0..tabs {
-            normalized.push_str(&indent_unit);
-        }
-        normalized.push_str(&line[tabs..]);
-    }
-    normalized
 }
 
 fn enclosing_element_range(
     position: MultiBufferOffset,
     snapshot: &MultiBufferSnapshot,
 ) -> Option<Range<MultiBufferOffset>> {
-    let mut range = position..position;
-    while let Some((node, node_range)) = snapshot.syntax_ancestor(range.clone()) {
-        if ELEMENT_NODE_KINDS.contains(&node.kind()) {
-            return Some(node_range);
-        }
-        if node_range == range {
-            return None;
-        }
-        range = node_range;
-    }
-    None
+    markup_ancestors(position, snapshot)
+        .find_map(|(node, range)| (node == MarkupNode::Element).then_some(range))
 }
 
 fn expand_over_partial_tags(
@@ -546,20 +574,15 @@ fn element_range_for_partial_tag(
     position: MultiBufferOffset,
     snapshot: &MultiBufferSnapshot,
 ) -> Option<Range<MultiBufferOffset>> {
-    let mut range = position..position;
     let mut in_tag = false;
-    while let Some((node, node_range)) = snapshot.syntax_ancestor(range.clone()) {
-        if TAG_NODE_KINDS.contains(&node.kind()) {
-            if node_range.start < position && position < node_range.end {
-                in_tag = true;
+    for (node, node_range) in markup_ancestors(position, snapshot) {
+        match node {
+            MarkupNode::Tag => {
+                in_tag |= node_range.start < position && position < node_range.end;
             }
-        } else if ELEMENT_NODE_KINDS.contains(&node.kind()) {
-            return in_tag.then_some(node_range);
+            MarkupNode::Element => return in_tag.then_some(node_range),
+            MarkupNode::Other => {}
         }
-        if node_range == range {
-            return None;
-        }
-        range = node_range;
     }
     None
 }
@@ -614,7 +637,12 @@ mod tests {
                 assert_eq!(params.language, "html");
                 assert_eq!(params.options.text, Some(vec!["hello".to_string()]));
                 assert_eq!(
-                    params.options.options, None,
+                    params.options.options,
+                    EmmetOutputOptions {
+                        indent: "    ".to_string(),
+                        base_indent: String::new(),
+                        ..EmmetOutputOptions::default()
+                    },
                     "single-line wraps should not force inline breaks"
                 );
                 Ok(Some("<div class=\"wrap\">${1:hello}</div>$0".to_string()))
@@ -751,7 +779,14 @@ mod tests {
                     Some(vec!["<p>a</p>".to_string(), "<p>b</p>".to_string()]),
                     "lines should be dedented by the base indentation of the first line"
                 );
-                Ok(Some("<div>\n\t<p>a</p>\n\t<p>b</p>\n</div>".to_string()))
+                assert_eq!(
+                    params.options.options.base_indent, "  ",
+                    "the wrapped line's indentation should be sent as the base indent"
+                );
+                Ok(Some(format_expansion(
+                    "<div>\n\t<p>a</p>\n\t<p>b</p>\n</div>",
+                    &params.options.options,
+                )))
             },
         );
 
@@ -927,6 +962,53 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_preview_does_not_embed_base_indentation(cx: &mut TestAppContext) {
+        let (editor, mut fake_servers, cx) =
+            setup("<section>\n  <p>a</p>\n  <p>b</p>\n</section>", cx).await;
+        let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().run_until_parked();
+
+        select_and_wrap(&editor, [Point::new(1, 2)..Point::new(2, 10)], cx);
+
+        let mut requests = fake_server.set_request_handler::<LspExpandAbbreviation, _, _>(
+            |params, _| async move {
+                assert_eq!(params.abbreviation, "div");
+                assert_eq!(
+                    params.options.options.base_indent, "",
+                    "previews render at the anchor column already, \
+                     so they must request no base indent"
+                );
+                Ok(Some(format_expansion(
+                    "<div>\n\t<p>a</p>\n\t<p>b</p>\n</div>",
+                    &params.options.options,
+                )))
+            },
+        );
+
+        editor.update_in(cx, |editor, window, cx| {
+            let input = pending_input(editor);
+            input.update(cx, |input, cx| input.set_text("div", window, cx));
+        });
+        cx.executor().advance_clock(PREVIEW_DEBOUNCE * 2);
+        requests.next().await.unwrap();
+        cx.executor().run_until_parked();
+
+        editor.update(cx, |editor, _| {
+            assert_eq!(
+                editor
+                    .pending_inline_input
+                    .as_ref()
+                    .and_then(|state| state.preview.clone()),
+                Some(InlineInputPreview::Text(
+                    "<div>\n    <p>a</p>\n    <p>b</p>\n</div>".to_string()
+                )),
+                "the preview block already renders at the anchor column, \
+                 so its lines must not repeat the wrapped line's base indentation"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_last_abbreviation_is_prefilled(cx: &mut TestAppContext) {
         let (editor, mut fake_servers, cx) = setup("<p>hello</p>", cx).await;
         let fake_server = fake_servers.next().await.unwrap();
@@ -968,6 +1050,96 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_up_and_down_cycle_abbreviation_history(cx: &mut TestAppContext) {
+        let (editor, mut fake_servers, cx) = setup("<p>hello</p>", cx).await;
+        let fake_server = fake_servers.next().await.unwrap();
+        cx.executor().run_until_parked();
+        cx.update(|_, cx| {
+            cx.bind_keys([
+                gpui::KeyBinding::new("up", crate::MoveUp, Some("Editor")),
+                gpui::KeyBinding::new("down", crate::MoveDown, Some("Editor")),
+            ]);
+        });
+        let mut requests = fake_server.set_request_handler::<LspExpandAbbreviation, _, _>(
+            |params, _| async move { Ok(Some(format!("<{0}>hello</{0}>", params.abbreviation))) },
+        );
+
+        for abbreviation in ["em", "strong", "span"] {
+            let hello = editor.update(cx, |editor, cx| {
+                let text = editor.text(cx);
+                let start = text.find("hello").expect("hello should still be there") as u32;
+                Point::new(0, start)..Point::new(0, start + "hello".len() as u32)
+            });
+            select_and_wrap(&editor, [hello], cx);
+            confirm_abbreviation(&editor, abbreviation, cx);
+            requests.next().await.unwrap();
+            cx.executor().run_until_parked();
+        }
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "<p><em><strong><span>hello</span></strong></em></p>"
+            );
+        });
+
+        select_and_wrap(&editor, [Point::new(0, 3)..Point::new(0, 8)], cx);
+        assert_eq!(input_text(&editor, cx), "span", "newest entry is prefilled");
+
+        cx.simulate_keystrokes("up");
+        assert_eq!(
+            input_text(&editor, cx),
+            "strong",
+            "up moves to the older entry"
+        );
+        cx.simulate_keystrokes("up");
+        assert_eq!(input_text(&editor, cx), "em");
+        cx.simulate_keystrokes("up");
+        assert_eq!(
+            input_text(&editor, cx),
+            "em",
+            "up stops at the oldest entry"
+        );
+
+        cx.simulate_keystrokes("down down down");
+        assert_eq!(
+            input_text(&editor, cx),
+            "",
+            "down past the newest entry returns to the empty draft"
+        );
+        cx.simulate_keystrokes("down");
+        assert_eq!(input_text(&editor, cx), "", "down stops at the draft");
+
+        editor.update_in(cx, |editor, window, cx| {
+            let input = pending_input(editor);
+            input.update(cx, |input, cx| input.set_text("div.wip", window, cx));
+        });
+        cx.executor().run_until_parked();
+        cx.simulate_keystrokes("up");
+        assert_eq!(
+            input_text(&editor, cx),
+            "span",
+            "up from a draft starts at the newest entry"
+        );
+        cx.simulate_keystrokes("down");
+        assert_eq!(
+            input_text(&editor, cx),
+            "div.wip",
+            "down restores the draft that was being typed"
+        );
+
+        editor.update(cx, |editor, cx| {
+            assert!(
+                editor.pending_inline_input.is_some(),
+                "cycling history must not dismiss the input"
+            );
+            assert_eq!(
+                editor.text(cx),
+                "<p><em><strong><span>hello</span></strong></em></p>"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_wrap_individual_lines(cx: &mut TestAppContext) {
         let (editor, mut fake_servers, cx) =
             setup("<div>\n    About\n    News\n    Products\n</div>", cx).await;
@@ -990,16 +1162,19 @@ mod tests {
                 );
                 assert_eq!(
                     params.options.options,
-                    Some(EmmetOutputOptions {
+                    EmmetOutputOptions {
+                        indent: "    ".to_string(),
+                        base_indent: "    ".to_string(),
                         inline_break: Some(1),
                         ..EmmetOutputOptions::default()
-                    }),
-                    "multi-line wraps should break inline elements per line"
+                    },
+                    "multi-line wraps should break inline elements per line \
+                     and carry the buffer's indentation to the server"
                 );
-                Ok(Some(
-                    "<ul>\n\t<li>About</li>\n\t<li>News</li>\n\t<li>Products</li>\n</ul>"
-                        .to_string(),
-                ))
+                Ok(Some(format_expansion(
+                    "<ul>\n\t<li>About</li>\n\t<li>News</li>\n\t<li>Products</li>\n</ul>",
+                    &params.options.options,
+                )))
             },
         );
 
@@ -1034,9 +1209,10 @@ mod tests {
                     Some(vec!["one".to_string(), "two".to_string()]),
                     "list markers should be removed from the wrapped lines"
                 );
-                Ok(Some(
-                    "<ul>\n\t<li>one</li>\n\t<li>two</li>\n</ul>".to_string(),
-                ))
+                Ok(Some(format_expansion(
+                    "<ul>\n\t<li>one</li>\n\t<li>two</li>\n</ul>",
+                    &params.options.options,
+                )))
             },
         );
 
@@ -1129,11 +1305,13 @@ mod tests {
                 );
                 assert_eq!(
                     params.options.options,
-                    Some(EmmetOutputOptions {
+                    EmmetOutputOptions {
+                        indent: "    ".to_string(),
+                        base_indent: String::new(),
                         comment_enabled: Some(true),
                         bem_enabled: Some(true),
                         inline_break: None,
-                    }),
+                    },
                     "the |c and |bem filters should map to emmet output options"
                 );
                 Ok(Some(
@@ -1413,6 +1591,23 @@ mod tests {
             input.update(cx, |input, cx| input.set_text(abbreviation, window, cx));
             editor.confirm_inline_input(window, cx);
         });
+    }
+
+    fn format_expansion(tab_indented: &str, options: &EmmetOutputOptions) -> String {
+        tab_indented
+            .split('\n')
+            .enumerate()
+            .map(|(ix, line)| {
+                let levels = line.chars().take_while(|ch| *ch == '\t').count();
+                let base = if ix == 0 { "" } else { &options.base_indent };
+                format!("{base}{}{}", options.indent.repeat(levels), &line[levels..])
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn input_text(editor: &Entity<Editor>, cx: &mut VisualTestContext) -> String {
+        editor.update(cx, |editor, cx| pending_input(editor).read(cx).text(cx))
     }
 
     fn pending_input(editor: &Editor) -> Entity<Editor> {

@@ -16,7 +16,7 @@ Emmet support is available through the [Emmet extension](https://github.com/zed-
 With the Emmet extension installed, you can wrap the current selections in an expanded [Emmet abbreviation](https://docs.emmet.io/abbreviations/):
 
 1. Select the text to wrap. With an empty selection, the enclosing HTML element is wrapped; if no enclosing element can be determined, the current line is wrapped instead.
-2. Run `editor: wrap with abbreviation` from the command palette. The last used abbreviation is prefilled and selected, so typing replaces it.
+2. Run `editor: wrap with abbreviation` from the command palette. The last used abbreviation is prefilled and selected, so typing replaces it; `up` and `down` cycle through previously used abbreviations.
 3. Type an abbreviation, for example `div.wrapper>ul>li*3`, into the input that appears below the selection. A preview of the expansion is shown under the input as you type.
 4. Press `enter` to apply, or `escape` to cancel. If the abbreviation produces no expansion, the error is shown next to the input and the input stays open so you can correct it.
 

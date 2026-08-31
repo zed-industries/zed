@@ -32,6 +32,7 @@ pub mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlays;
+mod inline_input;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
@@ -118,6 +119,8 @@ use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
+pub use inline_input::InlineInputState;
+pub(crate) use inline_input::{InlineInputHistoryDirection, InlineInputPreview};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use linked_editing_ranges::LinkedEdits;
 pub use lsp::CompletionContext;
@@ -1574,56 +1577,6 @@ pub struct RenameState {
     pub old_name: Arc<str>,
     pub editor: Entity<Editor>,
     block_id: CustomBlockId,
-}
-
-pub struct InlineInputState {
-    pub editor: Entity<Editor>,
-    block_id: CustomBlockId,
-    confirm_task: Option<Task<()>>,
-    preview_task: Option<Task<()>>,
-    pub(crate) preview: Option<InlineInputPreview>,
-    _subscription: Subscription,
-    on_confirm:
-        Rc<dyn Fn(&mut Editor, String, &mut Window, &mut Context<Editor>) -> Option<Task<()>>>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum InlineInputPreview {
-    Text(String),
-    Error(String),
-}
-
-const INLINE_INPUT_PREVIEW_MAX_LINES: usize = 8;
-
-impl InlineInputPreview {
-    fn display_lines(&self) -> Vec<SharedString> {
-        let text = match self {
-            InlineInputPreview::Text(text) => text,
-            InlineInputPreview::Error(message) => message,
-        };
-        let mut lines = text
-            .lines()
-            .map(|line| {
-                if line.is_empty() {
-                    SharedString::from(" ")
-                } else {
-                    SharedString::from(line.to_string())
-                }
-            })
-            .collect::<Vec<_>>();
-        if lines.is_empty() {
-            lines.push(SharedString::from(" "));
-        }
-        if lines.len() > INLINE_INPUT_PREVIEW_MAX_LINES {
-            lines.truncate(INLINE_INPUT_PREVIEW_MAX_LINES);
-            lines.push(SharedString::from("…"));
-        }
-        lines
-    }
-
-    fn height_in_lines(&self) -> u32 {
-        self.display_lines().len() as u32
-    }
 }
 
 struct InvalidationStack<T>(Vec<T>);
@@ -4992,7 +4945,7 @@ impl Editor {
         )
     }
 
-    pub fn insert_snippet_with_autoindent(
+    pub(crate) fn insert_snippet_with_autoindent(
         &mut self,
         insertion_ranges: &[Range<MultiBufferOffset>],
         snippet: Snippet,
@@ -8356,170 +8309,6 @@ impl Editor {
 
     pub fn pending_rename(&self) -> Option<&RenameState> {
         self.pending_rename.as_ref()
-    }
-
-    pub fn pending_inline_input(&self) -> Option<&InlineInputState> {
-        self.pending_inline_input.as_ref()
-    }
-
-    pub(crate) fn show_inline_input(
-        &mut self,
-        placeholder: &str,
-        position: Anchor,
-        on_confirm: impl Fn(&mut Editor, String, &mut Window, &mut Context<Editor>) -> Option<Task<()>>
-        + 'static,
-        on_change: impl Fn(&mut Editor, String, &mut Window, &mut Context<Editor>) -> Option<Task<()>>
-        + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.take_inline_input(window, cx);
-
-        let input = cx.new(|cx| {
-            let mut input = Editor::single_line(window, cx);
-            input.set_placeholder_text(placeholder, window, cx);
-            input
-        });
-        let subscription = cx.subscribe_in(
-            &input,
-            window,
-            move |editor, input, event: &EditorEvent, window, cx| match event {
-                EditorEvent::Focused => cx.emit(EditorEvent::FocusedIn),
-                EditorEvent::BufferEdited => {
-                    if editor.pending_inline_input.is_none() {
-                        return;
-                    }
-                    let text = input.read(cx).text(cx);
-                    let task = on_change(editor, text, window, cx);
-                    if let Some(state) = editor.pending_inline_input.as_mut() {
-                        state.preview_task = task;
-                    }
-                }
-                _ => {}
-            },
-        );
-        let block_ids = self.insert_blocks(
-            [BlockProperties {
-                style: BlockStyle::Flex,
-                placement: BlockPlacement::Below(position),
-                height: Some(1),
-                render: Self::render_inline_input_block(input.clone(), None),
-                priority: 0,
-            }],
-            Some(Autoscroll::fit()),
-            cx,
-        );
-        let Some(&block_id) = block_ids.first() else {
-            return;
-        };
-
-        let input_focus_handle = input.focus_handle(cx);
-        window.focus(&input_focus_handle, cx);
-        self.pending_inline_input = Some(InlineInputState {
-            editor: input,
-            block_id,
-            confirm_task: None,
-            preview_task: None,
-            preview: None,
-            _subscription: subscription,
-            on_confirm: Rc::new(on_confirm),
-        });
-    }
-
-    fn render_inline_input_block(
-        input: Entity<Editor>,
-        preview: Option<InlineInputPreview>,
-    ) -> RenderBlock {
-        Arc::new(move |cx: &mut BlockContext| {
-            v_flex()
-                .block_mouse_except_scroll()
-                .pl(cx.anchor_x)
-                .child(EditorElement::new(
-                    &input,
-                    EditorStyle {
-                        background: cx.theme().system().transparent,
-                        local_player: cx.editor_style.local_player,
-                        text: cx.editor_style.text.clone(),
-                        scrollbar_width: cx.editor_style.scrollbar_width,
-                        syntax: cx.editor_style.syntax.clone(),
-                        status: cx.editor_style.status.clone(),
-                        ..EditorStyle::default()
-                    },
-                ))
-                .when_some(preview.as_ref(), |this, preview| {
-                    let text_style = cx.editor_style.text.clone();
-                    let color = match preview {
-                        InlineInputPreview::Text(_) => cx.theme().colors().text_muted,
-                        InlineInputPreview::Error(_) => cx.theme().status().error,
-                    };
-                    this.children(preview.display_lines().into_iter().map(|line| {
-                        div()
-                            .font_family(text_style.font().family)
-                            .text_size(text_style.font_size)
-                            .text_color(color)
-                            .child(line)
-                    }))
-                })
-                .into_any_element()
-        })
-    }
-
-    pub(crate) fn set_inline_input_preview(
-        &mut self,
-        preview: Option<InlineInputPreview>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(state) = self.pending_inline_input.as_mut() else {
-            return;
-        };
-        let block_id = state.block_id;
-        let input = state.editor.clone();
-        let height = 1 + preview
-            .as_ref()
-            .map_or(0, InlineInputPreview::height_in_lines);
-        let previous = mem::replace(&mut state.preview, preview.clone());
-        let previous_height = 1 + previous
-            .as_ref()
-            .map_or(0, InlineInputPreview::height_in_lines);
-        let autoscroll = (height != previous_height).then_some(Autoscroll::fit());
-        self.replace_blocks(
-            [(block_id, Self::render_inline_input_block(input, preview))]
-                .into_iter()
-                .collect(),
-            None,
-            cx,
-        );
-        self.resize_blocks([(block_id, height)].into_iter().collect(), autoscroll, cx);
-    }
-
-    pub fn confirm_inline_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(state) = self.pending_inline_input.as_ref() else {
-            return;
-        };
-        let text = state.editor.read(cx).text(cx);
-        let on_confirm = state.on_confirm.clone();
-        if let Some(task) = on_confirm(self, text, window, cx)
-            && let Some(state) = self.pending_inline_input.as_mut()
-        {
-            state.confirm_task = Some(task);
-        }
-    }
-
-    pub(crate) fn take_inline_input(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<InlineInputState> {
-        let state = self.pending_inline_input.take()?;
-        if state.editor.focus_handle(cx).is_focused(window) {
-            window.focus(&self.focus_handle, cx);
-        }
-        self.remove_blocks(
-            [state.block_id].into_iter().collect(),
-            Some(Autoscroll::fit()),
-            cx,
-        );
-        Some(state)
     }
 
     fn can_format_selections(&self, cx: &App) -> bool {
