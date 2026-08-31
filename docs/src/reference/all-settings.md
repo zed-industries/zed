@@ -3426,8 +3426,21 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
 
 **Options**
 
-1. `"empty_tab"`: Show an empty untitled buffer
-2. `"launchpad"`: Show the launchpad
+1. Show an empty untitled buffer:
+
+```json [settings]
+{
+  "on_new_window": "empty_tab"
+}
+```
+
+2. Show the launchpad with recent projects:
+
+```json [settings]
+{
+  "on_new_window": "launchpad"
+}
+```
 
 ## Instrumentation
 
