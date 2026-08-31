@@ -13,13 +13,13 @@ const MAX_TOOLTIP_BINDINGS: usize = 10;
 
 /// A status bar item shown while timed pending input can complete a multi-stroke key binding.
 pub struct PendingKeystrokesIndicator {
-    pending: Option<Rc<PendingKeystrokes>>,
+    render_state: Option<Rc<IndicatorRenderState>>,
     pending_input_generation: u64,
     _pending_input_subscription: Subscription,
     _settings_subscription: Subscription,
 }
 
-struct PendingKeystrokes {
+struct IndicatorRenderState {
     keystrokes: Rc<[KeybindingKeystroke]>,
     pending_input_generation: u64,
     bindings: Vec<(Rc<[KeybindingKeystroke]>, SharedString)>,
@@ -32,7 +32,7 @@ impl PendingKeystrokesIndicator {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let pending_input_subscription =
             cx.observe_pending_input(window, |this: &mut Self, window, cx| {
-                if this.update_pending(window, cx) {
+                if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
             });
@@ -46,13 +46,13 @@ impl PendingKeystrokesIndicator {
                 }
 
                 enabled = new_enabled;
-                if this.update_pending(window, cx) {
+                if this.refresh_render_state(window, cx) {
                     cx.notify();
                 }
             });
 
         Self {
-            pending: None,
+            render_state: None,
             pending_input_generation: 0,
             _pending_input_subscription: pending_input_subscription,
             _settings_subscription: settings_subscription,
@@ -67,16 +67,16 @@ impl PendingKeystrokesIndicator {
             && !HelixModeSetting::is_enabled(cx)
     }
 
-    fn update_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn refresh_render_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !Self::enabled(cx) {
-            return self.clear_pending(window, cx);
+            return self.clear_render_state(window, cx);
         }
 
         let Some(pending_input) = window.pending_input() else {
-            return self.clear_pending(window, cx);
+            return self.clear_render_state(window, cx);
         };
         let Some(timeout) = pending_input.timeout() else {
-            return self.clear_pending(window, cx);
+            return self.clear_render_state(window, cx);
         };
         let keystrokes = pending_input.keystrokes();
 
@@ -104,7 +104,7 @@ impl PendingKeystrokesIndicator {
         });
 
         self.pending_input_generation = self.pending_input_generation.wrapping_add(1);
-        self.pending = Some(Rc::new(PendingKeystrokes {
+        self.render_state = Some(Rc::new(IndicatorRenderState {
             keystrokes: map_pending_keystrokes(keystrokes, cx.keyboard_mapper().as_ref()).into(),
             pending_input_generation: self.pending_input_generation,
             bindings: bindings
@@ -118,17 +118,17 @@ impl PendingKeystrokesIndicator {
         true
     }
 
-    fn clear_pending(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    fn clear_render_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         window.set_pending_input_timeout_paused(&cx.entity(), false, cx);
-        self.pending.take().is_some()
+        self.render_state.take().is_some()
     }
 
-    fn pending(&self) -> Option<&Rc<PendingKeystrokes>> {
-        self.pending.as_ref()
+    fn render_state(&self) -> Option<&Rc<IndicatorRenderState>> {
+        self.render_state.as_ref()
     }
 
     fn set_hovered(&mut self, hovered: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending.is_none() {
+        if self.render_state.is_none() {
             return;
         }
 
@@ -138,14 +138,15 @@ impl PendingKeystrokesIndicator {
 
 impl Render for PendingKeystrokesIndicator {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(pending) = self.pending().cloned() else {
+        let Some(render_state) = self.render_state().cloned() else {
             return div().hidden().into_any_element();
         };
-        let remaining_fraction = if pending.timeout_duration.is_zero() {
+        let remaining_fraction = if render_state.timeout_duration.is_zero() {
             0.0
         } else {
-            (pending.remaining_duration.as_secs_f32() / pending.timeout_duration.as_secs_f32())
-                .clamp(0.0, 1.0)
+            (render_state.remaining_duration.as_secs_f32()
+                / render_state.timeout_duration.as_secs_f32())
+            .clamp(0.0, 1.0)
         };
 
         h_flex()
@@ -161,16 +162,16 @@ impl Render for PendingKeystrokesIndicator {
                 let progress = CircularProgress::new(remaining_fraction, 1.0, px(13.), cx)
                     .stroke_width(px(2.))
                     .progress_color(cx.theme().colors().text_muted);
-                if pending.timeout_paused || pending.remaining_duration.is_zero() {
+                if render_state.timeout_paused || render_state.remaining_duration.is_zero() {
                     progress.into_any_element()
                 } else {
                     progress
                         .with_animation(
                             (
                                 "pending-keystrokes-countdown",
-                                pending.pending_input_generation,
+                                render_state.pending_input_generation,
                             ),
-                            Animation::new(pending.remaining_duration).with_max_fps(30.0),
+                            Animation::new(render_state.remaining_duration).with_max_fps(30.0),
                             move |progress, delta| {
                                 progress.value(remaining_fraction * (1.0 - delta))
                             },
@@ -179,23 +180,23 @@ impl Render for PendingKeystrokesIndicator {
                 }
             })
             .child(
-                KeyBinding::from_keystrokes(pending.keystrokes.clone(), false)
+                KeyBinding::from_keystrokes(render_state.keystrokes.clone(), false)
                     .size(rems_from_px(12_f32)),
             )
             .tooltip(Tooltip::element(move |_, _| {
-                let pending = &pending;
+                let render_state = &render_state;
                 v_flex()
                     .gap_1()
                     .child(
                         h_flex()
                             .gap_1()
                             .child(KeyBinding::from_keystrokes(
-                                pending.keystrokes.clone(),
+                                render_state.keystrokes.clone(),
                                 false,
                             ))
                             .child(Label::new("is waiting for more keys").color(Color::Muted)),
                     )
-                    .children(pending.bindings.iter().take(MAX_TOOLTIP_BINDINGS).map(
+                    .children(render_state.bindings.iter().take(MAX_TOOLTIP_BINDINGS).map(
                         |(keystrokes, action)| {
                             h_flex()
                                 .gap_2()
@@ -203,11 +204,11 @@ impl Render for PendingKeystrokesIndicator {
                                 .child(Label::new(action.clone()).size(LabelSize::Small))
                         },
                     ))
-                    .when(pending.bindings.len() > MAX_TOOLTIP_BINDINGS, |el| {
+                    .when(render_state.bindings.len() > MAX_TOOLTIP_BINDINGS, |el| {
                         el.child(
                             Label::new(format!(
                                 "…and {} more",
-                                pending.bindings.len() - MAX_TOOLTIP_BINDINGS
+                                render_state.bindings.len() - MAX_TOOLTIP_BINDINGS
                             ))
                             .size(LabelSize::Small)
                             .color(Color::Muted),
@@ -298,36 +299,38 @@ mod tests {
     }
 
     #[derive(Debug, PartialEq)]
-    struct PendingSnapshot {
+    struct IndicatorSnapshot {
         keystrokes: Vec<String>,
         generation: u64,
         bindings: Vec<(Vec<String>, String)>,
         timeout_paused: bool,
     }
 
-    fn pending_snapshot(indicator: &PendingKeystrokesIndicator) -> Option<PendingSnapshot> {
-        indicator.pending().map(|pending| PendingSnapshot {
-            keystrokes: pending
-                .keystrokes
-                .iter()
-                .map(|keystroke| keystroke.inner().unparse())
-                .collect(),
-            generation: pending.pending_input_generation,
-            bindings: pending
-                .bindings
-                .iter()
-                .map(|(keystrokes, action)| {
-                    (
-                        keystrokes
-                            .iter()
-                            .map(|keystroke| keystroke.inner().unparse())
-                            .collect(),
-                        action.to_string(),
-                    )
-                })
-                .collect(),
-            timeout_paused: pending.timeout_paused,
-        })
+    fn indicator_snapshot(indicator: &PendingKeystrokesIndicator) -> Option<IndicatorSnapshot> {
+        indicator
+            .render_state()
+            .map(|render_state| IndicatorSnapshot {
+                keystrokes: render_state
+                    .keystrokes
+                    .iter()
+                    .map(|keystroke| keystroke.inner().unparse())
+                    .collect(),
+                generation: render_state.pending_input_generation,
+                bindings: render_state
+                    .bindings
+                    .iter()
+                    .map(|(keystrokes, action)| {
+                        (
+                            keystrokes
+                                .iter()
+                                .map(|keystroke| keystroke.inner().unparse())
+                                .collect(),
+                            action.to_string(),
+                        )
+                    })
+                    .collect(),
+                timeout_paused: render_state.timeout_paused,
+            })
     }
 
     fn set_indicator_hovered(
@@ -383,12 +386,12 @@ mod tests {
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
 
-        let first_pending = indicator
-            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+        let first_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("pending input snapshot");
-        assert_eq!(first_pending.keystrokes, vec!["ctrl-b"]);
+        assert_eq!(first_render_state.keystrokes, vec!["ctrl-b"]);
         assert_eq!(
-            first_pending.bindings,
+            first_render_state.bindings,
             vec![
                 (
                     vec!["h".to_string()],
@@ -404,13 +407,13 @@ mod tests {
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
 
-        let second_pending = indicator
-            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+        let second_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("updated pending input snapshot");
-        assert_eq!(second_pending.keystrokes, vec!["ctrl-b", "h"]);
-        assert!(second_pending.generation > first_pending.generation);
+        assert_eq!(second_render_state.keystrokes, vec!["ctrl-b", "h"]);
+        assert!(second_render_state.generation > first_render_state.generation);
         assert_eq!(
-            second_pending.bindings,
+            second_render_state.bindings,
             vec![(
                 vec!["j".to_string()],
                 humanize_action_name(LongestBinding.name()),
@@ -419,7 +422,7 @@ mod tests {
 
         cx.simulate_keystrokes("j");
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
     }
 
     #[gpui::test]
@@ -431,17 +434,17 @@ mod tests {
 
         set_indicator_hovered(&indicator, true, cx);
         cx.run_until_parked();
-        let paused_pending = indicator
-            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+        let paused_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("paused pending input");
-        assert!(paused_pending.timeout_paused);
+        assert!(paused_render_state.timeout_paused);
 
         set_indicator_hovered(&indicator, false, cx);
         cx.run_until_parked();
-        let resumed_pending = indicator
-            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+        let resumed_render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
             .expect("resumed pending input");
-        assert!(!resumed_pending.timeout_paused);
+        assert!(!resumed_render_state.timeout_paused);
 
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
@@ -467,7 +470,7 @@ mod tests {
             });
         });
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         cx.update(|window, _| {
             let timeout = window
                 .pending_input()
@@ -509,7 +512,7 @@ mod tests {
             let pending_input = window.pending_input().expect("pending input");
             assert!(pending_input.timeout().is_none());
         });
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
         assert_eq!(notification_count.get(), 0);
     }
 }
