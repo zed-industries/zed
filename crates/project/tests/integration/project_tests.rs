@@ -4215,7 +4215,7 @@ async fn test_diagnostic_range_spanning_line_terminator(cx: &mut gpui::TestAppCo
                         Unclipped(PointUtf16::new(0, 11))..Unclipped(PointUtf16::new(1, 0)),
                         Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
-                            message: "Expected `:`".to_string(),
+                            message: "Expected `:`".into(),
                             source_kind: DiagnosticSourceKind::Pushed,
                             ..Diagnostic::default()
                         },
