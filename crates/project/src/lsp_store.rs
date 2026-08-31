@@ -1619,7 +1619,7 @@ impl LocalLspStore {
                                 .map(|(adapter, lsp)| (adapter.clone(), lsp.clone()))
                                 .collect::<Vec<_>>()
                         };
-                    let settings = LanguageSettings::for_buffer(buffer, cx).into_owned();
+                    let settings = LanguageSettings::for_buffer(buffer, cx);
                     let request_timeout = ProjectSettings::get_global(cx)
                         .global_lsp_settings
                         .get_request_timeout();
@@ -2881,6 +2881,27 @@ impl LocalLspStore {
                     entry.range.start.column -= 1;
                     entry.range.start =
                         snapshot.clip_point_utf16(Unclipped(entry.range.start), Bias::Left);
+                }
+            } else if entry.range.end == PointUtf16::new(entry.range.start.row + 1, 0) {
+                // Some language servers (e.g. Python parsers reporting a missing `:`)
+                // report a diagnostic whose range starts at the end of a line and ends
+                // at the start of the next one. That range contains nothing but the
+                // line terminator itself, so there is no glyph left to underline and
+                // the diagnostic renders invisibly even though it's real. Only collapse
+                // ranges that are exactly the terminator (checked via the precise end
+                // position above) so genuinely multi-line diagnostics that merely start
+                // at an end-of-line are left untouched.
+                let line_end = snapshot.clip_point_utf16(
+                    Unclipped(PointUtf16::new(entry.range.start.row, u32::MAX)),
+                    Bias::Left,
+                );
+                if entry.range.start == line_end {
+                    entry.range.end = entry.range.start;
+                    if entry.range.start.column > 0 {
+                        entry.range.start.column -= 1;
+                        entry.range.start =
+                            snapshot.clip_point_utf16(Unclipped(entry.range.start), Bias::Left);
+                    }
                 }
             }
 
@@ -4932,7 +4953,38 @@ impl LspStore {
                 self.on_buffer_reloaded(buffer, cx);
             }
 
+            language::BufferEvent::SettingsChanged => {
+                self.on_buffer_settings_changed(&buffer, cx);
+            }
+
             _ => {}
+        }
+    }
+
+    fn on_buffer_settings_changed(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) {
+        let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) else {
+            return;
+        };
+        let buffer = buffer.read(cx);
+        if buffer.language().is_none() {
+            return;
+        }
+        let settings = LanguageSettings::for_buffer(buffer, cx);
+        if settings.prettier.allowed
+            && let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings)
+        {
+            let worktree_id = File::from_dyn(buffer.file()).map(|file| file.worktree_id(cx));
+            let prettier_plugins = prettier_plugins
+                .iter()
+                .map(|plugin| Arc::from(plugin.as_str()))
+                .collect::<Vec<_>>();
+            prettier_store.update(cx, |prettier_store, cx| {
+                prettier_store.install_default_prettier(
+                    worktree_id,
+                    prettier_plugins.into_iter(),
+                    cx,
+                )
+            })
         }
     }
 
@@ -5194,15 +5246,17 @@ impl LspStore {
                     }
 
                     this.update(cx, |this, cx| {
-                        let mut plain_text_buffers = Vec::new();
+                        let mut buffers_to_detect = Vec::new();
                         let mut buffers_with_language = Vec::new();
                         let mut buffers_with_unknown_injections = Vec::new();
                         for handle in this.buffer_store.read(cx).buffers() {
                             let buffer = handle.read(cx);
                             if buffer.language().is_none()
                                 || buffer.language() == Some(&*language::PLAIN_TEXT)
+                                || (buffer.file().is_some()
+                                    && buffer.content_language_detection_enabled())
                             {
-                                plain_text_buffers.push(handle);
+                                buffers_to_detect.push(handle);
                             } else {
                                 if buffer.contains_unknown_injections() {
                                     buffers_with_unknown_injections.push(handle.clone());
@@ -5213,14 +5267,14 @@ impl LspStore {
 
                         // Deprioritize the invisible worktrees so main worktrees' language servers can be started first,
                         // and reused later in the invisible worktrees.
-                        plain_text_buffers.sort_by_key(|buffer| {
+                        buffers_to_detect.sort_by_key(|buffer| {
                             Reverse(
                                 File::from_dyn(buffer.read(cx).file())
                                     .map(|file| file.worktree.read(cx).is_visible()),
                             )
                         });
 
-                        for buffer in plain_text_buffers {
+                        for buffer in buffers_to_detect {
                             this.detect_language_for_buffer(&buffer, cx);
                             if let Some(local) = this.as_local_mut() {
                                 local.initialize_buffer(&buffer, cx);
@@ -5311,7 +5365,7 @@ impl LspStore {
 
         log::debug!("Parsed modeline settings: {:?}", modeline_settings);
 
-        buffer_handle.update(cx, |buffer, _cx| buffer.set_modeline(modeline_settings))
+        buffer_handle.update(cx, |buffer, cx| buffer.set_modeline(modeline_settings, cx))
     }
 
     fn detect_language_for_buffer(
@@ -5342,6 +5396,9 @@ impl LspStore {
             if let Some(Ok(Ok(new_language))) =
                 self.languages.load_language(language_id).now_or_never()
             {
+                buffer_handle.update(cx, |buffer, _| {
+                    buffer.set_content_language_detection_enabled(false);
+                });
                 self.set_language_for_buffer(buffer_handle, new_language, cx);
             }
         } else {
@@ -5382,8 +5439,7 @@ impl LspStore {
             Some(&buffer_entity.read(cx)),
             Some(&new_language.name()),
             cx,
-        )
-        .into_owned();
+        );
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -5744,26 +5800,7 @@ impl LspStore {
     }
 
     fn on_settings_changed(&mut self, cx: &mut Context<Self>) {
-        let mut language_formatters_to_check = Vec::new();
-        for buffer in self.buffer_store.read(cx).buffers() {
-            let buffer = buffer.read(cx);
-            let settings = LanguageSettings::for_buffer(buffer, cx);
-            if buffer.language().is_some() {
-                let buffer_file = File::from_dyn(buffer.file());
-                language_formatters_to_check.push((
-                    buffer_file.map(|f| f.worktree_id(cx)),
-                    settings.into_owned(),
-                ));
-            }
-        }
-
         self.request_workspace_config_refresh();
-
-        if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
-            prettier_store.update(cx, |prettier_store, cx| {
-                prettier_store.on_settings_changed(language_formatters_to_check, cx)
-            })
-        }
 
         let new_semantic_token_rules = crate::project_settings::ProjectSettings::get_global(cx)
             .global_lsp_settings

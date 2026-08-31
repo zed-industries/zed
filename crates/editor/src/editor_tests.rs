@@ -37,8 +37,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::Formatter;
-use languages::markdown_lang;
-use languages::rust_lang;
+use languages::{language, markdown_lang, rust_lang};
 use lsp::{CompletionParams, DEFAULT_LSP_REQUEST_TIMEOUT};
 use multi_buffer::{IndentGuide, MultiBuffer, MultiBufferOffset, MultiBufferOffsetUtf16, PathKey};
 use parking_lot::Mutex;
@@ -10000,6 +9999,147 @@ async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut Tes
 }
 
 #[gpui::test]
+async fn test_editing_untitled_buffer_redetects_language(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.language_detection = Some(false);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let project = Project::test(fs, [], cx).await;
+    let go_language = language("go", tree_sitter_go::LANGUAGE.into());
+    project.read_with(cx, |project, _| {
+        project.languages().add(rust_lang());
+        project.languages().add(go_language.clone());
+    });
+    let buffer = project
+        .update(cx, |project, cx| project.create_buffer(None, true, cx))
+        .await
+        .unwrap();
+    buffer.update(cx, |buffer, _| {
+        buffer.set_content_language_detection_enabled(true);
+    });
+    let window = cx.add_window(|window, cx| {
+        let editor = Editor::for_buffer(buffer.clone(), None, window, cx);
+        window.focus(&editor.focus_handle(cx), cx);
+        editor
+    });
+    let editor = window.root(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    update_test_editor_settings(cx, &|settings| {
+        settings.language_detection = Some(true);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.insert("fn main() {}", window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    editor.update_in(cx, |editor, window, cx| {
+        editor.insert(" ", window, cx);
+    });
+    cx.run_until_parked();
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT / 2);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        rust_lang().name()
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.backspace(&Backspace, window, cx);
+    });
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(
+            "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(\"hello\") }".to_string(),
+        ));
+        editor.paste(&Paste, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        rust_lang().name()
+    );
+
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        go_language.name()
+    );
+
+    project.update(cx, |project, cx| {
+        project.set_language_for_buffer(&buffer, PLAIN_TEXT.clone(), cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+        editor.insert("fn main() { println!(\"hello\"); }", window, cx);
+    });
+
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT);
+    cx.run_until_parked();
+
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.language().unwrap().name()),
+        PLAIN_TEXT.name()
+    );
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -10505,6 +10645,47 @@ async fn test_copy_file_location_from_multibuffer(cx: &mut TestAppContext) {
         cx.read_from_clipboard().and_then(|item| item.text()),
         Some("file.txt:3-5".to_string()),
         "a multi-row selection should report the original file's line range"
+    );
+}
+
+#[gpui::test]
+async fn test_copy_file_name_for_external_file(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "a.txt": "" })).await;
+    fs.insert_tree(path!("/elsewhere"), json!({ "external.csv": "a,b\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/elsewhere/external.csv"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        Editor::for_buffer(buffer, Some(project.clone()), window, cx)
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name(&CopyFileName, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external.csv".to_string()),
+        "copy_file_name should work for a file outside the project"
+    );
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.copy_file_name_without_extension(&CopyFileNameWithoutExtension, window, cx);
+    });
+    assert_eq!(
+        cx.read_from_clipboard().and_then(|item| item.text()),
+        Some("external".to_string()),
+        "copy_file_name_without_extension should work for a file outside the project"
     );
 }
 
@@ -30470,6 +30651,135 @@ let foo = 15;"#,
 }
 
 #[gpui::test]
+async fn test_goto_definition_reveals_existing_editor_in_other_pane(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.reveal_if_open = Some(true);
+            });
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            definition_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+    cx.set_state("fn main() { ˇtarget(); }");
+
+    let origin_path = cx.update_editor(|editor, _, cx| editor.active_project_path(cx).unwrap());
+    let (fake_fs, worktree_id) = cx.update_workspace(|workspace, _, cx| {
+        let project = workspace.project();
+        let fake_fs = project.read(cx).fs().as_fake();
+        let worktree_id = project.read(cx).worktrees(cx).next().unwrap().read(cx).id();
+        (fake_fs, worktree_id)
+    });
+    let target_abs_path = EditorLspTestContext::root_path()
+        .join("dir")
+        .join("definition.rs");
+    fake_fs
+        .insert_file(&target_abs_path, b"fn target() {}\n".to_vec())
+        .await;
+    cx.run_until_parked();
+
+    let (left_pane, right_pane) = cx.update_workspace(|workspace, window, cx| {
+        let left_pane = workspace.active_pane().clone();
+        let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, window, cx);
+        (left_pane, right_pane)
+    });
+    let origin_editor = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_path(origin_path, Some(right_pane.downgrade()), true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let target_editor = cx
+        .update_workspace(|workspace, window, cx| {
+            workspace.open_path(
+                (worktree_id, rel_path("dir/definition.rs")),
+                Some(left_pane.downgrade()),
+                false,
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let target_buffer = target_editor.read_with(&cx.cx.cx, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+    cx.update_workspace(|workspace, window, cx| {
+        assert!(workspace.activate_item(&origin_editor, true, true, window, cx));
+    });
+    cx.run_until_parked();
+    cx.update_workspace(|workspace, _, _| {
+        assert_eq!(workspace.active_pane(), &right_pane);
+    });
+
+    let target_uri = lsp::Uri::from_file_path(target_abs_path).unwrap();
+    let _go_to_definition = cx
+        .lsp
+        .set_request_handler::<lsp::request::GotoDefinition, _, _>(move |_, _| {
+            let target_uri = target_uri.clone();
+            async move {
+                Ok(Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location {
+                    uri: target_uri,
+                    range: lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 9)),
+                })))
+            }
+        });
+
+    let navigated = origin_editor
+        .update_in(&mut cx.cx.cx, |editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
+        .await
+        .expect("Failed to navigate to definition");
+    assert_eq!(navigated, Navigated::Yes);
+    cx.run_until_parked();
+
+    cx.update_workspace(|workspace, _, cx| {
+        assert_eq!(workspace.active_pane(), &left_pane);
+        assert_eq!(
+            left_pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap(),
+            target_editor
+        );
+        assert_eq!(
+            right_pane
+                .read(cx)
+                .active_item()
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap(),
+            origin_editor
+        );
+        assert_eq!(
+            workspace
+                .items_of_type::<Editor>(cx)
+                .filter(|editor| {
+                    editor.read(cx).buffer().read(cx).as_singleton().as_ref()
+                        == Some(&target_buffer)
+                })
+                .count(),
+            1
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(
@@ -30595,6 +30905,86 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
         assert_eq!(
             references_fallback_text, "fn one() {\n    let mut a = two();\n}",
             "Should use the range from the references response and not the GoToDefinition one"
+        );
+    });
+}
+
+/// End-to-end regression test for ZED-79W ("cannot summarize backward"):
+/// language servers can return a location whose range is reversed (start
+/// after end). `GetReferences::response_from_lsp` used to convert the
+/// endpoints individually, bypassing `range_from_lsp`'s normalization, so
+/// the reversed range reached excerpt construction intact, and when the
+/// reversal exceeded twice the excerpt context line count, the results
+/// multibuffer built an excerpt whose context anchors resolve backward,
+/// panicking the rope layer.
+#[gpui::test]
+async fn test_find_all_references_with_reversed_server_range(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}
+
+        fn three() {
+            two();
+            two();
+            two();
+        }"#
+        .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(1, 16), lsp::Position::new(1, 19)),
+                },
+                // A reversed range, as returned by some language servers.
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(9, 8), lsp::Position::new(1, 16)),
+                },
+            ]))
+        });
+
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences::default(), window, cx)
+        })
+        .expect("should have spawned a references request")
+        .await
+        .expect("references request should succeed");
+    assert_eq!(navigated, Navigated::Yes);
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, test_editor_cx| {
+        assert_eq!(
+            editors.len(),
+            2,
+            "references should open in a new multibuffer editor"
+        );
+        let references_text = editors
+            .into_iter()
+            .find(|new_editor| *new_editor != test_editor_cx.entity())
+            .expect("should have one non-test editor")
+            .read(test_editor_cx)
+            .text(test_editor_cx);
+        assert!(
+            references_text.contains("fn three()"),
+            "the reversed range's rows should be excerpted, got: {references_text:?}"
         );
     });
 }
@@ -35371,6 +35761,75 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         actions, new_actions,
         "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
     );
+}
+
+#[gpui::test]
+async fn test_reveal_if_open_uses_user_setting_for_loaded_editor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store
+            .set_user_settings(r#"{ "reveal_if_open": true }"#, cx)
+            .unwrap();
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({ "file.txt": "content" }))
+        .await;
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace =
+        multi_workspace.read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone());
+    let worktree_id = project.read_with(cx, |project, cx| {
+        project.worktrees(cx).next().unwrap().read(cx).id()
+    });
+    let left_pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+    let original_editor = workspace
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("file.txt")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let buffer = original_editor.read_with(cx, |editor, cx| {
+        editor.buffer().read(cx).as_singleton().unwrap()
+    });
+
+    let right_pane = workspace.update_in(cx, |workspace, window, cx| {
+        let right_pane = workspace.split_pane(left_pane.clone(), SplitDirection::Right, window, cx);
+        window.focus(&right_pane.focus_handle(cx), cx);
+        right_pane
+    });
+    cx.run_until_parked();
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.active_pane(), &right_pane);
+    });
+
+    let revealed_editor = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_project_item(None, buffer.clone(), true, true, false, false, window, cx)
+    });
+    assert_eq!(revealed_editor, original_editor);
+    assert_eq!(left_pane.read_with(cx, |pane, _| pane.items_len()), 1);
+    assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 0);
+    workspace.read_with(cx, |workspace, _| {
+        assert_eq!(workspace.active_pane(), &left_pane);
+    });
+
+    let duplicate_editor = workspace.update_in(cx, |workspace, window, cx| {
+        workspace.open_project_item(
+            Some(right_pane.clone()),
+            buffer,
+            true,
+            true,
+            false,
+            false,
+            window,
+            cx,
+        )
+    });
+    assert_ne!(duplicate_editor, original_editor);
+    assert_eq!(right_pane.read_with(cx, |pane, _| pane.items_len()), 1);
 }
 
 #[gpui::test]
@@ -45307,7 +45766,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
-    cx.update_editor(|editor, _, _| {
+    cx.update_editor(|editor, _, cx| {
         let bounds = size(px(1800.), px(900.));
         let settled = |width: f32, height: f32, editor_width: f32, bounds: Size<Pixels>| {
             Some(SettledScrollRange {
@@ -45316,7 +45775,13 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
                 editor_bounds_size: bounds,
             })
         };
-        editor.hold_scrollbar_range(true);
+        editor.set_search_results_status(
+            SearchResultsStatus {
+                pending: true,
+                ..SearchResultsStatus::default()
+            },
+            cx,
+        );
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1780.), px(100.)), px(1786.), bounds),
             settled(1780., 100., 1786., bounds),
@@ -45347,7 +45812,7 @@ async fn test_scroll_range_hold_freezes_before_first_settled_frame(cx: &mut Test
             settled(1300., 160., 1276., resized_bounds),
             "after re-freezing on the resize, churn at the same bounds stays frozen again"
         );
-        editor.hold_scrollbar_range(false);
+        editor.set_search_results_status(SearchResultsStatus::default(), cx);
         assert_eq!(
             editor.frozen_scroll_range(false, size(px(1770.), px(160.)), px(1776.), bounds),
             None,

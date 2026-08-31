@@ -9058,7 +9058,8 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let frozen_scroll_state = if self.editor.read(cx).scroll_range_hold.is_some() {
+                    let frozen_scroll_state = if self.editor.read(cx).search_results_hold.is_some()
+                    {
                         let is_rewrapping =
                             self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
                         self.editor.update(cx, |editor, _| {
@@ -10679,9 +10680,24 @@ pub fn register_action<T: Action>(
     window: &mut Window,
     listener: impl Fn(&mut Editor, &T, &mut Window, &mut Context<Editor>) + 'static,
 ) {
+    register_action_erased(
+        editor,
+        window,
+        TypeId::of::<T>(),
+        Box::new(move |editor, action, window, cx| {
+            listener(editor, action.downcast_ref().unwrap(), window, cx)
+        }),
+    )
+}
+
+fn register_action_erased(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    action_type: TypeId,
+    listener: Box<dyn Fn(&mut Editor, &dyn std::any::Any, &mut Window, &mut Context<Editor>)>,
+) {
     let editor = editor.clone();
-    window.on_action(TypeId::of::<T>(), move |action, phase, window, cx| {
-        let action = action.downcast_ref().unwrap();
+    window.on_action(action_type, move |action, phase, window, cx| {
         if phase == DispatchPhase::Bubble {
             editor.update(cx, |editor, cx| {
                 listener(editor, action, window, cx);
