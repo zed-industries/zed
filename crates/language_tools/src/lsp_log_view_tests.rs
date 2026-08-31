@@ -128,6 +128,62 @@ async fn test_lsp_log_view_filters_servers_from_other_projects(cx: &mut TestAppC
 }
 
 #[gpui::test]
+async fn test_lsp_log_view_labels_registered_supplementary_servers(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/the-root"), json!({ "test.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |store, cx| store.add_project(&project, cx));
+
+    let server_id = LanguageServerId(100);
+    let (server, _fake_server) = lsp::FakeLanguageServer::new(
+        server_id,
+        lsp::LanguageServerBinary {
+            path: "path/to/prettier".into(),
+            arguments: Vec::new(),
+            env: None,
+        },
+        "prettier".to_string(),
+        Default::default(),
+        &mut cx.to_async(),
+    );
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.register_supplementary_language_server_for_test(
+            server_id,
+            LanguageServerName::new_static("prettier (default)"),
+            Arc::new(server),
+            cx,
+        );
+    });
+
+    let window =
+        cx.add_window(|window, cx| LspLogView::new(project.clone(), log_store, window, cx));
+    let log_view = window.root(cx).unwrap();
+    let mut cx = VisualTestContext::from_window(*window, cx);
+
+    log_view.update(&mut cx, |view, cx| {
+        assert_eq!(
+            view.menu_items(cx).unwrap(),
+            &[LogMenuItem {
+                server_id,
+                server_name: LanguageServerName::new_static("prettier (default)"),
+                worktree_root_name: "supplementary".to_string(),
+                rpc_trace_enabled: false,
+                selected_entry: LogKind::Logs,
+                trace_level: lsp::TraceValue::Off,
+                server_kind: LanguageServerKind::Local {
+                    project: project.downgrade(),
+                },
+            }]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_log_store_does_not_retain_language_servers(cx: &mut TestAppContext) {
     init_test(cx);
 

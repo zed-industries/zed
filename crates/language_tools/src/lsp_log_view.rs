@@ -1,4 +1,4 @@
-use collections::VecDeque;
+use collections::{HashSet, VecDeque};
 use edit_prediction::EditPredictionStore;
 use editor::{Editor, EditorEvent, MultiBufferOffset, actions::MoveToEnd, scroll::Autoscroll};
 use gpui::{
@@ -426,6 +426,12 @@ impl LspLogView {
     }
     pub(crate) fn menu_items(&self, cx: &mut App) -> Option<Vec<LogMenuItem>> {
         self.try_ensure_copilot_for_project(cx);
+        let supplementary_language_server_ids = self
+            .project
+            .read(cx)
+            .supplementary_language_servers(cx)
+            .map(|(server_id, _)| server_id)
+            .collect::<HashSet<_>>();
         let log_store = self.log_store.read(cx);
 
         let unknown_server = LanguageServerName::new_static("unknown server");
@@ -440,11 +446,18 @@ impl LspLogView {
                 LanguageServerKind::Local { .. }
                 | LanguageServerKind::Remote { .. }
                 | LanguageServerKind::LocalSsh { .. } => {
-                    let worktree_root_name = state
-                        .worktree_id
-                        .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-                        .map(|worktree| worktree.read(cx).root_name_str().to_string())
-                        .unwrap_or_else(|| "Unknown worktree".to_string());
+                    let worktree_root_name =
+                        if matches!(&key.kind, LanguageServerKind::Local { .. })
+                            && supplementary_language_server_ids.contains(&key.server_id)
+                        {
+                            "supplementary".to_string()
+                        } else {
+                            state
+                                .worktree_id
+                                .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
+                                .map(|worktree| worktree.read(cx).root_name_str().to_string())
+                                .unwrap_or_else(|| "Unknown worktree".to_string())
+                        };
 
                     LogMenuItem {
                         server_id: key.server_id,

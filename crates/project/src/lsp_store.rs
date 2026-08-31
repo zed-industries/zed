@@ -12992,6 +12992,17 @@ impl LspStore {
         }
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn register_supplementary_language_server_for_test(
+        &mut self,
+        id: LanguageServerId,
+        name: LanguageServerName,
+        server: Arc<LanguageServer>,
+        cx: &mut Context<Self>,
+    ) {
+        self.register_supplementary_language_server(id, name, server, cx);
+    }
+
     fn unregister_supplementary_language_server(
         &mut self,
         id: LanguageServerId,
