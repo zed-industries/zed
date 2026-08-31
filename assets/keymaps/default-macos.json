@@ -608,6 +608,7 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
+      "cmd-k cmd-h": "call_hierarchy::ShowIncomingCalls",
       "cmd-|": "editor::MoveToEnclosingBracket",
       "ctrl-m": "editor::MoveToEnclosingBracket", // From Jetbrains
       "alt-cmd-[": "editor::Fold",
@@ -650,6 +651,14 @@
     "bindings": {
       "cmd-k v": "svg::OpenPreviewToTheSide",
       "cmd-shift-v": "svg::OpenPreview",
+    },
+  },
+  {
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "tabular_data::OpenPreviewToTheSide",
+      "cmd-shift-v": "tabular_data::OpenPreview",
     },
   },
   {
@@ -1229,6 +1238,15 @@
     "use_key_equivalents": true,
     "bindings": {
       "tab": "channel_modal::ToggleMode",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k cmd-h": "call_hierarchy::ToggleDirection",
+      "cmd-k right": "menu::SelectChild",
+      "cmd-k left": "menu::SelectParent",
     },
   },
   {

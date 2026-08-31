@@ -767,8 +767,8 @@ fn make_collaborator_replica(
 ) -> (Entity<Buffer>, clock::Global) {
     let (state, version) =
         buffer.read_with(cx, |buffer, _cx| (buffer.to_proto(_cx), buffer.version()));
-    let collaborator = cx.new(|_cx| {
-        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None).unwrap()
+    let collaborator = cx.new(|cx| {
+        Buffer::from_proto(ReplicaId::new(1), Capability::ReadWrite, state, None, cx).unwrap()
     });
     (collaborator, version)
 }
@@ -2368,9 +2368,9 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                             _ => DiagnosticSeverity::HINT,
                         },
                         message: match index {
-                            0 => "first warning".to_string(),
-                            1 => "second error".to_string(),
-                            _ => "third hint".to_string(),
+                            0 => "first warning".into(),
+                            1 => "second error".into(),
+                            _ => "third hint".into(),
                         },
                         group_id: index + 1,
                         is_primary: true,
@@ -2451,7 +2451,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                     text::PointUtf16::new(0, 0)..text::PointUtf16::new(0, 3),
                     Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "row zero".to_string(),
+                        message: "row zero".into(),
                         group_id: 1,
                         is_primary: true,
                         source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2462,7 +2462,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                     text::PointUtf16::new(2, 0)..text::PointUtf16::new(2, 5),
                     Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
-                        message: "row two".to_string(),
+                        message: "row two".into(),
                         group_id: 2,
                         is_primary: true,
                         source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2473,7 +2473,7 @@ fn test_active_buffer_diagnostics_fetching(cx: &mut TestAppContext) {
                     text::PointUtf16::new(4, 0)..text::PointUtf16::new(4, 4),
                     Diagnostic {
                         severity: DiagnosticSeverity::INFORMATION,
-                        message: "row four".to_string(),
+                        message: "row four".into(),
                         group_id: 3,
                         is_primary: true,
                         source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2537,7 +2537,7 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
                         text::PointUtf16::new(row, 0)..text::PointUtf16::new(row, 4),
                         Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
-                            message: format!("row {row}"),
+                            message: format!("row {row}").into(),
                             group_id: row as usize,
                             is_primary: true,
                             source_kind: language::DiagnosticSourceKind::Pushed,
@@ -2580,7 +2580,7 @@ fn test_active_buffer_diagnostics_collection_limits(cx: &mut TestAppContext) {
                 text::PointUtf16::new(150, 0)..text::PointUtf16::new(150, 4),
                 Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
-                    message: long_message.clone(),
+                    message: long_message.clone().into(),
                     group_id: 1,
                     is_primary: true,
                     source_kind: language::DiagnosticSourceKind::Pushed,

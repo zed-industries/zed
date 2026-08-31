@@ -1669,7 +1669,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to copy permalink: {err}");
+                let message = format!("Failed to copy permalink to line: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -1710,7 +1710,7 @@ impl Editor {
                 .ok();
             }
             Err(err) => {
-                let message = format!("Failed to open permalink: {err}");
+                let message = format!("Failed to open permalink to line: {err}");
 
                 anyhow::Result::<()>::Err(err).log_err();
 
@@ -2310,32 +2310,40 @@ impl Editor {
         Some((blame_entry, repository))
     }
 
+    pub(crate) fn blame_revision_target(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(RepoPath, Oid, Entity<Repository>)> {
+        let (blame_entry, repository) = self.blame_entry_at_cursor(window, cx)?;
+        let highlighted_sha = self
+            .blame
+            .as_ref()
+            .and_then(|blame| blame.read(cx).highlighted_sha());
+        let (revision, path) = blame_entry.revision_target(highlighted_sha)?;
+        Some((path, revision, repository))
+    }
+
+    pub(crate) fn blame_previous_revision_target(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(RepoPath, Oid, Entity<Repository>)> {
+        let (blame_entry, repository) = self.blame_entry_at_cursor(window, cx)?;
+        let (revision, path) = blame_entry.previous_revision_target()?;
+        Some((path, revision, repository))
+    }
+
     pub(super) fn blame_revision(
         &mut self,
         _: &BlameRevision,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((blame_entry, repository)) = self.blame_entry_at_cursor(window, cx) else {
-            self.show_blame_revision_toast("No blame entry for this line", cx);
+        let Some((path, revision, repository)) = self.blame_revision_target(window, cx) else {
             return;
         };
-        if blame_entry.sha.is_zero() {
-            self.show_blame_revision_toast("Cannot blame revision: the line is not committed", cx);
-            return;
-        }
-        if self
-            .blame
-            .as_ref()
-            .is_some_and(|blame| blame.read(cx).highlighted_sha() == Some(blame_entry.sha))
-        {
-            self.show_blame_revision_toast("Already blaming at this revision", cx);
-            return;
-        }
-        let Some(path) = RepoPath::new(&blame_entry.filename).log_err() else {
-            return;
-        };
-        self.open_blame_revision(path, blame_entry.sha, repository, window, cx);
+        self.open_blame_revision(path, revision, repository, window, cx);
     }
 
     pub(super) fn blame_previous_revision(
@@ -2344,15 +2352,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((blame_entry, repository)) = self.blame_entry_at_cursor(window, cx) else {
-            self.show_blame_revision_toast("No blame entry for this line", cx);
-            return;
-        };
-        let Some((revision, filename)) = blame_entry.previous_sha_and_filename() else {
-            self.show_blame_revision_toast("No previous revision for this line", cx);
-            return;
-        };
-        let Some(path) = RepoPath::new(filename).log_err() else {
+        let Some((path, revision, repository)) = self.blame_previous_revision_target(window, cx)
+        else {
             return;
         };
         self.open_blame_revision(path, revision, repository, window, cx);
@@ -2378,21 +2379,6 @@ impl Editor {
             window,
             cx,
         );
-    }
-
-    fn show_blame_revision_toast(&self, message: &str, cx: &mut Context<Self>) {
-        struct BlameRevisionToast;
-        if let Some(workspace) = self.workspace() {
-            workspace.update(cx, |workspace, cx| {
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<BlameRevisionToast>(),
-                        message.to_owned(),
-                    ),
-                    cx,
-                );
-            });
-        }
     }
 
     fn has_blame_entries(&self, cx: &App) -> bool {

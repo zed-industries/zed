@@ -212,23 +212,32 @@ impl RelatedExcerptStore {
         position: Anchor,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (project, snapshot, identifier_line_count) = this.read_with(cx, |this, cx| {
-            (
-                this.project.upgrade(),
-                buffer.read(cx).snapshot(),
-                this.identifier_line_count,
-            )
-        })?;
+        let (project, snapshot, file_extension, identifier_line_count) =
+            this.read_with(cx, |this, cx| {
+                let snapshot = buffer.read(cx).snapshot();
+                let file_extension = snapshot
+                    .file()
+                    .and_then(|file| {
+                        Some(
+                            Path::new(file.file_name(cx))
+                                .extension()?
+                                .to_string_lossy()
+                                .into_owned(),
+                        )
+                    })
+                    .unwrap_or_default();
+                (
+                    this.project.upgrade(),
+                    snapshot,
+                    file_extension,
+                    this.identifier_line_count,
+                )
+            })?;
         let Some(project) = project else {
             return Ok(());
         };
 
         let file = snapshot.file().cloned();
-        let file_extension = file
-            .as_ref()
-            .and_then(|file| file.path().extension())
-            .unwrap_or("")
-            .to_string();
         if let Some(file) = &file {
             log::debug!("retrieving_context buffer:{}", file.path().as_unix_str());
         }
@@ -648,7 +657,7 @@ fn identifiers_for_position(
         }
     }
 
-    ranges.sort_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
+    ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start).then(b.end.cmp(&a.end)));
     ranges.dedup_by(|a, b| {
         if a.start <= b.end {
             b.start = b.start.min(a.start);

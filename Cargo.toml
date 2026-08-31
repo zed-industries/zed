@@ -24,6 +24,7 @@ members = [
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",
+    "crates/call_hierarchy",
     "crates/channel",
     "crates/cli",
     "crates/client",
@@ -115,6 +116,7 @@ members = [
     "crates/keymap_editor",
     "crates/language",
     "crates/language_core",
+    "crates/language_detection",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
@@ -295,6 +297,7 @@ bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
+call_hierarchy = { path = "crates/call_hierarchy" }
 channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
@@ -381,6 +384,7 @@ json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
+language_detection = { path = "crates/language_detection" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
@@ -450,7 +454,7 @@ search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_content = { path = "crates/settings_content" }
-settings_json = { path = "crates/settings_json" }
+settings_json = { path = "crates/settings_json", default-features = false }
 settings_macros = { path = "crates/settings_macros" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 settings_ui = { path = "crates/settings_ui" }
@@ -542,20 +546,23 @@ async-std = { version = "1.12", features = ["unstable"] }
 async-tar = { git = "https://github.com/zed-industries/async-tar", rev = "bd3ad6f89df9a9da7a8535958756d6bf465936a0" }
 async-task = "4.7"
 async-trait = "0.1"
-async-tungstenite = "0.31.0"
+async-tungstenite = "0.33"
 async_zip = { version = "0.0.18", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.8.10", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.8", features = [
     "hardcoded-credentials",
 ] }
-aws-sdk-bedrockruntime = { version = "1.112.0", features = [
+aws-sdk-bedrockruntime = { version = "1.112.0", default-features = false, features = [
     "behavior-version-latest",
+    "default-https-client",
+    "rt-tokio",
 ] }
 aws-sigv4 = { version = "1.4.0", features = ["http1"] }
 aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
+betlang = "0.1.1"
 bitflags = "2.6.0"
 block = "0.1"
 block2 = "0.6"
@@ -582,7 +589,7 @@ core-graphics = "0.24"
 core-text = "21"
 core-video = { version = "0.5.2", features = ["metal"] }
 cpal = "0.17"
-crash-handler = "0.7"
+crash-handler = "0.8"
 criterion = { version = "0.5", features = ["html_reports"] }
 crossbeam = "0.8.4"
 ctor = "1.0.12"
@@ -602,16 +609,16 @@ derive_more = { version = "2.1.1", features = [
 ] }
 dialoguer = { version = "0.12", default-features = false }
 dirs = "6.0"
-documented = "0.9.1"
+documented = "0.10"
 dotenvy = "0.15.0"
 dunce = "1.0"
 ec4rs = { version = "1.2", features = ["allow-empty-values"] }
-emojis = "0.6.1"
+emojis = "0.9"
 encoding_rs = "0.8"
 env_logger = "0.11"
 etagere = "0.2"
 exec = "0.3.1"
-fancy-regex = "0.18.0"
+fancy-regex = "0.19"
 flume = "0.12"
 foreign-types = "0.5"
 fork = "0.4.0"
@@ -621,12 +628,12 @@ futures-lite = "1.13"
 gh-workflow = { git = "https://github.com/zed-industries/gh-workflow", rev = "37f3c0575d379c218a9c455ee67585184e40d43f" }
 globset = "0.4"
 handlebars = "4.3"
-hdrhistogram = "7"
+hdrhistogram = { version = "7", default-features = false }
 heapless = "0.9.2"
 heck = "0.5"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
-html5ever = "0.27.0"
+html5ever = "0.39"
 http = "1.1"
 http-body = "1.0"
 httparse = "1.10"
@@ -659,7 +666,7 @@ inventory = "0.3.19"
 itertools = "0.14.0"
 js-sys = "0.3"
 json_dotpath = "1.1"
-jsonschema = "0.37.0"
+jsonschema = { version = "0.51", default-features = false }
 jsonwebtoken = "10.0"
 jupyter-protocol = "1.4.0"
 jupyter-websocket-client = "1.1.0"
@@ -670,12 +677,12 @@ linkify = "0.10.0"
 livekit = { version = "0.7.32", features = ["tokio", "rustls-tls-native-roots"] }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lru = "0.16"
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f4dfa89a21ca35cd929b70354b1583fabae325f8" }
+lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "f1783e63a7f4eb4397bf51d4148b4895a1f7ab16" }
 mach2 = "0.5"
-markup5ever_rcdom = "0.3.0"
+markup5ever_rcdom = "0.39"
 metal = "0.33"
 mime = "0.3.17"
-minidumper = "0.9"
+minidumper = "0.11"
 moka = { version = "0.12.10", features = ["sync"] }
 nanoid = "0.4"
 nbformat = "1.2.0"
@@ -686,12 +693,15 @@ num-format = "0.4.4"
 objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSAlert",
+    "NSApplication",
     "NSButton",
     "NSControl",
     "NSGraphics",
     "NSResponder",
     "NSView",
     "NSWindow",
+    "block2",
     "objc2-core-foundation",
 ] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
@@ -747,9 +757,10 @@ profiling = "1"
 pollster = "0.4.0"
 proptest = { git = "https://github.com/proptest-rs/proptest", rev = "3dca198a8fef1b32e3a66f1e1897c955b4dc5b5b", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
-prost = "0.9"
-prost-build = "0.9"
-prost-types = "0.9"
+prost = "0.14"
+prost-build = "0.14"
+prost-types = "0.14"
+protox = "0.9"
 proxyvars = "0.2"
 pulldown-cmark = { version = "0.13.0", default-features = false }
 quick-xml = "0.38"
@@ -759,7 +770,7 @@ raw-window-handle = "0.6"
 rayon = "1.8"
 regex = "1.5"
 # WARNING: If you change this, you must also publish a new version of zed-reqwest to crates.io
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "c15662463bda39148ba154100dd44d3fba5873a4", default-features = false, features = [
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "33bc764aa15ff7b200bf7c93bd96e24878d53e14", default-features = false, features = [
     "charset",
     "http2",
     "macos-system-configuration",
@@ -782,7 +793,7 @@ rust-embed = { version = "8.11", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustix = { version = "1.1", features = ["fs"] }
 rustls = { version = "0.23.26" }
-rustls-platform-verifier = "0.5.0"
+rustls-platform-verifier = "0.7"
 # WARNING: If you change this, you must also publish a new version of zed-scap to crates.io
 scap = { git = "https://github.com/zed-industries/scap", rev = "4afea48c3b002197176fb19cd0f9b180dd36eaac", default-features = false, package = "zed-scap", version = "0.0.8-zed" }
 schemars = { version = "1.0", features = ["indexmap2"] }
@@ -809,7 +820,7 @@ sqlformat = "0.2"
 stacksafe = "1.0"
 streaming-iterator = "0.1"
 strsim = "0.11"
-strum = { version = "0.27.2", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 swash = "0.2.6"
 syn = { version = "2.0.101", features = ["full", "extra-traits", "visit-mut"] }
 sys-locale = "0.3.1"
@@ -834,7 +845,7 @@ toml_edit = { version = "0.22", default-features = false, features = [
     "serde",
 ] }
 tower-http = "0.4.4"
-tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "dff1fd868c750dbbae179fcd5c43ce987e4e0528" }
+tree-sitter = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 tracing = "0.1.40"
 tree-sitter-bash = "0.25.1"
 tree-sitter-c = "0.24.1"
@@ -874,7 +885,8 @@ vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
 wasm-encoder = "0.252"
 wasmparser = "0.252"
-wasmtime = { version = "36", default-features = false, features = [
+wasmtime = { version = "48", default-features = false, features = [
+    "anyhow",
     "async",
     "demangle",
     "runtime",
@@ -885,12 +897,13 @@ wasmtime = { version = "36", default-features = false, features = [
 ] }
 wasm-bindgen = "0.2.120"
 wasm-bindgen-futures = "0.4"
-wasmtime-wasi = "36"
+wasmtime-wasi = "48"
 wax = "0.7"
 web-time = "1.1.0"
+webpki-roots = "1.0.8"
 webrtc-sys = "0.3.23"
 wgpu = "29.0.4"
-which = "6.0.0"
+which = "8"
 windows-core = "0.61"
 windows-registry = "0.6.0"
 yaml-rust2 = "0.8"
@@ -964,16 +977,28 @@ features = [
 # Unify `tree_sitter_language::LanguageFn` between crates.io grammar crates and
 # the git tree-sitter above; two instances of the crate would make grammar
 # constants type-incompatible with `tree_sitter::Language`.
-tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "dff1fd868c750dbbae179fcd5c43ce987e4e0528" }
+tree-sitter-language = { git = "https://github.com/tree-sitter/tree-sitter", rev = "43623ec9bf0eaaf7113285c46e8a09018f181b18" }
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
 windows-capture = { git = "https://github.com/zed-industries/windows-capture.git", rev = "f0d6c1b6691db75461b732f6d5ff56eed002eeb9" }
 calloop = { git = "https://github.com/zed-industries/calloop" }
-livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
-libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
+libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
 notify = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
-webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "d0e27be0cdad89eadab3e36207cda0a2b6e359ee" }
+webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
+
+# corgi runs build.rs/proc-macros in a sandbox with no write access outside the
+# action's own OUT_DIR. Upstream `scratch` bakes its build-time OUT_DIR in via
+# `env!` and hands every crate one shared directory, which the sandbox can't
+# grant and a content-addressed build can't share. This patch reads OUT_DIR at
+# runtime, so each build script gets a private, writable dir in its own entry —
+# where cxx-build writes its shared cxxbridge headers. Kept local rather than a
+# cxx git fork so Windows cargo builds are unaffected (a git checkout of cxx
+# needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
+# per-crate scratch dirs are sufficient. Upstream issue:
+# https://github.com/dtolnay/cxx/issues/1752
+scratch = { path = "corgi-patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

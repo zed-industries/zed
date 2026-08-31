@@ -848,7 +848,8 @@ impl HeadlessProject {
                 .map(|global_log_store| global_log_store.0.clone())
                 .context("lsp logs store is missing")?;
             let toggled_log_kind =
-                match proto::toggle_lsp_logs::LogType::from_i32(envelope.payload.log_type)
+                match proto::toggle_lsp_logs::LogType::try_from(envelope.payload.log_type)
+                    .ok()
                     .context("invalid log type")?
                 {
                     proto::toggle_lsp_logs::LogType::Log => LogKind::Logs,

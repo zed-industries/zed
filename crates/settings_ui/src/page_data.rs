@@ -274,6 +274,20 @@ fn general_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Reveal If Open",
+                description: "when enabled, zed will prefer already-open buffers.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("reveal_if_open"),
+                    pick: |settings_content| settings_content.workspace.reveal_if_open.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.reveal_if_open = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Default Open Behavior",
                 description: "How projects open from the UI by default.",
                 field: Box::new(SettingField {
@@ -3604,7 +3618,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 }
 
 fn search_and_files_page() -> SettingsPage {
-    fn search_section() -> [SettingsPageItem; 9] {
+    fn search_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3740,6 +3754,30 @@ fn search_and_files_page() -> SettingsPage {
                             .search
                             .get_or_insert_default()
                             .center_on_match = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Search on Type",
+                description: "Start searching as you type in project search, without pressing Enter.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("editor.search.search_on_type"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .search
+                            .as_ref()
+                            .and_then(|search| search.search_on_type.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .search
+                            .get_or_insert_default()
+                            .search_on_type = value;
                     },
                 }),
                 metadata: None,
@@ -5267,23 +5305,23 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Folder Icons",
-                description: "Whether to show folder icons or chevrons for directories in the project panel.",
+                title: "Folder Indicator",
+                description: "What to show for directories in the project panel.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("project_panel.folder_icons"),
+                    json_path: Some("project_panel.folder_indicator"),
                     pick: |settings_content| {
                         settings_content
                             .project_panel
                             .as_ref()?
-                            .folder_icons
+                            .folder_indicator
                             .as_ref()
                     },
                     write: |settings_content, value, _| {
                         settings_content
                             .project_panel
                             .get_or_insert_default()
-                            .folder_icons = value;
+                            .folder_indicator = value;
                     },
                 }),
                 metadata: None,
@@ -5880,7 +5918,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn outline_panel_section() -> [SettingsPageItem; 11] {
+    fn outline_panel_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Outline Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5959,23 +5997,23 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Folder Icons",
-                description: "Whether to show folder icons or chevrons for directories in the outline panel.",
+                title: "Folder Indicator",
+                description: "What to show for directories in the outline panel.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("outline_panel.folder_icons"),
+                    json_path: Some("outline_panel.folder_indicator"),
                     pick: |settings_content| {
                         settings_content
                             .outline_panel
                             .as_ref()?
-                            .folder_icons
+                            .folder_indicator
                             .as_ref()
                     },
                     write: |settings_content, value, _| {
                         settings_content
                             .outline_panel
                             .get_or_insert_default()
-                            .folder_icons = value;
+                            .folder_indicator = value;
                     },
                 }),
                 metadata: None,
@@ -6095,6 +6133,29 @@ fn panels_page() -> SettingsPage {
                     },
                 }),
                 metadata: None,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Hide Symbols in Multi-Buffers",
+                description: "Whether to hide symbols, excerpts and search matches in the outline panel when a multi-buffer view is active.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("outline_panel.multi_buffer_hide_symbols"),
+                    pick: |settings_content| {
+                        settings_content
+                            .outline_panel
+                            .as_ref()?
+                            .multi_buffer_hide_symbols
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .outline_panel
+                            .get_or_insert_default()
+                            .multi_buffer_hide_symbols = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
             }),
         ]
     }
@@ -6297,19 +6358,23 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Folder Icons",
-                description: "Whether to show folder icons or chevrons for directories in the git panel.",
+                title: "Folder Indicator",
+                description: "What to show for directories in the git panel.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("git_panel.folder_icons"),
+                    json_path: Some("git_panel.folder_indicator"),
                     pick: |settings_content| {
-                        settings_content.git_panel.as_ref()?.folder_icons.as_ref()
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .folder_indicator
+                            .as_ref()
                     },
                     write: |settings_content, value, _| {
                         settings_content
                             .git_panel
                             .get_or_insert_default()
-                            .folder_icons = value;
+                            .folder_indicator = value;
                     },
                 }),
                 metadata: None,
@@ -10019,9 +10084,23 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn miscellaneous_section() -> [SettingsPageItem; 7] {
+    fn miscellaneous_section() -> [SettingsPageItem; 8] {
         [
             SettingsPageItem::SectionHeader("Miscellaneous"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Language Detection",
+                description: "Whether to enable automatic language detection in unsaved buffers.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("language_detection"),
+                    pick: |settings_content| settings_content.editor.language_detection.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.editor.language_detection = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Word Diff Enabled",
                 description: "Whether to enable word diff highlighting in the editor. When enabled, changed words within modified lines are highlighted to show exactly what changed.",

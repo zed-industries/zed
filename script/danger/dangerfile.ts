@@ -1,4 +1,4 @@
-import { danger, message, warn, fail } from "danger";
+import { danger, message, warn, fail, schedule } from "danger";
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -59,6 +59,43 @@ if (includesIssueUrl) {
       "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
     ].join("\n"),
   );
+}
+
+const SELF_REVIEW_MARKER = "Remove this line to confirm you've reviewed this PR before submitting.";
+
+const readmeModified =
+  danger.git.modified_files.includes("README.md") || danger.git.created_files.includes("README.md");
+if (readmeModified) {
+  schedule(async () => {
+    const readmeDiff = await danger.git.diffForFile("README.md");
+    if (readmeDiff && readmeDiff.added.includes(SELF_REVIEW_MARKER)) {
+      fail(
+        "Please self-review your PR before submitting — README.md contains a line that asks to be removed which you should have spotted.",
+      );
+    }
+  });
+}
+
+if (danger.git.deleted_files.includes(".rules")) {
+  fail(
+    [
+      "This PR deletes `.rules`, which contains the mandatory agent self-review rule (the `> [!IMPORTANT]` README marker rule).",
+      "If the deletion is intentional, move that rule to another rules file in the same PR.",
+    ].join("\n"),
+  );
+} else if (danger.git.modified_files.includes(".rules")) {
+  schedule(async () => {
+    const rulesDiff = await danger.git.diffForFile(".rules");
+    if (rulesDiff && rulesDiff.removed.includes(SELF_REVIEW_MARKER) && !rulesDiff.added.includes(SELF_REVIEW_MARKER)) {
+      fail(
+        [
+          "This PR removes the mandatory agent self-review rule from `.rules` (the `> [!IMPORTANT]` README marker rule).",
+          "It has been dropped by accident before and had to be restored in https://github.com/zed-industries/zed/pull/63384.",
+          "If changing it is intentional, keep an equivalent rule containing the same marker text in `.rules`.",
+        ].join("\n"),
+      );
+    }
+  });
 }
 
 const SCHEMA_CHANGE_ATTESTATION =
