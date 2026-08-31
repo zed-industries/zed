@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
     Capslock, ClipboardEntry, ClipboardItem, ClipboardString, DispatchEventResult, GestureTuning,
@@ -89,6 +89,30 @@ pub(crate) struct ClickState {
     last_position: Point<Pixels>,
     last_time: f64,
     current_count: usize,
+}
+
+#[derive(Default)]
+pub(crate) struct TouchIds {
+    next: u64,
+    active: HashMap<i32, TouchId>,
+}
+
+impl TouchIds {
+    fn start(&mut self, pointer_id: i32) -> Option<TouchId> {
+        let next = self.next.checked_add(1)?;
+        let touch_id = TouchId(self.next);
+        self.next = next;
+        self.active.insert(pointer_id, touch_id);
+        Some(touch_id)
+    }
+
+    fn active(&self, pointer_id: i32) -> Option<TouchId> {
+        self.active.get(&pointer_id).copied()
+    }
+
+    fn end(&mut self, pointer_id: i32) -> Option<TouchId> {
+        self.active.remove(&pointer_id)
+    }
 }
 
 impl Default for ClickState {
@@ -209,13 +233,17 @@ impl WebWindowInner {
             this.canvas.set_pointer_capture(event.pointer_id()).ok();
 
             if pointer_type == "touch" {
+                let Some(touch_id) = this.touch_ids.borrow_mut().start(event.pointer_id()) else {
+                    log::error!("exhausted touch identifiers");
+                    return;
+                };
                 this.state.borrow_mut().mouse_position = position;
                 if this.touch_tap_candidate.get().is_none() {
                     this.touch_tap_candidate
                         .set(Some((event.pointer_id(), position)));
                 }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
-                    id: TouchId(event.pointer_id() as u64),
+                    id: touch_id,
                     phase: TouchPhase::Started,
                     position,
                     predicted_position: None,
@@ -273,6 +301,9 @@ impl WebWindowInner {
             let position = pointer_position_in_element(&event);
 
             if event.pointer_type() == "touch" {
+                let Some(touch_id) = this.touch_ids.borrow_mut().end(event.pointer_id()) else {
+                    return;
+                };
                 this.state.borrow_mut().mouse_position = position;
                 let completes_tap = match this.touch_tap_candidate.get() {
                     Some((pointer_id, _)) if pointer_id == event.pointer_id() => {
@@ -285,7 +316,7 @@ impl WebWindowInner {
                 // call, so the text-input check below sees the state the tap
                 // produced.
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
-                    id: TouchId(event.pointer_id() as u64),
+                    id: touch_id,
                     phase: TouchPhase::Ended,
                     position,
                     predicted_position: None,
@@ -387,13 +418,16 @@ impl WebWindowInner {
         self.listen("pointercancel", move |event: JsValue| {
             let event: web_sys::PointerEvent = event.unchecked_into();
             if event.pointer_type() == "touch" {
+                let Some(touch_id) = this.touch_ids.borrow_mut().end(event.pointer_id()) else {
+                    return;
+                };
                 if let Some((pointer_id, _)) = this.touch_tap_candidate.get()
                     && pointer_id == event.pointer_id()
                 {
                     this.touch_tap_candidate.set(None);
                 }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
-                    id: TouchId(event.pointer_id() as u64),
+                    id: touch_id,
                     phase: TouchPhase::Cancelled,
                     position: pointer_position_in_element(&event),
                     predicted_position: None,
@@ -508,6 +542,9 @@ impl WebWindowInner {
             let position = pointer_position_in_element(&event);
 
             if event.pointer_type() == "touch" {
+                let Some(touch_id) = this.touch_ids.borrow().active(event.pointer_id()) else {
+                    return;
+                };
                 this.state.borrow_mut().mouse_position = position;
                 // Mirror the slop rule of gpui's tap recognizer: once the
                 // touch travels beyond it, its release must not affect the
@@ -523,7 +560,7 @@ impl WebWindowInner {
                     this.touch_tap_candidate.set(None);
                 }
                 this.dispatch_input(PlatformInput::Touch(TouchEvent {
-                    id: TouchId(event.pointer_id() as u64),
+                    id: touch_id,
                     phase: TouchPhase::Moved,
                     position,
                     predicted_position: predicted_pointer_position(&event, position),
@@ -1363,4 +1400,25 @@ fn predicted_pointer_position(
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     // offset_x/offset_y give position relative to the target element's padding edge
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn browser_pointer_id_reuse_gets_a_new_touch_id() {
+        let mut touch_ids = TouchIds::default();
+        let first = touch_ids.start(7).expect("first touch id");
+        let concurrent = touch_ids.start(8).expect("concurrent touch id");
+
+        assert_ne!(first, concurrent);
+        assert_eq!(touch_ids.active(7), Some(first));
+        assert_eq!(touch_ids.end(7), Some(first));
+        assert_eq!(touch_ids.active(7), None);
+
+        let reused = touch_ids.start(7).expect("reused pointer touch id");
+        assert_ne!(reused, first);
+        assert_ne!(reused, concurrent);
+    }
 }
