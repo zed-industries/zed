@@ -2578,8 +2578,7 @@ impl GitPanel {
     fn add_created_entries_to_exclude_list(
         &mut self,
         action_label: &'static str,
-        add_path: impl Fn(&mut Repository, &RepoPath) -> oneshot::Receiver<anyhow::Result<()>>
-        + 'static,
+        add_path: impl Fn(&mut Repository, &RepoPath) -> oneshot::Receiver<anyhow::Result<()>> + 'static,
         cx: &mut Context<Self>,
     ) {
         maybe!({
@@ -2592,8 +2591,7 @@ impl GitPanel {
                 }
 
                 let repo_path = entry.repo_path;
-                let receiver =
-                    active_repository.update(cx, |repo, _| add_path(repo, &repo_path));
+                let receiver = active_repository.update(cx, |repo, _| add_path(repo, &repo_path));
                 let workspace = workspace.clone();
 
                 cx.spawn(async move |_, cx| {
