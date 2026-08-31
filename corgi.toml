@@ -1,4 +1,5 @@
 # corgi build configuration for Zed.
+# Corgi source and documentation: https://github.com/ConradIrwin/corgi
 #
 # corgi runs build.rs scripts and proc-macros in a sandbox with no network,
 # no ambient environment, and reads limited to each package's own source plus

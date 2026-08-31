@@ -993,7 +993,8 @@ webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev 
 # where cxx-build writes its shared cxxbridge headers. Kept local rather than a
 # cxx git fork so Windows cargo builds are unaffected (a git checkout of cxx
 # needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
-# per-crate scratch dirs are sufficient.
+# per-crate scratch dirs are sufficient. Upstream issue:
+# https://github.com/dtolnay/cxx/issues/1752
 scratch = { path = "corgi-patches/scratch" }
 
 [profile.dev]
