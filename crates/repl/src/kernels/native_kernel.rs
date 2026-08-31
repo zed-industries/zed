@@ -468,4 +468,132 @@ mod test {
             vec!["deno", "python"]
         );
     }
+
+    #[gpui::test]
+    async fn test_installed_kernel_name_for_venv(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/venv",
+            json!({
+                "bin": {
+                    "python": "",
+                },
+                "share": {
+                    "jupyter": {
+                        "kernels": {
+                            "python3": {
+                                "kernel.json": r#"{
+                                    "display_name": "Python 3 (ipykernel)",
+                                    "language": "python",
+                                    "argv": ["python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+                                    "env": {}
+                                }"#
+                            }
+                        }
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let name = installed_kernel_name_for_venv(std::path::Path::new("/venv"), fs.as_ref())
+            .await
+            .expect("expected to find the installed kernelspec");
+
+        assert_eq!(name, "python3");
+    }
+
+    #[gpui::test]
+    async fn test_installed_kernel_name_for_venv_without_kernelspec(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/venv",
+            json!({
+                "bin": {
+                    "python": "",
+                },
+            }),
+        )
+        .await;
+
+        let name = installed_kernel_name_for_venv(std::path::Path::new("/venv"), fs.as_ref()).await;
+
+        assert!(name.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_installed_kernel_name_for_venv_skips_non_python_kernels(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/venv",
+            json!({
+                "share": {
+                    "jupyter": {
+                        "kernels": {
+                            // Sorts before "python3", so a filter bug that picks the first
+                            // sorted entry instead of the first *Python* entry would return
+                            // this one and fail the assertion below.
+                            "aaa-deno": {
+                                "kernel.json": r#"{
+                                    "display_name": "Deno",
+                                    "language": "typescript",
+                                    "argv": ["deno", "run", "{connection_file}"],
+                                    "env": {}
+                                }"#
+                            },
+                            "python3": {
+                                "kernel.json": r#"{
+                                    "display_name": "Python 3 (ipykernel)",
+                                    "language": "python",
+                                    "argv": ["python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+                                    "env": {}
+                                }"#
+                            }
+                        }
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let name = installed_kernel_name_for_venv(std::path::Path::new("/venv"), fs.as_ref())
+            .await
+            .expect("expected to find the python kernelspec");
+
+        // Expected: "python3", the only Python-language kernelspec, not "aaa-deno".
+        assert_eq!(name, "python3");
+    }
+
+    #[gpui::test]
+    async fn test_installed_kernel_name_for_venv_no_python_kernels(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/venv",
+            json!({
+                "share": {
+                    "jupyter": {
+                        "kernels": {
+                            "deno": {
+                                "kernel.json": r#"{
+                                    "display_name": "Deno",
+                                    "language": "typescript",
+                                    "argv": ["deno", "run", "{connection_file}"],
+                                    "env": {}
+                                }"#
+                            }
+                        }
+                    }
+                },
+            }),
+        )
+        .await;
+
+        let name = installed_kernel_name_for_venv(std::path::Path::new("/venv"), fs.as_ref()).await;
+
+        // Expected: None. A kernels dir with only non-Python kernelspecs must not be mistaken
+        // for "this venv has an installed Python kernel" - the caller falls back to a
+        // synthesized name in that case, and returning a typescript kernel's name here would
+        // point notebooks at the wrong (non-Python) kernel.
+        assert!(name.is_none());
+    }
 }
