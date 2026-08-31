@@ -29,9 +29,10 @@ use util::ResultExt;
 use crate::provider::anthropic::{AnthropicEventMapper, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
+use language_model::chat_completion::ChatCompletionEventMapper;
 
 fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
     match effort.trim().to_ascii_lowercase().as_str() {
@@ -706,7 +707,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                     self.stream_openai_chat(openai_request, http_client, extra_headers, cx);
                 let executor = cx.background_executor().clone();
                 async move {
-                    let mapper = OpenAiEventMapper::new();
+                    let mapper = ChatCompletionEventMapper::new();
                     Ok(language_model::stream_in_background(
                         mapper.map_stream(stream.await?).boxed(),
                         executor,

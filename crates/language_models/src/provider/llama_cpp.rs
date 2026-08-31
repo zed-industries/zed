@@ -29,7 +29,7 @@ use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::open_ai::OpenAiEventMapper;
+use language_model::chat_completion::ChatCompletionEventMapper;
 
 const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
 const LLAMA_CPP_MODELS_URL: &str = "https://huggingface.co/models?library=gguf&sort=trending";
@@ -940,7 +940,7 @@ impl LanguageModel for LlamaCppLanguageModel {
         };
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = OpenAiEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()

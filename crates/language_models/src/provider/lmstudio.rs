@@ -24,7 +24,7 @@ use ui::{ButtonLike, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, 
 use ui_input::InputField;
 
 use crate::AllLanguageModelSettings;
-use crate::provider::open_ai::OpenAiEventMapper;
+use language_model::chat_completion::ChatCompletionEventMapper;
 
 const LMSTUDIO_DOWNLOAD_URL: &str = "https://lmstudio.ai/download";
 const LMSTUDIO_CATALOG_URL: &str = "https://lmstudio.ai/models";
@@ -554,7 +554,7 @@ impl LanguageModel for LmStudioLanguageModel {
         };
         let completions = self.stream_completion(request, cx);
         async move {
-            let mapper = OpenAiEventMapper::new();
+            let mapper = ChatCompletionEventMapper::new();
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()

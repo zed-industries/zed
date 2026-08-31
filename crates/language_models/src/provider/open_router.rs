@@ -1,10 +1,10 @@
 use anyhow::Result;
 
-use crate::provider::open_ai::OpenAiEventMapper;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::{CustomHeaders, HttpClient};
+use language_model::chat_completion::ChatCompletionEventMapper;
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -443,7 +443,7 @@ impl LanguageModel for OpenRouterLanguageModel {
         let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            let events = OpenAiEventMapper::new().map_stream(response);
+            let events = ChatCompletionEventMapper::new().map_stream(response);
             Ok(language_model::stream_in_background(
                 events.boxed(),
                 executor,

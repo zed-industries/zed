@@ -9630,6 +9630,7 @@ dependencies = [
  "anyhow",
  "async-lock",
  "cloud_llm_client",
+ "collections",
  "futures 0.3.32",
  "gpui_shared_string",
  "http_client",

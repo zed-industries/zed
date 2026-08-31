@@ -66,11 +66,14 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use crate::provider::open_ai::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
+use language_model::chat_completion::{
+    ChatCompletionEventMapper, ResponseStreamEvent, ResponseStreamResult,
+};
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
-use open_ai::{ReasoningEffort, RequestError, ResponseStreamEvent};
+use open_ai::{ReasoningEffort, RequestError};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -1211,9 +1214,9 @@ async fn resolve_mantle_auth(
 }
 
 fn parse_mantle_chat_stream_line(line: &str) -> Result<ResponseStreamEvent> {
-    match serde_json::from_str::<open_ai::ResponseStreamResult>(line) {
-        Ok(open_ai::ResponseStreamResult::Ok(response)) => Ok(response),
-        Ok(open_ai::ResponseStreamResult::Err { error }) => Err(anyhow!(error.message)),
+    match serde_json::from_str::<ResponseStreamResult>(line) {
+        Ok(ResponseStreamResult::Ok(response)) => Ok(response),
+        Ok(ResponseStreamResult::Err { error }) => Err(anyhow!(error.message)),
         Err(error) => {
             log::error!(
                 "Failed to parse Mantle chat completion stream event: `{}`\nResponse: `{}`",
@@ -1961,7 +1964,7 @@ impl LanguageModel for BedrockMantleModel {
                 let completions = self.stream_completion(request, cx);
                 let executor = cx.background_executor().clone();
                 async move {
-                    let mapper = OpenAiEventMapper::new();
+                    let mapper = ChatCompletionEventMapper::new();
                     Ok(language_model::stream_in_background(
                         mapper.map_stream(completions.await?).boxed(),
                         executor,

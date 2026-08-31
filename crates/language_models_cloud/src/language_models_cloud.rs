@@ -43,8 +43,9 @@ use anthropic::completion::{
     AnthropicEventMapper, AnthropicPromptCacheMode, collect_compaction_result, into_anthropic,
 };
 use google_ai::completion::{GoogleEventMapper, into_google};
+use language_model::chat_completion::ChatCompletionEventMapper;
 use open_ai::completion::{
-    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    ChatCompletionMaxTokensParameter, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response, token_usage_from_response_usage,
 };
 
@@ -912,7 +913,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     )
                     .await?;
 
-                    let mut mapper = OpenAiEventMapper::new();
+                    let mut mapper = ChatCompletionEventMapper::new();
                     let events = map_cloud_completion_events(
                         Box::pin(response_lines(response, includes_status_messages)),
                         &provider_name,

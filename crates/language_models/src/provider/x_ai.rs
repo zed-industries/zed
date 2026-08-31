@@ -430,7 +430,7 @@ impl LanguageModel for XAiLanguageModel {
         let completions = self.stream_completion(request, cx);
         let executor = cx.background_executor().clone();
         async move {
-            let mapper = crate::provider::open_ai::OpenAiEventMapper::new();
+            let mapper = language_model::chat_completion::ChatCompletionEventMapper::new();
             Ok(language_model::stream_in_background(
                 mapper.map_stream(completions.await?).boxed(),
                 executor,
