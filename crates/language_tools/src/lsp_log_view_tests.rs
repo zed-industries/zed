@@ -11,7 +11,7 @@ use language::{
 use lsp::LanguageServerName;
 use project::{
     FakeFs, Project,
-    lsp_store::log_store::{LanguageServerKind, LogKind, LogStore},
+    lsp_store::log_store::{LanguageServerKind, LanguageServerLogKey, LogKind, LogStore},
 };
 use serde_json::json;
 use settings::SettingsStore;
@@ -125,6 +125,96 @@ async fn test_lsp_log_view_filters_servers_from_other_projects(cx: &mut TestAppC
             ]
         );
     });
+}
+
+#[gpui::test]
+async fn test_log_store_does_not_retain_language_servers(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/the-root"), json!({ "test.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let server_id = LanguageServerId(100);
+    let server_kind = LanguageServerKind::Local {
+        project: project.downgrade(),
+    };
+    let server_key = LanguageServerLogKey::new(server_kind.clone(), server_id);
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+
+    let (first_server, _first_fake_server) = lsp::FakeLanguageServer::new(
+        server_id,
+        lsp::LanguageServerBinary {
+            path: "path/to/first-language-server".into(),
+            arguments: Vec::new(),
+            env: None,
+        },
+        "first-language-server".to_string(),
+        Default::default(),
+        &mut cx.to_async(),
+    );
+    let first_server = Arc::new(first_server);
+    let first_server_weak = Arc::downgrade(&first_server);
+    log_store.update(cx, |store, cx| {
+        store.add_language_server(
+            server_kind.clone(),
+            server_id,
+            Some(LanguageServerName::new_static("first-language-server")),
+            None,
+            Some(first_server.clone()),
+            cx,
+        );
+    });
+
+    let (replacement_server, _replacement_fake_server) = lsp::FakeLanguageServer::new(
+        server_id,
+        lsp::LanguageServerBinary {
+            path: "path/to/replacement-language-server".into(),
+            arguments: Vec::new(),
+            env: None,
+        },
+        "replacement-language-server".to_string(),
+        Default::default(),
+        &mut cx.to_async(),
+    );
+    let replacement_server = Arc::new(replacement_server);
+    let replacement_server_weak = Arc::downgrade(&replacement_server);
+    log_store.update(cx, |store, cx| {
+        store.add_language_server(
+            server_kind,
+            server_id,
+            Some(LanguageServerName::new_static(
+                "replacement-language-server",
+            )),
+            None,
+            Some(replacement_server.clone()),
+            cx,
+        );
+    });
+
+    let stored_server = log_store
+        .read_with(cx, |store, _| {
+            store
+                .language_servers
+                .get(&server_key)
+                .and_then(|state| state.server())
+        })
+        .expect("replacement language server should be available");
+    assert!(Arc::ptr_eq(&stored_server, &replacement_server));
+    drop(stored_server);
+
+    drop(first_server);
+    assert!(first_server_weak.upgrade().is_none());
+    drop(replacement_server);
+    assert!(replacement_server_weak.upgrade().is_none());
+    assert!(
+        log_store
+            .read_with(cx, |store, _| store
+                .language_servers
+                .get(&server_key)
+                .and_then(|state| state.server()))
+            .is_none()
+    );
 }
 
 #[gpui::test]

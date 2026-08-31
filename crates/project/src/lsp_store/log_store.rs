@@ -1,6 +1,6 @@
 use std::{
     collections::VecDeque,
-    sync::Arc,
+    sync::{Arc, Weak},
     time::{Duration, Instant},
 };
 
@@ -133,7 +133,7 @@ pub struct LanguageServerState {
     pub name: Option<LanguageServerName>,
     pub worktree_id: Option<WorktreeId>,
     pub kind: LanguageServerKind,
-    pub server: Option<Arc<LanguageServer>>,
+    server: Option<Weak<LanguageServer>>,
     log_messages: VecDeque<LogMessage>,
     trace_messages: VecDeque<TraceMessage>,
     pub rpc_state: Option<LanguageServerRpcState>,
@@ -141,6 +141,12 @@ pub struct LanguageServerState {
     pub log_level: MessageType,
     io_logs_subscription: Option<lsp::Subscription>,
     pub toggled_log_kind: Option<LogKind>,
+}
+
+impl LanguageServerState {
+    pub fn server(&self) -> Option<Arc<LanguageServer>> {
+        self.server.as_ref()?.upgrade()
+    }
 }
 
 impl std::fmt::Debug for LanguageServerState {
@@ -615,7 +621,7 @@ impl LogStore {
                     name: None,
                     worktree_id: None,
                     kind,
-                    server: server.clone(),
+                    server: server.as_ref().map(Arc::downgrade),
                     rpc_state: None,
                     log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
                     trace_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -633,22 +639,29 @@ impl LogStore {
             server_state.worktree_id = Some(worktree_id);
         }
 
-        if server_state.server.is_none() {
-            server_state.server = server.clone();
-        }
-        if let Some(server) = server.filter(|_| server_state.io_logs_subscription.is_none()) {
-            let io_tx = self.io_tx.clone();
-            server_state.io_logs_subscription = Some(server.on_io(move |io_kind, message| {
-                let observed_at = Instant::now();
-                io_tx
-                    .unbounded_send((
-                        server_key.clone(),
-                        io_kind,
-                        message.to_string(),
-                        observed_at,
-                    ))
-                    .ok();
-            }));
+        if let Some(server) = server {
+            let is_new_server = match server_state.server() {
+                Some(current_server) => !Arc::ptr_eq(&current_server, &server),
+                None => true,
+            };
+            if is_new_server {
+                server_state.server = Some(Arc::downgrade(&server));
+                server_state.io_logs_subscription = None;
+            }
+            if server_state.io_logs_subscription.is_none() {
+                let io_tx = self.io_tx.clone();
+                server_state.io_logs_subscription = Some(server.on_io(move |io_kind, message| {
+                    let observed_at = Instant::now();
+                    io_tx
+                        .unbounded_send((
+                            server_key.clone(),
+                            io_kind,
+                            message.to_string(),
+                            observed_at,
+                        ))
+                        .ok();
+                }));
+            }
         }
 
         Some(server_state)

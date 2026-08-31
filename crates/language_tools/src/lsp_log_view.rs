@@ -377,39 +377,48 @@ impl LspLogView {
             let copilot = EditPredictionStore::try_global(cx)
                 .and_then(|store| store.read(cx).copilot_for_project(&self.project))?;
             let server = copilot.read(cx).language_server()?.clone();
-            let log_subscription = this.copilot_state_for_project(&self.project.downgrade());
-            if let Some(subscription_slot @ None) = log_subscription {
-                let weak_lsp_store = cx.weak_entity();
-                let server_id = server.server_id();
-                let server_kind = LanguageServerKind::Supplementary {
-                    project: self.project.downgrade(),
-                };
-                let server_key = LanguageServerLogKey::new(server_kind.clone(), server_id);
+            let server_id = server.server_id();
+            let server_kind = LanguageServerKind::Supplementary {
+                project: self.project.downgrade(),
+            };
+            let server_key = LanguageServerLogKey::new(server_kind.clone(), server_id);
+            let is_new_server = this
+                .language_servers
+                .get(&server_key)
+                .and_then(|state| state.server())
+                .is_none_or(|current_server| !Arc::ptr_eq(&current_server, &server));
 
-                let name = LanguageServerName::new_static("copilot");
-                *subscription_slot =
-                    Some(server.on_notification::<lsp::notification::LogMessage, _>(
-                        move |params, cx| {
-                            weak_lsp_store
-                                .update(cx, |lsp_store, cx| {
-                                    lsp_store.add_language_server_log(
-                                        &server_key,
-                                        MessageType::LOG,
-                                        &params.message,
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        },
-                    ));
-                this.add_language_server(
-                    server_kind,
-                    server_id,
-                    Some(name),
-                    None,
-                    Some(server),
-                    cx,
-                );
+            let log_subscription = this.copilot_state_for_project(&self.project.downgrade());
+            if let Some(subscription_slot) = log_subscription {
+                if is_new_server {
+                    *subscription_slot = None;
+                }
+                if subscription_slot.is_none() {
+                    let weak_lsp_store = cx.weak_entity();
+                    *subscription_slot =
+                        Some(server.on_notification::<lsp::notification::LogMessage, _>(
+                            move |params, cx| {
+                                weak_lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.add_language_server_log(
+                                            &server_key,
+                                            MessageType::LOG,
+                                            &params.message,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            },
+                        ));
+                    this.add_language_server(
+                        server_kind,
+                        server_id,
+                        Some(LanguageServerName::new_static("copilot")),
+                        None,
+                        Some(server),
+                        cx,
+                    );
+                }
             }
 
             Some(())
@@ -637,7 +646,7 @@ impl LspLogView {
             .read(cx)
             .language_servers
             .get(&key)
-            .and_then(|state| state.server.clone())
+            .and_then(|state| state.server())
             .or_else(|| {
                 self.project
                     .read(cx)
@@ -670,7 +679,9 @@ impl LspLogView {
             .read(cx)
             .language_servers
             .get(&key)
-            .and_then(|state| state.server.as_deref().map(ServerInfo::new));
+            .and_then(|state| state.server())
+            .as_deref()
+            .map(ServerInfo::new);
         let server_info = server_info.or_else(|| {
             self.project
                 .read(cx)
