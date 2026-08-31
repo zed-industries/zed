@@ -165,6 +165,8 @@ pub enum FrameSkipReason {
     InactiveFrameRateLimit,
     /// Thermal throttling deferred drawing.
     ThermalFrameRateLimit,
+    /// Low power mode deferred drawing.
+    LowPowerFrameRateLimit,
 }
 
 /// A completed frame request that returned without drawing a new frame.
