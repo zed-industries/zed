@@ -1158,7 +1158,7 @@ impl Item for Editor {
         if self
             .highlighted_rows
             .get(&TypeId::of::<ActiveDebugLine>())
-            .is_some_and(|lines| !lines.ranges.is_empty())
+            .is_some_and(|lines| !lines.is_empty())
             && let Some(breakpoint_store) = self.breakpoint_store.as_ref()
         {
             breakpoint_store.update(cx, |store, _cx| {

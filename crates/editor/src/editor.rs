@@ -1020,7 +1020,7 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
-    highlighted_rows: TypeIdHashMap<RowHighlights>,
+    highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
     gutter_highlights: TypeIdHashMap<GutterHighlight>,
@@ -1523,12 +1523,6 @@ struct RowHighlight {
     color: fn(&App) -> Hsla,
     options: RowHighlightOptions,
     type_id: TypeId,
-}
-
-#[derive(Default)]
-struct RowHighlights {
-    ranges: Vec<RowHighlight>,
-    has_diff_base_anchors: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -9111,9 +9105,6 @@ impl Editor {
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
         let row_highlights = self.highlighted_rows.entry(TypeId::of::<T>()).or_default();
-        row_highlights.has_diff_base_anchors |=
-            range.start.diff_base_anchor().is_some() || range.end.diff_base_anchor().is_some();
-        let row_highlights = &mut row_highlights.ranges;
         let ix = row_highlights.binary_search_by(|highlight| {
             Ordering::Equal
                 .then_with(|| highlight.range.start.cmp(&range.start, &snapshot))
@@ -9193,7 +9184,7 @@ impl Editor {
         let snapshot = self.buffer().read(cx).snapshot(cx);
         let row_highlights = self.highlighted_rows.entry(TypeId::of::<T>()).or_default();
         let mut ranges_to_remove = ranges_to_remove.iter().peekable();
-        row_highlights.ranges.retain(|highlight| {
+        row_highlights.retain(|highlight| {
             while let Some(range_to_remove) = ranges_to_remove.peek() {
                 match range_to_remove.end.cmp(&highlight.range.start, &snapshot) {
                     Ordering::Less | Ordering::Equal => {
@@ -9226,7 +9217,7 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
-            .map_or(&[] as &[_], |highlights| highlights.ranges.as_slice())
+            .map_or(&[] as &[_], |highlights| highlights.as_slice())
             .iter()
             .map(|highlight| (highlight.range.clone(), (highlight.color)(cx)))
     }
@@ -9265,40 +9256,34 @@ impl Editor {
         self.highlighted_rows
             .values()
             .flat_map(|highlighted_rows| {
-                let ranges = highlighted_rows.ranges.as_slice();
-                let (start_index, end_index) = if highlighted_rows.has_diff_base_anchors {
-                    (0, ranges.len())
-                } else {
-                    // Diff-base anchor ordering depends on the current diff snapshot, while regular
-                    // buffer anchors preserve their ordering across edits.
-                    let start_index = ranges.partition_point(|highlight| {
-                        highlight
-                            .range
-                            .end
-                            .cmp(&anchor_range.start, buffer_snapshot)
-                            .is_lt()
-                    });
-                    let end_index = ranges.partition_point(|highlight| {
-                        highlight
-                            .range
-                            .start
-                            .cmp(&anchor_range.end, buffer_snapshot)
-                            .is_le()
-                    });
-                    (start_index, end_index)
-                };
-                ranges[start_index..end_index].iter().filter(|highlight| {
+                let start_index = highlighted_rows.partition_point(|highlight| {
                     highlight
                         .range
                         .end
                         .cmp(&anchor_range.start, buffer_snapshot)
-                        .is_ge()
-                        && highlight
+                        .is_lt()
+                });
+                let end_index = highlighted_rows.partition_point(|highlight| {
+                    highlight
+                        .range
+                        .start
+                        .cmp(&anchor_range.end, buffer_snapshot)
+                        .is_le()
+                });
+                highlighted_rows[start_index..end_index]
+                    .iter()
+                    .filter(|highlight| {
+                        highlight
                             .range
-                            .start
-                            .cmp(&anchor_range.end, buffer_snapshot)
-                            .is_le()
-                })
+                            .end
+                            .cmp(&anchor_range.start, buffer_snapshot)
+                            .is_ge()
+                            && highlight
+                                .range
+                                .start
+                                .cmp(&anchor_range.end, buffer_snapshot)
+                                .is_le()
+                    })
             })
             .fold(
                 BTreeMap::<DisplayRow, LineHighlight>::new(),
@@ -9361,7 +9346,7 @@ impl Editor {
     ) -> Option<DisplayRow> {
         self.highlighted_rows
             .values()
-            .flat_map(|highlighted_rows| highlighted_rows.ranges.iter())
+            .flat_map(|highlighted_rows| highlighted_rows.iter())
             .filter_map(|highlight| {
                 if highlight.options.autoscroll {
                     Some(highlight.range.start.to_display_point(snapshot).row())
@@ -9835,7 +9820,7 @@ impl Editor {
         let current_execution_position = self
             .highlighted_rows
             .get(&TypeId::of::<ActiveDebugLine>())
-            .and_then(|lines| lines.ranges.last().map(|line| line.range.end));
+            .and_then(|lines| lines.last().map(|line| line.range.end));
 
         self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
             let inline_values = editor
