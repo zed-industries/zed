@@ -4400,7 +4400,24 @@ impl OutlinePanel {
 
             let mut last_depth_at_level: Vec<Option<Range<Anchor>>> = vec![None; 10];
 
-            let all_outlines: Vec<_> = buffer.iter_outlines().collect();
+            let all_outlines = buffer
+                .iter_outlines()
+                .filter(|outline| match &buffer_snapshot {
+                    Some(buffer_snapshot) => {
+                        outline
+                            .range
+                            .start
+                            .cmp(&excerpt.context.end, buffer_snapshot)
+                            .is_le()
+                            && outline
+                                .range
+                                .end
+                                .cmp(&excerpt.context.start, buffer_snapshot)
+                                .is_ge()
+                    }
+                    None => true,
+                })
+                .collect::<Vec<_>>();
 
             let mut outline_has_children = HashMap::default();
             let mut visible_outlines = Vec::new();
@@ -8811,6 +8828,161 @@ rust-analyzer/
                 select_first_in_all_matches(
                     "search: match config.«param_names_for_lifetime_elision_hints» {"
                 )
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_excerpt_outlines_scoped_to_excerpt_range(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "src": {
+                    "one.rs": indoc!("
+                        fn alpha() {
+                            let one = 1;
+                        }
+
+                        fn beta() {
+                            let two = 2;
+                        }
+                    "),
+                    "two.rs": indoc!("
+                        struct Gamma {
+                            field: i32,
+                        }
+
+                        fn delta() {}
+                    "),
+                    "three.rs": indoc!("
+                        mod epsilon {
+                            fn zeta() {
+                                let three = 3;
+                            }
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer_one = project
+            .update(cx, |project, cx| {
+                let path = project
+                    .find_project_path(path!("/test/src/one.rs"), cx)
+                    .unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let buffer_two = project
+            .update(cx, |project, cx| {
+                let path = project
+                    .find_project_path(path!("/test/src/two.rs"), cx)
+                    .unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let buffer_three = project
+            .update(cx, |project, cx| {
+                let path = project
+                    .find_project_path(path!("/test/src/three.rs"), cx)
+                    .unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+                multibuffer.set_excerpts_for_buffer(
+                    buffer_one.clone(),
+                    [
+                        language::Point::new(0, 0)..language::Point::new(2, 1),
+                        language::Point::new(4, 0)..language::Point::new(6, 1),
+                    ],
+                    0,
+                    cx,
+                );
+                multibuffer.set_excerpts_for_buffer(
+                    buffer_two.clone(),
+                    [language::Point::new(0, 0)..language::Point::new(2, 1)],
+                    0,
+                    cx,
+                );
+                multibuffer.set_excerpts_for_buffer(
+                    buffer_three.clone(),
+                    [language::Point::new(2, 0)..language::Point::new(2, 22)],
+                    0,
+                    cx,
+                );
+                multibuffer
+            });
+            let editor = cx
+                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor.update(cx, |editor, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+            });
+        });
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.update_non_fs_items(window, cx);
+            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        let expected_entries = [
+            "test/",
+            "  src/",
+            "    one.rs",
+            "      ",
+            "        outline: fn alpha",
+            "      ",
+            "        outline: fn beta",
+            "    three.rs",
+            "      ",
+            "        outline: mod epsilon",
+            "          outline: fn zeta",
+            "    two.rs",
+            "      ",
+            "        outline: struct Gamma",
+            "          outline: field",
+        ]
+        .join("\n");
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                expected_entries,
+                "each excerpt should only show outlines intersecting its range, \
+                 without duplicating outlines from other excerpts of the same buffer \
+                 and without outlines that lie outside every excerpt"
             );
         });
     }
