@@ -189,6 +189,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     cx.observe_new(
         |workspace: &mut Workspace, mut window, cx: &mut gpui::Context<Workspace>| {
             workspace.register_action(open_settings_file);
+            workspace.register_action(show_welcome_item);
             // cmd-= / cmd-- are bound in the default keymap, but the actions
             // are handled by the zed crate, which this shell does not use.
             workspace.register_action(
@@ -364,6 +365,14 @@ impl gpui::Render for TouchActionBar {
                     }),
             )
             .child(
+                ui::IconButton::new("touch-home", ui::IconName::AiZed)
+                    .icon_size(ui::IconSize::Small)
+                    .tooltip(ui::Tooltip::text("Welcome"))
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(Box::new(ShowWelcomeItem), cx);
+                    }),
+            )
+            .child(
                 ui::IconButton::new("touch-project-panel", ui::IconName::FileTree)
                     .icon_size(ui::IconSize::Small)
                     .tooltip(ui::Tooltip::text("Toggle Project Panel"))
@@ -389,6 +398,38 @@ impl gpui::Render for TouchActionBar {
                     }),
             )
     }
+}
+
+gpui::actions!(
+    zed_ios,
+    [
+        /// Opens the welcome page in the current window.
+        ShowWelcomeItem
+    ]
+);
+
+/// Zed's own ShowWelcome opens a local workspace, which means an extra window
+/// on top of a remote project. Add the page to the current workspace instead.
+fn show_welcome_item(
+    workspace: &mut Workspace,
+    _: &ShowWelcomeItem,
+    window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    let existing = workspace
+        .active_pane()
+        .read(cx)
+        .items()
+        .find_map(|item| item.downcast::<workspace::welcome::WelcomePage>());
+
+    if let Some(existing) = existing {
+        workspace.activate_item(&existing, true, true, window, cx);
+        return;
+    }
+
+    let welcome_page = cx
+        .new(|cx| workspace::welcome::WelcomePage::new(workspace.weak_handle(), false, window, cx));
+    workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx);
 }
 
 fn open_settings_file(
