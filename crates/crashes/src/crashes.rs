@@ -261,11 +261,15 @@ pub fn set_gpu_info(crash_client: &Arc<Client>, specs: GpuSpecs) {
 }
 
 pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
-    set_tag(crash_client, SENTRY_USER_ID, info.metrics_id);
-    set_tag(
+    set_tags(
         crash_client,
-        "sentry[user][is_staff]",
-        info.is_staff.map(|is_staff| is_staff.to_string()),
+        [
+            (SENTRY_USER_ID, info.metrics_id),
+            (
+                "sentry[user][is_staff]",
+                info.is_staff.map(|is_staff| is_staff.to_string()),
+            ),
+        ],
     );
 }
 
@@ -278,12 +282,24 @@ pub fn set_user_info(crash_client: &Arc<Client>, info: UserInfo) {
 /// `sentry[user][username]` or any name under `sentry[tags]`, which is why the
 /// value reaches Sentry without the crash handler modelling what it means.
 pub fn set_tag(crash_client: &Arc<Client>, key: impl Into<String>, value: Option<String>) {
-    let key = key.into();
+    set_tags(crash_client, [(key, value)]);
+}
+
+/// Applies several tag updates as one crash-handler message, so a crash cannot
+/// observe part of a logical state change.
+pub fn set_tags<K>(crash_client: &Arc<Client>, tags: impl IntoIterator<Item = (K, Option<String>)>)
+where
+    K: Into<String>,
+{
+    let tags = tags
+        .into_iter()
+        .map(|(key, value)| (key.into(), value))
+        .collect::<Vec<_>>();
     debug_assert!(
-        key.starts_with("sentry["),
-        "crash tag key {key:?} is not a Sentry submission field"
+        tags.iter().all(|(key, _)| key.starts_with("sentry[")),
+        "crash tag keys must be Sentry submission fields"
     );
-    send_crash_server_message(crash_client, CrashServerMessage::Tag { key, value });
+    send_crash_server_message(crash_client, CrashServerMessage::SetTags(tags));
 }
 
 /// Requests an orderly exit from the crash-handler sidecar.
@@ -296,7 +312,7 @@ enum CrashServerMessage {
     Init(InitCrashHandler),
     Panic(CrashPanic),
     GPUInfo(GpuSpecs),
-    Tag { key: String, value: Option<String> },
+    SetTags(Vec<(String, Option<String>)>),
     AbortMessageLocation(AbortMessageLocation),
     Shutdown,
 }
@@ -495,14 +511,19 @@ impl minidumper::ServerHandler for CrashServer {
             CrashServerMessage::GPUInfo(gpu_specs) => {
                 self.active_gpu.lock().replace(gpu_specs);
             }
-            CrashServerMessage::Tag { key, value } => match value {
-                Some(value) => {
-                    self.tags.lock().insert(key, value);
+            CrashServerMessage::SetTags(updates) => {
+                let mut tags = self.tags.lock();
+                for (key, value) in updates {
+                    match value {
+                        Some(value) => {
+                            tags.insert(key, value);
+                        }
+                        None => {
+                            tags.remove(&key);
+                        }
+                    }
                 }
-                None => {
-                    self.tags.lock().remove(&key);
-                }
-            },
+            }
             CrashServerMessage::AbortMessageLocation(location) => {
                 self.abort_message_location.lock().replace(location);
             }
@@ -729,33 +750,37 @@ mod tests {
     /// because that is how an application withdraws identifying state from
     /// crashes it has not produced yet.
     #[test]
-    fn setting_a_tag_to_none_removes_it() {
+    fn setting_tags_updates_and_removes_values() {
         let server = test_crash_server();
 
-        server.receive(CrashServerMessage::Tag {
-            key: SENTRY_USER_ID.to_string(),
-            value: Some("metrics-1".to_string()),
-        });
-        server.receive(CrashServerMessage::Tag {
-            key: "sentry[tags][custom]".to_string(),
-            value: Some("first".to_string()),
-        });
-        server.receive(CrashServerMessage::Tag {
-            key: "sentry[tags][custom]".to_string(),
-            value: Some("second".to_string()),
-        });
+        server.receive(CrashServerMessage::SetTags(vec![
+            (SENTRY_USER_ID.to_string(), Some("metrics-1".to_string())),
+            (
+                "sentry[user][is_staff]".to_string(),
+                Some("true".to_string()),
+            ),
+            (
+                "sentry[tags][custom]".to_string(),
+                Some("first".to_string()),
+            ),
+            (
+                "sentry[tags][custom]".to_string(),
+                Some("second".to_string()),
+            ),
+        ]));
         assert_eq!(
             server.tags.lock().clone(),
             BTreeMap::from([
                 (SENTRY_USER_ID.to_string(), "metrics-1".to_string()),
+                ("sentry[user][is_staff]".to_string(), "true".to_string()),
                 ("sentry[tags][custom]".to_string(), "second".to_string()),
             ])
         );
 
-        server.receive(CrashServerMessage::Tag {
-            key: SENTRY_USER_ID.to_string(),
-            value: None,
-        });
+        server.receive(CrashServerMessage::SetTags(vec![
+            (SENTRY_USER_ID.to_string(), None),
+            ("sentry[user][is_staff]".to_string(), None),
+        ]));
         assert_eq!(
             server.tags.lock().clone(),
             BTreeMap::from([("sentry[tags][custom]".to_string(), "second".to_string())])
