@@ -680,17 +680,21 @@ pub mod __rust_embed {
     pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
 }
 
-/// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the repo-relative
-/// `dev` directory that passes the same rust_embed include/exclude globs the
+/// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the root-relative
+/// directory that passes the same rust_embed include/exclude globs the
 /// release derive uses, so the dev and release file sets are identical. Reuses
 /// rust_embed's own matcher rather than reimplementing glob semantics.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub fn __fs_embed_iter(dev: &str, includes: &[&str], excludes: &[&str]) -> rust_embed::Filenames {
-    let Some(root) = dev_repo_root().map(|root| root.join(dev)) else {
-        return rust_embed::Filenames::Dynamic(Box::new(
-            std::iter::empty::<std::borrow::Cow<'static, str>>(),
-        ));
+pub fn __fs_embed_iter(
+    root_relative: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> rust_embed::Filenames {
+    let Some(root) = dev_repo_root().map(|root| root.join(root_relative)) else {
+        return rust_embed::Filenames::Dynamic(Box::new(std::iter::empty::<
+            std::borrow::Cow<'static, str>,
+        >()));
     };
     let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
     let names: Vec<std::borrow::Cow<'static, str>> =
@@ -706,7 +710,7 @@ pub fn __fs_embed_iter(dev: &str, includes: &[&str], excludes: &[&str]) -> rust_
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub fn __fs_embed_get(
-    dev: &str,
+    root_relative: &str,
     file_path: &str,
     includes: &[&str],
     excludes: &[&str],
@@ -717,7 +721,7 @@ pub fn __fs_embed_get(
     }
     let root = dev_repo_root()
         .expect("dev asset loading requires running from within the checkout")
-        .join(dev);
+        .join(root_relative);
     rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
 }
 
@@ -728,23 +732,24 @@ pub fn __fs_embed_get(
 /// dev macro, and keeps a single source of truth for the include/exclude globs.
 ///
 /// It expands to both arms:
-/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding `folder`
-///   at build time, with the given `include`/`exclude` globs.
-/// * Dev (`debug_assertions`): a runtime filesystem source rooted at `dev`,
-///   applying those same globs through rust_embed's own matcher.
+/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding
+///   `crate_relative` at build time, with the given `include`/`exclude` globs.
+/// * Dev (`debug_assertions`): a runtime filesystem source rooted at
+///   `root_relative`, applying those same globs through rust_embed's own matcher.
 ///
 /// Two paths are required because the arms resolve from different bases: the
-/// release derive reads `folder` relative to the crate's `Cargo.toml` at build
-/// time (rust_embed's rule), while the dev arm resolves `dev` relative to the
-/// repository root at runtime via [`dev_repo_root`]. Baking the build-time path
-/// into the dev artifact would point at the wrong checkout from another worktree
-/// and is rejected by corgi, whose sandbox requires checkout-independent output.
+/// release derive reads `crate_relative` relative to the crate's `Cargo.toml`
+/// at build time (rust_embed's rule), while the dev arm resolves `root_relative`
+/// relative to the repository root at runtime via [`dev_repo_root`]. Baking the
+/// build-time path into the dev artifact would point at the wrong checkout from
+/// another worktree and is rejected by corgi, whose sandbox requires
+/// checkout-independent output.
 ///
 /// ```ignore
 /// util::fs_embed! {
 ///     pub struct Assets,
-///     folder = "../../assets",
-///     dev = "assets",
+///     crate_relative = "../../assets",
+///     root_relative = "assets",
 ///     include = ["fonts/**/*", "themes/**/*", "*.md"],
 ///     exclude = ["themes/src/*", "*.DS_Store"],
 /// }
@@ -753,8 +758,8 @@ pub fn __fs_embed_get(
 macro_rules! fs_embed {
     (
         $vis:vis struct $name:ident,
-        folder = $folder:literal,
-        dev = $dev:literal
+        crate_relative = $crate_relative:literal,
+        root_relative = $root_relative:literal
         $(, include = [$($include:literal),* $(,)?])?
         $(, exclude = [$($exclude:literal),* $(,)?])?
         $(,)?
@@ -764,7 +769,7 @@ macro_rules! fs_embed {
         #[cfg(not(debug_assertions))]
         #[derive($crate::__rust_embed::RustEmbed)]
         #[crate_path = "::util::__rust_embed"]
-        #[folder = $folder]
+        #[folder = $crate_relative]
         $($(#[include = $include])*)?
         $($(#[exclude = $exclude])*)?
         $vis struct $name;
@@ -782,7 +787,7 @@ macro_rules! fs_embed {
                 file_path: &str,
             ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
                 $crate::__fs_embed_get(
-                    $dev,
+                    $root_relative,
                     file_path,
                     &[$($($include),*)?],
                     &[$($($exclude),*)?],
@@ -792,7 +797,11 @@ macro_rules! fs_embed {
             pub fn iter(
             ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
             {
-                $crate::__fs_embed_iter($dev, &[$($($include),*)?], &[$($($exclude),*)?])
+                $crate::__fs_embed_iter(
+                    $root_relative,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
             }
         }
 
@@ -805,7 +814,11 @@ macro_rules! fs_embed {
             }
 
             fn iter() -> $crate::__rust_embed::Filenames {
-                $crate::__fs_embed_iter($dev, &[$($($include),*)?], &[$($($exclude),*)?])
+                $crate::__fs_embed_iter(
+                    $root_relative,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
             }
         }
     };

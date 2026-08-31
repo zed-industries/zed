@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 #[cfg(not(feature = "dynamic_prompts"))]
 util::fs_embed! {
     struct LanguageConfigs,
-    folder = "../grammars/src/",
-    dev = "crates/grammars/src",
+    crate_relative = "../grammars/src/",
+    root_relative = "crates/grammars/src",
     include = ["*/config.toml"],
 }
 

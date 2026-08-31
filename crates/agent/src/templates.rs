@@ -8,8 +8,8 @@ use std::sync::Arc;
 // them; see the `assets` crate for the rationale.
 util::fs_embed! {
     struct Assets,
-    folder = "src/templates",
-    dev = "crates/agent/src/templates",
+    crate_relative = "src/templates",
+    root_relative = "crates/agent/src/templates",
     include = ["*.hbs"],
 }
 
