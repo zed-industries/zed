@@ -18454,9 +18454,12 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "project",
  "proptest",
+ "serde_json",
  "text",
  "ui",
+ "util",
  "workspace",
 ]
 
