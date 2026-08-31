@@ -17,7 +17,7 @@ use crate::{
     StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
 };
 use anyhow::{Context as _, anyhow};
-use collections::FxHashMap;
+use collections::{FxHashMap, FxHashSet};
 use core::fmt;
 use derive_more::{Add, Deref, FromStr, Sub};
 use itertools::Itertools;
@@ -26,10 +26,15 @@ use smallvec::{SmallVec, smallvec};
 use std::{
     borrow::Cow,
     cmp,
+    collections::VecDeque,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
+    mem,
     ops::{Deref, DerefMut, Range},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 /// An opaque identifier for a specific font.
@@ -47,6 +52,195 @@ pub const SUBPIXEL_VARIANTS_X: u8 = 4;
 /// Number of subpixel glyph variants along the Y axis.
 pub const SUBPIXEL_VARIANTS_Y: u8 = 1;
 
+const MAX_REPORTED_MISSING_GLYPHS: usize = 1024;
+
+/// The spacing behavior required of a fallback font.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FallbackFontClass {
+    /// A proportionally spaced fallback font.
+    Proportional,
+    /// A fixed-width fallback font.
+    Monospace,
+}
+
+/// A grapheme cluster that could not be represented by any available font.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct MissingGlyph {
+    grapheme: SharedString,
+    font_class: FallbackFontClass,
+}
+
+impl MissingGlyph {
+    /// Creates a missing-glyph report.
+    pub fn new(grapheme: SharedString, font_class: FallbackFontClass) -> Self {
+        Self {
+            grapheme,
+            font_class,
+        }
+    }
+
+    /// Returns the unresolved grapheme cluster.
+    pub fn grapheme(&self) -> &str {
+        &self.grapheme
+    }
+
+    /// Returns the spacing behavior required of a fallback font.
+    pub fn font_class(&self) -> FallbackFontClass {
+        self.font_class
+    }
+}
+
+#[derive(Default)]
+struct MissingGlyphState {
+    reported: FxHashSet<MissingGlyph>,
+    reported_order: VecDeque<MissingGlyph>,
+    pending: Vec<MissingGlyph>,
+}
+
+/// Collects missing-glyph reports without invoking application code during layout.
+#[derive(Clone)]
+pub struct MissingGlyphReporter {
+    state: Arc<Mutex<MissingGlyphState>>,
+    wake_sender: async_channel::Sender<()>,
+}
+
+impl MissingGlyphReporter {
+    /// Queues newly observed missing glyphs and wakes the receiver.
+    pub fn report(&self, missing_glyphs: impl IntoIterator<Item = MissingGlyph>) {
+        if self.wake_sender.is_closed() {
+            return;
+        }
+
+        let mut state = self.state.lock();
+        let mut added = false;
+        for missing_glyph in missing_glyphs {
+            if state.pending.len() == MAX_REPORTED_MISSING_GLYPHS {
+                break;
+            }
+            if state.reported.insert(missing_glyph.clone()) {
+                state.reported_order.push_back(missing_glyph.clone());
+                state.pending.push(missing_glyph);
+                added = true;
+            }
+            while state.reported.len() > MAX_REPORTED_MISSING_GLYPHS {
+                if let Some(expired) = state.reported_order.pop_front() {
+                    state.reported.remove(&expired);
+                }
+            }
+        }
+        drop(state);
+
+        if added {
+            match self.wake_sender.try_send(()) {
+                Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
+                Err(async_channel::TrySendError::Closed(())) => {
+                    let mut state = self.state.lock();
+                    state.reported.clear();
+                    state.reported_order.clear();
+                    state.pending.clear();
+                }
+            }
+        }
+    }
+
+    fn reset(&self) {
+        let mut state = self.state.lock();
+        state.reported.clear();
+        state.reported_order.clear();
+        state.pending.clear();
+    }
+
+    /// Returns whether a receiver is still consuming reports.
+    pub fn is_active(&self) -> bool {
+        !self.wake_sender.is_closed()
+    }
+}
+
+/// Receives batches of grapheme clusters that exhausted font fallback.
+pub struct MissingGlyphReceiver {
+    state: Arc<Mutex<MissingGlyphState>>,
+    wake_receiver: async_channel::Receiver<()>,
+}
+
+impl MissingGlyphReceiver {
+    /// Waits until at least one new missing glyph has been observed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`async_channel::RecvError`] if the reporting channel is closed.
+    pub async fn recv(&self) -> std::result::Result<Vec<MissingGlyph>, async_channel::RecvError> {
+        loop {
+            self.wake_receiver.recv().await?;
+            let pending = mem::take(&mut self.state.lock().pending);
+            if !pending.is_empty() {
+                return Ok(pending);
+            }
+        }
+    }
+}
+
+impl Drop for MissingGlyphReceiver {
+    fn drop(&mut self) {
+        let mut state = self.state.lock();
+        state.reported.clear();
+        state.reported_order.clear();
+        state.pending.clear();
+    }
+}
+
+#[cfg(test)]
+mod missing_glyph_tests {
+    use super::*;
+
+    #[test]
+    fn bounds_retained_missing_glyphs() {
+        let (wake_sender, _wake_receiver) = async_channel::bounded(1);
+        let state = Arc::<Mutex<MissingGlyphState>>::default();
+        let reporter = MissingGlyphReporter {
+            state: state.clone(),
+            wake_sender,
+        };
+        reporter.report((0..MAX_REPORTED_MISSING_GLYPHS).map(|index| {
+            MissingGlyph::new(index.to_string().into(), FallbackFontClass::Proportional)
+        }));
+        state.lock().pending.clear();
+
+        let newest = MissingGlyph::new("newest".into(), FallbackFontClass::Monospace);
+        reporter.report([newest.clone()]);
+
+        let state = state.lock();
+        assert_eq!(state.reported.len(), MAX_REPORTED_MISSING_GLYPHS);
+        assert_eq!(state.reported_order.len(), MAX_REPORTED_MISSING_GLYPHS);
+        assert!(state.reported.contains(&newest));
+    }
+
+    #[test]
+    fn dropping_receiver_disables_and_clears_reports() {
+        let (wake_sender, wake_receiver) = async_channel::bounded(1);
+        let state = Arc::<Mutex<MissingGlyphState>>::default();
+        let reporter = MissingGlyphReporter {
+            state: state.clone(),
+            wake_sender,
+        };
+        let receiver = MissingGlyphReceiver {
+            state: state.clone(),
+            wake_receiver,
+        };
+        reporter.report([MissingGlyph::new(
+            "missing".into(),
+            FallbackFontClass::Proportional,
+        )]);
+
+        drop(receiver);
+
+        assert!(!reporter.is_active());
+        let state = state.lock();
+        assert!(state.reported.is_empty());
+        assert!(state.reported_order.is_empty());
+        assert!(state.pending.is_empty());
+    }
+}
+
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
@@ -56,11 +250,16 @@ pub struct TextSystem {
     wrapper_pool: Mutex<FxHashMap<FontIdWithSize, Vec<LineWrapper>>>,
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
+    font_generation: Arc<AtomicUsize>,
+    missing_glyph_reporter: MissingGlyphReporter,
+    missing_glyph_receiver: Mutex<Option<MissingGlyphReceiver>>,
 }
 
 impl TextSystem {
     /// Create a new TextSystem with the given platform text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
+        let (wake_sender, wake_receiver) = async_channel::bounded(1);
+        let missing_glyph_state = Arc::<Mutex<MissingGlyphState>>::default();
         TextSystem {
             platform_text_system,
             font_metrics: RwLock::default(),
@@ -81,6 +280,15 @@ impl TextSystem {
                 font("DejaVu Sans"),
                 font("Arial"), // macOS, Windows
             ],
+            font_generation: Arc::default(),
+            missing_glyph_reporter: MissingGlyphReporter {
+                state: missing_glyph_state.clone(),
+                wake_sender,
+            },
+            missing_glyph_receiver: Mutex::new(Some(MissingGlyphReceiver {
+                state: missing_glyph_state,
+                wake_receiver,
+            })),
         }
     }
 
@@ -99,8 +307,30 @@ impl TextSystem {
     }
 
     /// Add a font's data to the text system.
+    ///
+    /// Cached font resolution and line layouts are invalidated after installation.
+    /// Layouts already in progress may complete against the previous font set.
     pub fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.platform_text_system.add_fonts(fonts)
+        self.platform_text_system.add_fonts(fonts)?;
+        self.font_ids_by_font.write().clear();
+        self.missing_glyph_reporter.reset();
+        self.font_generation.fetch_add(1, Ordering::Release);
+        Ok(())
+    }
+
+    /// Takes the receiver for missing-glyph reports.
+    ///
+    /// Only one receiver is available for each supported text system. Taking it
+    /// enables missing-glyph detection in the platform text system. Returns
+    /// `None` when reporting is unsupported or the receiver was already taken.
+    pub fn take_missing_glyph_receiver(&self) -> Option<MissingGlyphReceiver> {
+        if !self.platform_text_system.supports_missing_glyph_reporting() {
+            return None;
+        }
+        let receiver = self.missing_glyph_receiver.lock().take()?;
+        self.platform_text_system
+            .set_missing_glyph_reporter(self.missing_glyph_reporter.clone());
+        Some(receiver)
     }
 
     /// Get the FontId for the configure font family and style.
@@ -387,7 +617,10 @@ impl WindowTextSystem {
     /// Create a new WindowTextSystem with the given TextSystem.
     pub fn new(text_system: Arc<TextSystem>) -> Self {
         Self {
-            line_layout_cache: LineLayoutCache::new(text_system.platform_text_system.clone()),
+            line_layout_cache: LineLayoutCache::new(
+                text_system.platform_text_system.clone(),
+                text_system.font_generation.clone(),
+            ),
             text_system,
         }
     }
