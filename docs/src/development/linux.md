@@ -128,7 +128,8 @@ Use this when Zed is using a lot of CPU. It is not useful for hangs.
   On Ubuntu (derivatives) run `sudo apt install linux-tools`.
 
 - Perf record:
-  Run `sudo perf record -p <pid you just found>`, wait a few seconds to gather data, then press Ctrl+C. You should now have a `perf.data` file.
+  Run `sudo perf record -g --call-graph dwarf -p <pid you just found>`, wait a few seconds to gather data, then press Ctrl+C. You should now have a `perf.data` file.
+  The `--call-graph dwarf` part records the callers of every sampled function: without it, the profile shows isolated hot symbols with no way to tell who invoked them, which is rarely enough to act on.
 
 - Make the output file user owned:
   run `sudo chown $USER:$USER perf.data`
