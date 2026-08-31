@@ -35,6 +35,7 @@ use crate::{
 
 pub mod branch_diff;
 pub mod branch_picker;
+mod branch_review;
 mod commit_context_menu;
 mod commit_modal;
 pub mod commit_tooltip;
@@ -51,6 +52,7 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+mod review_state;
 pub mod solo_diff_view;
 pub mod staged_diff;
 pub mod stash_picker;

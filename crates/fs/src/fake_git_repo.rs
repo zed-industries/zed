@@ -254,7 +254,24 @@ impl GitRepository for FakeGitRepository {
                 };
                 entries.insert(path.clone(), status);
             }
-            Ok(TreeDiff { entries })
+            let base_modes = entries
+                .iter()
+                .map(|(path, status)| {
+                    (
+                        path.clone(),
+                        if matches!(status, TreeDiffStatus::Added) {
+                            0
+                        } else {
+                            0o100644
+                        },
+                    )
+                })
+                .collect();
+            Ok(TreeDiff {
+                renames: Default::default(),
+                entries,
+                base_modes,
+            })
         })
         .boxed()
     }

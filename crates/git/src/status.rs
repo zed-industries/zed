@@ -1,5 +1,5 @@
 use crate::{Oid, repository::RepoPath};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
@@ -514,6 +514,10 @@ pub enum DiffTreeType {
 
 #[derive(Debug, PartialEq)]
 pub struct TreeDiff {
+    /// Rename destinations mapped to their base-side paths. Entries remain split
+    /// into deletion/addition so existing diff buffers keep their identity.
+    pub renames: HashMap<RepoPath, RepoPath>,
+    pub base_modes: HashMap<RepoPath, u32>,
     pub entries: HashMap<RepoPath, TreeDiffStatus>,
 }
 
@@ -528,12 +532,22 @@ impl FromStr for TreeDiff {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self> {
-        let mut fields = s.split('\0');
+        let mut records = s.split('\0');
+        let mut renames = HashMap::default();
         let mut parsed = HashMap::default();
-        while let Some((status, path)) = fields.next().zip(fields.next()) {
+        let mut base_modes = HashMap::default();
+        while let Some((status, path)) = records.next().zip(records.next()) {
             let path = RepoPath::from_rel_path(RelPath::from_unix_str(path)?);
 
-            let mut fields = status.split(" ").skip(2);
+            let mut fields = status.split(" ");
+            let base_mode = u32::from_str_radix(
+                fields
+                    .next()
+                    .context("missing base mode")?
+                    .trim_start_matches(':'),
+                8,
+            )?;
+            fields.next().context("missing current mode")?;
             let old_sha = fields
                 .next()
                 .ok_or_else(|| anyhow!("expected to find old_sha"))?
@@ -544,26 +558,38 @@ impl FromStr for TreeDiff {
                 .ok_or_else(|| anyhow!("expected to find new_sha"))?;
             let status = fields
                 .next()
-                .and_then(|s| {
-                    if s.len() == 1 {
-                        s.as_bytes().first()
-                    } else {
-                        None
-                    }
-                })
+                .and_then(|s| s.as_bytes().first())
                 .ok_or_else(|| anyhow!("expected to find status"))?;
 
+            if *status == b'R' {
+                let destination = records.next().context("missing rename destination")?;
+                anyhow::ensure!(!destination.is_empty(), "missing rename destination");
+                let destination = RepoPath::from_rel_path(RelPath::from_unix_str(destination)?);
+                renames.insert(destination.clone(), path.clone());
+                base_modes.insert(destination.clone(), 0);
+                parsed.insert(destination, TreeDiffStatus::Added);
+                base_modes.insert(path.clone(), base_mode);
+                parsed.insert(path, TreeDiffStatus::Deleted { old: old_sha });
+                continue;
+            }
             let result = match StatusCode::from_byte(*status)? {
-                StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
+                StatusCode::Modified | StatusCode::TypeChanged => {
+                    TreeDiffStatus::Modified { old: old_sha }
+                }
                 StatusCode::Added => TreeDiffStatus::Added,
                 StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
                 _status => continue,
             };
 
+            base_modes.insert(path.clone(), base_mode);
             parsed.insert(path, result);
         }
 
-        Ok(Self { entries: parsed })
+        Ok(Self {
+            renames,
+            entries: parsed,
+            base_modes,
+        })
     }
 }
 
@@ -617,11 +643,11 @@ pub fn parse_numstat(output: &str) -> GitDiffStat {
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
         repository::RepoPath,
         status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
     };
+    use collections::HashMap;
 
     use super::{DiffStat, parse_numstat};
 
@@ -736,6 +762,12 @@ mod tests {
         assert_eq!(
             output,
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::from_iter([
+                    (RepoPath::new(".zed/settings.json").unwrap(), 0),
+                    (RepoPath::new("README.md").unwrap(), 0o100644),
+                    (RepoPath::new("parallel.go").unwrap(), 0o100644)
+                ]),
                 entries: [
                     (
                         RepoPath::new(".zed/settings.json").unwrap(),
@@ -758,5 +790,29 @@ mod tests {
                 .collect()
             }
         )
+    }
+    #[test]
+    fn tree_diff_preserves_rename_paths_and_modes() {
+        let sha = "42f097005a1f21eb2260fad02ec8c991282beee8";
+        let output: TreeDiff = format!(":100755 100755 {sha} {sha} R100\0old name\0new name\0")
+            .parse()
+            .unwrap();
+        let old = RepoPath::new("old name").unwrap();
+        let new = RepoPath::new("new name").unwrap();
+        assert_eq!(output.renames.get(&new), Some(&old));
+        assert_eq!(output.entries.get(&new), Some(&TreeDiffStatus::Added));
+        assert_eq!(
+            output.entries.get(&old),
+            Some(&TreeDiffStatus::Deleted {
+                old: sha.parse().unwrap()
+            })
+        );
+        assert_eq!(output.base_modes.get(&old), Some(&0o100755));
+        assert_eq!(output.base_modes.get(&new), Some(&0));
+        assert!(
+            format!(":100644 100644 {sha} {sha} R100\0old\0")
+                .parse::<TreeDiff>()
+                .is_err()
+        );
     }
 }

@@ -9567,7 +9567,11 @@ impl Repository {
                         })
                         .collect();
 
-                    Ok(TreeDiff { entries })
+                    Ok(TreeDiff {
+                        renames: Default::default(),
+                        entries,
+                        base_modes: HashMap::default(),
+                    })
                 }
             }
         })

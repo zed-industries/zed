@@ -13,7 +13,7 @@ name = "git_ui"
 path = "src/git_ui.rs"
 
 [features]
-test-support = ["multi_buffer/test-support", "remote_connection/test-support"]
+test-support = ["multi_buffer/test-support", "project/test-support", "remote_connection/test-support", "workspace/test-support"]
 call = ["dep:call"]
 
 [dependencies]
@@ -53,6 +53,7 @@ remote_connection.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 settings.workspace = true
 smallvec.workspace = true
 strum.workspace = true

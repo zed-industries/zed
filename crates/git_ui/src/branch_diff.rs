@@ -40,12 +40,21 @@ use workspace::{
 };
 use zed_actions::agent::ReviewBranchDiff;
 
-/// The workspace item for a branch (merge-base) diff: "Changes since {branch}".
+gpui::actions!(
+    git,
+    [
+        /// Opens native Branch Review against the default branch.
+        OpenBranchReview,
+    ]
+);
+
+/// The workspace item for a branch (merge-base) review.
 /// It wraps a single [`DiffMultibuffer`] over [`DiffBase::Merge`] and delegates
 /// the [`Item`] surface to it. The merge base can be changed in place via the
 /// [`BranchDiffToolbar`]'s branch picker, which reloads without reconfiguring
 /// the editor (the merge styling is identical for every base ref).
 pub struct BranchDiff {
+    pub(crate) review: Entity<crate::branch_review::BranchReview>,
     diff: Entity<DiffMultibuffer>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
@@ -71,6 +80,9 @@ impl Addon for BranchDiffAddon {
 impl BranchDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(|workspace, _: &DeployBranchDiff, window, cx| {
+            Self::deploy_branch_diff(workspace, window, cx)
+        });
+        workspace.register_action(|workspace, _: &OpenBranchReview, window, cx| {
             Self::deploy_branch_diff(workspace, window, cx)
         });
         workspace.register_action(Self::compare_with_branch);
@@ -364,7 +376,10 @@ impl BranchDiff {
         let diff_event_subscription = cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
             cx.emit(event.clone())
         });
+        let review =
+            cx.new(|cx| crate::branch_review::BranchReview::new(project.clone(), diff.clone(), cx));
         Self {
+            review,
             diff,
             project,
             workspace: workspace.downgrade(),
@@ -477,7 +492,7 @@ impl Item for BranchDiff {
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         match self.diff_base(cx) {
-            DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
+            DiffBase::Merge { base_ref } => format!("Branch Review: {}", base_ref).into(),
             DiffBase::Head | DiffBase::Index | DiffBase::Staged => "Changes".into(),
         }
     }
@@ -636,7 +651,9 @@ impl Render for BranchDiff {
         div()
             .size_full()
             .on_action(cx.listener(Self::review_diff))
-            .child(self.diff.clone())
+            .flex()
+            .child(self.review.clone())
+            .child(div().flex_1().min_w_0().h_full().child(self.diff.clone()))
     }
 }
 

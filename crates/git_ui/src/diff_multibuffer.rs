@@ -703,17 +703,60 @@ impl DiffMultibuffer {
                 })?;
             }
         }
-        this.update(cx, |this, cx| {
-            if !buffers_to_fold.is_empty() {
-                this.editor.update(cx, |editor, cx| {
-                    editor
-                        .rhs_editor()
-                        .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
+        cx.update(|window, cx| {
+            this.update(cx, |this, cx| {
+                this.editor.update(cx, |split, cx| {
+                    let editors = std::iter::once(split.rhs_editor().clone())
+                        .chain(split.lhs_editor().cloned());
+                    for editor in editors {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.buffer().read(cx).snapshot(cx);
+                            let selections = editor.selections.disjoint_anchors();
+                            if selections.iter().any(|selection| {
+                                !snapshot.can_resolve(&selection.start)
+                                    || !snapshot.can_resolve(&selection.end)
+                            }) {
+                                // A renamed live buffer can move to a new path while
+                                // its old path becomes a separate deletion buffer.
+                                // Resolve stale anchors at their nearest surviving
+                                // positions before folding newly added buffers.
+                                let repaired = selections
+                                    .iter()
+                                    .cloned()
+                                    .map(|mut selection| {
+                                        if !snapshot.can_resolve(&selection.start) {
+                                            selection.start =
+                                                snapshot.anchor_before(selection.start);
+                                        }
+                                        if !snapshot.can_resolve(&selection.end) {
+                                            selection.end = snapshot.anchor_after(selection.end);
+                                        }
+                                        selection
+                                    })
+                                    .collect::<Vec<_>>();
+                                editor.change_selections(
+                                    Default::default(),
+                                    window,
+                                    cx,
+                                    |selections| {
+                                        selections.select_anchors(repaired);
+                                    },
+                                );
+                            }
+                        });
+                    }
                 });
-            }
-            this.pending_scroll.take();
-            cx.notify();
-        })?;
+                if !buffers_to_fold.is_empty() {
+                    this.editor.update(cx, |editor, cx| {
+                        editor
+                            .rhs_editor()
+                            .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
+                    });
+                }
+                this.pending_scroll.take();
+                cx.notify();
+            })
+        })??;
 
         Ok(())
     }

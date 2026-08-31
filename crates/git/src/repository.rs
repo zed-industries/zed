@@ -1921,7 +1921,7 @@ impl GitRepository for RealGitRepository {
                 "-r",
                 "-z",
                 "--abbrev=64",
-                "--no-renames",
+                "--find-renames",
                 "--merge-base",
                 base.as_str(),
                 head.as_str(),
@@ -1933,7 +1933,7 @@ impl GitRepository for RealGitRepository {
                 "--raw",
                 "-z",
                 "--abbrev=64",
-                "--no-renames",
+                "--find-renames",
                 "--merge-base",
                 base.as_str(),
             ]
@@ -1944,7 +1944,7 @@ impl GitRepository for RealGitRepository {
                 "-r",
                 "-z",
                 "--abbrev=64",
-                "--no-renames",
+                "--find-renames",
                 base.as_str(),
                 head.as_str(),
             ]
@@ -2093,6 +2093,7 @@ impl GitRepository for RealGitRepository {
                     let worktree_oid = String::from_utf8_lossy(&hash_output.stdout);
                     if worktree_oid.trim() == old.to_string() {
                         tree_diff.entries.remove(&path);
+                        tree_diff.base_modes.remove(&path);
                     } else {
                         tree_diff
                             .entries
@@ -4338,6 +4339,51 @@ mod tests {
         git_command_output(working_directory, arguments);
     }
 
+    #[gpui::test]
+    async fn branch_review_rename_and_mode_metadata(cx: &mut gpui::TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        git_init_repo(root);
+        fs::write(root.join("old.txt"), "base content\n").unwrap();
+        git_command(root, ["add", "."]);
+        git_command(root, ["commit", "-m", "base"]);
+        git_command(root, ["switch", "-c", "feature"]);
+        git_command(root, ["mv", "old.txt", "new.txt"]);
+        let repository =
+            RealGitRepository::new(&root.join(".git"), None, Some("git".into()), cx.executor())
+                .unwrap();
+        let comparison = repository
+            .diff_tree(DiffTreeType::MergeBaseWithWorktree {
+                base: "main".into(),
+            })
+            .await
+            .unwrap();
+        let old = RepoPath::new("old.txt").unwrap();
+        let new = RepoPath::new("new.txt").unwrap();
+        assert_eq!(comparison.renames.get(&new), Some(&old));
+        assert_eq!(comparison.base_modes.get(&old), Some(&0o100644));
+        assert_eq!(comparison.base_modes.get(&new), Some(&0));
+        assert!(matches!(
+            comparison.entries.get(&old),
+            Some(TreeDiffStatus::Deleted { .. })
+        ));
+        assert!(matches!(
+            comparison.entries.get(&new),
+            Some(TreeDiffStatus::Added)
+        ));
+        git_command(root, ["commit", "-m", "rename"]);
+        let committed = repository
+            .diff_tree(DiffTreeType::MergeBase {
+                base: "main".into(),
+                head: "HEAD".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(comparison, committed);
+    }
+
     fn git_init_repo(path: &Path) {
         fs::create_dir_all(path).expect("failed to create repo directory");
         git_command(path, ["init", "-b", "main"]);
@@ -4471,6 +4517,8 @@ mod tests {
                 .await
                 .unwrap(),
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::default(),
                 entries: HashMap::default(),
             }
         );
@@ -4484,6 +4532,8 @@ mod tests {
                 .await
                 .unwrap(),
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::from_iter([(RepoPath::new("file.txt").unwrap(), 0o100644)]),
                 entries: HashMap::from_iter([(
                     RepoPath::new("file.txt").unwrap(),
                     TreeDiffStatus::Modified { old: base_oid },
@@ -4528,6 +4578,8 @@ mod tests {
                 .await
                 .unwrap(),
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::default(),
                 entries: HashMap::default(),
             }
         );
@@ -4541,6 +4593,8 @@ mod tests {
                 .await
                 .unwrap(),
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::from_iter([(RepoPath::new("file.txt").unwrap(), 0o100644)]),
                 entries: HashMap::from_iter([(
                     RepoPath::new("file.txt").unwrap(),
                     TreeDiffStatus::Modified { old: base_oid },
@@ -4590,6 +4644,8 @@ mod tests {
                 .await
                 .unwrap(),
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::default(),
                 entries: HashMap::default(),
             }
         );
@@ -4604,6 +4660,8 @@ mod tests {
                 .await
                 .unwrap(),
             TreeDiff {
+                renames: HashMap::default(),
+                base_modes: HashMap::from_iter([(RepoPath::new("file.txt").unwrap(), 0o120000)]),
                 entries: HashMap::from_iter([(
                     RepoPath::new("file.txt").unwrap(),
                     TreeDiffStatus::Modified { old: base_oid },
