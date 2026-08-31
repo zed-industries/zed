@@ -75,6 +75,7 @@ targets:
       - sdk: CoreVideo.framework
       - sdk: Foundation.framework
       - sdk: Metal.framework
+      - sdk: MetalKit.framework
       - sdk: Network.framework
       - sdk: QuartzCore.framework
       - sdk: SafariServices.framework
