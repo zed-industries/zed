@@ -60,11 +60,10 @@ nix = { workspace = true, features = ["user"] }
 mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-tendril = "0.4.3"
+tendril = "0.5"
 windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
 util_macros.workspace = true
-pretty_assertions.workspace = true
 path = { workspace = true, features = ["test-support"] }

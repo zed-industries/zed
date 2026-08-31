@@ -6,8 +6,8 @@ use editor::{
 };
 use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Font, IntoElement, Render, SharedString, Task, Window,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
+    IntoElement, Render, SharedString, Task, Window,
 };
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
@@ -17,12 +17,12 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{Color, Icon, IconName, Label, LabelCommon as _};
+use ui::{Color, Icon, IconName};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -231,16 +231,6 @@ impl Item for MultiDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
-        Label::new(self.title())
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_tooltip_text(&self, _cx: &App) -> Option<ui::SharedString> {

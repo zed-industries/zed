@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -111,8 +111,8 @@ impl settings::Settings for TerminalSettings {
             button: user_content.button.unwrap(),
             dock: user_content.dock.unwrap(),
             starts_open: user_content.starts_open.unwrap(),
-            default_width: px(user_content.default_width.unwrap()),
-            default_height: px(user_content.default_height.unwrap()),
+            default_width: user_content.default_width.unwrap().into_gpui(),
+            default_height: user_content.default_height.unwrap().into_gpui(),
             flexible: user_content.flexible.unwrap(),
             detect_venv: project_content.detect_venv.unwrap(),
             scroll_multiplier: user_content.scroll_multiplier.unwrap(),

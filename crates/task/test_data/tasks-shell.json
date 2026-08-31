@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Without args",
+      "group": "build",
+      "type": "shell",
+      "command": "cargo build --package rust-analyzer",
+      "problemMatcher": "$rustc"
+    },
+    {
+      "label": "With args",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/node_modules/typescript/lib/tsc.js",
+        "--build",
+        "${workspaceFolder}/src",
+        "--watch"
+      ],
+      "group": "build"
+    },
+    {
+      "label": "Ignored task without type",
+      "dependsOn": ["Without args", "With args"],
+      "problemMatcher": "$rustc"
+    }
+  ]
+}

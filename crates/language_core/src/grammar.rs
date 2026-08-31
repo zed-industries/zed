@@ -26,9 +26,66 @@ impl Default for GrammarId {
     }
 }
 
+/// A handle that can produce a parseable [`tree_sitter::Language`] on the
+/// current thread.
+///
+/// On native targets a language is process-global, so the handle simply
+/// stores it. On WebAssembly, a dynamically linked grammar's functions live
+/// in the function table of the wasm instance that linked it, and every
+/// thread is a separate instance — so a parseable language is only valid on
+/// the thread that produced it, and [`tree_sitter::Language`] is `!Send`
+/// there. The handle instead stores a thread-safe resolver that links or
+/// looks up a copy of the grammar for whichever thread asks.
+#[derive(Clone)]
+pub struct ParseableLanguage {
+    #[cfg(not(target_family = "wasm"))]
+    language: tree_sitter::Language,
+    #[cfg(target_family = "wasm")]
+    resolve: std::sync::Arc<dyn Fn() -> Result<tree_sitter::Language> + Send + Sync>,
+}
+
+impl ParseableLanguage {
+    /// A parseable language valid on the calling thread.
+    pub fn resolve(&self) -> Result<tree_sitter::Language> {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            Ok(self.language.clone())
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            (self.resolve)()
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+impl From<tree_sitter::Language> for ParseableLanguage {
+    fn from(language: tree_sitter::Language) -> Self {
+        Self { language }
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl ParseableLanguage {
+    pub fn from_resolver(
+        resolve: std::sync::Arc<dyn Fn() -> Result<tree_sitter::Language> + Send + Sync>,
+    ) -> Self {
+        Self { resolve }
+    }
+}
+
+impl std::fmt::Debug for ParseableLanguage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParseableLanguage").finish_non_exhaustive()
+    }
+}
+
 pub struct Grammar {
     id: GrammarId,
+    #[cfg(not(target_family = "wasm"))]
     pub ts_language: tree_sitter::Language,
+    #[cfg(target_family = "wasm")]
+    parseable_language: ParseableLanguage,
     pub error_query: Option<Query>,
     pub highlights_config: Option<HighlightsConfig>,
     pub brackets_config: Option<BracketsConfig>,
@@ -257,7 +314,12 @@ fn populate_capture_indices(
 }
 
 impl Grammar {
-    pub fn new(ts_language: tree_sitter::Language) -> Self {
+    pub fn new(language: impl Into<ParseableLanguage>) -> Self {
+        let parseable_language = language.into();
+        let error_query = parseable_language
+            .resolve()
+            .ok()
+            .and_then(|ts_language| Query::new(&ts_language, "(ERROR) @error").ok());
         Self {
             id: GrammarId::new(),
             highlights_config: None,
@@ -269,10 +331,30 @@ impl Grammar {
             override_config: None,
             redactions_config: None,
             runnable_config: None,
-            error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
+            error_query,
             debug_variables_config: None,
-            ts_language,
+            #[cfg(not(target_family = "wasm"))]
+            ts_language: parseable_language
+                .resolve()
+                .expect("resolving a native parseable language cannot fail"),
+            #[cfg(target_family = "wasm")]
+            parseable_language,
             highlight_map: Default::default(),
+        }
+    }
+
+    /// A parseable [`tree_sitter::Language`] valid on the calling thread.
+    ///
+    /// See [`ParseableLanguage`] for why this is a resolution rather than a
+    /// field access on WebAssembly.
+    pub fn parseable_language(&self) -> Result<tree_sitter::Language> {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            Ok(self.ts_language.clone())
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            self.parseable_language.resolve()
         }
     }
 
@@ -365,7 +447,7 @@ impl Grammar {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
 
         let mut identifier_capture_indices = Vec::new();
         for name in [
@@ -392,7 +474,7 @@ impl Grammar {
     }
 
     pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
         let extra_captures: Vec<_> = query
             .capture_names()
             .iter()
@@ -420,7 +502,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
         let mut item_capture_ix = 0;
         let mut name_capture_ix = 0;
         let mut context_capture_ix = None;
@@ -462,7 +544,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
 
         let mut text_objects_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
@@ -489,7 +571,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
 
         let mut objects_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
@@ -516,7 +598,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
         let mut open_capture_ix = 0;
         let mut close_capture_ix = 0;
         if populate_capture_indices(
@@ -559,7 +641,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
         let mut indent_capture_ix = 0;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
@@ -600,7 +682,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
         let mut language_capture_ix = None;
         let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
@@ -674,7 +756,7 @@ impl Grammar {
         brackets: &mut BracketPairConfig,
         scope_opt_in_language_servers: &[SharedString],
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, mut name) in query.capture_names().iter().copied().enumerate() {
@@ -751,7 +833,7 @@ impl Grammar {
         source: &str,
         language_name: &LanguageName,
     ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
+        let query = Query::new(&self.parseable_language()?, source)?;
         let mut redaction_capture_ix = 0;
         if populate_capture_indices(
             &query,

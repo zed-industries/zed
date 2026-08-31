@@ -685,6 +685,29 @@ For the case of "open", regular selection behavior can be achieved by holding `a
 
 List of `string` values.
 
+### Prediction Debounce
+
+- Description: How long Zed waits after you stop typing before automatically requesting an edit prediction.
+- Setting: `edit_predictions.<provider>.prediction_debounce`
+- Default: `75` for GitHub Copilot, `150` for Codestral, and `0` for Zed, Mercury, Ollama, and OpenAI-compatible APIs.
+
+**Options**
+
+Non-negative integer values representing milliseconds. Set this to `0` to disable the additional delay. Configure the value under the settings object for the selected provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "prediction_debounce": 500
+    }
+  }
+}
+```
+
+See [Configuring the Prediction Debounce](../ai/edit-prediction.md#configuring-the-prediction-debounce) for more information.
+
 ## Edit Predictions Disabled in
 
 - Description: A list of language scopes in which edit predictions should be disabled.
@@ -839,7 +862,7 @@ List of `string` values
     "breakpoints": true,
     "folds": true,
     "min_line_number_digits": 4,
-    "git_gutter_width": null
+    "git_gutter_width": "default"
   }
 }
 ```
@@ -851,7 +874,7 @@ List of `string` values
 - `breakpoints`: Whether to show breakpoints in the gutter
 - `folds`: Whether to show fold buttons in the gutter
 - `min_line_number_digits`: Minimum number of characters to reserve space for in the gutter
-- `git_gutter_width`: The width, in pixels, of the git diff hunk indicators in the gutter. When `null`, the width scales with the buffer font size
+- `git_gutter_width`: The width, in pixels, of the git diff hunk indicators in the gutter. When `default`, the width scales with the buffer font size
 
 ## Hide Mouse
 
@@ -1693,6 +1716,30 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 This setting enables integration with macOS’s native window tabbing feature. When set to `true`, Zed windows can be grouped together as tabs in a single macOS window, following the system-wide tabbing preferences set by the user (such as "Always", "In Full Screen", or "Never"). This setting is only available on macOS.
 
+## Fullscreen Mode
+
+- Description: Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+- Setting: `fullscreen_mode`
+- Default: `native`
+
+**Options**
+
+1. Use macOS's native fullscreen, which moves the window into its own Mission Control space:
+
+```json
+{
+  "fullscreen_mode": "native"
+}
+```
+
+2. Resize the window to cover the entire screen, including the menu bar and, on notched displays, the area around the notch:
+
+```json
+{
+  "fullscreen_mode": "simple"
+}
+```
+
 ## Enable Language Server
 
 - Description: Whether or not to use language servers to provide code intelligence.
@@ -2128,6 +2175,8 @@ The result is still `)))` and not `))))))`, which is what it would be by default
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.sl",
+    "**/.repo",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -2137,7 +2186,23 @@ The result is still `)))` and not `))))))`, which is what it would be by default
 }
 ```
 
-Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
+Note that specifying `file_scan_exclusions` in `settings.json` will override the defaults (listed above). Use `"..."` to keep them:
+
+```json [settings]
+{
+  "file_scan_exclusions": ["**/node_modules", "..."]
+}
+```
+
+The `"..."` entry expands to the list you are overriding, so the example above excludes `node_modules` in addition to every default. Entries you list by name keep their position, and `"..."` fills in the inherited ones at that point in the list. If you want full control over what is excluded, omit `"..."` — only the entries you list by name will be used.
+
+| Configuration                | Result                               |
+| ---------------------------- | ------------------------------------ |
+| `["..."]`                    | The defaults, unchanged              |
+| `["**/node_modules", "..."]` | `**/node_modules`, then the defaults |
+| `["**/node_modules"]`        | `**/node_modules` only               |
+
+> Note: `"..."` resolves one settings layer at a time. In a project’s `.zed/settings.json` it expands to whatever your user settings resolved to, rather than to Zed’s defaults.
 
 ## File Scan Inclusions
 
@@ -2150,6 +2215,37 @@ Note, specifying `file_scan_exclusions` in settings.json will override the defau
   "file_scan_inclusions": [".env*"]
 }
 ```
+
+## File Scan Depth
+
+- Setting: `file_scan_depth`
+- Description: Maximum directory depth that Zed eagerly indexes outside of git repositories. Directories at this depth or deeper are indexed on demand: when expanded in the project panel or when a file inside them is opened. Contents of directories that were not indexed yet are invisible to the file finder and project search. When directories get deferred, the status bar of the affected window shows a brief "Partial file index" message. Set to `0` to always index everything eagerly and activate all git repositories immediately.
+- Default: `5`
+
+```json [settings]
+{
+  "file_scan_depth": 0
+}
+```
+
+How the limit applies, case by case:
+
+| Case                                                                    | Behavior                                                                                                    |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Project rooted at a git repository, or at a subdirectory of one         | Indexed fully, the limit never applies                                                                      |
+| Git repository rooted shallower than the limit (e.g. a repo under `~/`) | Its whole subtree is indexed fully, no matter how deep                                                      |
+| Git repository rooted at or deeper than the limit                       | Not discovered eagerly; opening any file inside it registers it and indexes its whole subtree from then on  |
+| Non-git tree shallower than the limit                                   | Indexed fully, nothing changes                                                                              |
+| Non-git tree deeper than the limit (e.g. `~/`, `/`, large datasets)     | Indexed up to the limit, the rest on demand; unindexed contents are invisible to the file finder and search |
+| Gitignored directories                                                  | Indexed on demand regardless of this setting, as always                                                     |
+| `file_scan_inclusions` matches                                          | Always indexed, regardless of depth                                                                         |
+| `file_scan_exclusions` matches                                          | Never indexed, regardless of depth                                                                          |
+
+Directories loaded on demand stay indexed, but are deferred again after a restart or after a settings change triggers a worktree rescan.
+
+`file_scan_depth` bounds where git repositories can be discovered; [repository activation](../git.md#repository-activation) decides what a discovered repository costs.
+Note that any non-zero value defers git activation for repositories that are not directly inside a project root folder, no matter how large the value is; raising the limit indexes more directories eagerly but does not activate deeper repositories any earlier.
+In multi-folder projects, depth is measured from each root folder separately.
 
 ## Scan Symbolic Links
 
@@ -2935,10 +3031,10 @@ At this point, the server may or may not return hints depending on its implement
 
 The following languages have inlay hints preconfigured by Zed:
 
-- [Go](https://docs.zed.dev/languages/go)
-- [Rust](https://docs.zed.dev/languages/rust)
-- [Svelte](https://docs.zed.dev/languages/svelte)
-- [TypeScript](https://docs.zed.dev/languages/typescript)
+- [Go](../languages/go.md)
+- [Rust](../languages/rust.md)
+- [Svelte](../languages/svelte.md)
+- [TypeScript](../languages/typescript.md)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
@@ -3033,6 +3129,16 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 **Options**
 
 - `enabled`: Whether to enable automatic JSX tag closing
+
+## Language Detection
+
+- Description: Whether to automatically detect the language of an untitled buffer from its contents. Languages explicitly selected from the language selector are not changed.
+- Setting: `language_detection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
 
 ## Languages
 
@@ -3474,6 +3580,14 @@ Examples:
 
 `boolean` values
 
+## Call Hierarchy
+
+### Modal Max Width
+
+- Description: Max-width of the call hierarchy modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `modal_max_width`
+- Default: `medium`
+
 ## File Finder
 
 ### File Icons
@@ -3798,7 +3912,8 @@ Non-negative `integer` values
     "case_sensitive": false,
     "include_ignored": false,
     "regex": false,
-    "center_on_match": false
+    "center_on_match": false,
+    "search_on_type": true
   }
 }
 ```
@@ -3840,6 +3955,12 @@ Non-negative `integer` values
 - Description: Whether to center the cursor on each search match when navigating.
 - Setting: `center_on_match`
 - Default: `false`
+
+### Search On Type
+
+- Description: Start searching as you type in project search, without pressing Enter.
+- Setting: `search_on_type`
+- Default: `true`
 
 ## Search Wrap
 
@@ -5149,7 +5270,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5686,7 +5807,7 @@ You can define these in user or project settings; project settings are merged on
     "default_width": 300,
     "dock": "left",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,

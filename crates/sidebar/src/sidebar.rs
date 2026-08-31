@@ -39,7 +39,9 @@ use menu::{
     Cancel, Confirm, SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious,
 };
 use notifications::status_toast::StatusToast;
-use project::{AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId};
+use project::{
+    AgentId, AgentRegistryStore, Event as ProjectEvent, WorktreeId, repo_identity_path_if_local,
+};
 use recent_projects::sidebar_recent_projects::SidebarRecentProjects;
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
 use ui::utils::platform_title_bar_height;
@@ -63,10 +65,10 @@ use unicode_segmentation::UnicodeSegmentation as _;
 use util::ResultExt as _;
 use util::path_list::PathList;
 use workspace::{
-    CloseWindow, FocusWorkspaceSidebar, MultiWorkspace, MultiWorkspaceEvent, NextProject,
-    NextThread, Open, OpenMode, PreviousProject, PreviousThread, ProjectGroupKey, RemovalIntent,
-    SaveIntent, Sidebar as WorkspaceSidebar, SidebarSide, Toast, ToggleWorkspaceSidebar, Workspace,
-    notifications::NotificationId, sidebar_side_context_menu,
+    CloseWindow, FocusWorkspaceSidebar, MoveProjectDown, MoveProjectUp, MultiWorkspace,
+    MultiWorkspaceEvent, NextProject, NextThread, Open, OpenMode, PreviousProject, PreviousThread,
+    ProjectGroupKey, RemovalIntent, SaveIntent, Sidebar as WorkspaceSidebar, SidebarSide, Toast,
+    ToggleWorkspaceSidebar, Workspace, notifications::NotificationId, sidebar_side_context_menu,
 };
 
 use git_ui_core::worktree_service::{RemoteBranchName, worktree_create_targets};
@@ -627,10 +629,15 @@ fn workspace_menu_worktree_labels(
 
             if let Some(snapshot) = repository_snapshot {
                 let worktree_name = if snapshot.is_linked_worktree() {
+                    let identity_fallback = repo_identity_path_if_local(
+                        &snapshot.common_dir_abs_path,
+                        snapshot.path_style,
+                    );
                     snapshot
                         .main_worktree_abs_path()
-                        .and_then(|main_worktree_path| {
-                            project::linked_worktree_short_name(main_worktree_path, root_path)
+                        .or(identity_fallback)
+                        .and_then(|name_anchor_path| {
+                            project::linked_worktree_short_name(name_anchor_path, root_path)
                         })
                         .unwrap_or_else(|| folder_name.clone())
                 } else {
@@ -3073,6 +3080,7 @@ impl Sidebar {
                             this.separator()
                                 .item(
                                     ContextMenuEntry::new("Move Up")
+                                        .action(Box::new(MoveProjectUp))
                                         .disabled(!can_move_up)
                                         .handler(move |_window, cx| {
                                             move_up_multi_workspace
@@ -3087,6 +3095,7 @@ impl Sidebar {
                                 )
                                 .item(
                                     ContextMenuEntry::new("Move Down")
+                                        .action(Box::new(MoveProjectDown))
                                         .disabled(!can_move_down)
                                         .handler(move |_window, cx| {
                                             move_down_multi_workspace
@@ -7201,7 +7210,7 @@ impl Sidebar {
         let has_query = self.has_filter_query(cx);
         let sidebar_on_left = self.side(cx) == SidebarSide::Left;
         let sidebar_on_right = self.side(cx) == SidebarSide::Right;
-        let not_fullscreen = !window.is_fullscreen();
+        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
         let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =
@@ -7635,9 +7644,14 @@ fn render_import_onboarding_banner(
                 .min_w_0()
                 .w_full()
                 .gap_1()
+                .items_start()
                 .justify_between()
-                .flex_wrap()
-                .child(Label::new(title).size(LabelSize::Small))
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .child(Label::new(title).size(LabelSize::Small)),
+                )
                 .child(
                     IconButton::new(
                         SharedString::from(format!("close-{id}-onboarding")),
