@@ -11,7 +11,7 @@ use crate::{
     StyleRefinement, Styled, Window, point, px, size,
 };
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc, usize};
+use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
 
 use super::ListHorizontalSizingBehavior;
 
@@ -671,7 +671,7 @@ impl UniformList {
             return Size::default();
         };
         let available_space = size(
-            list_width.map_or(AvailableSpace::MinContent, |width| {
+            list_width.map_or(AvailableSpace::MaxContent, |width| {
                 AvailableSpace::Definite(width)
             }),
             AvailableSpace::MinContent,

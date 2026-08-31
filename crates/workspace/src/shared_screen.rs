@@ -64,7 +64,7 @@ impl Item for SharedScreen {
     type Event = Event;
 
     fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
-        Some(format!("{}'s screen", self.user.github_login).into())
+        Some(format!("{}'s screen", self.user.username).into())
     }
 
     fn deactivated(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -78,7 +78,7 @@ impl Item for SharedScreen {
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        format!("{}'s screen", self.user.github_login).into()
+        format!("{}'s screen", self.user.username).into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

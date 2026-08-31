@@ -3,18 +3,19 @@ use gh_workflow::*;
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, DownloadArtifactStep, FluentBuilder, IfNoFilesFound, NamedJob, RepositoryTarget,
-        TokenPermissions, UploadArtifactStep, ZippyGitIdentity, named, use_clang,
+        self, CommonPermissionSets, DownloadArtifactStep, FluentBuilder, IfNoFilesFound, NamedJob,
+        RepositoryTarget, TokenPermissions, UploadArtifactStep, ZippyGitIdentity, named, use_clang,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
 
 pub fn autofix_pr() -> Workflow {
     let pr_number = WorkflowInput::string("pr_number", None);
-    let run_clippy = WorkflowInput::bool("run_clippy", Some(true));
+    let run_clippy = WorkflowInput::bool("run_clippy", Some(false));
     let run_autofix = run_autofix(&pr_number, &run_clippy);
     let commit_changes = commit_changes(&pr_number, &run_autofix);
     named::workflow()
+        .with_minimal_permissions()
         .run_name(format!("autofix PR #{pr_number}"))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
@@ -45,14 +46,23 @@ fn download_patch_artifact() -> DownloadArtifactStep {
 }
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
+    // Dispatches via the REST API/CLI can deliver boolean inputs as strings, and the
+    // non-empty string 'false' is truthy in expressions, so compare against both forms.
+    fn clippy_enabled(run_clippy: &WorkflowInput) -> Expression {
+        Expression::new(format!(
+            "{expr} == true || {expr} == 'true'",
+            expr = run_clippy.expr()
+        ))
+    }
+
     fn checkout_pr(pr_number: &WorkflowInput) -> Step<Run> {
         named::bash(r#"gh pr checkout "$PR_NUMBER""#)
             .add_env(("PR_NUMBER", pr_number.to_string()))
             .add_env(("GITHUB_TOKEN", vars::GITHUB_TOKEN))
     }
 
-    fn install_cargo_machete() -> Step<Use> {
-        steps::taiki_install_action("cargo-machete@0.7.0")
+    fn install_cargo_shear() -> Step<Use> {
+        steps::taiki_install_action("cargo-shear@1.13.4")
     }
 
     fn run_cargo_fmt() -> Step<Run> {
@@ -63,8 +73,8 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
         named::bash("cargo fix --workspace --allow-dirty --allow-staged")
     }
 
-    fn run_cargo_machete_fix() -> Step<Run> {
-        named::bash("cargo machete --fix")
+    fn run_cargo_shear_fix() -> Step<Run> {
+        named::bash("cargo shear --fix")
     }
 
     fn run_clippy_fix() -> Step<Run> {
@@ -91,6 +101,11 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     named::job(use_clang(
         Job::default()
             .runs_on(runners::LINUX_DEFAULT)
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Read)
+                    .pull_requests(Level::Read),
+            )
             .outputs([(
                 "has_changes".to_owned(),
                 "${{ steps.create-patch.outputs.has_changes }}".to_owned(),
@@ -101,10 +116,10 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
             .add_step(steps::cache_rust_dependencies_namespace())
             .map(steps::install_linux_dependencies)
             .add_step(steps::setup_pnpm())
-            .add_step(install_cargo_machete().if_condition(Expression::new(run_clippy.to_string())))
-            .add_step(run_cargo_fix().if_condition(Expression::new(run_clippy.to_string())))
-            .add_step(run_cargo_machete_fix().if_condition(Expression::new(run_clippy.to_string())))
-            .add_step(run_clippy_fix().if_condition(Expression::new(run_clippy.to_string())))
+            .add_step(install_cargo_shear().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_cargo_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_cargo_shear_fix().if_condition(clippy_enabled(run_clippy)))
+            .add_step(run_clippy_fix().if_condition(clippy_enabled(run_clippy)))
             .add_step(run_prettier_fix())
             .add_step(run_cargo_fmt())
             .add_step(create_patch())

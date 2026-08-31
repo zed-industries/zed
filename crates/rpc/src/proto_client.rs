@@ -396,10 +396,16 @@ impl AnyProtoClient {
                             Response::GetDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
+                            Response::GetEditPredictionDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
                             Response::GetDeclarationResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetTypeDefinitionResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetEditPredictionTypeDefinitionResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetImplementationResponse(response) => {
@@ -418,6 +424,15 @@ impl AnyProtoClient {
                                 to_any_envelope(&envelope, response)
                             }
                             Response::GetDocumentLinksResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::PrepareCallHierarchyResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetIncomingCallsResponse(response) => {
+                                to_any_envelope(&envelope, response)
+                            }
+                            Response::GetOutgoingCallsResponse(response) => {
                                 to_any_envelope(&envelope, response)
                             }
                         };

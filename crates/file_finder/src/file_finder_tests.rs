@@ -403,14 +403,11 @@ async fn test_complex_path(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -484,7 +481,9 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_at_position(finder, 1, &query_inside_file.to_string());
+        // The CreateNew fallback is now keyed on the parsed path (without the
+        // `:row:column` suffix), so its file_name matches `file_query`.
+        assert_match_at_position(finder, 1, file_query);
         let finder = &finder.delegate;
         assert_eq!(finder.matches.len(), 2);
         let latest_search_query = finder
@@ -558,7 +557,9 @@ async fn test_row_column_numbers_query_inside_unicode_file(cx: &mut TestAppConte
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_at_position(finder, 1, &query_inside_file.to_string());
+        // The CreateNew fallback is now keyed on the parsed path (without the
+        // `:row:column` suffix), so its file_name matches `file_query`.
+        assert_match_at_position(finder, 1, file_query);
         let finder = &finder.delegate;
         assert_eq!(finder.matches.len(), 2);
         let latest_search_query = finder
@@ -644,7 +645,9 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_at_position(finder, 1, &query_outside_file.to_string());
+        // The CreateNew fallback is now keyed on the parsed path (without the
+        // `:row:column` suffix), so its file_name matches `file_query`.
+        assert_match_at_position(finder, 1, file_query);
         let delegate = &finder.delegate;
         assert_eq!(delegate.matches.len(), 2);
         let latest_search_query = delegate
@@ -787,9 +790,8 @@ async fn test_line_range_query_selects_lines(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 2);
+        assert_eq!(finder.delegate.matches.len(), 1);
         assert_match_at_position(finder, 0, "first.rs");
-        assert_match_at_position(finder, 1, "first.rs:2-4");
 
         let latest_search_query = finder
             .delegate
@@ -873,6 +875,48 @@ async fn test_line_range_query_outside_file_clamps_to_eof(cx: &mut TestAppContex
         assert_eq!(selection.start, selection.end);
         assert_eq!(selection.start.row, 1);
         assert_eq!(selection.start.column, "line 2".len() as u32);
+    });
+}
+
+// Regression test for https://github.com/zed-industries/zed/issues/55551.
+//
+// Typing `path:line` for an already-open file must keep the file selected
+// rather than offering to create one or skipping past it to a fuzzy neighbor.
+#[gpui::test]
+async fn test_path_with_position_when_target_file_is_open(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "default.json": "line 1\nline 2\nline 3\n",
+                "seed.default.json": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (_, workspace, cx) = build_find_picker(project, cx);
+    open_queried_buffer("default", 2, "default.json", &workspace, cx).await;
+
+    // Type the query character by character. Appending `:3` keeps
+    // `path_query()` the same, so the previously-buggy code preserved the
+    // skipped-to selection (`seed.default.json`) instead of re-evaluating.
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("default.json:3");
+    picker.update(cx, |finder, _| {
+        assert!(
+            finder
+                .delegate
+                .matches
+                .matches
+                .iter()
+                .all(|m| !matches!(m, Match::CreateNew(_))),
+            "`Create file:` row should not be offered for an existing file"
+        );
+        assert_match_selection(finder, 0, "default.json");
     });
 }
 
@@ -1092,6 +1136,48 @@ async fn test_ignored_root_with_file_inclusions_repro(cx: &mut TestAppContext) {
             "All ignored files that were indexed are found for default ignored mode"
         );
     });
+}
+
+#[gpui::test]
+async fn test_toggle_action_include_ignored_param(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    let project = Project::test(app_state.fs.clone(), [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    let cases = [
+        (None, Some(true), Some(true)),
+        (None, Some(false), Some(false)),
+        (None, None, None),
+        (Some(true), Some(false), Some(false)),
+        (Some(false), Some(true), Some(true)),
+        (Some(true), None, Some(true)),
+    ];
+    for (setting, action_param, expected) in cases {
+        cx.update(|_, cx| {
+            let settings = *FileFinderSettings::get_global(cx);
+            FileFinderSettings::override_global(
+                FileFinderSettings {
+                    include_ignored: setting,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        cx.dispatch_action(ToggleFileFinder {
+            separate_history: false,
+            include_ignored: action_param,
+        });
+        let picker = active_file_picker(&workspace, cx);
+        picker.update(cx, |picker, _| {
+            assert_eq!(
+                picker.delegate.include_ignored, expected,
+                "setting: {setting:?}, action param: {action_param:?}"
+            );
+        });
+        cx.dispatch_action(menu::Cancel);
+    }
 }
 
 #[gpui::test]
@@ -1707,14 +1793,11 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -1953,14 +2036,11 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2022,14 +2102,11 @@ async fn test_history_labels_do_not_include_worktree_root_name(cx: &mut gpui::Te
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2122,14 +2199,11 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_false(
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: false,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(false);
+            });
+        });
     });
 
     app_state
@@ -2175,14 +2249,11 @@ async fn test_history_labels_include_worktree_root_name_when_hide_root_true_and_
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2505,14 +2576,11 @@ async fn test_non_project_file_matches_history_with_hidden_root(cx: &mut gpui::T
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2710,14 +2778,11 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -2826,14 +2891,11 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3305,7 +3367,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
             .expect("unable to create file");
     }
 
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
@@ -3320,14 +3382,11 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3379,14 +3438,11 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -3474,7 +3530,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         .remove_file("/src/main.rs".as_ref(), Default::default())
         .await
         .expect("unable to remove file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // main.rs is in not among search results anymore
     picker.update(cx, |finder, _| {
@@ -3489,7 +3545,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         .create_file("/src/util.rs".as_ref(), Default::default())
         .await
         .expect("unable to create file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // util.rs is among search results
     picker.update(cx, |finder, _| {
@@ -3497,6 +3553,51 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "util.rs");
         assert_match_at_position(finder, 2, "rs");
+    });
+}
+
+#[gpui::test]
+async fn test_worktree_entry_updates_are_coalesced(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/src",
+            json!({
+                "lib.rs": "// Lib file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/src".as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    simulate_input(cx, "rs");
+    let initial_search_count = picker.read_with(cx, |picker, _| picker.delegate.search_count);
+
+    for filename in ["one.rs", "two.rs", "three.rs"] {
+        app_state
+            .fs
+            .create_file(Path::new(&format!("/src/{filename}")), Default::default())
+            .await
+            .expect("unable to create file");
+        cx.executor().advance_clock(FS_WATCH_LATENCY);
+        cx.run_until_parked();
+    }
+
+    cx.executor()
+        .advance_clock(WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
+
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            picker.delegate.search_count,
+            initial_search_count + 1,
+            "bursty worktree entry updates should be coalesced into one search refresh"
+        );
+        assert_eq!(picker.delegate.matches.len(), 5);
     });
 }
 
@@ -3646,7 +3747,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
         })
         .await
         .expect("unable to create workdir");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // main.rs is among search results
     picker.update(cx, |finder, _| {
@@ -3819,14 +3920,11 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state.fs.as_fake().insert_tree("/src", json!({})).await;
@@ -3876,10 +3974,14 @@ async fn test_selected_match_stays_selected_after_matches_refreshed(cx: &mut gpu
             .create_file(Path::new(&filename), Default::default())
             .await
             .expect("unable to create file");
-        // Wait for each file system event to be fully processed before adding the next
+        // Wait for each file system event to be observed before adding the next.
         cx.executor().advance_clock(FS_WATCH_LATENCY);
         cx.run_until_parked();
     }
+
+    cx.executor()
+        .advance_clock(WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
 
     // file_13.txt is still selected
     picker.update(cx, |finder, _| {
@@ -3924,7 +4026,7 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
         .remove_file("/src/file_2.txt".as_ref(), Default::default())
         .await
         .expect("unable to remove file");
-    cx.executor().advance_clock(FS_WATCH_LATENCY);
+    advance_worktree_update_refresh(cx);
 
     // file_1.txt is now selected
     picker.update(cx, |finder, _| {
@@ -4380,6 +4482,41 @@ async fn test_open_without_dismiss_then_confirm_closes_finder(cx: &mut TestAppCo
     });
 }
 
+#[gpui::test]
+async fn test_reopen_with_preview_keeps_results_width(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({ "a.txt": "", "b.txt": "" }))
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    cx.dispatch_action(picker::SetPreviewRight);
+    cx.run_until_parked();
+    let in_session_width = picker.update_in(cx, |picker, window, _| picker.results_width(window));
+
+    cx.dispatch_action(Cancel);
+    cx.run_until_parked();
+
+    let picker = open_file_picker(&workspace, cx);
+    cx.run_until_parked();
+    let reopened_width = picker.update_in(cx, |picker, window, _| picker.results_width(window));
+
+    assert_eq!(
+        in_session_width, reopened_width,
+        "reopening with the side preview must keep the same results width as the in-session toggle"
+    );
+
+    // The preview layout is persisted in the key-value store, and tests in a
+    // process share one in-memory fallback store (no per-App `AppDatabase` is
+    // set in tests, so `AppDatabase::global` falls back to the shared static).
+    // Reset to the default layout so this write doesn't leak into other tests.
+    cx.dispatch_action(picker::SetPreviewHidden);
+    cx.run_until_parked();
+}
+
 async fn open_close_queried_buffer(
     input: &str,
     expected_matches: usize,
@@ -4442,7 +4579,7 @@ async fn open_queried_buffer(
     history_items
 }
 
-fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+pub(crate) fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
@@ -4472,12 +4609,13 @@ fn build_find_picker(
 }
 
 #[track_caller]
-fn open_file_picker(
+pub(crate) fn open_file_picker(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<FileFinderDelegate>> {
     cx.dispatch_action(ToggleFileFinder {
         separate_history: true,
+        include_ignored: None,
     });
     active_file_picker(workspace, cx)
 }
@@ -4493,8 +4631,14 @@ fn simulate_input(cx: &mut VisualTestContext, input: &str) {
     cx.run_until_parked();
 }
 
+fn advance_worktree_update_refresh(cx: &mut VisualTestContext) {
+    cx.executor()
+        .advance_clock(FS_WATCH_LATENCY + WORKTREE_UPDATE_REFRESH_DEBOUNCE);
+    cx.run_until_parked();
+}
+
 #[track_caller]
-fn active_file_picker(
+pub(crate) fn active_file_picker(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> Entity<Picker<FileFinderDelegate>> {
@@ -4549,7 +4693,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                 if let Some(path_match) = path_match.as_ref() {
                     search_entries
                         .history
-                        .push(path_match.0.path_prefix.join(&path_match.0.path));
+                        .push(path_match.0.path_prefix.join(&path_match.0.path).into());
                 } else {
                     // This occurs when the query is empty and we show history matches
                     // that are outside the project.
@@ -4562,7 +4706,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             Match::Search(path_match) => {
                 search_entries
                     .search
-                    .push(path_match.0.path_prefix.join(&path_match.0.path));
+                    .push(path_match.0.path_prefix.join(&path_match.0.path).into());
                 search_entries.search_matches.push(path_match.0.clone());
             }
             Match::CreateNew(_) => {}
@@ -4612,14 +4756,11 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -4668,14 +4809,11 @@ async fn test_paths_with_starting_slash(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
     cx.update(|cx| {
-        let settings = *ProjectPanelSettings::get_global(cx);
-        ProjectPanelSettings::override_global(
-            ProjectPanelSettings {
-                hide_root: true,
-                ..settings
-            },
-            cx,
-        );
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project_panel.get_or_insert_default().hide_root = Some(true);
+            });
+        });
     });
 
     app_state
@@ -5045,6 +5183,67 @@ async fn test_exact_filename_with_directory_token(cx: &mut TestAppContext) {
         assert_eq!(
             matches[0].path.as_unix_str(),
             "crates/agent_servers/src/acp.rs",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_hover_does_not_set_has_changed_selected_index(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": "",
+                "b.rs": "",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+    let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+    open_close_queried_buffer("a", 1, "a.rs", &workspace, cx).await;
+    open_close_queried_buffer("b", 1, "b.rs", &workspace, cx).await;
+
+    let picker = open_file_picker(&workspace, cx);
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.matches.len() >= 2,
+            "need at least 2 matches"
+        );
+    });
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.set_hovered_index(1, window, cx);
+    });
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            !picker.delegate.has_changed_selected_index,
+            "hover should not set `has_changed_selected_index`"
+        );
+        assert_eq!(
+            picker.delegate.selected_index(),
+            1,
+            "hover should change `selected_index`"
+        );
+    });
+
+    picker.update_in(cx, |picker, window, cx| {
+        picker.cycle_selection(window, cx);
+    });
+
+    picker.update(cx, |picker, _| {
+        assert!(
+            picker.delegate.has_changed_selected_index,
+            "keyboard should set `has_changed_selected_index`"
         );
     });
 }

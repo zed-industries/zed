@@ -17,13 +17,13 @@ const DEV_CONTAINER_SUGGEST_KEY: &str = "dev_container_suggest_dismissed";
 
 fn devcontainer_dir_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".devcontainer").expect("valid path"));
+        LazyLock::new(|| RelPath::from_unix_str(".devcontainer").expect("valid path"));
     *PATH
 }
 
 fn devcontainer_json_path() -> &'static RelPath {
     static PATH: LazyLock<&'static RelPath> =
-        LazyLock::new(|| RelPath::unix(".devcontainer.json").expect("valid path"));
+        LazyLock::new(|| RelPath::from_unix_str(".devcontainer.json").expect("valid path"));
     *PATH
 }
 

@@ -1,18 +1,25 @@
+#[cfg(not(target_family = "wasm"))]
 pub mod archive;
+#[cfg(not(target_family = "wasm"))]
 pub mod command;
-pub mod disambiguate;
+#[cfg(not(target_family = "wasm"))]
 pub mod fs;
+#[cfg(not(target_family = "wasm"))]
+pub mod process;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell_builder;
+#[cfg(not(target_family = "wasm"))]
+pub mod shell_env;
+
+pub mod disambiguate;
 pub mod markdown;
 pub mod path_list;
 pub mod paths;
-pub mod process;
 pub mod redact;
-pub mod rel_path;
 pub mod schemars;
 pub mod serde;
-pub mod shell;
-pub mod shell_builder;
-pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -21,7 +28,7 @@ pub mod time;
 use anyhow::Result;
 use itertools::Either;
 use regex::Regex;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::LazyLock;
 use std::{
     borrow::Cow,
@@ -31,11 +38,15 @@ use std::{
 use unicase::UniCase;
 
 pub use gpui_util::*;
+pub use path::PathExt;
+pub use path::normalize_path;
+pub use path::rel_path;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
+#[cfg(not(target_family = "wasm"))]
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
 };
@@ -208,28 +219,6 @@ where
     }
 }
 
-pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
-where
-    F: Fn(&T, &T) -> Ordering,
-{
-    if limit == 0 {
-        items.truncate(0);
-    }
-    if items.len() <= limit {
-        items.sort_by(compare);
-        return;
-    }
-    // When limit is near to items.len() it may be more efficient to sort the whole list and
-    // truncate, rather than always doing selection first as is done below. It's hard to analyze
-    // where the threshold for this should be since the quickselect style algorithm used by
-    // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
-    // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
-    // unsorted input.
-    items.select_nth_unstable_by(limit, compare);
-    items.truncate(limit);
-    items.sort_by(compare);
-}
-
 /// Prevents execution of the application with root privileges on Unix systems.
 ///
 /// This function checks if the current process is running with root privileges
@@ -308,6 +297,7 @@ fn load_shell_from_passwd() -> Result<()> {
 }
 
 /// Returns a shell escaped path for the current zed executable
+#[cfg(not(target_family = "wasm"))]
 pub fn get_shell_safe_zed_path(shell_kind: shell::ShellKind) -> anyhow::Result<String> {
     use anyhow::Context as _;
     use paths::PathExt;
@@ -450,6 +440,9 @@ pub fn merge_json_lenient_value_into(
     }
 }
 
+/// Merges `source` into `target`: objects are merged recursively, key by key;
+/// any other colliding value in `target` — including arrays — is replaced by
+/// `source`'s value wholesale.
 pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
 
@@ -463,13 +456,30 @@ pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json:
                 }
             }
         }
+        (source, target) => *target = source,
+    }
+}
 
-        (Value::Array(source), Value::Array(target)) => {
-            for value in source {
-                target.push(value);
+pub fn union_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
+    use serde_json::Value;
+
+    match (source, target) {
+        (Value::Object(source), Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    union_json_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
             }
         }
-
+        (Value::Array(source), Value::Array(target)) => {
+            for value in source {
+                if !target.contains(&value) {
+                    target.push(value);
+                }
+            }
+        }
         (source, target) => *target = source,
     }
 }
@@ -622,6 +632,196 @@ pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
         Cow::Borrowed(bytes) => Cow::Borrowed(std::str::from_utf8(bytes).unwrap()),
         Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).unwrap()),
     }
+}
+
+/// The checkout that produced this binary, resolved at runtime by walking up to
+/// the first ancestor that contains a `.git` entry (a directory in a normal
+/// clone, a file in a git worktree or submodule). Cargo and corgi both place
+/// built binaries under `<repo>/target/<profile>/`, so the repository root is
+/// always an ancestor of the executable.
+///
+/// Dev-only affordances use this instead of baking a build-time path into the
+/// artifact: such a path points at the wrong checkout from any other worktree
+/// and, under corgi, is rejected because artifacts must be checkout-independent
+/// to be shared across worktrees.
+///
+/// The executable's launch path is tried first, then its canonical form, then
+/// the working directory. In CI, `target/` (or the checkout root) can be a
+/// symlink onto another volume, so canonicalizing the executable alone can walk
+/// off the checkout and miss `.git`; the launch path and the test runner's cwd
+/// (a crate dir under the checkout) stay inside it.
+pub fn dev_repo_root() -> Option<&'static std::path::Path> {
+    use std::path::PathBuf;
+    static ROOT: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let exe = std::env::current_exe().ok();
+        let candidates = [
+            exe.clone(),
+            exe.and_then(|exe| exe.canonicalize().ok()),
+            std::env::current_dir().ok(),
+        ];
+        candidates.into_iter().flatten().find_map(|start| {
+            Some(
+                start
+                    .ancestors()
+                    .find(|dir| dir.join(".git").exists())?
+                    .to_path_buf(),
+            )
+        })
+    })
+    .as_deref()
+}
+
+/// Re-exports that back [`fs_embed!`] so a caller only needs to depend on `util`,
+/// not on `rust_embed` directly (the macro's dependency is an implementation
+/// detail). Hidden from the public API.
+#[doc(hidden)]
+pub mod __rust_embed {
+    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
+}
+
+/// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the root-relative
+/// directory that passes the same rust_embed include/exclude globs the
+/// release derive uses, so the dev and release file sets are identical. Reuses
+/// rust_embed's own matcher rather than reimplementing glob semantics.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn __fs_embed_iter(
+    root_relative: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> rust_embed::Filenames {
+    let Some(root) = dev_repo_root().map(|root| root.join(root_relative)) else {
+        return rust_embed::Filenames::Dynamic(Box::new(std::iter::empty::<
+            std::borrow::Cow<'static, str>,
+        >()));
+    };
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    let names: Vec<std::borrow::Cow<'static, str>> =
+        rust_embed::utils::get_files(root.to_string_lossy().into_owned(), matcher)
+            .map(|entry| std::borrow::Cow::Owned(entry.rel_path))
+            .collect();
+    rust_embed::Filenames::Dynamic(Box::new(names.into_iter()))
+}
+
+/// Backs the dev arm of [`fs_embed!`]'s `get`: reads a single file from the
+/// checkout, returning `None` when the include/exclude globs filter it out so
+/// `get` matches release's embedded set exactly.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn __fs_embed_get(
+    root_relative: &str,
+    file_path: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> Option<rust_embed::EmbeddedFile> {
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    if !matcher.is_path_included(file_path) {
+        return None;
+    }
+    let root = dev_repo_root()
+        .expect("dev asset loading requires running from within the checkout")
+        .join(root_relative);
+    rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
+}
+
+/// A `rust_embed` asset source that embeds files in release builds and reads them
+/// from the checkout at runtime in dev builds (edits show up on the next launch
+/// with no rebuild). One invocation replaces the previous pairing of a
+/// `#[cfg(not(debug_assertions))] #[derive(RustEmbed)]` struct with a separate
+/// dev macro, and keeps a single source of truth for the include/exclude globs.
+///
+/// It expands to both arms:
+/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding
+///   `crate_relative` at build time, with the given `include`/`exclude` globs.
+/// * Dev (`debug_assertions`): a runtime filesystem source rooted at
+///   `root_relative`, applying those same globs through rust_embed's own matcher.
+///
+/// Two paths are required because the arms resolve from different bases: the
+/// release derive reads `crate_relative` relative to the crate's `Cargo.toml`
+/// at build time (rust_embed's rule), while the dev arm resolves `root_relative`
+/// relative to the repository root at runtime via [`dev_repo_root`]. Baking the
+/// build-time path into the dev artifact would point at the wrong checkout from
+/// another worktree and is rejected by corgi, whose sandbox requires
+/// checkout-independent output.
+///
+/// ```ignore
+/// util::fs_embed! {
+///     pub struct Assets,
+///     crate_relative = "../../assets",
+///     root_relative = "assets",
+///     include = ["fonts/**/*", "themes/**/*", "*.md"],
+///     exclude = ["themes/src/*", "*.DS_Store"],
+/// }
+/// ```
+#[macro_export]
+macro_rules! fs_embed {
+    (
+        $vis:vis struct $name:ident,
+        crate_relative = $crate_relative:literal,
+        root_relative = $root_relative:literal
+        $(, include = [$($include:literal),* $(,)?])?
+        $(, exclude = [$($exclude:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        // `crate_path` points the derive's generated code at util's re-export so
+        // the caller needs no direct `rust_embed` dependency.
+        #[cfg(not(debug_assertions))]
+        #[derive($crate::__rust_embed::RustEmbed)]
+        #[crate_path = "::util::__rust_embed"]
+        #[folder = $crate_relative]
+        $($(#[include = $include])*)?
+        $($(#[exclude = $exclude])*)?
+        $vis struct $name;
+
+        #[cfg(debug_assertions)]
+        $vis struct $name;
+
+        // Mirror the derive's public surface: inherent `get`/`iter` (callable
+        // without the trait in scope) plus the trait impl (for generic bounds
+        // like `util::asset_str` and `handlebars::register_embed_templates`), so
+        // the two arms are interchangeable at call sites.
+        #[cfg(debug_assertions)]
+        impl $name {
+            pub fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                $crate::__fs_embed_get(
+                    $root_relative,
+                    file_path,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+
+            pub fn iter(
+            ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
+            {
+                $crate::__fs_embed_iter(
+                    $root_relative,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        impl $crate::__rust_embed::RustEmbed for $name {
+            fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                <$name>::get(file_path)
+            }
+
+            fn iter() -> $crate::__rust_embed::Filenames {
+                $crate::__fs_embed_iter(
+                    $root_relative,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+        }
+    };
 }
 
 pub trait RangeExt<T> {
@@ -779,36 +979,6 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     fn from(result: anyhow::Result<O>) -> Self {
         ConnectionResult::Result(result)
     }
-}
-
-/// Normalizes a path by resolving `.` and `..` components without
-/// requiring the path to exist on disk (unlike `canonicalize`).
-pub fn normalize_path(path: &Path) -> PathBuf {
-    use std::path::Component;
-    let mut components = path.components().peekable();
-    let mut ret = if let Some(c @ Component::Prefix(..)) = components.peek().cloned() {
-        components.next();
-        PathBuf::from(c.as_os_str())
-    } else {
-        PathBuf::new()
-    };
-
-    for component in components {
-        match component {
-            Component::Prefix(..) => unreachable!(),
-            Component::RootDir => {
-                ret.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                ret.pop();
-            }
-            Component::Normal(c) => {
-                ret.push(c);
-            }
-        }
-    }
-    ret
 }
 
 #[cfg(test)]
@@ -1112,5 +1282,103 @@ Line 3"#
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
         assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
+    }
+
+    #[test]
+    fn test_merge_json_values() {
+        use serde_json::json;
+
+        let mut target = json!({
+            "unchanged": 1,
+            "replaced_scalar": "old",
+            "replaced_array": ["default-1", "default-2"],
+            "nulled": true,
+            "array_becomes_object": [1, 2],
+            "object_becomes_scalar": { "x": 1 },
+            "nested": {
+                "kept": true,
+                "overridden": 2,
+                "args": ["--default"],
+                "deeper": { "list": [1, 2], "other": "kept" },
+            },
+        });
+        let source = json!({
+            "replaced_scalar": "new",
+            "replaced_array": ["default-2", "user"],
+            "nulled": null,
+            "array_becomes_object": { "y": 2 },
+            "object_becomes_scalar": 3,
+            "inserted": ["brand-new"],
+            "nested": {
+                "overridden": 20,
+                "args": ["--user"],
+                "deeper": { "list": [3] },
+                "inserted": { "z": true },
+            },
+        });
+
+        merge_json_value_into(source, &mut target);
+
+        assert_eq!(
+            target,
+            json!({
+                "unchanged": 1,
+                "replaced_scalar": "new",
+                "replaced_array": ["default-2", "user"],
+                "nulled": null,
+                "array_becomes_object": { "y": 2 },
+                "object_becomes_scalar": 3,
+                "inserted": ["brand-new"],
+                "nested": {
+                    "kept": true,
+                    "overridden": 20,
+                    "args": ["--user"],
+                    "deeper": { "list": [3], "other": "kept" },
+                    "inserted": { "z": true },
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn test_union_json_values() {
+        use serde_json::json;
+
+        let mut target = json!({
+            "unchanged": 1,
+            "replaced_scalar": "old",
+            "unioned_array": ["shared", "first"],
+            "nested": {
+                "kept": true,
+                "plugins": [{ "name": "first-plugin" }],
+                "scalar": 2,
+            },
+        });
+        let source = json!({
+            "replaced_scalar": "new",
+            "unioned_array": ["shared", "second"],
+            "inserted": ["brand-new"],
+            "nested": {
+                "plugins": [{ "name": "second-plugin" }],
+                "scalar": 20,
+            },
+        });
+
+        union_json_value_into(source, &mut target);
+
+        assert_eq!(
+            target,
+            json!({
+                "unchanged": 1,
+                "replaced_scalar": "new",
+                "unioned_array": ["shared", "first", "second"],
+                "inserted": ["brand-new"],
+                "nested": {
+                    "kept": true,
+                    "plugins": [{ "name": "first-plugin" }, { "name": "second-plugin" }],
+                    "scalar": 20,
+                },
+            })
+        );
     }
 }

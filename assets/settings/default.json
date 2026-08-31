@@ -13,16 +13,18 @@
   },
   "icon_theme": "Zed (Default)",
   // The name of a base set of key bindings to use.
-  // This setting can take six values, each named after another
-  // text editor:
+  // This setting can take the following values:
   //
-  // 1. "VSCode"
-  // 2. "Atom"
-  // 3. "JetBrains"
-  // 4. "None"
+  // 1. "Zed"
+  // 2. "VSCode"
+  // 3. "Atom"
+  // 4. "JetBrains"
   // 5. "SublimeText"
   // 6. "TextMate"
-  "base_keymap": "VSCode",
+  // 7. "Emacs"
+  // 8. "Cursor"
+  // 9. "None"
+  "base_keymap": "Zed",
   // The name of a font to use for rendering text in the editor
   // ".ZedMono" currently aliases to Lilex
   // but this may change in the future.
@@ -67,13 +69,17 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
+  // The font family for agent responses in the agent panel. Falls back to the UI font family if unset.
+  "agent_ui_font_family": null,
   // The default font size for agent responses in the agent panel. Falls back to the UI font size if unset.
   "agent_ui_font_size": null,
+  // The font family for user messages in the agent panel. Falls back to the buffer font family if unset.
+  "agent_buffer_font_family": null,
   // The default font size for user messages in the agent panel.
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
-  // The default font size for the markdown preview. Falls back to the editor font size if unset.
+  // The default font size for the markdown preview. Falls back to the UI font size if unset.
   "markdown_preview_font_size": null,
   // The font family for the markdown preview. Falls back to the UI font family if unset.
   "markdown_preview_font_family": null,
@@ -162,8 +168,7 @@
   // May take 2 values:
   //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Open directories in a new window (reuse existing windows for files
-  //     that are already part of an open project)
+  //  2. Open paths in a new window, unless they are subpaths of an existing project
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
   // The default behavior when opening projects from the UI.
@@ -183,6 +188,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to reveal an already open file in an existing pane instead of opening it in the active pane.
+  "reveal_if_open": false,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
   // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
@@ -224,16 +231,21 @@
   //
   // Default: true
   "zoomed_padding": true,
-  // What draws Zed's window decorations (titlebar):
-  // 1. Client application (Zed) draws its own window decorations
+  // On Linux, what draws Zed's window decorations (titlebar).
+  // This setting has no effect on other platforms:
+  // 1. Zed draws its own window decorations.
   //    "client"
-  // 2. Display server draws the window decorations. Not supported by GNOME Wayland.
+  // 2. The window manager or compositor draws the window decorations.
+  //    Not supported by GNOME Wayland.
   //    "server"
   //
   // This requires restarting Zed for changes to take effect.
   //
   // Default: "client"
   "window_decorations": "client",
+  // Whether to optimize Zed's interface for assistive technology such as screen
+  // readers.
+  "accessible_mode": false,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -266,6 +278,15 @@
   // 3. Hide on typing and on key bindings that resolve to an action:
   //    "on_typing_and_action"
   "hide_mouse": "on_typing_and_action",
+  // Whether to reduce non-essential motion in the UI, such as loading
+  // spinners and pulsating labels, by rendering them in a static state.
+  //
+  // May take 2 values:
+  // 1. Always reduce motion:
+  //    "on"
+  // 2. Never reduce motion:
+  //    "off"
+  "reduce_motion": "off",
   // Determines whether the focused panel follows the mouse location.
   "focus_follows_mouse": {
     "enabled": false,
@@ -362,6 +383,9 @@
   "minimum_split_diff_width": 100,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
+  // Whether to automatically detect the language of an untitled buffer from its contents.
+  // Languages explicitly selected from the language selector are not changed.
+  "language_detection": true,
   // Whether to show the signature help after completion or a bracket pair inserted.
   // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
@@ -399,6 +423,14 @@
   // 4. Preserve the cursor's vertical position within the viewport, falling back to `center` when the cursor is
   //    offscreen: `preserve`
   "go_to_definition_scroll_strategy": "center",
+  // Where to show LSP results that can contain multiple locations
+  // (Go to Definition, Go to Implementation, Find All References). A single
+  // result always opens directly. Individual actions can override this with
+  // their `open_results_in` argument.
+  //
+  // 1. Open the results in a multibuffer: `multi_buffer` (default)
+  // 2. Open the results in a filterable picker: `picker`
+  "lsp_results_location": "multi_buffer",
   // Which level to use to filter out diagnostics displayed in the editor.
   //
   // Affects the editor rendering only, and does not interrupt
@@ -523,12 +555,22 @@
   },
   // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
   "use_system_window_tabs": false,
+  // Which fullscreen mode the `zed::ToggleFullScreen` action enters (macOS only).
+  //
+  // 1. Use macOS's native fullscreen, which moves the window into its own Mission Control space.
+  //     "native"
+  // 2. Resize the window to cover the entire screen, including the menu bar and,
+  //    on notched displays, the area around the notch.
+  //     "simple"
+  "fullscreen_mode": "native",
   // Titlebar related settings
   "title_bar": {
     // Whether to show git status indicators on the branch icon in the titlebar.
     "show_branch_status_icon": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
+    // Whether to show the worktree name button in the titlebar.
+    "show_worktree_name": true,
     // Whether to show the project host and name in the titlebar.
     "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.
@@ -666,6 +708,9 @@
     "folds": true,
     // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4,
+    // The width of the git diff hunk indicators in the gutter.
+    // Use "default" to scale with font size, or {"custom": <pixels>} for a fixed width.
+    "git_gutter_width": "default",
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.
@@ -727,6 +772,8 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Start searching as you type in project search, without pressing Enter.
+    "search_on_type": true,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -788,8 +835,15 @@
     "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
     "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the project panel.
-    "folder_icons": true,
+    // What to show for directories in the project panel.
+    //
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    "folder_indicator": "icon",
     // Whether to show the git status in the project panel.
     "git_status": true,
     // Amount of indentation for nested items.
@@ -903,8 +957,15 @@
     "dock": "right",
     // Whether to show file icons in the outline panel.
     "file_icons": true,
-    // Whether to show folder icons or chevrons for directories in the outline panel.
-    "folder_icons": true,
+    // What to show for directories in the outline panel.
+    //
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    "folder_indicator": "icon",
     // Whether to show the git status in the outline panel.
     "git_status": true,
     // Amount of indentation for nested items.
@@ -947,6 +1008,11 @@
     // Default depth to expand outline items in the current file.
     // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
     "expand_outlines_with_depth": 100,
+    // Whether to hide symbols, excerpts and search matches in the outline panel
+    // when a multi-buffer view (e.g. a diff or search results) is active,
+    // showing only files and directories.
+    // Does not affect single-file views.
+    "multi_buffer_hide_symbols": false,
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -972,10 +1038,17 @@
     //
     // Default: false
     "file_icons": false,
-    // Whether to show folder icons or chevrons for directories in the git panel.
+    // What to show for directories in the git panel.
     //
-    // Default: true
-    "folder_icons": true,
+    // 1. A folder icon:
+    //   "icon"
+    // 2. A disclosure chevron:
+    //   "chevron"
+    // 3. A disclosure chevron followed by a folder icon:
+    //   "both"
+    //
+    // Default: icon
+    "folder_indicator": "icon",
     // What branch name to use if `init.defaultBranch` is not set
     //
     // Default: main
@@ -1026,14 +1099,12 @@
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
   },
-  "message_editor": {
-    // Whether to automatically replace emoji shortcodes with emoji characters.
-    // For example: typing `:wave:` gets replaced with `👋`.
-    "auto_replace_emoji_shortcode": true,
-  },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available
     "inline_assistant_use_streaming_tools": true,
+    // Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
+    // in the prompt when generating git commit messages.
+    "commit_message_include_project_rules": true,
     // Whether the agent is enabled.
     "enabled": true,
     // Whether to show the agent panel button in the status bar.
@@ -1161,6 +1232,7 @@
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
+          "ask_user": false,
           "edit_file": true,
           "write_file": true,
           "fetch": true,
@@ -1187,6 +1259,7 @@
         "tools": {
           "create_thread": true,
           "diagnostics": true,
+          "ask_user": false,
           "fetch": true,
           "list_agents_and_models": true,
           "list_directory": true,
@@ -1387,6 +1460,13 @@
     // If `enable_preview_file_from_code_navigation` or `enable_preview_multibuffer_from_code_navigation` is also true, the new tab may replace the existing one.
     "enable_keep_preview_on_code_navigation": false,
   },
+  // Settings related to the call hierarchy picker.
+  "call_hierarchy": {
+    // Determines how much space the call hierarchy picker can take up in relation to the available window width.
+    //
+    // Default: medium
+    "modal_max_width": "medium",
+  },
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.
@@ -1461,9 +1541,15 @@
   // The EditorConfig `end_of_line` property overrides this setting and behaves
   // like `enforce_lf` or `enforce_crlf`.
   "line_ending": "detect",
-  // Whether or not to perform a buffer format before saving: [on, off]
+  // Whether or not to perform a buffer format before saving:
+  //   "on" — format the whole buffer
+  //   "off" — do not format
+  //   "modifications" — format only lines with unstaged changes; skips formatting
+  //     when no git diff is available or the language server lacks range formatting
+  //   "modifications_if_available" — same, but falls back to formatting the whole
+  //     buffer when range formatting cannot be used
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
-  "format_on_save": "on",
+  "format_on_save": "off",
   // How to perform a buffer format. This setting can take multiple values:
   //
   // 1. Default. Format files using Zed's Prettier integration (if applicable),
@@ -1610,6 +1696,14 @@
   // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
+  // Maximum directory depth to eagerly index outside of git repositories;
+  // contents of directories at this depth or deeper are indexed on demand.
+  // Repositories rooted shallower than this depth are always indexed fully.
+  // In projects that are not rooted at a git repository, repositories directly
+  // inside a root folder activate their git features immediately; deeper ones
+  // activate on first use.
+  // `0` means no limit and activates all git repositories immediately.
+  "file_scan_depth": 5,
   // When to scan content of linked directories.
   // May take 2 values:
   //  1. Only scan symlinked directories when they've been expanded in the workspace:
@@ -1643,13 +1737,15 @@
     ///
     /// Default: 0
     "gutter_debounce": 0,
-    // Control whether the git blame information is shown inline,
-    // in the currently focused line.
+    // Control whether the git blame information is shown for the currently
+    // focused line, and where it is rendered.
     "inline_blame": {
       "enabled": true,
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // Where to render the blame information when it is enabled.
+      "location": "inline",
       // The amount of padding between the end of the source line and the start
       // of the inline blame in units of em widths.
       "padding": 7,
@@ -1665,6 +1761,10 @@
     "branch_picker": {
       "show_author_name": true,
     },
+    "file_diff": {
+      // Whether newly opened file diffs show the full file instead of changes only.
+      "show_full_file": true,
+    },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
     //
@@ -1673,6 +1773,8 @@
     // 2. Show unstaged hunks hollow and staged hunks filled:
     //    "hunk_style": "unstaged_hollow"
     "hunk_style": "staged_hollow",
+    // Whether git features diff against HEAD ("head") or the default branch ("default_branch").
+    "diff_base": "head",
     // Should the name or path be displayed first in the git view.
     // "path_style": "file_name_first" or "file_path_first"
     "path_style": "file_name_first",
@@ -1745,31 +1847,44 @@
     // "copilot": {
     //   "enterprise_uri": "",
     //   "proxy": "",
-    //   "proxy_no_verify": false
-    //   "enable_next_edit_suggestions": true
+    //   "proxy_no_verify": false,
+    //   "enable_next_edit_suggestions": true,
+    //   // The debounce delay in milliseconds before automatically requesting a prediction.
+    //   // Set to 0 to request predictions immediately.
+    //   "prediction_debounce": 75
     // },
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null,
       "enable_next_edit_suggestions": true,
+      "prediction_debounce": 75,
     },
     "codestral": {
       "api_url": "https://codestral.mistral.ai",
       "model": "codestral-latest",
       "max_tokens": 150,
+      "prediction_debounce": 150,
     },
     "ollama": {
       "api_url": "http://localhost:11434",
       "model": "qwen2.5-coder:7b-base",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
     },
     "open_ai_compatible_api": {
       "api_url": "",
       "model": "",
       "prompt_format": "infer",
       "max_output_tokens": 64,
+      "prediction_debounce": 0,
+    },
+    "zed": {
+      "prediction_debounce": 0,
+    },
+    "mercury": {
+      "prediction_debounce": 0,
     },
     // Controls whether Zed may collect training data when using Zed's Edit Predictions.
     // Data is only captured when the project is detected as open source.
@@ -1824,6 +1939,10 @@
     "shell": "system",
     // Where to dock terminals panel. Can be `left`, `right`, `bottom`.
     "dock": "bottom",
+    // Whether the terminal panel should open on startup.
+    //
+    // Default: false
+    "starts_open": false,
     // Whether the terminal panel should use flexible (proportional) sizing.
     //
     // Default: true
@@ -1898,6 +2017,12 @@
     "copy_on_select": false,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
+    // Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    // when the terminal application has enabled mouse reporting (e.g. vim with
+    // mouse=a, htop). When false, these clicks are forwarded to the application
+    // instead, and hyperlinks can still be opened with shift-cmd-click
+    // (shift-ctrl-click).
+    "open_links_in_mouse_mode": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -2168,6 +2293,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "format_on_save": "on",
       "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
@@ -2180,14 +2306,12 @@
       },
     },
     "C": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false,
       },
     },
     "C++": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "prettier": {
         "allowed": false,
@@ -2202,6 +2326,7 @@
       },
     },
     "Dart": {
+      "format_on_save": "on",
       "tab_size": 2,
     },
     "Diff": {
@@ -2210,12 +2335,15 @@
       "ensure_final_newline_on_save": false,
     },
     "EEx": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "Elixir": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "!emmet-language-server", "..."],
     },
     "Elm": {
+      "format_on_save": "on",
       "tab_size": 4,
     },
     "Erlang": {
@@ -2227,6 +2355,7 @@
       "preferred_line_length": 72,
     },
     "Go": {
+      "format_on_save": "on",
       "hard_tabs": true,
       "code_actions_on_format": {
         "source.organizeImports": true,
@@ -2234,11 +2363,13 @@
       "debuggers": ["Delve"],
     },
     "GraphQL": {
+      "format_on_save": "on",
       "prettier": {
         "allowed": true,
       },
     },
     "HEEx": {
+      "format_on_save": "on",
       "language_servers": ["elixir-ls", "!expert", "!dexter", "!next-ls", "!lexical", "..."],
     },
     "HTML": {
@@ -2275,6 +2406,7 @@
       "language_servers": ["!ruby-lsp", "..."],
     },
     "Kotlin": {
+      "format_on_save": "on",
       "language_servers": ["!kotlin-language-server", "kotlin-lsp", "..."],
     },
     "LaTeX": {
@@ -2286,7 +2418,6 @@
       },
     },
     "Markdown": {
-      "format_on_save": "off",
       "use_on_type_format": false,
       "remove_trailing_whitespace_on_save": false,
       "allow_rewrap": "anywhere",
@@ -2299,7 +2430,7 @@
       },
     },
     "PHP": {
-      "language_servers": ["phpactor", "!intelephense", "!phptools", "..."],
+      "language_servers": ["phpactor", "!intelephense", "!phptools", "!phpantom", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["@prettier/plugin-php"],
@@ -2341,6 +2472,7 @@
       ],
     },
     "Rust": {
+      "format_on_save": "on",
       "debuggers": ["CodeLLDB"],
     },
     "SCSS": {
@@ -2349,6 +2481,7 @@
       },
     },
     "Starlark": {
+      "format_on_save": "on",
       "language_servers": ["starpls", "!buck2-lsp", "!tilt", "..."],
     },
     "Svelte": {
@@ -2376,8 +2509,7 @@
       },
     },
     "SystemVerilog": {
-      "format_on_save": "off",
-      "language_servers": ["!slang", "..."],
+      "language_servers": ["slang", "!verible", "!veridian", "!svls", "..."],
       "use_on_type_format": false,
     },
     "Vue.js": {
@@ -2401,6 +2533,7 @@
       "language_servers": ["!ruby-lsp", "..."],
     },
     "Zig": {
+      "format_on_save": "on",
       "language_servers": ["zls", "..."],
     },
   },
@@ -2416,6 +2549,9 @@
     },
     "ollama": {
       "api_url": "http://localhost:11434",
+    },
+    "llama.cpp": {
+      "api_url": "http://localhost:8080",
     },
     "openai": {
       "api_url": "https://api.openai.com/v1",
@@ -2513,6 +2649,11 @@
     //
     // Default: 120
     "request_timeout": 120,
+    // The maximum line length a buffer may contain before language server features are disabled
+    // for the entire buffer.
+    //
+    // Default: 20000
+    "max_buffer_line_length": 20000,
     "notifications": {
       // Timeout in milliseconds for automatically dismissing language server notifications.
       // Set to 0 to disable auto-dismiss.
@@ -2645,7 +2786,7 @@
   "windows": {
     "languages": {
       "PHP": {
-        "language_servers": ["intelephense", "!phpactor", "!phptools", "..."],
+        "language_servers": ["intelephense", "!phpactor", "!phptools", "!phpantom", "..."],
       },
     },
   },

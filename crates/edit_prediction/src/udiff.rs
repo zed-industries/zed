@@ -5,7 +5,8 @@ use collections::{HashMap, hash_map::Entry};
 use edit_prediction_types::PredictedCursorPosition;
 use gpui::{AsyncApp, Entity};
 use language::{
-    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, TextBufferSnapshot, text_diff,
+    Anchor, Buffer, BufferSnapshot, OffsetRangeExt as _, TextBufferSnapshot, ToOffset as _,
+    text_diff,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -20,6 +21,8 @@ pub use zeta_prompt::udiff::{
     DiffLine, HunkLocation, apply_diff_to_string, apply_diff_to_string_with_hunk_offset,
     strip_diff_metadata, strip_diff_path_prefix,
 };
+
+const INLINE_CURSOR_SENTINEL: &str = "\u{fdd0}";
 
 #[derive(Clone, Debug)]
 pub struct OpenedBuffers(HashMap<String, Entity<Buffer>>);
@@ -53,7 +56,11 @@ pub async fn prediction_edits_for_single_file_diff(
 
     while let Some(event) = diff.next()? {
         match event {
-            DiffEvent::Hunk { path, hunk, status } => {
+            DiffEvent::Hunk {
+                path,
+                mut hunk,
+                status,
+            } => {
                 anyhow::ensure!(
                     status == FileStatus::Modified,
                     "V4 edit predictions only support modifying existing files"
@@ -80,18 +87,32 @@ pub async fn prediction_edits_for_single_file_diff(
                 }
 
                 let (_, _, snapshot) = target_file.as_ref().context("missing target file")?;
+                for edit in &mut hunk.edits {
+                    while let Some(marker_offset) = edit.text.find(INLINE_CURSOR_MARKER) {
+                        edit.text.replace_range(
+                            marker_offset..marker_offset + INLINE_CURSOR_MARKER.len(),
+                            INLINE_CURSOR_SENTINEL,
+                        );
+                    }
+                }
+
                 for (range, text) in resolve_hunk_edits_in_buffer(
                     hunk,
                     snapshot,
                     &[Anchor::min_max_range_for_buffer(snapshot.remote_id())],
                     status,
                 )? {
-                    if let Some(marker_offset) = text.find(INLINE_CURSOR_MARKER) {
+                    if let Some(marker_offset) = text.find(INLINE_CURSOR_SENTINEL) {
                         cursor_position.get_or_insert_with(|| {
-                            PredictedCursorPosition::new(range.start, marker_offset)
+                            PredictedCursorPosition::new(
+                                snapshot.anchor_before(range.start.to_offset(snapshot)),
+                                marker_offset,
+                            )
                         });
-                        let text = text.replace(INLINE_CURSOR_MARKER, "");
-                        if range.start != range.end || !text.is_empty() {
+                        let text = text.replace(INLINE_CURSOR_SENTINEL, "");
+                        if range.start.to_offset(snapshot) != range.end.to_offset(snapshot)
+                            || !text.is_empty()
+                        {
                             edits.push((range, text.into()));
                         }
                     } else {
@@ -146,7 +167,7 @@ pub async fn apply_diff(
                 if status == FileStatus::Deleted {
                     let delete_task = project.update(cx, |project, cx| {
                         if let Some(path) = project.find_project_path(path.as_ref(), cx) {
-                            project.delete_file(path, false, cx)
+                            project.delete_file(path, cx)
                         } else {
                             None
                         }
@@ -246,12 +267,12 @@ pub async fn refresh_worktree_entries(
 ) -> Result<()> {
     let mut rel_paths = Vec::new();
     for path in paths {
-        if let Ok(rel_path) = RelPath::new(path, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(path, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
 
         let path_without_root: PathBuf = path.components().skip(1).collect();
-        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Posix) {
+        if let Ok(rel_path) = RelPath::new(&path_without_root, PathStyle::Unix) {
             rel_paths.push(rel_path.into_arc());
         }
     }
@@ -380,7 +401,7 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::ToOffset as _;
+
     use pretty_assertions::assert_eq;
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -541,14 +562,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_prediction_edits_for_single_file_diff_does_not_treat_completed_literal_marker_as_cursor(
+    async fn test_prediction_edits_for_single_file_diff_places_cursor_after_inline_completion(
         cx: &mut TestAppContext,
     ) {
         let fs = init_test(cx);
         fs.insert_tree(
             path!("/root"),
             json!({
-                "file": "text <|user_cursor\n",
+                "file": "        }\n\n        let api_key = data.\n    }\n    drop(sender);\n    Ok(())\n}\n",
             }),
         )
         .await;
@@ -558,8 +579,14 @@ mod tests {
             --- a/file
             +++ b/file
             @@ ... @@
-            -text <|user_cursor
-            +text <|user_cursor|>
+                     }
+
+            -        let api_key = data.
+            +        let api_key = data.config.<|user_cursor|>open_ai_api_key.clone();
+                 }
+                 drop(sender);
+                 Ok(())
+             }
         "#};
 
         let (buffer, _, edits, cursor_position) =
@@ -567,11 +594,100 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
+        let cursor_position = cursor_position.unwrap();
 
-        assert!(cursor_position.is_none());
         buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
         buffer.read_with(cx, |buffer, _cx| {
-            assert_eq!(buffer.text(), "text <|user_cursor|>\n");
+            let snapshot = buffer.snapshot();
+            let cursor_offset = (cursor_position.anchor.to_offset(&snapshot)
+                + cursor_position.offset)
+                .min(snapshot.len());
+            let mut text = buffer.text();
+            text.insert(cursor_offset, 'ˇ');
+
+            assert_eq!(
+                text,
+                "        }\n\n        let api_key = data.config.ˇopen_ai_api_key.clone();\n    }\n    drop(sender);\n    Ok(())\n}\n"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_drops_marker_only_edit(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "Name</Update>\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+            -Name</Update>
+            +<|user_cursor|>Name</Update>
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(edits.is_empty());
+        let cursor_position = cursor_position.unwrap();
+        assert_eq!(cursor_position.anchor.to_offset(&snapshot), 0);
+        assert_eq!(cursor_position.offset, 0);
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "Name</Update>\n");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_strips_cursor_marker_that_overlaps_source(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "before<after\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+            -before<after
+            +before<|user_cursor|><after
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(edits.is_empty());
+        let cursor_position = cursor_position.unwrap();
+        assert_eq!(
+            cursor_position.anchor.to_offset(&snapshot) + cursor_position.offset,
+            "before".len()
+        );
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "before<after\n");
         });
     }
 

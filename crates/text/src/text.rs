@@ -2194,6 +2194,10 @@ impl BufferSnapshot {
         self.visible_text.to_string()
     }
 
+    pub fn text_with_line_endings(&self) -> String {
+        chunks_with_line_ending(&self.visible_text, self.line_ending).collect()
+    }
+
     pub fn line_ending(&self) -> LineEnding {
         self.line_ending
     }
@@ -2665,9 +2669,8 @@ impl BufferSnapshot {
     }
 
     pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        anchor.is_min()
-            || anchor.is_max()
-            || (self.remote_id == anchor.buffer_id && self.version.observed(anchor.timestamp()))
+        self.remote_id == anchor.buffer_id
+            && (anchor.is_min() || anchor.is_max() || self.version.observed(anchor.timestamp()))
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -3428,7 +3431,7 @@ impl ToOffset for usize {
 impl ToOffset for Anchor {
     #[inline]
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
-        snapshot.summary_for_anchor(self)
+        snapshot.offset_for_anchor(self)
     }
 }
 
@@ -3570,7 +3573,7 @@ impl FromAnchor for PointUtf16 {
 impl FromAnchor for usize {
     #[inline]
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
-        snapshot.summary_for_anchor(anchor)
+        snapshot.offset_for_anchor(anchor)
     }
 }
 
@@ -3641,6 +3644,25 @@ impl LineEnding {
             replaced.into()
         } else {
             text
+        }
+    }
+
+    /// Converts `text` to use this line ending.
+    ///
+    /// Detects the existing line ending of `text` first; if it already matches
+    /// `self`, the string is returned unchanged. Mixed line endings are not
+    /// supported: detection is based on the first newline found.
+    pub fn apply(&self, text: String) -> String {
+        match (LineEnding::detect(&text), self) {
+            (LineEnding::Unix, LineEnding::Unix) | (LineEnding::Windows, LineEnding::Windows) => {
+                text
+            }
+            (LineEnding::Unix, LineEnding::Windows) => text.replace('\n', "\r\n"),
+            (LineEnding::Windows, LineEnding::Unix) => {
+                let mut result = text;
+                LineEnding::normalize(&mut result);
+                result
+            }
         }
     }
 }

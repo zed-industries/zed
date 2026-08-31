@@ -160,14 +160,14 @@ fn open_mention_uri(
 
     workspace.update(cx, |workspace, cx| match mention_uri {
         MentionUri::File { abs_path } => {
-            open_file(workspace, abs_path, None, window, cx);
+            open_abs_path_at_point(workspace, abs_path, None, window, cx);
         }
         MentionUri::Symbol {
             abs_path,
             line_range,
             ..
         } => {
-            open_file(
+            open_abs_path_at_point(
                 workspace,
                 abs_path,
                 Some(Point::new(*line_range.start(), 0)),
@@ -180,7 +180,7 @@ fn open_mention_uri(
             line_range,
             column,
         } => {
-            open_file(
+            open_abs_path_at_point(
                 workspace,
                 abs_path,
                 Some(Point::new(*line_range.start(), column.unwrap_or(0))),
@@ -337,41 +337,6 @@ fn open_skill_content_buffer(
     });
     let pane = workspace.active_pane().clone();
     workspace.add_item(pane, Box::new(editor), None, true, true, window, cx);
-}
-
-fn open_file(
-    workspace: &mut Workspace,
-    abs_path: PathBuf,
-    point: Option<Point>,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
-    if let Some(point) = point {
-        if open_abs_path_at_point(workspace, abs_path.clone(), point, window, cx) {
-            return;
-        }
-    }
-
-    let project = workspace.project();
-    if let Some(project_path) =
-        project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
-    {
-        workspace
-            .open_path(project_path, None, true, window, cx)
-            .detach_and_log_err(cx);
-    } else if abs_path.exists() {
-        workspace
-            .open_abs_path(
-                abs_path,
-                OpenOptions {
-                    focus: Some(true),
-                    ..Default::default()
-                },
-                window,
-                cx,
-            )
-            .detach_and_log_err(cx);
-    }
 }
 
 fn reveal_in_project_panel(

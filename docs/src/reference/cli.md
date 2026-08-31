@@ -85,7 +85,15 @@ Reuse an existing window, replacing its current workspace with the new paths:
 zed -r ~/projects/different-project
 ```
 
-By default (without `-n`, `-a`, or `-r`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
+### `-e`, `--existing`
+
+Open paths in an existing Zed window instead of creating a new one:
+
+```sh
+zed -e myfile.txt
+```
+
+By default (without `-n`, `-a`, `-r`, or `-e`), directories open in the current window's sidebar. You can change this default with the `cli_default_open_behavior` setting. See [Windows & Projects](../windows-and-projects.md) for more details.
 
 ### `--diff <OLD_PATH> <NEW_PATH>`
 

@@ -28,9 +28,14 @@ impl IndentGuideColors {
     }
 }
 
+/// Horizontal offset that lines an indent guide up with the icon column of a
+/// standard [`ListItem`](crate::ListItem)-based row.
+pub const LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET: Pixels = px(15.);
+
 pub struct IndentGuides {
     colors: IndentGuideColors,
     indent_size: Pixels,
+    left_offset: Pixels,
     compute_indents_fn:
         Option<Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> SmallVec<[usize; 64]>>>,
     render_fn: Option<
@@ -49,6 +54,7 @@ pub fn indent_guides(indent_size: Pixels, colors: IndentGuideColors) -> IndentGu
     IndentGuides {
         colors,
         indent_size,
+        left_offset: px(0.),
         compute_indents_fn: None,
         render_fn: None,
         on_click: None,
@@ -56,6 +62,15 @@ pub fn indent_guides(indent_size: Pixels, colors: IndentGuideColors) -> IndentGu
 }
 
 impl IndentGuides {
+    /// Sets a horizontal offset applied to every guide, used to line the guides
+    /// up with the icon column of the list's rows. Ignored when a custom render
+    /// function is set via [`Self::with_render_fn`], which is responsible for its
+    /// own positioning.
+    pub fn with_left_offset(mut self, left_offset: Pixels) -> Self {
+        self.left_offset = left_offset;
+        self
+    }
+
     /// Sets the callback that will be called when the user clicks on an indent guide.
     pub fn on_click(
         mut self,
@@ -124,7 +139,7 @@ impl IndentGuides {
                 .map(|layout| RenderedIndentGuide {
                     bounds: Bounds::new(
                         point(
-                            layout.offset.x * self.indent_size,
+                            layout.offset.x * self.indent_size + self.left_offset,
                             layout.offset.y * item_height,
                         ),
                         size(px(1.), layout.length * item_height),

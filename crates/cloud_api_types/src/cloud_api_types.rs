@@ -36,8 +36,10 @@ pub struct GetAuthenticatedUserResponse {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct AuthenticatedUser {
-    pub id: i32,
+    pub id_v2: String,
+    pub legacy_user_id: i32,
     pub metrics_id: String,
+    pub username: String,
     pub avatar_url: String,
     pub github_login: String,
     pub name: Option<String>,
@@ -68,11 +70,6 @@ pub struct OrganizationConfiguration {
 pub struct OrganizationEditPredictionConfiguration {
     pub is_enabled: bool,
     pub is_feedback_enabled: bool,
-}
-
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
-pub struct AcceptTermsOfServiceResponse {
-    pub user: AuthenticatedUser,
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]

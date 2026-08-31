@@ -66,9 +66,14 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "line_height": "standard",
   },
 
-  // Controls the font size for agent responses in the agent panel.
-  // If not specified, it falls back to the UI font size.
+  // Controls the font family and size for agent responses in the agent panel.
+  // If not specified, they fall back to the UI font family and size.
+  "agent_ui_font_family": "Inter",
   "agent_ui_font_size": 15,
+  // Controls the font family and size for the agent panel's message editor
+  // and user messages.
+  // If not specified, the font family falls back to the buffer font family.
+  "agent_buffer_font_family": "Berkeley Mono",
   // Controls the font size for the agent panel's message editor, user message,
   // and any other snippet of code.
   "agent_buffer_font_size": 12,
@@ -130,6 +135,7 @@ To disable this behavior use:
   "title_bar": {
     "show_branch_status_icon": false, // Show git status on branch icon
     "show_branch_name": true,       // Show/hide branch name
+    "show_worktree_name": true,     // Show/hide worktree name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
@@ -247,7 +253,8 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay_ms": 0,                  // Show after delay (ms)
+      "delay_ms": 0,               // Show after delay (ms)
+      "location": "inline",        // inline, status_bar
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
@@ -465,10 +472,10 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
   "project_panel": {
     "button": true,                 // Show/hide button in the status bar
     "default_width": 240,           // Default panel width
-    "dock": "left",                 // Position of the dock (left, right)
+    "dock": "right",                // Position of the dock (left, right)
     "entry_spacing": "comfortable", // Vertical spacing (comfortable, standard)
     "file_icons": true,             // Show/hide file icons
-    "folder_icons": true,           // Show/hide folder icons
+    "folder_indicator": "icon",     // Dir glyph: icon, chevron, both
     "git_status": true,             // Indicate new/updated files
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
@@ -512,11 +519,14 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "default_width": 640, // Default width (left/right docked)
     "default_height": 320 // Default height (bottom docked)
   },
-  // Controls the font size for agent responses in the agent panel.
-  // If not specified, it falls back to the UI font size.
+  // Controls the font family and size for agent responses in the agent panel.
+  // If not specified, they fall back to the UI font family and size.
+  "agent_ui_font_family": "Inter",
   "agent_ui_font_size": 15,
-  // Controls the font size for the agent panel's message editor, user message,
-  // and any other snippet of code.
+  // Controls the font family and size for the agent panel's message editor
+  // and user messages.
+  // If not specified, the font family falls back to the buffer font family.
+  "agent_buffer_font_family": "Berkeley Mono",
   "agent_buffer_font_size": 12
 }
 ```
@@ -570,7 +580,7 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "default_width": 360,         // Default width of the git panel.
     "status_style": "icon",       // label_color, icon
     "sort_by": "path",            // path, name
-    "group_by": "status",         // none, status
+    "group_by": "status",         // none, status, staging
     "scrollbar": {
       "show": null                // Show/hide: (auto, system, always, never)
     }
@@ -588,7 +598,7 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "default_width": 300,         // Default width of the git panel
     "dock": "left",               // Where to dock: left, right
     "file_icons": true,           // Show/hide file_icons
-    "folder_icons": true,         // Show file_icons (true), chevrons (false) for dirs
+    "folder_indicator": "icon",   // Dir glyph: icon, chevron, both
     "git_status": true,           // Show git status
     "indent_size": 20,            // Indentation for nested items (pixels)
     "indent_guides": {
@@ -598,7 +608,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "auto_fold_dirs": true,       // Fold dirs with single subdir
     "scrollbar": {                // Project panel scrollbar settings
       "show": null                // Show/hide: (auto, system, always, never)
-    }
+    },
+    "multi_buffer_hide_symbols": false  // Hide symbols in multi-buffer views (show only files)
   }
 ```
 

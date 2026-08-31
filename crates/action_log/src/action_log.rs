@@ -159,17 +159,35 @@ impl ActionLog {
                 let text_snapshot = buffer.read(cx).text_snapshot();
                 let language = buffer.read(cx).language().cloned();
                 let language_registry = buffer.read(cx).language_registry();
-                let diff =
-                    cx.new(|cx| BufferDiff::new(&text_snapshot, language, language_registry, cx));
+                let diff = cx.new(|cx| {
+                    BufferDiff::new(
+                        &text_snapshot,
+                        language,
+                        language_registry,
+                        buffer_diff::DiffBaseKind::Custom,
+                        cx,
+                    )
+                });
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
                 let unreviewed_edits;
                 if is_created {
-                    diff_base = Rope::default();
-                    unreviewed_edits = Patch::new(vec![Edit {
-                        old: 0..1,
-                        new: 0..text_snapshot.max_point().row + 1,
-                    }])
+                    if let TrackedBufferStatus::Created {
+                        existing_file_content: Some(existing_content),
+                    } = &status
+                    {
+                        diff_base = existing_content.clone();
+                        unreviewed_edits = Patch::new(vec![Edit {
+                            old: 0..existing_content.max_point().row + 1,
+                            new: 0..text_snapshot.max_point().row + 1,
+                        }]);
+                    } else {
+                        diff_base = Rope::default();
+                        unreviewed_edits = Patch::new(vec![Edit {
+                            old: 0..1,
+                            new: 0..text_snapshot.max_point().row + 1,
+                        }]);
+                    }
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
                     unreviewed_edits = Patch::default();
@@ -758,11 +776,10 @@ impl ActionLog {
                             .read(cx)
                             .entry_id(cx)
                             .and_then(|entry_id| {
-                                self.project.update(cx, |project, cx| {
-                                    project.delete_entry(entry_id, false, cx)
-                                })
+                                self.project
+                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
                             })
-                            .unwrap_or_else(|| Task::ready(Ok(None)));
+                            .unwrap_or_else(|| Task::ready(Ok(())));
 
                         cx.background_spawn(async move {
                             task.await?;
@@ -1041,30 +1058,19 @@ impl ActionLog {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiffStats {
     pub lines_added: u32,
     pub lines_removed: u32,
 }
 
 impl DiffStats {
-    pub fn single_file(buffer: &Buffer, diff: &BufferDiff, cx: &App) -> Self {
-        let mut stats = DiffStats::default();
-        let diff_snapshot = diff.snapshot(cx);
-        let buffer_snapshot = buffer.snapshot();
-        let base_text = diff_snapshot.base_text();
-
-        for hunk in diff_snapshot.hunks(&buffer_snapshot) {
-            let added_rows = hunk.range.end.row.saturating_sub(hunk.range.start.row);
-            stats.lines_added += added_rows;
-
-            let base_start = hunk.diff_base_byte_range.start.to_point(base_text).row;
-            let base_end = hunk.diff_base_byte_range.end.to_point(base_text).row;
-            let removed_rows = base_end.saturating_sub(base_start);
-            stats.lines_removed += removed_rows;
+    pub fn single_file(diff: &BufferDiff) -> Self {
+        let (lines_added, lines_removed) = diff.changed_row_counts();
+        DiffStats {
+            lines_added,
+            lines_removed,
         }
-
-        stats
     }
 
     pub fn all_files(
@@ -1072,8 +1078,8 @@ impl DiffStats {
         cx: &App,
     ) -> Self {
         let mut total = DiffStats::default();
-        for (buffer, diff) in changed_buffers {
-            let stats = DiffStats::single_file(buffer.read(cx), diff.read(cx), cx);
+        for (_, diff) in changed_buffers {
+            let stats = DiffStats::single_file(diff.read(cx));
             total.lines_added += stats.lines_added;
             total.lines_removed += stats.lines_removed;
         }
@@ -1692,8 +1698,8 @@ mod tests {
                 buffer.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 19),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "Lorem ipsum dolor".into(),
                 }],
             )]
         );
@@ -1710,6 +1716,50 @@ mod tests {
         assert_eq!(
             buffer.read_with(cx, |buffer, _cx| buffer.text()),
             "Lorem ipsum dolor"
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_overwriting_file_counts_removed_lines(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file1": "line1\nline2\nline3\n"
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let file_path = project
+            .read_with(cx, |project, cx| project.find_project_path("dir/file1", cx))
+            .unwrap();
+
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("new1\nnew2\n", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // Overwriting an existing file must count the replaced lines as removed,
+        // not treat the whole file as added (+2 -0 would be the bug).
+        assert_eq!(
+            action_log.read_with(cx, |log, cx| log.diff_stats(cx)),
+            DiffStats {
+                lines_added: 2,
+                lines_removed: 3,
+            }
         );
     }
 
@@ -1773,8 +1823,8 @@ mod tests {
                 buffer.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 9),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "Lorem ipsum dolor".into(),
                 }],
             )]
         );
@@ -1831,14 +1881,14 @@ mod tests {
         action_log.update(cx, |log, cx| log.will_delete_buffer(buffer2.clone(), cx));
         project
             .update(cx, |project, cx| {
-                project.delete_file(file1_path.clone(), false, cx)
+                project.delete_file(file1_path.clone(), cx)
             })
             .unwrap()
             .await
             .unwrap();
         project
             .update(cx, |project, cx| {
-                project.delete_file(file2_path.clone(), false, cx)
+                project.delete_file(file2_path.clone(), cx)
             })
             .unwrap()
             .await
@@ -1890,8 +1940,8 @@ mod tests {
                 buffer2.clone(),
                 vec![HunkStatus {
                     range: Point::new(0, 0)..Point::new(0, 5),
-                    diff_status: DiffHunkStatusKind::Added,
-                    old_text: "".into(),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "ipsum\n".into(),
                 }],
             )]
         );
@@ -2143,9 +2193,7 @@ mod tests {
             action_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| {
-                project.delete_file(file_path.clone(), false, cx)
-            })
+            .update(cx, |project, cx| project.delete_file(file_path.clone(), cx))
             .unwrap()
             .await
             .unwrap();
@@ -3156,7 +3204,7 @@ mod tests {
             child_log.update(cx, |log, cx| log.will_delete_buffer(buffer.clone(), cx));
         });
         project
-            .update(cx, |project, cx| project.delete_file(file_path, false, cx))
+            .update(cx, |project, cx| project.delete_file(file_path, cx))
             .unwrap()
             .await
             .unwrap();

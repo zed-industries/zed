@@ -41,7 +41,7 @@ The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../accou
 
 Edit Prediction has two display modes:
 
-1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
+1. `eager` (default): predictions are displayed inline as long as they don't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
 
 Toggle between them via the `mode` key:
@@ -145,6 +145,34 @@ If you configured edit prediction keybindings before Zed `v0.229.0`, your `keyma
 **Old tab workaround**: Before `unbind` existed, the only way to prevent `tab` from accepting edit predictions was to copy all the default non-edit-prediction `tab` bindings into your keymap alongside a custom `AcceptEditPrediction` binding. If your keymap still contains those copy-pasted entries, delete them and use a single `"unbind"` entry as shown in the examples above.
 
 **Renamed context**: The `edit_prediction_conflict` context has been replaced by `edit_prediction && (showing_completions || in_leading_whitespace)`. Zed automatically migrates any bindings that used `edit_prediction_conflict`, so no changes are required on your end.
+
+## Configuring the Prediction Debounce
+
+The prediction debounce controls how long Zed waits after you stop typing before automatically requesting an edit prediction. Configure it in milliseconds under the settings for your selected provider:
+
+```json [settings]
+{
+  "edit_predictions": {
+    "provider": "open_ai_compatible_api",
+    "open_ai_compatible_api": {
+      "prediction_debounce": 500
+    }
+  }
+}
+```
+
+The default debounce depends on the provider:
+
+| Provider              | Default |
+| --------------------- | ------: |
+| GitHub Copilot        |   75 ms |
+| Codestral             |  150 ms |
+| Zed                   |    0 ms |
+| Mercury               |    0 ms |
+| Ollama                |    0 ms |
+| OpenAI-compatible API |    0 ms |
+
+Set `prediction_debounce` to `0` to disable the additional delay. Normal request throttling can still apply. Explicitly requesting a prediction with {#action editor::ShowEditPrediction} bypasses the configured debounce.
 
 ## Disabling Automatic Edit Prediction
 
@@ -342,6 +370,7 @@ The `prompt_format` setting controls how code context is formatted for the model
 - `code_gemma` - CodeGemma format: `<|fim_prefix|>prefix<|fim_suffix|>suffix<|fim_middle|>`
 - `codestral` - Codestral format: `[SUFFIX]suffix[PREFIX]prefix`
 - `glm` - GLM-4 format with code markers
+- `sweep` - [Sweep rewrite-window](https://blog.sweep.dev/posts/oss-next-edit) format using `<|file_sep|>` file blocks for related files, `original/...`, `current/...`, and `updated/...`.
 - `infer` - Auto-detect from model name (default)
 
 With `"prompt_format": "infer"`, Zed automatically uses Zeta 2 format for models named `zeta2` and Zeta 2.1 format for models named `zeta2.1`.

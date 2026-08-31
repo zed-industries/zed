@@ -160,10 +160,11 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let transaction_id = vim.visual_delete(false, window, cx);
         if let (Some(original_selections), Some(transaction_id)) =
             (original_selections, transaction_id)
+            && !original_selections.is_empty()
         {
             let updated = vim.update_editor(cx, |_, editor, _| {
                 editor.modify_transaction_selection_history(transaction_id, |selections| {
-                    selections.0 = original_selections;
+                    selections.undo = original_selections;
                 })
             });
             debug_assert_ne!(updated, Some(false));
@@ -752,17 +753,7 @@ impl Vim {
                     let indent = if auto_indent_mode == AutoIndentMode::None {
                         String::new()
                     } else {
-                        let indent_size = snapshot.indent_size_for_line(MultiBufferRow(row)).len;
-                        let first_char = snapshot.chars_at(Point::new(row, indent_size)).next();
-                        let indent_row = if matches!(first_char, Some('}') | Some(')')) {
-                            snapshot
-                                .prev_non_blank_row(MultiBufferRow(row))
-                                .map(|r| r.0)
-                                .unwrap_or(row)
-                        } else {
-                            row
-                        };
-                        snapshot.indent_and_comment_for_line(MultiBufferRow(indent_row), cx)
+                        snapshot.indent_and_comment_for_line(MultiBufferRow(row), cx)
                     };
                     let start_of_line = Point::new(row, 0);
                     let edit = (start_of_line..start_of_line, indent + "\n");
@@ -777,7 +768,7 @@ impl Vim {
                     editor.edit(plain_edits, cx);
                 }
                 if !auto_indent_edits.is_empty() {
-                    editor.edit_with_autoindent(auto_indent_edits, cx);
+                    editor.edit_before_with_autoindent(auto_indent_edits, cx);
                 }
 
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -1745,6 +1736,23 @@ mod test {
                 }"},
             Mode::Insert,
         );
+
+        // Inserting a line above should auto-indent the newly added line and leave the previous
+        // line unchanged
+        cx.assert_binding(
+            "shift-o",
+            indoc! {"
+                fn test() {
+                        println!(ˇ);
+                }"},
+            Mode::Normal,
+            indoc! {"
+                fn test() {
+                    ˇ
+                        println!();
+                }"},
+            Mode::Insert,
+        );
     }
 
     #[gpui::test]
@@ -2222,6 +2230,11 @@ mod test {
         cx.set_state("    let xˇ = 1;", Mode::Normal);
         cx.simulate_keystrokes("shift-o");
         cx.assert_state("    ˇ\n    let x = 1;", Mode::Insert);
+
+        // O on an unindented line: the new line gets no indentation
+        cx.set_state("fn test() {\n    println!(\"\");\nˇ}", Mode::Normal);
+        cx.simulate_keystrokes("shift-o");
+        cx.assert_state("fn test() {\n    println!(\"\");\nˇ\n}", Mode::Insert);
     }
 
     #[gpui::test]

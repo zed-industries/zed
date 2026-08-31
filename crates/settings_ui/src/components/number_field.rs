@@ -13,7 +13,7 @@ use gpui::{
 
 use settings::{
     CenteredPaddingSettings, CodeFade, DelayMs, FontSize, FontWeightContent, InactiveOpacity,
-    MinimumContrast,
+    MinimumContrast, PixelSetting,
 };
 use ui::prelude::*;
 use zed_actions::editor::{MoveDown, MoveUp};
@@ -120,6 +120,7 @@ impl_newtype_numeric_stepper_float!(CodeFade, 0.1, 0.2, 0.05, 0.0, 0.9);
 impl_newtype_numeric_stepper_float!(FontSize, 1.0, 4.0, 0.5, 6.0, 72.0);
 impl_newtype_numeric_stepper_float!(InactiveOpacity, 0.1, 0.2, 0.05, 0.0, 1.0);
 impl_newtype_numeric_stepper_float!(MinimumContrast, 1., 10., 0.5, 0.0, 106.0);
+impl_newtype_numeric_stepper_float!(PixelSetting, 1.0, 10.0, 0.5, 0.0, f32::MAX);
 impl_newtype_numeric_stepper_int!(DelayMs, 100, 500, 10, 0, 2000);
 impl_newtype_numeric_stepper_float!(
     CenteredPaddingSettings,
@@ -275,6 +276,7 @@ pub struct NumberField<T: NumberFieldType = usize> {
     on_change: Rc<dyn Fn(&T, &mut Window, &mut App) + 'static>,
     tab_index: Option<isize>,
     aria_label: Option<SharedString>,
+    aria_description: Option<SharedString>,
 }
 
 impl<T: NumberFieldType> NumberField<T> {
@@ -316,6 +318,7 @@ impl<T: NumberFieldType> NumberField<T> {
             on_change: Rc::new(|_, _, _| {}),
             tab_index: None,
             aria_label: None,
+            aria_description: None,
         }
     }
 
@@ -347,6 +350,13 @@ impl<T: NumberFieldType> NumberField<T> {
     /// Sets the label announced by assistive technology.
     pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
         self.aria_label = Some(label.into());
+        self
+    }
+
+    /// Sets the supplementary description announced by assistive technology
+    /// after the field's name, role, and value.
+    pub fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.aria_description = Some(description.into());
         self
     }
 
@@ -521,6 +531,9 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
             .role(Role::SpinButton)
             .when_some(self.aria_label.clone(), |this, label| {
                 this.aria_label(label)
+            })
+            .when_some(self.aria_description.clone(), |this, description| {
+                this.aria_description(description)
             })
             .when_some(a11y_numeric_value(&self.value), |this, value| {
                 this.aria_numeric_value(value)
@@ -774,6 +787,10 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                         .when_some(self.aria_label.clone(), |this, label| {
                                             this.aria_label(label)
                                         })
+                                        .when_some(
+                                            self.aria_description.clone(),
+                                            |this, description| this.aria_description(description),
+                                        )
                                         .flex_1()
                                         .h_full()
                                         .track_focus(&focus_handle)
@@ -783,8 +800,8 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
                                         })
                                         .child(editor)
                                         .on_action::<menu::Confirm>({
-                                            move |_, window, _| {
-                                                window.blur();
+                                            move |_, window, cx| {
+                                                window.blur(cx);
                                             }
                                         })
                                         .into_any_element()

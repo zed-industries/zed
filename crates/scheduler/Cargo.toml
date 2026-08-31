@@ -14,13 +14,30 @@ doctest = false
 
 [features]
 test-support = []
+# Allows `spawn_dedicated` to create real threads on wasm targets by spawning
+# web workers. Off by default because it requires shared-memory threading
+# (atomics + bulk-memory); wasm consumers without those build flags keep
+# compiling, and `spawn_dedicated` panics at runtime instead.
+#
+# `flume/spin` replaces flume's internal `std::sync::Mutex` with a spinlock:
+# a contended `std` lock parks with `Atomics.wait`, which the browser forbids
+# on the main thread, and the main thread sends on flume channels every time
+# it schedules work onto a dedicated thread.
+wasm-threads = ["dep:wasm_thread", "flume/spin"]
 
 [dependencies]
 async-task.workspace = true
 backtrace.workspace = true
 chrono.workspace = true
-flume = "0.11"
+flume.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
 rand.workspace = true
 web-time.workspace = true
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+# Forked because upstream is unmaintained and its worker bootstrap still calls
+# the wasm-bindgen init function with the positional arguments deprecated in 0.2.93.
+wasm_thread = { git = "https://github.com/zed-industries/wasm_thread", rev = "0cf96c7708dfb97ccf3da50347e25edcf75d6937", version = "0.3", features = [
+    "es_modules",
+], optional = true }

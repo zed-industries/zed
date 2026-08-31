@@ -3,7 +3,10 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
 use std::sync::Arc;
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use crate::ExtendingVec;
 
@@ -214,13 +217,11 @@ pub struct AgentSettingsContent {
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_width: Option<f32>,
+    pub default_width: Option<crate::PixelSetting>,
     /// Default height in pixels when the agent panel is docked to the bottom.
     ///
     /// Default: 320
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub default_height: Option<f32>,
+    pub default_height: Option<crate::PixelSetting>,
     /// Whether to limit the content width in the agent panel. When enabled,
     /// content will be constrained to `max_content_width` and centered when
     /// the panel is wider than that value, for optimal readability.
@@ -231,8 +232,7 @@ pub struct AgentSettingsContent {
     /// centered when the panel is wider than this value.
     ///
     /// Default: 850
-    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
-    pub max_content_width: Option<f32>,
+    pub max_content_width: Option<crate::PixelSetting>,
     /// The default model to use when creating new chats and for other features when a specific model is not specified.
     pub default_model: Option<LanguageModelSelection>,
     /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
@@ -248,11 +248,21 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
+    /// in the prompt when generating git commit messages.
+    ///
+    /// Default: true
+    pub commit_message_include_project_rules: Option<bool>,
     /// Custom instructions to include in the prompt when generating git commit messages.
     /// Applied in addition to any project rules files (such as `.rules` or `AGENTS.md`).
     pub commit_message_instructions: Option<String>,
     /// Model to use for generating thread summaries. Defaults to default_model when not specified.
     pub thread_summary_model: Option<LanguageModelSelection>,
+    /// Model to use for context compaction (`/compact` and auto-compaction).
+    /// Falls back to the thread's currently selected model when not specified.
+    /// If the configured model is unavailable (provider not registered, model
+    /// not found), the thread's current model is used instead.
+    pub compaction_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     pub inline_alternatives: Option<Vec<LanguageModelSelection>>,
     /// The default profile to use in the Agent.
@@ -481,19 +491,13 @@ impl AgentSettingsContent {
             .allow_fs_write_all = Some(true);
     }
 
-    pub fn allow_sandbox_git_access(&mut self) {
-        self.sandbox_permissions
-            .get_or_insert_default()
-            .allow_git_access = Some(true);
-    }
-
     pub fn allow_sandbox_unsandboxed(&mut self) {
         self.sandbox_permissions
             .get_or_insert_default()
             .allow_unsandboxed = Some(true);
     }
 
-    pub fn add_sandbox_write_path(&mut self, path: PathBuf) {
+    pub fn add_sandbox_write_path(&mut self, granted: GrantedWritePathContent) {
         let write_paths = &mut self
             .sandbox_permissions
             .get_or_insert_default()
@@ -501,7 +505,17 @@ impl AgentSettingsContent {
             .get_or_insert_default()
             .0;
 
-        util::paths::insert_subtree(write_paths, path);
+        // Mirror `util::paths::insert_subtree`, keeping the grant set minimal,
+        // but compare by each entry's canonical (resolved) grant path.
+        let canonical = granted.canonical_or_requested().to_path_buf();
+        if write_paths
+            .iter()
+            .any(|existing| canonical.starts_with(existing.canonical_or_requested()))
+        {
+            return;
+        }
+        write_paths.retain(|existing| !existing.canonical_or_requested().starts_with(&canonical));
+        write_paths.push(granted);
     }
 }
 
@@ -621,6 +635,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                         "mistral",
                         "ollama",
                         "openai",
+                        "openai-subscribed",
                         "opencode",
                         "openrouter",
                         "vercel_ai_gateway",
@@ -667,6 +682,56 @@ impl std::ops::DerefMut for AllAgentServersSettings {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AgentConfigOptionValue {
+    ValueId(String),
+    Boolean(bool),
+}
+
+impl AgentConfigOptionValue {
+    pub fn as_value_id(&self) -> Option<&str> {
+        match self {
+            Self::ValueId(value) => Some(value),
+            Self::Boolean(_) => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Boolean(value) => Some(*value),
+            Self::ValueId(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for AgentConfigOptionValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ValueId(value) => formatter.write_str(value),
+            Self::Boolean(value) => value.fmt(formatter),
+        }
+    }
+}
+
+impl From<String> for AgentConfigOptionValue {
+    fn from(value: String) -> Self {
+        Self::ValueId(value)
+    }
+}
+
+impl From<&str> for AgentConfigOptionValue {
+    fn from(value: &str) -> Self {
+        Self::ValueId(value.to_string())
+    }
+}
+
+impl From<bool> for AgentConfigOptionValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -687,11 +752,11 @@ pub enum CustomAgentServerSettings {
         default_mode: Option<String>,
         /// Default values for session config options.
         ///
-        /// This is a map from config option ID to value ID.
+        /// This is a map from config option ID to the default value for that option.
         ///
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
@@ -716,11 +781,11 @@ pub enum CustomAgentServerSettings {
         default_mode: Option<String>,
         /// Default values for session config options.
         ///
-        /// This is a map from config option ID to value ID.
+        /// This is a map from config option ID to the default value for that option.
         ///
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
@@ -729,6 +794,113 @@ pub enum CustomAgentServerSettings {
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
     },
+}
+
+/// A persisted sandbox writable-path grant. Deserializes from either a bare
+/// path string (`"/tmp/x"`, a legacy/hand-authored entry with no resolved
+/// target) or an object (`{ "requested": "/tmp/x", "resolved": "/tmp/real" }`).
+/// Serializes back as a bare string when `resolved` is `None` and as an object
+/// otherwise, so hand-authored bare strings round-trip and Zed-written grants
+/// are objects.
+#[derive(Clone, Debug, Default, PartialEq, MergeFrom)]
+pub struct GrantedWritePathContent {
+    /// The path exactly as the user/model requested it.
+    pub requested: PathBuf,
+    /// The canonical, symlink-resolved target established when the grant was
+    /// approved. Absent for a bare-string entry.
+    pub resolved: Option<PathBuf>,
+    /// Windows/WSL only: whether the canonical target lives on a Windows-hosted
+    /// (DrvFs) filesystem, whose sandbox-integrity guarantees are weaker. Absent
+    /// (false) on other platforms and for bare-string entries.
+    pub on_windows_fs: bool,
+}
+
+impl GrantedWritePathContent {
+    /// The path used for lexical subtree/coverage/dedup logic: the resolved
+    /// canonical target when known, otherwise the requested path.
+    fn canonical_or_requested(&self) -> &Path {
+        self.resolved.as_deref().unwrap_or(&self.requested)
+    }
+}
+
+impl Serialize for GrantedWritePathContent {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.resolved {
+            None => self.requested.serialize(serializer),
+            Some(resolved) => {
+                use serde::ser::SerializeStruct as _;
+                let field_count = if self.on_windows_fs { 3 } else { 2 };
+                let mut state =
+                    serializer.serialize_struct("GrantedWritePathContent", field_count)?;
+                state.serialize_field("requested", &self.requested)?;
+                state.serialize_field("resolved", resolved)?;
+                if self.on_windows_fs {
+                    state.serialize_field("on_windows_fs", &self.on_windows_fs)?;
+                }
+                state.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for GrantedWritePathContent {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        struct Object {
+            requested: PathBuf,
+            #[serde(default)]
+            resolved: Option<PathBuf>,
+            #[serde(default)]
+            on_windows_fs: bool,
+        }
+
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrObject {
+            String(PathBuf),
+            Object(Object),
+        }
+
+        Ok(match StringOrObject::deserialize(deserializer)? {
+            StringOrObject::String(requested) => Self {
+                requested,
+                resolved: None,
+                on_windows_fs: false,
+            },
+            StringOrObject::Object(Object {
+                requested,
+                resolved,
+                on_windows_fs,
+            }) => Self {
+                requested,
+                resolved,
+                on_windows_fs,
+            },
+        })
+    }
+}
+
+impl JsonSchema for GrantedWritePathContent {
+    fn schema_name() -> Cow<'static, str> {
+        "GrantedWritePathContent".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "oneOf": [
+                { "type": "string" },
+                {
+                    "type": "object",
+                        "properties": {
+                        "requested": { "type": "string" },
+                        "resolved": { "type": ["string", "null"] },
+                        "on_windows_fs": { "type": "boolean" }
+                    },
+                    "required": ["requested"]
+                }
+            ]
+        })
+    }
 }
 
 #[with_fallible_options]
@@ -745,11 +917,6 @@ pub struct SandboxPermissionsContent {
     /// Default: []
     pub network_hosts: Option<ExtendingVec<String>>,
 
-    /// Whether sandboxed terminal commands may always access protected Git
-    /// metadata paths without prompting.
-    /// Default: false
-    pub allow_git_access: Option<bool>,
-
     /// Whether sandboxed terminal commands may always write anywhere on the
     /// filesystem without prompting.
     /// Default: false
@@ -765,9 +932,29 @@ pub struct SandboxPermissionsContent {
     pub allow_unsandboxed: Option<bool>,
 
     /// Directory subtrees that sandboxed terminal commands may always write
-    /// to without prompting. Paths written by Zed are absolute.
+    /// to without prompting. Each entry is either a bare path string or an
+    /// object `{requested, resolved}`; Zed writes objects (the canonical,
+    /// symlink-resolved target established at approval time), while
+    /// hand-authored entries may be bare path strings. Paths written by Zed
+    /// are absolute.
     /// Default: []
-    pub write_paths: Option<ExtendingVec<PathBuf>>,
+    pub write_paths: Option<ExtendingVec<GrantedWritePathContent>>,
+
+    /// Whether to warn when a sandbox escalation prompt requests a domain or
+    /// write path that contains potentially confusable Unicode characters
+    /// (homoglyphs, invisible characters, or bidirectional overrides). When
+    /// enabled, such prompts show a warning that must be acknowledged before
+    /// the request can be allowed.
+    /// Default: true
+    pub warn_confusable_unicode: Option<bool>,
+
+    /// Whether to warn (Windows/WSL only) when a sandbox grant targets a file on
+    /// a Windows-hosted (DrvFs) filesystem. Such grants are enforced inside WSL
+    /// via a translated path, and their sandbox-integrity guarantees are weaker
+    /// than a distro-native filesystem. When enabled, such grants show a warning
+    /// that must be acknowledged before the command runs.
+    /// Default: true
+    pub warn_ntfs_grants: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -862,6 +1049,46 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_config_option_value_serializes_value_id_as_string() {
+        let value = AgentConfigOptionValue::from("manual");
+
+        assert_eq!(
+            serde_json::to_value(&value).expect("serialize value id"),
+            serde_json::json!("manual")
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentConfigOptionValue>(serde_json::json!("manual"))
+                .expect("deserialize value id"),
+            AgentConfigOptionValue::ValueId("manual".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_config_option_value_serializes_boolean_as_boolean() {
+        let value = AgentConfigOptionValue::Boolean(true);
+
+        assert_eq!(
+            serde_json::to_value(&value).expect("serialize boolean"),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentConfigOptionValue>(serde_json::json!(true))
+                .expect("deserialize boolean"),
+            AgentConfigOptionValue::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn agent_config_option_value_merge_replaces_existing_value() {
+        use crate::merge_from::MergeFrom as _;
+
+        let mut value = AgentConfigOptionValue::ValueId("manual".to_string());
+        value.merge_from(&AgentConfigOptionValue::Boolean(true));
+
+        assert_eq!(value, AgentConfigOptionValue::Boolean(true));
+    }
 
     #[test]
     fn test_set_tool_default_permission_creates_structure() {
@@ -1050,9 +1277,12 @@ mod tests {
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
         settings.allow_sandbox_fs_write_all();
-        settings.allow_sandbox_git_access();
         settings.allow_sandbox_unsandboxed();
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build"),
+            resolved: None,
+            on_windows_fs: false,
+        });
 
         let sandbox_permissions = settings.sandbox_permissions.as_ref().unwrap();
         assert_eq!(sandbox_permissions.allow_all_hosts, Some(true));
@@ -1065,7 +1295,6 @@ mod tests {
                 .as_slice(),
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
-        assert_eq!(sandbox_permissions.allow_git_access, Some(true));
         assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
         assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
         assert_eq!(
@@ -1075,7 +1304,11 @@ mod tests {
                 .unwrap()
                 .0
                 .as_slice(),
-            &[PathBuf::from("/tmp/build")]
+            &[GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/build"),
+                resolved: None,
+                on_windows_fs: false,
+            }]
         );
     }
 
@@ -1083,9 +1316,21 @@ mod tests {
     fn test_add_sandbox_write_path_prunes_redundant_paths() {
         let mut settings = AgentSettingsContent::default();
 
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/cache"));
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
-        settings.add_sandbox_write_path(PathBuf::from("/tmp/build/output"));
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/cache"),
+            resolved: None,
+            on_windows_fs: false,
+        });
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build"),
+            resolved: None,
+            on_windows_fs: false,
+        });
+        settings.add_sandbox_write_path(GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/build/output"),
+            resolved: None,
+            on_windows_fs: false,
+        });
 
         let write_paths = settings
             .sandbox_permissions
@@ -1096,6 +1341,78 @@ mod tests {
             .unwrap()
             .0
             .as_slice();
-        assert_eq!(write_paths, &[PathBuf::from("/tmp/build")]);
+        assert_eq!(
+            write_paths,
+            &[GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/build"),
+                resolved: None,
+                on_windows_fs: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn test_granted_write_path_content_deserializes_string_or_object() {
+        let from_string: GrantedWritePathContent =
+            serde_json::from_value(serde_json::json!("/tmp/x")).unwrap();
+        assert_eq!(
+            from_string,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: None,
+                on_windows_fs: false,
+            }
+        );
+
+        let from_object: GrantedWritePathContent = serde_json::from_value(
+            serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" }),
+        )
+        .unwrap();
+        assert_eq!(
+            from_object,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: Some(PathBuf::from("/tmp/real")),
+                on_windows_fs: false,
+            }
+        );
+
+        // `resolved` is optional in the object form.
+        let object_without_resolved: GrantedWritePathContent =
+            serde_json::from_value(serde_json::json!({ "requested": "/tmp/x" })).unwrap();
+        assert_eq!(
+            object_without_resolved,
+            GrantedWritePathContent {
+                requested: PathBuf::from("/tmp/x"),
+                resolved: None,
+                on_windows_fs: false,
+            }
+        );
+    }
+
+    #[test]
+    fn test_granted_write_path_content_serializes_string_or_object() {
+        // No resolved target serializes as a bare string, so hand-authored
+        // bare strings round-trip.
+        let bare = GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/x"),
+            resolved: None,
+            on_windows_fs: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&bare).unwrap(),
+            serde_json::json!("/tmp/x")
+        );
+
+        // A resolved target serializes as an object.
+        let resolved = GrantedWritePathContent {
+            requested: PathBuf::from("/tmp/x"),
+            resolved: Some(PathBuf::from("/tmp/real")),
+            on_windows_fs: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&resolved).unwrap(),
+            serde_json::json!({ "requested": "/tmp/x", "resolved": "/tmp/real" })
+        );
     }
 }
