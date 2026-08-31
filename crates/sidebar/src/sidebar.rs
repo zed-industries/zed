@@ -3473,25 +3473,21 @@ impl Sidebar {
         title: SharedString,
         cx: &mut Context<Self>,
     ) {
-        let workspace = self.contents.entries.iter().find_map(|entry| {
-            let ListEntry::Terminal(terminal) = entry else {
-                return None;
-            };
-            (terminal.metadata.terminal_id == terminal_id).then(|| terminal.workspace.clone())
-        });
-        let renamed_live_terminal = match workspace {
-            Some(ThreadEntryWorkspace::Open(workspace)) => workspace
-                .read(cx)
-                .panel::<AgentPanel>(cx)
-                .is_some_and(|agent_panel| {
-                    agent_panel.update(cx, |agent_panel, cx| {
+        let mut found = false;
+        if let Some(multi_workspace) = self.multi_workspace.upgrade() {
+            let workspaces: Vec<_> = multi_workspace.read(cx).workspaces().cloned().collect();
+            for workspace in workspaces {
+                if let Some(agent_panel) = workspace.read(cx).panel::<AgentPanel>(cx)
+                    && agent_panel.update(cx, |agent_panel, cx| {
                         agent_panel.rename_terminal(terminal_id, title.clone(), cx)
                     })
-                }),
-            Some(ThreadEntryWorkspace::Closed { .. }) | None => false,
-        };
+                {
+                    found = true;
+                }
+            }
+        }
 
-        if !renamed_live_terminal {
+        if !found {
             TerminalThreadMetadataStore::global(cx).update(cx, |store, cx| {
                 store.rename_terminal(terminal_id, title, cx);
             });
