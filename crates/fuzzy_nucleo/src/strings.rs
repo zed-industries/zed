@@ -117,14 +117,8 @@ where
         return empty_query_results(candidates, max_results);
     };
 
-    let num_cpus = if cfg!(target_family = "wasm") {
-        1
-    } else {
-        executor.num_cpus().min(candidates.len())
-    };
-    #[cfg(not(target_family = "wasm"))]
+    let num_cpus = executor.num_cpus().min(candidates.len());
     let base_size = candidates.len() / num_cpus;
-    #[cfg(not(target_family = "wasm"))]
     let remainder = candidates.len() % num_cpus;
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
@@ -133,7 +127,6 @@ where
     let config = nucleo::Config::DEFAULT;
     let mut matchers = matcher::get_matchers(num_cpus, config);
 
-    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, (results, matcher)) in segment_results
@@ -160,17 +153,6 @@ where
             }
         })
         .await;
-
-    #[cfg(target_family = "wasm")]
-    match_string_helper(
-        candidates,
-        &query,
-        &mut matchers[0],
-        length_penalty,
-        &mut segment_results[0],
-        cancel_flag,
-    )
-    .ok();
 
     matcher::return_matchers(matchers);
 

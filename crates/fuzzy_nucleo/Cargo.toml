@@ -17,6 +17,7 @@ fuzzy.workspace = true
 nucleo.workspace = true
 gpui.workspace = true
 gpui_util.workspace = true
+num_cpus = "1.13"
 path.workspace = true
 
 [dev-dependencies]

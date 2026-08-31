@@ -5,9 +5,7 @@ use futures::prelude::*;
 use gpui_util::{TryFutureExt, TryFutureExtBacktrace};
 use scheduler::Instant;
 use scheduler::Scheduler;
-use std::{future::Future, marker::PhantomData, rc::Rc, sync::Arc, time::Duration};
-#[cfg(not(target_family = "wasm"))]
-use std::{mem, pin::Pin};
+use std::{future::Future, marker::PhantomData, mem, pin::Pin, rc::Rc, sync::Arc, time::Duration};
 
 pub use scheduler::{
     DedicatedExecutor, FallibleTask, LocalExecutor as SchedulerLocalExecutor, Priority, Task,
@@ -145,20 +143,13 @@ impl BackgroundExecutor {
     ///
     /// Dropping the returned future cancels its tasks and synchronously waits for their futures to
     /// be destroyed before returning.
-    #[cfg(not(target_family = "wasm"))]
     pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
         let mut scope = Scope::new(self.clone(), Priority::default());
         (scheduler)(&mut scope);
-        let spawned = mem::take(&mut scope.futures)
-            .into_iter()
-            .map(|f| self.spawn_with_priority(scope.priority, f))
-            .collect::<Vec<_>>();
-        for task in spawned {
-            task.await;
-        }
+        scope.run().await;
     }
 
     /// Runs prioritized background tasks that may borrow from their environment and waits for all
@@ -166,20 +157,13 @@ impl BackgroundExecutor {
     ///
     /// Dropping the returned future cancels its tasks and synchronously waits for their futures to
     /// be destroyed before returning.
-    #[cfg(not(target_family = "wasm"))]
     pub async fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
         let mut scope = Scope::new(self.clone(), priority);
         (scheduler)(&mut scope);
-        let spawned = mem::take(&mut scope.futures)
-            .into_iter()
-            .map(|f| self.spawn_with_priority(scope.priority, f))
-            .collect::<Vec<_>>();
-        for task in spawned {
-            task.await;
-        }
+        scope.run().await;
     }
 
     /// Get the current time.
@@ -277,6 +261,9 @@ impl BackgroundExecutor {
         if let Some(test) = self.dispatcher.as_test() {
             return test.num_cpus_override().unwrap_or(4);
         }
+        #[cfg(target_family = "wasm")]
+        return 1;
+        #[cfg(not(target_family = "wasm"))]
         num_cpus::get()
     }
 
@@ -468,27 +455,54 @@ impl ForegroundExecutor {
 }
 
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
-#[cfg(not(target_family = "wasm"))]
 pub struct Scope<'a> {
     executor: BackgroundExecutor,
+    #[cfg(not(target_family = "wasm"))]
     priority: Priority,
+    #[cfg(not(target_family = "wasm"))]
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
+    #[cfg(target_family = "wasm")]
+    futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'a>>>,
+    #[cfg(not(target_family = "wasm"))]
     tx: Option<mpsc::Sender<()>>,
+    #[cfg(not(target_family = "wasm"))]
     rx: mpsc::Receiver<()>,
     lifetime: PhantomData<&'a ()>,
 }
 
-#[cfg(not(target_family = "wasm"))]
 impl<'a> Scope<'a> {
     fn new(executor: BackgroundExecutor, priority: Priority) -> Self {
+        #[cfg(not(target_family = "wasm"))]
         let (tx, rx) = mpsc::channel(1);
+        #[cfg(target_family = "wasm")]
+        let _ = priority;
         Self {
             executor,
+            #[cfg(not(target_family = "wasm"))]
             priority,
+            #[cfg(not(target_family = "wasm"))]
             tx: Some(tx),
+            #[cfg(not(target_family = "wasm"))]
             rx,
             futures: Default::default(),
             lifetime: PhantomData,
+        }
+    }
+
+    async fn run(&mut self) {
+        #[cfg(not(target_family = "wasm"))]
+        {
+            let spawned = mem::take(&mut self.futures)
+                .into_iter()
+                .map(|future| self.executor.spawn_with_priority(self.priority, future))
+                .collect::<Vec<_>>();
+            for task in spawned {
+                task.await;
+            }
+        }
+        #[cfg(target_family = "wasm")]
+        for future in mem::take(&mut self.futures) {
+            future.await;
         }
     }
 
@@ -496,7 +510,10 @@ impl<'a> Scope<'a> {
     pub fn num_cpus(&self) -> usize {
         self.executor.num_cpus()
     }
+}
 
+#[cfg(not(target_family = "wasm"))]
+impl<'a> Scope<'a> {
     /// Spawn a future into this scope.
     #[track_caller]
     pub fn spawn<F>(&mut self, f: F)
@@ -517,6 +534,18 @@ impl<'a> Scope<'a> {
             }))
         };
         self.futures.push(f);
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl<'a> Scope<'a> {
+    /// Spawn a future into this scope.
+    #[track_caller]
+    pub fn spawn<F>(&mut self, future: F)
+    where
+        F: Future<Output = ()> + Send + 'a,
+    {
+        self.futures.push(Box::pin(future));
     }
 }
 

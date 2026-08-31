@@ -6961,6 +6961,7 @@ dependencies = [
  "gpui",
  "gpui_util",
  "nucleo",
+ "num_cpus",
  "path",
 ]
 

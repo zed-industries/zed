@@ -6,14 +6,11 @@ use crate::{
 use gpui::BackgroundExecutor;
 use std::{
     borrow::Borrow,
-    cmp::Ordering,
+    cmp::{self, Ordering},
     iter,
     ops::Range,
     sync::atomic::{self, AtomicBool},
 };
-
-#[cfg(not(target_family = "wasm"))]
-use std::cmp;
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
@@ -152,18 +149,12 @@ where
     let query = &query;
     let query_char_bag = CharBag::from(&lowercase_query[..]);
 
-    let num_cpus = if cfg!(target_family = "wasm") {
-        1
-    } else {
-        executor.num_cpus().min(candidates.len())
-    };
-    #[cfg(not(target_family = "wasm"))]
+    let num_cpus = executor.num_cpus().min(candidates.len());
     let segment_size = candidates.len().div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
-    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
@@ -198,30 +189,6 @@ where
             }
         })
         .await;
-
-    #[cfg(target_family = "wasm")]
-    {
-        let mut matcher = Matcher::new(
-            query,
-            lowercase_query,
-            query_char_bag,
-            smart_case,
-            penalize_length,
-        );
-        matcher.match_candidates(
-            &[],
-            &[],
-            candidates.iter().map(|candidate| candidate.borrow()),
-            &mut segment_results[0],
-            cancel_flag,
-            |candidate: &&StringMatchCandidate, score, positions| StringMatch {
-                candidate_id: candidate.id,
-                score,
-                positions: positions.clone(),
-                string: candidate.string.to_string(),
-            },
-        );
-    }
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();

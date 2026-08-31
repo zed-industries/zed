@@ -287,12 +287,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         return Vec::new();
     };
 
-    let num_cpus = if cfg!(target_family = "wasm") {
-        1
-    } else {
-        executor.num_cpus().min(path_count)
-    };
-    #[cfg(not(target_family = "wasm"))]
+    let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results))
@@ -300,7 +295,6 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let mut config = nucleo::Config::DEFAULT;
     config.set_match_paths();
     let mut matchers = matcher::get_matchers(num_cpus, config);
-    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, (results, matcher)) in segment_results
@@ -350,26 +344,6 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
             }
         })
         .await;
-
-    #[cfg(target_family = "wasm")]
-    for candidate_set in candidate_sets {
-        if path_match_helper(
-            &mut matchers[0],
-            &query,
-            candidate_set.candidates(0),
-            &mut segment_results[0],
-            candidate_set.id(),
-            &candidate_set.prefix(),
-            candidate_set.root_is_file(),
-            relative_to,
-            path_style,
-            cancel_flag,
-        )
-        .is_err()
-        {
-            break;
-        }
-    }
 
     matcher::return_matchers(matchers);
     if cancel_flag.load(atomic::Ordering::Acquire) {
