@@ -35,6 +35,7 @@ use std::{
 };
 
 const GPUI_WINDOW_IVAR: &str = "gpui_window_ptr";
+const BACK_BUTTON_TAG: isize = 0x2ED;
 
 static METAL_VIEW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
 static VC_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
@@ -866,6 +867,17 @@ impl IosWindow {
     /// Secondary windows (settings, and anything else GPUI opens in its own
     /// window) cover the workspace on iOS and have no window chrome, so give
     /// them a native way back.
+    /// Removes the back button again, for windows that provide their own way
+    /// back (a workspace has history navigation in its toolbar).
+    pub(super) fn remove_back_button(&self) {
+        unsafe {
+            let button: *mut AnyObject = msg_send![self.view, viewWithTag: BACK_BUTTON_TAG];
+            if !button.is_null() {
+                let _: () = msg_send![button, removeFromSuperview];
+            }
+        }
+    }
+
     fn install_back_button(&self) {
         const UI_CONTROL_EVENT_TOUCH_UP_INSIDE: u64 = 1 << 6;
         const BUTTON_HEIGHT: f64 = 34.0;
@@ -878,6 +890,7 @@ impl IosWindow {
 
             let title = super::util::nsstring("‹ Back");
             let _: () = msg_send![button, setTitle: title, forState: 0u64];
+            let _: () = msg_send![button, setTag: BACK_BUTTON_TAG];
 
             // A plain button floats over the content, so give it a pill that
             // reads as a control and keep it inside the safe area.
@@ -932,6 +945,12 @@ impl IosWindow {
     }
 
     fn request_close(&self) {
+        // Closing the only window would terminate the app; there is nothing to
+        // go back to in that case.
+        if super::ffi::window_count() <= 1 {
+            return;
+        }
+
         let should_close = self
             .should_close_callback
             .borrow_mut()
