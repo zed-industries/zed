@@ -23309,6 +23309,138 @@ async fn test_toggle_comment_ignore_indent(cx: &mut TestAppContext) {
     "});
 }
 
+// A language where `#` opens both a line comment and an attribute.
+fn language_with_hash_comments_and_attributes() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into(), "# ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query(
+            r#"
+            [(string_literal) (raw_string_literal)] @string
+            [(line_comment) (block_comment)] @comment.inclusive
+            "#,
+        )
+        .unwrap(),
+    )
+}
+
+#[gpui::test]
+async fn test_toggle_comment_does_not_strip_attribute_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = language_with_hash_comments_and_attributes();
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // The `#` opening an attribute is not a comment marker, so toggling must add
+    // `// ` rather than strip the `#`.
+    cx.set_state(indoc! {"
+        «#[deriveˇ»(Debug)]
+        struct Foo;
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        // «#[deriveˇ»(Debug)]
+        struct Foo;
+    "});
+
+    // Toggling again removes the `// ` prefix, leaving the attribute intact.
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        «#[deriveˇ»(Debug)]
+        struct Foo;
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_strips_hash_comment_prefix(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = language_with_hash_comments_and_attributes();
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // A real comment on the same `#` prefix still round-trips, so the attribute
+    // check above does not disable uncommenting.
+    cx.set_state(indoc! {"
+        // ˇcommented out
+        struct Foo;
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        ˇcommented out
+        struct Foo;
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_after_attribute_does_not_continue_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = language_with_hash_comments_and_attributes();
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // The cursor sits inside an attribute, not a comment, so Enter must not
+    // carry a `# ` prefix onto the new line.
+    cx.set_state(indoc! {"
+        #[derive(ˇDebug)]
+        struct Foo;
+    "});
+
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        #[derive(
+        ˇDebug)]
+        struct Foo;
+    "});
+}
+
+#[gpui::test]
+async fn test_toggle_comment_on_empty_comment_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                line_comments: vec!["// ".into()],
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query("[(line_comment) (block_comment)] @comment.inclusive")
+        .unwrap(),
+    );
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // A line containing only // should be uncommented to an empty line,
+    // not have a second // added.
+    cx.set_state(indoc! {"
+        //ˇ
+    "});
+
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        ˇ
+    "});
+
+    // Toggling again on the empty line should re-add the // prefix.
+    cx.update_editor(|e, window, cx| e.toggle_comments(&ToggleComments::default(), window, cx));
+
+    cx.assert_editor_state(indoc! {"
+        //•ˇ
+    "});
+}
+
 #[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

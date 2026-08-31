@@ -1567,7 +1567,21 @@ impl Editor {
                             .max_by_key(|range| range.end.column - range.start.column)
                             .expect("prefixes is non-empty");
 
+                        // A comment prefix can also open other syntax, so ask the override
+                        // scope, not the text. `string` counts as commented, so a prefix
+                        // inside a multi-line string is stripped, not stacked.
                         if prefix_range.is_empty() {
+                            all_selection_lines_are_comments = false;
+                        } else if snapshot
+                            .language_scope_at(prefix_range.start)
+                            .is_some_and(|scope| {
+                                scope.has_override_config()
+                                    && !matches!(
+                                        scope.override_name(),
+                                        Some("comment" | "string")
+                                    )
+                            })
+                        {
                             all_selection_lines_are_comments = false;
                         }
 
@@ -2486,6 +2500,16 @@ fn comment_delimiter_for_newline(
     let cursor_is_placed_after_comment_marker =
         num_of_whitespaces + trimmed_len <= start_point.column as usize;
     if cursor_is_placed_after_comment_marker {
+        // The prefix may open other syntax, which must not be continued.
+        let is_outside_comment = buffer
+            .language_scope_at(*start_point)
+            .is_some_and(|scope| {
+                scope.has_override_config() && scope.override_name() != Some("comment")
+            });
+        if is_outside_comment {
+            return None;
+        }
+
         if !is_repl {
             return Some(delimiter.clone());
         }

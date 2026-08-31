@@ -1349,6 +1349,16 @@ impl LanguageScope {
         override_config.values.get(&id).map(|e| e.name.as_str())
     }
 
+    /// Whether the language labels its scopes at all. Callers reading an absent
+    /// `override_name` as a negative answer need this to tell "not that scope"
+    /// apart from "this language never says".
+    pub fn has_override_config(&self) -> bool {
+        self.language
+            .grammar
+            .as_ref()
+            .is_some_and(|grammar| grammar.override_config.is_some())
+    }
+
     fn config_override(&self) -> Option<&LanguageConfigOverride> {
         let id = self.override_id?;
         let grammar = self.language.grammar.as_ref()?;
