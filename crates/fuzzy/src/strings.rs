@@ -155,37 +155,45 @@ where
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
+    let match_segment = |segment_idx, results: &mut Vec<StringMatch>| {
+        let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
+        let segment_end = cmp::min(segment_start + segment_size, candidates.len());
+        let mut matcher = Matcher::new(
+            query,
+            lowercase_query,
+            query_char_bag,
+            smart_case,
+            penalize_length,
+        );
+
+        matcher.match_candidates(
+            &[],
+            &[],
+            candidates[segment_start..segment_end]
+                .iter()
+                .map(|c| c.borrow()),
+            results,
+            cancel_flag,
+            |candidate: &&StringMatchCandidate, score, positions| StringMatch {
+                candidate_id: candidate.id,
+                score,
+                positions: positions.clone(),
+                string: candidate.string.to_string(),
+            },
+        );
+    };
+
+    #[cfg(target_family = "wasm")]
+    for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+        match_segment(segment_idx, results);
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-                let cancel_flag = &cancel_flag;
-                scope.spawn(async move {
-                    let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
-                    let segment_end = cmp::min(segment_start + segment_size, candidates.len());
-                    let mut matcher = Matcher::new(
-                        query,
-                        lowercase_query,
-                        query_char_bag,
-                        smart_case,
-                        penalize_length,
-                    );
-
-                    matcher.match_candidates(
-                        &[],
-                        &[],
-                        candidates[segment_start..segment_end]
-                            .iter()
-                            .map(|c| c.borrow()),
-                        results,
-                        cancel_flag,
-                        |candidate: &&StringMatchCandidate, score, positions| StringMatch {
-                            candidate_id: candidate.id,
-                            score,
-                            positions: positions.clone(),
-                            string: candidate.string.to_string(),
-                        },
-                    );
-                });
+                let match_segment = &match_segment;
+                scope.spawn(async move { match_segment(segment_idx, results) });
             }
         })
         .await;

@@ -1,11 +1,10 @@
-mod char_bag;
 mod matcher;
 mod paths;
 mod strings;
 
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 
-pub use char_bag::CharBag;
+pub use fuzzy::CharBag;
 pub use paths::{
     PathMatch, PathMatchCandidate, PathMatchCandidateSet, match_fixed_path_set, match_path_sets,
 };
