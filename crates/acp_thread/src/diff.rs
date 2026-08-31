@@ -279,7 +279,7 @@ impl PendingDiff {
                 self.new_buffer.read(cx).line_ending(),
                 self.new_buffer.read(cx).as_rope().clone(),
             );
-            let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
+            let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite, cx);
             buffer.set_language(language, cx);
             buffer
         });

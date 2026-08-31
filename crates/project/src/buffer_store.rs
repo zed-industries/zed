@@ -174,7 +174,7 @@ impl RemoteBufferStore {
             proto::create_buffer_for_peer::Variant::State(mut state) => {
                 let buffer_id = BufferId::new(state.id)?;
 
-                let buffer_result = maybe!({
+                let buffer_file_result = maybe!({
                     let mut buffer_file = None;
                     if let Some(file) = state.file.take() {
                         let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
@@ -188,12 +188,15 @@ impl RemoteBufferStore {
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree, cx)?)
                             as Arc<dyn language::File>);
                     }
-                    Buffer::from_proto(replica_id, capability, state, buffer_file)
+                    anyhow::Ok(buffer_file)
                 });
 
-                match buffer_result {
-                    Ok(buffer) => {
-                        let buffer = cx.new(|_| buffer);
+                match buffer_file_result {
+                    Ok(buffer_file) => {
+                        let buffer = cx.new(|cx| {
+                            Buffer::from_proto(replica_id, capability, state, buffer_file, cx)
+                                .expect("buffer_id was validated above")
+                        });
                         self.loading_remote_buffers_by_id.insert(buffer_id, buffer);
                     }
                     Err(error) => {
@@ -704,8 +707,9 @@ impl LocalBufferStore {
                             )
                         })
                         .await;
-                    cx.insert_entity(reservation, |_| {
-                        let mut buffer = Buffer::build(text_buffer, Some(loaded.file), capability);
+                    cx.insert_entity(reservation, |cx| {
+                        let mut buffer =
+                            Buffer::build(text_buffer, Some(loaded.file), capability, cx);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
                         buffer
@@ -725,6 +729,7 @@ impl LocalBufferStore {
                             is_private: false,
                         })),
                         Capability::ReadWrite,
+                        cx,
                     );
                     apply_initial_line_ending(&mut buffer, cx);
                     buffer
