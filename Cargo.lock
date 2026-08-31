@@ -7225,6 +7225,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "pulldown-cmark 0.13.4",
  "rand 0.9.4",
  "release_channel",
  "remote_connection",

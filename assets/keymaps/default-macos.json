@@ -1,4 +1,11 @@
 [
+  {
+    "context": "BranchReviewPanel && !Editor",
+    "bindings": {
+      "alt-n": "branch_review::NextUnviewed",
+      "alt-p": "branch_review::PreviousUnviewed"
+    }
+  },
   // Standard macOS bindings
   {
     "use_key_equivalents": true,

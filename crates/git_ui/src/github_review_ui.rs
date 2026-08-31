@@ -1,6 +1,6 @@
 use crate::github_review::{
-    self, Checkout, CommentDraft, CommentKind, CommentTarget, DiscussionComment, GitHubClient,
-    GitHubFailure, GitHubRepo, PullRequest,
+    self, Checkout, CommentDraft, CommentKind, CommentTarget, DiscussionAction, DiscussionComment,
+    GitHubClient, GitHubFailure, GitHubRepo, PullRequest,
 };
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
@@ -22,7 +22,18 @@ impl EventEmitter<GitHubReviewEvent> for GitHubReview {}
 #[derive(Default, Serialize, Deserialize)]
 struct SavedDrafts {
     repository: Option<String>,
+    #[serde(default)]
+    pending_actions: BTreeMap<String, DiscussionAction>,
     drafts: BTreeMap<String, CommentDraft>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum DiscussionFilter {
+    #[default]
+    All,
+    Unresolved,
+    Resolved,
+    Outdated,
 }
 
 pub(crate) struct GitHubReview {
@@ -42,6 +53,14 @@ pub(crate) struct GitHubReview {
     preview: Option<PullRequest>,
     pub checkout: Option<Checkout>,
     discussion: Vec<DiscussionComment>,
+    viewer: Option<String>,
+    thread_error: Option<String>,
+    discussion_filter: DiscussionFilter,
+    markdown: BTreeMap<String, (String, Entity<markdown::Markdown>)>,
+    expanded_comments: std::collections::BTreeSet<String>,
+    preview_markdown: Option<(String, Entity<markdown::Markdown>)>,
+    previewing: bool,
+    pending_delete: Option<(CommentKind, u64)>,
     target: CommentTarget,
     state: &'static str,
     page: u32,
@@ -102,6 +121,14 @@ impl GitHubReview {
             preview: None,
             checkout: None,
             discussion: Vec::new(),
+            viewer: None,
+            thread_error: None,
+            discussion_filter: DiscussionFilter::All,
+            markdown: BTreeMap::new(),
+            expanded_comments: Default::default(),
+            preview_markdown: None,
+            previewing: false,
+            pending_delete: None,
             target: CommentTarget::General,
             state: "open",
             page: 1,
@@ -149,6 +176,12 @@ impl GitHubReview {
         self.preview = None;
         self.requests.clear();
         self.discussion.clear();
+        self.markdown.clear();
+        self.expanded_comments.clear();
+        self.pending_delete = None;
+        self.viewer = None;
+        self.thread_error = None;
+        self.reconciled = false;
         self.choices.clear();
         if let Some(repo) = &self.repository {
             let repo = repo.read(cx);
@@ -270,6 +303,12 @@ impl GitHubReview {
         self.browsing = false;
         self.showing_discussion = false;
         self.discussion.clear();
+        self.markdown.clear();
+        self.expanded_comments.clear();
+        self.pending_delete = None;
+        self.viewer = None;
+        self.thread_error = None;
+        self.reconciled = false;
         self.target = CommentTarget::General;
         let body = self
             .draft()
@@ -350,6 +389,7 @@ impl GitHubReview {
                 .entry(key)
                 .or_insert_with(|| CommentDraft {
                     target: self.target.clone(),
+                    original_body: None,
                     body: String::new(),
                     outcome_unknown: false,
                 });
@@ -397,6 +437,7 @@ impl GitHubReview {
         }
         self.save_draft(cx);
         self.target = target;
+        self.previewing = false;
         let body = self
             .draft()
             .map(|draft| draft.body.clone())
@@ -525,7 +566,40 @@ impl GitHubReview {
                 let pr = client
                     .pull_request(&checkout.repository, checkout.pull_request.number)
                     .await?;
-                let comments = client.discussion(&checkout.repository, pr.number).await?;
+                let mut comments = client.discussion(&checkout.repository, pr.number).await?;
+                let (viewer, thread_error) = match client.viewer().await {
+                    Ok(viewer) => (Some(viewer.login), None),
+                    Err(error) => (
+                        None,
+                        Some(format!("Comment permissions unavailable: {error}")),
+                    ),
+                };
+                let thread_error =
+                    match client.review_threads(&checkout.repository, pr.number).await {
+                        Ok(threads) => {
+                            let by_comment: BTreeMap<_, _> = threads
+                                .into_iter()
+                                .flat_map(|thread| {
+                                    let thread = std::sync::Arc::new(thread);
+                                    thread
+                                        .comments
+                                        .iter()
+                                        .map(|comment| (comment.database_id, thread.clone()))
+                                        .collect::<Vec<_>>()
+                                })
+                                .collect();
+                            for entry in &mut comments {
+                                if entry.kind == CommentKind::Inline {
+                                    entry.comment.thread =
+                                        by_comment.get(&entry.comment.id).cloned();
+                                }
+                            }
+                            thread_error
+                        }
+                        Err(error) => Some(format!(
+                            "Thread state unavailable: {error}. Existing comments remain readable."
+                        )),
+                    };
                 let placement = if let Some(root) = root {
                     github_review::published_comments(
                         cx.background_executor(),
@@ -546,7 +620,7 @@ impl GitHubReview {
                         )),
                     ),
                 };
-                Ok((pr, comments, inline, warning))
+                Ok((pr, comments, inline, warning, viewer, thread_error))
             }
             .await;
             this.update(cx, |this, cx| {
@@ -555,7 +629,12 @@ impl GitHubReview {
                 }
                 this.busy = false;
                 match result {
-                    Ok((pr, comments, inline, warning)) => {
+                    Ok((pr, comments, inline, warning, viewer, thread_error)) => {
+                        this.viewer = viewer;
+                        this.thread_error = thread_error;
+                        this.markdown.retain(|key, _| {
+                            comments.iter().any(|entry| key == &comment_key(entry))
+                        });
                         cx.emit(GitHubReviewEvent::CommentsLoaded(inline));
                         this.preview = Some(pr);
                         this.discussion = comments;
@@ -571,12 +650,459 @@ impl GitHubReview {
         cx.notify();
     }
 
+    fn action_key(&self) -> Option<String> {
+        let checkout = self.checkout.as_ref()?;
+        Some(format!(
+            "{}:{}",
+            checkout.repository.id, checkout.pull_request.number
+        ))
+    }
+
+    fn start_edit(
+        &mut self,
+        entry: DiscussionComment,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.posting || self.busy {
+            return;
+        }
+        self.select_target(
+            CommentTarget::Edit {
+                comment_id: entry.comment.id,
+                comment_kind: entry.kind,
+            },
+            window,
+            cx,
+        );
+        if let Some(key) = self.draft_key() {
+            if self
+                .saved
+                .drafts
+                .get(&key)
+                .is_none_or(|draft| draft.original_body.is_none())
+            {
+                let body = entry.comment.body.unwrap_or_default();
+                self.saved.drafts.insert(
+                    key,
+                    CommentDraft {
+                        target: self.target.clone(),
+                        original_body: Some(body.clone()),
+                        body: body.clone(),
+                        outcome_unknown: false,
+                    },
+                );
+                self.composer
+                    .update(cx, |editor, cx| editor.set_text(body, window, cx));
+                self.persist(cx);
+            }
+        }
+    }
+
+    fn run_discussion_action(&mut self, action: DiscussionAction, cx: &mut Context<Self>) {
+        if self.busy || self.posting || self.detached || self.load_failed {
+            return;
+        }
+        let (Some(checkout), Some(key), Some(storage_key)) = (
+            self.checkout.clone(),
+            self.action_key(),
+            self.storage_key.clone(),
+        ) else {
+            return;
+        };
+        if self.saved.pending_actions.contains_key(&key) {
+            return;
+        }
+        self.saved
+            .pending_actions
+            .insert(key.clone(), action.clone());
+        self.pending_delete = None;
+        self.posting = true;
+        self.reconciled = false;
+        self.persist(cx);
+        let persisted = self.write_task.take();
+        let value = serde_json::to_string(&self.saved);
+        let database = KeyValueStore::global(cx);
+        let client = self.client.clone();
+        self.task = Some(cx.spawn(async move |this, cx| {
+            if let Some(persisted) = persisted {
+                persisted.await;
+            }
+            let result: Result<()> = async {
+                database
+                    .write_kvp(storage_key, value?)
+                    .await
+                    .context("Could not save the pending action")?;
+                client
+                    .discussion_action(&checkout.repository, checkout.pull_request.number, &action)
+                    .await
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                this.posting = false;
+                match result {
+                    Ok(()) => {
+                        this.saved.pending_actions.remove(&key);
+                        this.error = None;
+                    }
+                    Err(error) => {
+                        if !error
+                            .downcast_ref::<GitHubFailure>()
+                            .is_some_and(|error| error.outcome_unknown)
+                        {
+                            this.saved.pending_actions.remove(&key);
+                        }
+                        this.error = Some(format!("{error:#}"));
+                    }
+                }
+                this.persist(cx);
+                if this.action_key().as_ref() == Some(&key) && this.error.is_none() {
+                    this.refresh_discussion(cx);
+                }
+                let repository = this.project.read(cx).active_repository(cx);
+                this.set_repository(repository, cx);
+                cx.notify();
+            })
+            .log_err();
+        }));
+        cx.notify();
+    }
+
+    fn comment_markdown(
+        &mut self,
+        entry: &DiscussionComment,
+        cx: &mut Context<Self>,
+    ) -> Entity<markdown::Markdown> {
+        let body = entry.comment.body.clone().unwrap_or_default();
+        let key = comment_key(entry);
+        let languages = self.project.read(cx).languages().clone();
+        let cached = self.markdown.entry(key).or_insert_with(|| {
+            (
+                body.clone(),
+                crate::review_markdown::new(&body, languages, cx),
+            )
+        });
+        if cached.0 != body {
+            cached.1.update(cx, |markdown, cx| {
+                markdown.replace(crate::review_markdown::source(&body), cx)
+            });
+            cached.0 = body;
+        }
+        cached.1.clone()
+    }
+
+    fn render_discussion(&mut self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut groups: Vec<Vec<DiscussionComment>> = Vec::new();
+        let mut indices = BTreeMap::new();
+        for entry in &self.discussion {
+            let key = if entry.kind == CommentKind::Inline {
+                entry
+                    .comment
+                    .thread
+                    .as_ref()
+                    .map(|thread| thread.id.clone())
+                    .unwrap_or_else(|| {
+                        format!(
+                            "inline-{}",
+                            entry.comment.in_reply_to_id.unwrap_or(entry.comment.id)
+                        )
+                    })
+            } else {
+                comment_key(entry)
+            };
+            let index = *indices.entry(key).or_insert_with(|| {
+                groups.push(Vec::new());
+                groups.len() - 1
+            });
+            groups[index].push(entry.clone());
+        }
+        let pending = self.busy
+            || self.posting
+            || self.detached
+            || self
+                .action_key()
+                .is_some_and(|key| self.saved.pending_actions.contains_key(&key));
+        groups
+            .into_iter()
+            .filter_map(|group| {
+                let first = group.first()?;
+                let thread = first.comment.thread.clone();
+                if !match self.discussion_filter {
+                    DiscussionFilter::All => true,
+                    DiscussionFilter::Unresolved => {
+                        thread.as_ref().is_some_and(|thread| !thread.is_resolved)
+                    }
+                    DiscussionFilter::Resolved => {
+                        thread.as_ref().is_some_and(|thread| thread.is_resolved)
+                    }
+                    DiscussionFilter::Outdated => {
+                        thread.as_ref().is_some_and(|thread| thread.is_outdated)
+                    }
+                } {
+                    return None;
+                }
+                let mut card = v_flex()
+                    .gap_1()
+                    .p_2()
+                    .border_1()
+                    .border_color(cx.theme().colors().border);
+                if let Some(thread) = thread {
+                    let id = thread.id.clone();
+                    let resolved = thread.is_resolved;
+                    let allowed = if resolved {
+                        thread.viewer_can_unresolve
+                    } else {
+                        thread.viewer_can_resolve
+                    };
+                    card = card.child(
+                        h_flex()
+                            .gap_1()
+                            .flex_wrap()
+                            .child(
+                                Label::new(format!(
+                                    "{}{}",
+                                    if resolved { "Resolved" } else { "Unresolved" },
+                                    if thread.is_outdated {
+                                        " · Outdated"
+                                    } else {
+                                        ""
+                                    }
+                                ))
+                                .size(LabelSize::XSmall),
+                            )
+                            .child(
+                                Button::new(
+                                    SharedString::from(format!("resolve-{id}")),
+                                    if resolved { "Reopen" } else { "Resolve" },
+                                )
+                                .disabled(pending || !allowed)
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.run_discussion_action(
+                                            DiscussionAction::Resolve {
+                                                thread_id: id.clone(),
+                                                resolved: !resolved,
+                                            },
+                                            cx,
+                                        )
+                                    },
+                                )),
+                            ),
+                    );
+                }
+                for entry in group {
+                    let comment = &entry.comment;
+                    let key = comment_key(&entry);
+                    let expanded = self.expanded_comments.contains(&key);
+                    let long = comment
+                        .body
+                        .as_ref()
+                        .is_some_and(|body| body.len() > 500 || body.lines().count() > 8);
+                    let own = self
+                        .viewer
+                        .as_ref()
+                        .is_some_and(|viewer| comment.user.login.eq_ignore_ascii_case(viewer));
+                    let permissions = comment.thread.as_ref().and_then(|thread| {
+                        thread
+                            .comments
+                            .iter()
+                            .find(|item| item.database_id == comment.id)
+                    });
+                    let can_edit = own
+                        && entry.kind != CommentKind::Review
+                        && (entry.kind == CommentKind::Conversation
+                            || permissions
+                                .is_some_and(|p| p.viewer_did_author && p.viewer_can_update));
+                    let can_delete = own
+                        && entry.kind != CommentKind::Review
+                        && (entry.kind == CommentKind::Conversation
+                            || permissions
+                                .is_some_and(|p| p.viewer_did_author && p.viewer_can_delete));
+                    let url = self.checkout.as_ref().map(|checkout| {
+                        format!(
+                            "{}#{}{}",
+                            checkout.pull_request.url(&checkout.repository),
+                            match entry.kind {
+                                CommentKind::Conversation => "issuecomment-",
+                                CommentKind::Review => "pullrequestreview-",
+                                CommentKind::Inline => "discussion_r",
+                            },
+                            comment.id
+                        )
+                    });
+                    let markdown = self.comment_markdown(&entry, cx);
+                    let mut content = v_flex()
+                        .min_w_0()
+                        .gap_1()
+                        .child(
+                            Label::new(format!("{} · {:?}", comment.user.login, entry.kind))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .when_some(comment.path.clone(), |view, path| {
+                            view.child(
+                                Label::new(match comment.line.or(comment.original_line) {
+                                    Some(line) => format!(
+                                        "{} · {}:{}{}",
+                                        path,
+                                        match comment.side {
+                                            Some(github_review::DiffSide::Left) => "Left",
+                                            Some(github_review::DiffSide::Right) => "Right",
+                                            None => "Line",
+                                        },
+                                        line,
+                                        if comment.line.is_none() {
+                                            " (outdated)"
+                                        } else {
+                                            ""
+                                        }
+                                    ),
+                                    None => format!("{path} · File comment"),
+                                })
+                                .size(LabelSize::XSmall),
+                            )
+                        })
+                        .child(
+                            div()
+                                .min_w_0()
+                                .when(long && !expanded, |view| {
+                                    view.max_h(px(160.)).overflow_hidden()
+                                })
+                                .child(crate::review_markdown::render(markdown, window, cx)),
+                        )
+                        .when(long, |view| {
+                            view.child(
+                                Button::new(
+                                    SharedString::from(format!("expand-{key}")),
+                                    if expanded { "Show less" } else { "Show more" },
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        if !this.expanded_comments.remove(&key) {
+                                            this.expanded_comments.insert(key.clone());
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                        });
+                    if comment.line.is_none() && entry.kind == CommentKind::Inline {
+                        if let Some(hunk) = &comment.diff_hunk {
+                            content = content.child(
+                                Label::new(hunk.clone())
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            );
+                        }
+                    }
+                    let id = comment.id;
+                    let kind = entry.kind;
+                    let edit = entry.clone();
+                    let reply_id = comment.in_reply_to_id.unwrap_or(id);
+                    content = content.child(
+                        h_flex()
+                            .gap_1()
+                            .flex_wrap()
+                            .when_some(url, |view, url| {
+                                view.child(
+                                    Button::new(("github-comment-link", id as usize), "GitHub ↗")
+                                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                                )
+                            })
+                            .when(kind == CommentKind::Inline, |view| {
+                                view.child(
+                                    Button::new(("reply", id as usize), "Reply")
+                                        .disabled(
+                                            pending
+                                                || comment
+                                                    .thread
+                                                    .as_ref()
+                                                    .is_none_or(|thread| !thread.viewer_can_reply),
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.select_target(
+                                                CommentTarget::Reply {
+                                                    comment_id: reply_id,
+                                                },
+                                                window,
+                                                cx,
+                                            )
+                                        })),
+                                )
+                            })
+                            .when(can_edit, |view| {
+                                view.child(
+                                    Button::new(("edit-comment", id as usize), "Edit")
+                                        .disabled(pending)
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.start_edit(edit.clone(), window, cx)
+                                        })),
+                                )
+                            })
+                            .when(can_delete, |view| {
+                                view.child(
+                                    Button::new(("delete-comment", id as usize), "Delete")
+                                        .disabled(pending)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.pending_delete = Some((kind, id));
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    );
+                    if self.pending_delete == Some((kind, id)) {
+                        content = content
+                            .child(
+                                Label::new("Permanently delete this comment from GitHub?")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Warning),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new(
+                                            ("confirm-delete", id as usize),
+                                            "Delete comment",
+                                        )
+                                        .disabled(pending)
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.run_discussion_action(
+                                                    DiscussionAction::Delete {
+                                                        comment_id: id,
+                                                        comment_kind: kind,
+                                                    },
+                                                    cx,
+                                                )
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        Button::new(("cancel-delete", id as usize), "Cancel")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.pending_delete = None;
+                                                cx.notify();
+                                            })),
+                                    ),
+                            );
+                    }
+                    card = card.child(content);
+                }
+                Some(card.into_any_element())
+            })
+            .collect()
+    }
+
     fn post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.posting
             || self.busy
             || self.detached
             || self.load_failed
             || self.draft().is_some_and(|draft| draft.outcome_unknown)
+            || self
+                .action_key()
+                .is_some_and(|key| self.saved.pending_actions.contains_key(&key))
         {
             return;
         }
@@ -591,6 +1117,7 @@ impl GitHubReview {
             return;
         }
         let target = self.target.clone();
+        let original_body = self.draft().and_then(|draft| draft.original_body.clone());
         let client = self.client.clone();
         let project = self.project.clone();
         let review = self.review.clone();
@@ -674,7 +1201,11 @@ impl GitHubReview {
                         }
                         Ok(())
                     })??;
-                    client.post(&checkout.repository, &pr, &target, &body).await
+                    if let CommentTarget::Edit { comment_id, comment_kind } = target {
+                        client.update_comment(&checkout.repository, comment_kind, comment_id, original_body.as_deref().context("Original comment unavailable; reopen the edit")?, &body).await
+                    } else {
+                        client.post(&checkout.repository, &pr, &target, &body).await
+                    }
                 }
                 .await;
             this.update_in(cx, |this, window, cx| {
@@ -683,17 +1214,22 @@ impl GitHubReview {
                     .update(cx, |editor, _| editor.set_read_only(false));
                 match result {
                     Ok(comment) => {
+                        if let CommentTarget::Edit { comment_id, comment_kind } = target {
+                            this.discussion.retain(|entry| entry.kind != comment_kind || entry.comment.id != comment_id);
+                        }
                         this.discussion.push(DiscussionComment {
-                            kind: if matches!(target, CommentTarget::General) {
-                                CommentKind::Conversation
-                            } else {
-                                CommentKind::Inline
+                            kind: match target {
+                                CommentTarget::General => CommentKind::Conversation,
+                                CommentTarget::Edit { comment_kind, .. } => comment_kind,
+                                _ => CommentKind::Inline,
                             },
                             comment,
                         });
                         this.saved.drafts.remove(&key);
                         this.composer
                             .update(cx, |editor, cx| editor.set_text("", window, cx));
+                        this.target = CommentTarget::General;
+                        this.refresh_discussion(cx);
                     }
                     Err(error) => {
                         let unknown = error
@@ -719,7 +1255,41 @@ impl GitHubReview {
 }
 
 impl Render for GitHubReview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let discussion = self.render_discussion(window, cx);
+        let body = self.composer.read(cx).text(cx);
+        let languages = self.project.read(cx).languages().clone();
+        let preview = self.preview_markdown.get_or_insert_with(|| {
+            (
+                body.clone(),
+                crate::review_markdown::new(&body, languages, cx),
+            )
+        });
+        if preview.0 != body {
+            preview.1.update(cx, |markdown, cx| {
+                markdown.replace(crate::review_markdown::source(&body), cx)
+            });
+            preview.0 = body;
+        }
+        let preview = preview.1.clone();
+        let unknown_action = self
+            .action_key()
+            .is_some_and(|key| self.saved.pending_actions.contains_key(&key));
+        let changed_edit = if let CommentTarget::Edit {
+            comment_id,
+            comment_kind,
+        } = self.target
+        {
+            self.discussion
+                .iter()
+                .find(|entry| entry.kind == comment_kind && entry.comment.id == comment_id)
+                .and_then(|entry| entry.comment.body.clone())
+                .filter(|body| {
+                    self.draft().and_then(|draft| draft.original_body.as_ref()) != Some(body)
+                })
+        } else {
+            None
+        };
         let pending = self.busy || self.posting;
         let unknown = self.draft().is_some_and(|draft| draft.outcome_unknown);
         v_flex().id("github-review-content").size_full().min_h_0().gap_2().p_2().overflow_y_scroll()
@@ -760,18 +1330,16 @@ impl Render for GitHubReview {
                                 .child(Button::new("update-pr-checkout", "Update checkout").disabled(pending || self.detached).on_click(cx.listener(move |_, _, _, cx| { if let Some(repo) = &repo { cx.emit(GitHubReviewEvent::Open { repo: repo.clone(), pr: pr.clone() }); } })))
                         })
                 })
-                .children(self.discussion.iter().map(|entry| {
-                    let comment = &entry.comment;
-                    let id = comment.in_reply_to_id.unwrap_or(comment.id);
-                    let url = self.checkout.as_ref().map(|checkout| format!("{}#{}{}", checkout.pull_request.url(&checkout.repository), match entry.kind { CommentKind::Conversation => "issuecomment-", CommentKind::Review => "pullrequestreview-", CommentKind::Inline => "discussion_r" }, comment.id));
-                    v_flex().gap_1().p_2().border_b_1().border_color(cx.theme().colors().border)
-                        .child(Label::new(format!("{} · {:?}", comment.user.login, entry.kind)).size(LabelSize::XSmall).color(Color::Muted))
-                        .when_some(comment.path.clone(), |view, path| view.child(Label::new(format!("{} · {}:{}{}", path, comment.side.map(|side| match side { github_review::DiffSide::Left => "Left", github_review::DiffSide::Right => "Right" }).unwrap_or("Line"), comment.line.or(comment.original_line).unwrap_or(0), if comment.line.is_none() { " (outdated)" } else { "" })).size(LabelSize::XSmall)))
-                        .child(Label::new(comment.body.clone().unwrap_or_default()).size(LabelSize::Small))
-                        .when(comment.line.is_none(), |view| view.when_some(comment.diff_hunk.clone(), |view, hunk| view.child(Label::new(hunk).size(LabelSize::XSmall).color(Color::Muted).line_clamp(8))))
-                        .when_some(url, |view, url| view.child(Button::new(("github-comment-link", comment.id as usize), "View on GitHub ↗").on_click(move |_, _, cx| cx.open_url(&url))))
-                        .when(entry.kind == CommentKind::Inline, |view| view.child(Button::new(("reply-to-comment", comment.id as usize), "Reply").disabled(pending || self.detached).on_click(cx.listener(move |this, _, window, cx| this.select_target(CommentTarget::Reply { comment_id: id }, window, cx)))))
-                }))
+                .when_some(self.thread_error.clone(), |view, error| view.child(Label::new(error).size(LabelSize::Small).color(Color::Warning)))
+                .child(h_flex().gap_1().flex_wrap().children([
+                    ("all-discussion", "All", DiscussionFilter::All), ("unresolved-discussion", "Unresolved", DiscussionFilter::Unresolved),
+                    ("resolved-discussion", "Resolved", DiscussionFilter::Resolved), ("outdated-discussion", "Outdated", DiscussionFilter::Outdated),
+                ].into_iter().map(|(id, label, filter)| Button::new(id, label).toggle_state(self.discussion_filter == filter).on_click(cx.listener(move |this, _, _, cx| { this.discussion_filter = filter; cx.notify(); })))))
+                .when(unknown_action, |view| view.child(Label::new("A thread action may have succeeded. Refresh and inspect GitHub before retrying.").size(LabelSize::Small).color(Color::Warning))
+                    .child(Button::new("clear-unknown-action", "I checked GitHub; allow another action").disabled(pending || !self.reconciled).on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(key) = this.action_key() { this.saved.pending_actions.remove(&key); } this.persist(cx); cx.notify();
+                    }))))
+                .children(discussion)
                 .children(self.checkout.as_ref().map(|checkout| format!("{}:{}:", checkout.repository.id, checkout.pull_request.number)).into_iter().flat_map(|prefix| {
                     self.saved.drafts.iter().filter(move |(key, draft)| key.starts_with(&prefix) && (!draft.body.is_empty() || draft.outcome_unknown))
                 }).enumerate().map(|(index, (_, draft))| {
@@ -783,7 +1351,16 @@ impl Render for GitHubReview {
                     .child(h_flex().gap_1().child(Button::new("general-pr-comment", "General").disabled(pending).on_click(cx.listener(|this, _, window, cx| this.select_target(CommentTarget::General, window, cx))))
                         .child(Button::new("inline-pr-comment", "Selected lines").disabled(pending || self.detached).on_click(cx.listener(|_, _, _, cx| cx.emit(GitHubReviewEvent::CommentSelection)))))
                     .child(Label::new(target_label(&self.target)).size(LabelSize::XSmall))
-                    .child(div().border_1().border_color(cx.theme().colors().border).p_2().child(self.composer.clone()))
+                    .when_some(changed_edit, |view, latest| view
+                        .child(Label::new("This comment changed on GitHub. Compare the discussion above with your draft before replacing it.").size(LabelSize::Small).color(Color::Warning))
+                        .child(Button::new("accept-latest-edit-base", "Keep draft; use refreshed comment as base").disabled(pending || unknown).on_click(cx.listener(move |this, _, _, cx| {
+                            if let Some(key) = this.draft_key() { if let Some(draft) = this.saved.drafts.get_mut(&key) { draft.original_body = Some(latest.clone()); } }
+                            this.persist(cx); cx.notify();
+                        }))))
+                    .child(h_flex().gap_1()
+                        .child(Button::new("write-comment", "Write").toggle_state(!self.previewing).on_click(cx.listener(|this, _, _, cx| { this.previewing = false; cx.notify(); })))
+                        .child(Button::new("preview-comment", "Preview").toggle_state(self.previewing).on_click(cx.listener(|this, _, _, cx| { this.previewing = true; cx.notify(); }))))
+                    .child(div().min_w_0().border_1().border_color(cx.theme().colors().border).p_2().map(|view| if self.previewing { view.child(crate::review_markdown::render(preview, window, cx)) } else { view.child(self.composer.clone()) }))
                     .when(self.detached, |view| view.child(Label::new("Review detached from the checkout. Drafts are kept; reopen the PR to post.").size(LabelSize::Small).color(Color::Warning)))
                     .when(unknown, |view| view.child(Label::new("The last post may have succeeded. Refresh and inspect the discussion before retrying.").size(LabelSize::Small).color(Color::Warning))
                         .child(Button::new("confirm-comment-retry", "I checked GitHub; allow retry").disabled(pending || !self.reconciled).on_click(cx.listener(|this, _, _, cx| {
@@ -791,14 +1368,19 @@ impl Render for GitHubReview {
                             this.composer.update(cx, |editor, _| editor.set_read_only(false));
                             this.persist(cx); cx.notify();
                         }))))
-                    .child(Button::new("post-github-comment", "Post to GitHub").disabled(pending || self.detached || unknown || self.load_failed).on_click(cx.listener(|this, _, window, cx| this.post(window, cx))))))
+                    .child(Button::new("post-github-comment", if matches!(self.target, CommentTarget::Edit { .. }) { "Save changes" } else { "Post to GitHub" }).disabled(pending || self.detached || unknown || unknown_action || self.load_failed).on_click(cx.listener(|this, _, window, cx| this.post(window, cx))))))
             })
     }
+}
+
+fn comment_key(entry: &DiscussionComment) -> String {
+    format!("{:?}:{}", entry.kind, entry.comment.id)
 }
 
 fn target_label(target: &CommentTarget) -> String {
     match target {
         CommentTarget::General => "PR conversation".into(),
+        CommentTarget::Edit { comment_id, .. } => format!("Edit comment {comment_id}"),
         CommentTarget::Reply { comment_id } => format!("Reply to thread {comment_id}"),
         CommentTarget::Inline {
             path,
@@ -849,6 +1431,74 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[gpui::test]
+    async fn editing_and_thread_actions_keep_durable_pr_scoped_state(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"a.txt":"base"}))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (view, cx) = cx.add_window_view(|window, cx| GitHubReview::new(project, window, cx));
+        view.update_in(cx, |view, window, cx| {
+            view.storage_key = Some("test-review-edit-drafts".into());
+            view.attach(checkout(1), window, cx);
+            let entry = DiscussionComment {
+                kind: CommentKind::Inline,
+                comment: serde_json::from_value(json!({"id":7,"body":"**Original**","user":{"login":"author"},"thread":{"id":"t1","isResolved":true,"isOutdated":true,"viewerCanResolve":false,"viewerCanUnresolve":true,"viewerCanReply":true,"comments":[]}})).unwrap(),
+            };
+            let mut reply = entry.clone();
+            reply.comment.id = 8;
+            reply.comment.in_reply_to_id = Some(7);
+            view.discussion = vec![entry.clone(), reply];
+            assert_eq!(view.render_discussion(window, cx).len(), 1);
+            view.discussion_filter = DiscussionFilter::Unresolved;
+            assert!(view.render_discussion(window, cx).is_empty());
+            view.discussion_filter = DiscussionFilter::Outdated;
+            assert_eq!(view.render_discussion(window, cx).len(), 1);
+            view.start_edit(entry, window, cx);
+            assert_eq!(view.composer.read(cx).text(cx), "**Original**");
+            assert_eq!(view.draft().unwrap().original_body.as_deref(), Some("**Original**"));
+            view.composer.update(cx, |editor, cx| editor.set_text("Updated draft", window, cx));
+            view.save_draft(cx);
+            let action_key = view.action_key().unwrap();
+            view.saved.pending_actions.insert(action_key, DiscussionAction::Resolve { thread_id:"t1".into(), resolved:false });
+            view.attach(checkout(2), window, cx);
+            view.select_target(CommentTarget::Edit { comment_id:7, comment_kind:CommentKind::Inline }, window, cx);
+            assert_eq!(view.composer.read(cx).text(cx), "");
+            view.attach(checkout(1), window, cx);
+            view.select_target(CommentTarget::Edit { comment_id:7, comment_kind:CommentKind::Inline }, window, cx);
+            assert_eq!(view.composer.read(cx).text(cx), "Updated draft");
+            assert_eq!(view.draft().unwrap().original_body.as_deref(), Some("**Original**"));
+            view.run_discussion_action(DiscussionAction::Resolve { thread_id:"t1".into(), resolved:false }, cx);
+            assert!(!view.posting, "An uncertain action must not be resubmitted");
+            view.persist(cx);
+        });
+        cx.run_until_parked();
+        if let Some(write) = view.update(cx, |view, _| view.write_task.take()) {
+            write.await;
+        }
+        view.read_with(cx, |view, cx| {
+            let saved: SavedDrafts = serde_json::from_str(
+                &KeyValueStore::global(cx)
+                    .read_kvp("test-review-edit-drafts")
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(saved.pending_actions.len(), 1);
+            assert_eq!(
+                saved.drafts[&view.draft_key().unwrap()].body,
+                "Updated draft"
+            );
+        });
     }
 
     #[gpui::test]

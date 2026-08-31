@@ -364,13 +364,14 @@ impl BranchDiff {
                 cx,
             )
         });
-        Self::from_diff(diff, project, workspace, cx)
+        Self::from_diff(diff, project, workspace, window, cx)
     }
 
     fn from_diff(
         diff: Entity<DiffMultibuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let diff_event_subscription = Subscription::join(
@@ -379,8 +380,9 @@ impl BranchDiff {
             }),
             cx.observe(&diff, |_, _, cx| cx.notify()),
         );
-        let review =
-            cx.new(|cx| crate::branch_review::BranchReview::new(project.clone(), diff.clone(), cx));
+        let review = cx.new(|cx| {
+            crate::branch_review::BranchReview::new(project.clone(), diff.clone(), window, cx)
+        });
         Self {
             review,
             diff,

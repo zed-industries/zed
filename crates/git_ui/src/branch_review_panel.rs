@@ -20,9 +20,18 @@ use workspace::{
     dock::{DockPosition, PanelEvent},
 };
 
-gpui::actions!(branch_review, [ToggleFocus, CloseReview]);
+gpui::actions!(
+    branch_review,
+    [ToggleFocus, CloseReview, NextUnviewed, PreviousUnviewed]
+);
 
 pub(crate) fn register(workspace: &mut Workspace) {
+    workspace.register_action(|workspace, _: &NextUnviewed, window, cx| {
+        navigate_unviewed(workspace, false, window, cx);
+    });
+    workspace.register_action(|workspace, _: &PreviousUnviewed, window, cx| {
+        navigate_unviewed(workspace, true, window, cx);
+    });
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
         workspace.toggle_panel_focus::<BranchReviewPanel>(window, cx);
     });
@@ -31,6 +40,31 @@ pub(crate) fn register(workspace: &mut Workspace) {
             panel.update(cx, |panel, cx| panel.close_review(cx));
         }
     });
+}
+
+fn navigate_unviewed(
+    workspace: &mut Workspace,
+    backwards: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if let Some(panel) = workspace.panel::<BranchReviewPanel>(cx) {
+        let focus = panel.read(cx).focus_handle.clone();
+        let keep_panel_focus = focus.contains_focused(window, cx);
+        let review = panel
+            .read(cx)
+            .session
+            .as_ref()
+            .map(|session| session.item.read(cx).review.clone());
+        if let Some(review) = review {
+            review.update(cx, |review, cx| {
+                review.navigate_unviewed(backwards, window, cx)
+            });
+            if keep_panel_focus {
+                cx.defer_in(window, move |_, window, cx| window.focus(&focus, cx));
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, settings::RegisterSetting)]

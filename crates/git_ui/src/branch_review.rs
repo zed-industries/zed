@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
 use collections::HashSet;
+use editor::{Editor, EditorEvent};
 use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::{repository::RepoPath, status::FileStatus};
@@ -19,6 +20,14 @@ use project::{
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
 use ui::{Checkbox, ListItem, Tooltip, prelude::*};
 use util::ResultExt as _;
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum ReviewFilter {
+    #[default]
+    All,
+    Unviewed,
+    Changed,
+}
 
 struct ReviewEntry {
     status: FileStatus,
@@ -70,6 +79,8 @@ pub(crate) struct BranchReview {
     list: Entity<DiffBufferList>,
     entries: BTreeMap<RepoPath, ReviewEntry>,
     comments: Vec<crate::github_review::PublishedComment>,
+    comment_markdown: BTreeMap<u64, (String, Entity<markdown::Markdown>)>,
+    expanded_threads: HashSet<u64>,
     comment_blocks: Vec<(
         Entity<editor::Editor>,
         Vec<editor::display_map::CustomBlockId>,
@@ -77,6 +88,13 @@ pub(crate) struct BranchReview {
     rows: Vec<Row>,
     collapsed: HashSet<String>,
     selected: Option<RepoPath>,
+    search: Entity<Editor>,
+    query: String,
+    filter: ReviewFilter,
+    changed_since_viewed: usize,
+    matching: usize,
+    scroll_handle: gpui::UniformListScrollHandle,
+    _search_subscription: Subscription,
     state: Option<Entity<ReviewState>>,
     scope: Option<ReviewScope>,
     storage_key: Option<String>,
@@ -96,8 +114,19 @@ impl BranchReview {
     pub fn new(
         project: Entity<Project>,
         diff: Entity<DiffMultibuffer>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let search = cx.new(|cx| Editor::single_line(window, cx));
+        search.update(cx, |search, cx| {
+            search.set_placeholder_text("Filter files…", window, cx)
+        });
+        let search_subscription = cx.subscribe(&search, |this, search, event, cx| {
+            if matches!(event, EditorEvent::Edited { .. }) {
+                this.query = search.read(cx).text(cx).to_lowercase();
+                this.rebuild_rows(cx);
+            }
+        });
         let list = diff.read(cx).branch_diff().clone();
         let subscription = Subscription::join(
             cx.subscribe(&list, |this, _, _, cx| this.refresh(cx)),
@@ -109,10 +138,19 @@ impl BranchReview {
             list,
             entries: BTreeMap::new(),
             comments: Vec::new(),
+            comment_markdown: BTreeMap::new(),
+            expanded_threads: HashSet::default(),
             comment_blocks: Vec::new(),
             rows: Vec::new(),
             collapsed: HashSet::default(),
             selected: None,
+            search,
+            query: String::new(),
+            filter: ReviewFilter::All,
+            changed_since_viewed: 0,
+            matching: 0,
+            scroll_handle: gpui::UniformListScrollHandle::new(),
+            _search_subscription: search_subscription,
             state: None,
             scope: None,
             storage_key: None,
@@ -178,6 +216,30 @@ impl BranchReview {
         comments: Vec<crate::github_review::PublishedComment>,
         cx: &mut Context<Self>,
     ) {
+        self.comment_markdown
+            .retain(|id, _| comments.iter().any(|published| published.comment.id == *id));
+        for published in &comments {
+            let body = published.comment.body.clone().unwrap_or_default();
+            let cached = self
+                .comment_markdown
+                .entry(published.comment.id)
+                .or_insert_with(|| {
+                    (
+                        body.clone(),
+                        crate::review_markdown::new(
+                            &body,
+                            self.project.read(cx).languages().clone(),
+                            cx,
+                        ),
+                    )
+                });
+            if cached.0 != body {
+                cached.1.update(cx, |markdown, cx| {
+                    markdown.replace(crate::review_markdown::source(&body), cx)
+                });
+                cached.0 = body;
+            }
+        }
         self.comments = comments;
         let review = cx.weak_entity();
         cx.defer(move |cx| {
@@ -203,8 +265,18 @@ impl BranchReview {
         let split = diff.read(cx).editor().clone();
         let right = split.read(cx).rhs_editor().clone();
         let left = split.read(cx).lhs_editor().cloned();
+        let mut rendered_threads = HashSet::default();
         for published in &self.comments {
             let comment = &published.comment;
+            let root = comment.in_reply_to_id.unwrap_or(comment.id);
+            if rendered_threads.contains(&root)
+                || comment
+                    .thread
+                    .as_ref()
+                    .is_some_and(|thread| thread.is_outdated)
+            {
+                continue;
+            }
             let (Some(path), Some(line), Some(side)) = (&comment.path, comment.line, comment.side)
             else {
                 continue;
@@ -245,60 +317,139 @@ impl BranchReview {
             let Some(anchor) = anchor else {
                 continue;
             };
+            rendered_threads.insert(root);
+            let expanded = self.expanded_threads.contains(&root);
+            let bodies: Vec<_> = self
+                .comments
+                .iter()
+                .filter(|published| {
+                    published
+                        .comment
+                        .in_reply_to_id
+                        .unwrap_or(published.comment.id)
+                        == root
+                })
+                .filter_map(|published| {
+                    self.comment_markdown
+                        .get(&published.comment.id)
+                        .map(|(_, markdown)| {
+                            (published.comment.user.login.clone(), markdown.clone())
+                        })
+                })
+                .collect();
             let review = cx.weak_entity();
             let buffer = buffer.clone();
             let diff = diff.clone();
             let comment = comment.clone();
-            let ids = editor.update(cx, |editor, cx| {
-                editor.insert_blocks(
-                    [BlockProperties {
-                        placement: BlockPlacement::Below(anchor),
-                        height: Some(3),
-                        style: BlockStyle::Flex,
-                        priority: 0,
-                        render: std::sync::Arc::new(move |cx| {
-                            if buffer.read(cx.app).version() != *current.version()
-                                || diff.read(cx.app).base_text(cx.app).version() != base.version()
-                            {
-                                return div().into_any_element();
-                            }
-                            let review = review.clone();
-                            let id = comment.in_reply_to_id.unwrap_or(comment.id);
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .px_2()
-                                .bg(cx.app.theme().colors().panel_background)
-                                .child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .child(
-                                            Label::new(format!("GitHub · {}", comment.user.login))
+            let ids =
+                editor.update(cx, |editor, cx| {
+                    editor.insert_blocks(
+                        [BlockProperties {
+                            placement: BlockPlacement::Below(anchor),
+                            height: None,
+                            style: BlockStyle::Flex,
+                            priority: 0,
+                            render: std::sync::Arc::new(move |cx| {
+                                if buffer.read(cx.app).version() != *current.version()
+                                    || diff.read(cx.app).base_text(cx.app).version()
+                                        != base.version()
+                                {
+                                    return div().into_any_element();
+                                }
+                                let review = review.clone();
+                                let id = comment.in_reply_to_id.unwrap_or(comment.id);
+                                let expand_review = review.clone();
+                                v_flex()
+                                    .w_full()
+                                    .min_w_0()
+                                    .gap_1()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(cx.app.theme().colors().panel_background)
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                Label::new(format!(
+                                                    "GitHub thread · {}",
+                                                    comment
+                                                        .thread
+                                                        .as_ref()
+                                                        .map(|thread| if thread.is_resolved {
+                                                            "Resolved"
+                                                        } else {
+                                                            "Unresolved"
+                                                        })
+                                                        .unwrap_or("State unavailable")
+                                                ))
                                                 .size(LabelSize::XSmall)
                                                 .color(Color::Muted),
-                                        )
-                                        .child(
-                                            Label::new(comment.body.clone().unwrap_or_default())
-                                                .size(LabelSize::Small)
-                                                .line_clamp(2),
-                                        ),
-                                )
-                                .child(
-                                    Button::new(("reply-inline", comment.id as usize), "Reply")
-                                        .on_click(move |_, _, cx| {
-                                            review
-                                                .update(cx, |_, cx| cx.emit(ReviewEvent::Reply(id)))
-                                                .log_err();
-                                        }),
-                                )
-                                .into_any_element()
-                        }),
-                    }],
-                    None,
-                    cx,
-                )
-            });
+                                            )
+                                            .child(
+                                                Button::new(
+                                                    ("expand-inline-thread", root as usize),
+                                                    if expanded { "Collapse" } else { "Expand" },
+                                                )
+                                                .on_click(move |_, _, cx| {
+                                                    expand_review
+                                                        .update(cx, |review, cx| {
+                                                            if !review
+                                                                .expanded_threads
+                                                                .remove(&root)
+                                                            {
+                                                                review
+                                                                    .expanded_threads
+                                                                    .insert(root);
+                                                            }
+                                                            review.update_comment_blocks(cx);
+                                                            cx.notify();
+                                                        })
+                                                        .log_err();
+                                                }),
+                                            )
+                                            .child(
+                                                Button::new(
+                                                    ("reply-inline", root as usize),
+                                                    "Discussion / Reply",
+                                                )
+                                                .on_click(move |_, _, cx| {
+                                                    review
+                                                        .update(cx, |_, cx| {
+                                                            cx.emit(ReviewEvent::Reply(id))
+                                                        })
+                                                        .log_err();
+                                                }),
+                                            ),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .min_w_0()
+                                            .gap_1()
+                                            .when(!expanded, |view| {
+                                                view.max_h(px(160.)).overflow_hidden()
+                                            })
+                                            .children(bodies.iter().map(|(author, markdown)| {
+                                                v_flex()
+                                                    .min_w_0()
+                                                    .child(
+                                                        Label::new(author.clone())
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .child(crate::review_markdown::render(
+                                                        markdown.clone(),
+                                                        cx.window,
+                                                        cx.app,
+                                                    ))
+                                            })),
+                                    )
+                                    .into_any_element()
+                            }),
+                        }],
+                        None,
+                        cx,
+                    )
+                });
             self.comment_blocks.push((editor.clone(), ids));
         }
     }
@@ -618,6 +769,11 @@ impl BranchReview {
                     }
                     match result {
                         Ok((fingerprint, changed)) => {
+                            if let Some(state) = &this.state {
+                                state.update(cx, |state, cx| {
+                                    state.enrich_approval(&path.to_string(), &fingerprint, cx)
+                                });
+                            }
                             entry.fingerprint = Some(fingerprint);
                             entry.validated_snapshot = Some(expected_snapshot);
                             entry.validated_base = Some(expected_base);
@@ -653,42 +809,133 @@ impl BranchReview {
             && matches!(self.list.read(cx).diff_base(), DiffBase::Merge { base_ref } if base_ref.as_ref() == scope.base_ref)
     }
 
+    fn validated_fingerprint(&self, path: &RepoPath, cx: &App) -> Option<&Fingerprint> {
+        if !self.scope_matches(cx)
+            || self.loading
+            || self.error.is_some()
+            || self.list.read(cx).is_tree_base_loading()
+            || self.list.read(cx).tree_diff_error().is_some()
+        {
+            return None;
+        }
+        self.entries
+            .get(path)
+            .filter(|entry| {
+                entry
+                    .validated_base
+                    .as_ref()
+                    .zip(entry.diff.as_ref())
+                    .is_some_and(|(base, diff)| {
+                        base.remote_id() == diff.read(cx).base_text(cx).remote_id()
+                            && base.version() == diff.read(cx).base_text(cx).version()
+                    })
+            })
+            .filter(|entry| {
+                entry
+                    .validated_snapshot
+                    .as_ref()
+                    .zip(entry.buffer.as_ref())
+                    .is_some_and(|(snapshot, buffer)| {
+                        let buffer = buffer.read(cx);
+                        buffer.snapshot().remote_id() == snapshot.remote_id()
+                            && buffer.snapshot().version() == snapshot.version()
+                            && buffer.line_ending() == snapshot.line_ending()
+                            && buffer.file().map(|file| file.disk_state())
+                                == snapshot.file().map(|file| file.disk_state())
+                    })
+            })
+            .and_then(|entry| entry.fingerprint.as_ref())
+    }
+
     fn is_viewed(&self, path: &RepoPath, cx: &App) -> bool {
-        self.scope_matches(cx)
-            && self.error.is_none()
-            && self.list.read(cx).tree_diff_error().is_none()
-            && self
-                .entries
-                .get(path)
-                .filter(|entry| {
-                    entry
-                        .validated_base
-                        .as_ref()
-                        .zip(entry.diff.as_ref())
-                        .is_some_and(|(base, diff)| {
-                            base.remote_id() == diff.read(cx).base_text(cx).remote_id()
-                                && base.version() == diff.read(cx).base_text(cx).version()
-                        })
-                })
-                .filter(|entry| {
-                    entry
-                        .validated_snapshot
-                        .as_ref()
-                        .zip(entry.buffer.as_ref())
-                        .is_some_and(|(snapshot, buffer)| {
-                            let buffer = buffer.read(cx);
-                            buffer.snapshot().remote_id() == snapshot.remote_id()
-                                && buffer.snapshot().version() == snapshot.version()
-                                && buffer.line_ending() == snapshot.line_ending()
-                                && buffer.file().map(|file| file.disk_state())
-                                    == snapshot.file().map(|file| file.disk_state())
-                        })
-                })
-                .and_then(|entry| entry.fingerprint.as_ref())
-                .zip(self.state.as_ref())
-                .is_some_and(|(fingerprint, state)| {
-                    state.read(cx).is_viewed(&path.to_string(), fingerprint)
-                })
+        self.validated_fingerprint(path, cx)
+            .zip(self.state.as_ref())
+            .is_some_and(|(fingerprint, state)| {
+                state.read(cx).is_viewed(&path.to_string(), fingerprint)
+            })
+    }
+
+    fn change_reasons(&self, path: &RepoPath, cx: &App) -> Vec<&'static str> {
+        self.validated_fingerprint(path, cx)
+            .zip(self.state.as_ref())
+            .map(|(fingerprint, state)| {
+                state
+                    .read(cx)
+                    .change_reasons(&path.to_string(), fingerprint)
+            })
+            .unwrap_or_default()
+    }
+
+    fn matches_filter(&self, path: &RepoPath, cx: &App) -> bool {
+        path.to_string().to_lowercase().contains(&self.query)
+            && match self.filter {
+                ReviewFilter::All => true,
+                ReviewFilter::Unviewed => !self.is_viewed(path, cx),
+                ReviewFilter::Changed => !self.change_reasons(path, cx).is_empty(),
+            }
+    }
+
+    fn open_path(&mut self, path: RepoPath, window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(ReviewEvent::OpenDiff);
+        self.selected = Some(path.clone());
+        if let Some(entry) = self.entries.get(&path)
+            && let Some(repository) = self.list.read(cx).repo()
+        {
+            let key = project_diff_path_key(repository.read(cx), &path, entry.status, cx);
+            self.diff
+                .update(cx, |diff, cx| diff.move_to_path(key, window, cx))
+                .log_err();
+        }
+        cx.notify();
+    }
+
+    pub fn navigate_unviewed(
+        &mut self,
+        backwards: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut all_rows = Vec::new();
+        let root = self.folder_tree(cx);
+        flatten(&root, "", 0, &HashSet::default(), &mut all_rows);
+        let paths: Vec<_> = all_rows
+            .into_iter()
+            .filter_map(|row| match row {
+                Row::File { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect();
+        let selected = self
+            .selected
+            .as_ref()
+            .and_then(|selected| paths.iter().position(|path| path == selected));
+        let count = paths.len();
+        for offset in 1..=count {
+            let index = match selected {
+                Some(index) if backwards => (index + count - offset) % count,
+                Some(index) => (index + offset) % count,
+                None if backwards => count - offset,
+                None => offset - 1,
+            };
+            let path = &paths[index];
+            if self.matches_filter(path, cx) && !self.is_viewed(path, cx) {
+                let path = path.clone();
+                let mut parent = path.as_std_path().parent();
+                while let Some(directory) = parent {
+                    self.collapsed.remove(directory.to_string_lossy().as_ref());
+                    parent = directory.parent();
+                }
+                self.rebuild_rows(cx);
+                if let Some(index) = self.rows.iter().position(
+                    |row| matches!(row, Row::File { path: candidate, .. } if candidate == &path),
+                ) {
+                    self.scroll_handle
+                        .scroll_to_item(index, gpui::ScrollStrategy::Center);
+                }
+                self.open_path(path, window, cx);
+                break;
+            }
+        }
     }
 
     fn toggle_viewed(&mut self, path: &RepoPath, cx: &mut Context<Self>) {
@@ -759,6 +1006,32 @@ impl BranchReview {
                     .log_err();
             });
         }
+        let root = self.folder_tree(cx);
+        self.total = root.total;
+        self.viewed = root.viewed;
+        self.changed_since_viewed = self
+            .entries
+            .iter()
+            .filter(|(path, entry)| entry.changed && !self.change_reasons(path, cx).is_empty())
+            .count();
+        let mut filtered = root;
+        self.filter_folders(&mut filtered, cx);
+        self.rows.clear();
+        let collapsed = if self.query.is_empty() && self.filter == ReviewFilter::All {
+            self.collapsed.clone()
+        } else {
+            HashSet::default()
+        };
+        flatten(&filtered, "", 0, &collapsed, &mut self.rows);
+        self.matching = self
+            .entries
+            .iter()
+            .filter(|(path, entry)| entry.changed && self.matches_filter(path, cx))
+            .count();
+        cx.notify();
+    }
+
+    fn folder_tree(&self, cx: &App) -> Folder {
         let mut root = Folder::default();
         for (path, entry) in &self.entries {
             if !entry.changed {
@@ -780,11 +1053,15 @@ impl BranchReview {
                 }
             }
         }
-        self.total = root.total;
-        self.viewed = root.viewed;
-        self.rows.clear();
-        flatten(&root, "", 0, &self.collapsed, &mut self.rows);
-        cx.notify();
+        root
+    }
+
+    fn filter_folders(&self, folder: &mut Folder, cx: &App) {
+        folder.files.retain(|path| self.matches_filter(path, cx));
+        folder.folders.retain(|_, child| {
+            self.filter_folders(child, cx);
+            !child.files.is_empty() || !child.folders.is_empty()
+        });
     }
 
     fn render_row(&self, index: usize, cx: &Context<Self>) -> AnyElement {
@@ -857,9 +1134,12 @@ impl BranchReview {
                     ("M", Color::VersionControlModified)
                 };
                 let checkbox_path = path.clone();
+                let reasons = self.change_reasons(&path, cx);
                 let tooltip = entry.error.clone().unwrap_or_else(|| {
                     if viewed {
                         "Mark unviewed".into()
+                    } else if !reasons.is_empty() {
+                        format!("Changed since Viewed: {}", reasons.join(", "))
                     } else {
                         "Mark Viewed: approve this comparison".into()
                     }
@@ -909,20 +1189,20 @@ impl BranchReview {
                             Color::Default
                         }),
                     )
-                    .end_slot(Label::new(status).size(LabelSize::XSmall).color(color))
+                    .end_slot(
+                        h_flex()
+                            .gap_1()
+                            .when(!reasons.is_empty(), |row| {
+                                row.child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                )
+                            })
+                            .child(Label::new(status).size(LabelSize::XSmall).color(color)),
+                    )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        cx.emit(ReviewEvent::OpenDiff);
-                        this.selected = Some(path.clone());
-                        if let Some(entry) = this.entries.get(&path)
-                            && let Some(repository) = this.list.read(cx).repo()
-                        {
-                            let key =
-                                project_diff_path_key(repository.read(cx), &path, entry.status, cx);
-                            this.diff
-                                .update(cx, |diff, cx| diff.move_to_path(key, window, cx))
-                                .log_err();
-                        }
-                        cx.notify();
+                        this.open_path(path.clone(), window, cx)
                     }))
                     .into_any_element()
             }
@@ -969,6 +1249,12 @@ impl Render for BranchReview {
             .or_else(|| state.and_then(|state| state.error.clone()))
             .or_else(|| self.list.read(cx).tree_diff_error().map(str::to_owned));
         let saving = state.is_some_and(|state| state.saving);
+        let validating = self.loading
+            || self.list.read(cx).is_tree_base_loading()
+            || self
+                .entries
+                .values()
+                .any(|entry| entry.fingerprint.is_none() && entry.error.is_none());
         v_flex()
             .size_full()
             .min_h_0()
@@ -990,16 +1276,63 @@ impl Render for BranchReview {
                     ),
             )
             .child(
+                div()
+                    .mx_2()
+                    .mb_1()
+                    .px_1()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(self.search.clone()),
+            )
+            .child(
+                h_flex().px_2().gap_1().flex_wrap().children(
+                    [
+                        ("all-review-files", "All", ReviewFilter::All),
+                        ("unviewed-review-files", "Unviewed", ReviewFilter::Unviewed),
+                        (
+                            "changed-review-files",
+                            "Changed since Viewed",
+                            ReviewFilter::Changed,
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(id, label, filter)| {
+                        Button::new(id, label)
+                            .toggle_state(self.filter == filter)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.filter = filter;
+                                this.rebuild_rows(cx);
+                            }))
+                    }),
+                ),
+            )
+            .child(
+                h_flex()
+                    .px_2()
+                    .gap_1()
+                    .child(Button::new("previous-unviewed", "Previous").on_click(
+                        cx.listener(|this, _, window, cx| this.navigate_unviewed(true, window, cx)),
+                    ))
+                    .child(
+                        Button::new("next-unviewed", "Next unviewed").on_click(cx.listener(
+                            |this, _, window, cx| this.navigate_unviewed(false, window, cx),
+                        )),
+                    ),
+            )
+            .child(
                 h_flex()
                     .px_2()
                     .pb_1()
                     .gap_1()
                     .child(
-                        Label::new(format!("{}/{} Viewed", self.viewed, self.total))
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
+                        Label::new(format!(
+                            "{}/{} Viewed · {} changed",
+                            self.viewed, self.total, self.changed_since_viewed
+                        ))
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
                     )
-                    .when(self.loading || saving, |row| {
+                    .when(validating || saving, |row| {
                         row.child(
                             Label::new(if saving { "Saving…" } else { "Validating…" })
                                 .size(LabelSize::XSmall)
@@ -1013,6 +1346,36 @@ impl Render for BranchReview {
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),
                 ),
+            )
+            .when(
+                self.filter != ReviewFilter::All || !self.query.is_empty(),
+                |view| {
+                    view.child(
+                        div().px_2().child(
+                            Label::new(format!("{} matching files", self.matching))
+                                .size(LabelSize::XSmall),
+                        ),
+                    )
+                },
+            )
+            .when(
+                self.matching == 0 && !validating && error.is_none(),
+                |view| {
+                    view.child(
+                        div().p_2().child(
+                            Label::new(if !self.query.is_empty() {
+                                "No matching files"
+                            } else if self.filter == ReviewFilter::Unviewed {
+                                "No remaining unviewed files"
+                            } else if self.filter == ReviewFilter::Changed {
+                                "No files changed since Viewed"
+                            } else {
+                                "No changed files"
+                            })
+                            .size(LabelSize::Small),
+                        ),
+                    )
+                },
             )
             .when_some(error, |view, error| {
                 view.child(
@@ -1034,6 +1397,7 @@ impl Render for BranchReview {
                             .collect::<Vec<_>>()
                     }),
                 )
+                .track_scroll(&self.scroll_handle)
                 .flex_1(),
             )
     }
@@ -1263,6 +1627,48 @@ mod tests {
             assert!(!review.is_viewed(&b, cx));
             assert!(!review.is_viewed(&c, cx));
             assert_eq!((review.viewed, review.total), (1, 3));
+        });
+        recreated_review.update_in(cx, |review, window, cx| {
+            assert_eq!(review.change_reasons(&b, cx), ["Content changed"]);
+            assert!(review.change_reasons(&a, cx).is_empty());
+            assert!(review.change_reasons(&c, cx).is_empty());
+            assert_eq!(review.changed_since_viewed, 1);
+            review.filter = ReviewFilter::Changed;
+            review.rebuild_rows(cx);
+            assert_eq!(review.matching, 1);
+            assert!(
+                review
+                    .rows
+                    .iter()
+                    .any(|row| matches!(row, Row::File { path, .. } if path == &b))
+            );
+            review.filter = ReviewFilter::Unviewed;
+            review.collapsed.insert("src".into());
+            review.rebuild_rows(cx);
+            assert_eq!(review.matching, 2);
+            assert_eq!((review.viewed, review.total), (1, 3));
+            review.navigate_unviewed(false, window, cx);
+            assert_eq!(review.selected.as_ref(), Some(&b));
+            review.toggle_viewed(&b, cx);
+            assert_eq!(
+                review.selected.as_ref(),
+                Some(&b),
+                "Checking a filtered file must not navigate"
+            );
+            assert_eq!(review.matching, 1);
+            review.navigate_unviewed(false, window, cx);
+            assert_eq!(review.selected.as_ref(), Some(&c));
+            review.navigate_unviewed(true, window, cx);
+            assert_eq!(review.selected.as_ref(), Some(&c));
+            review.query = "B.TXT".to_lowercase();
+            review.filter = ReviewFilter::All;
+            review.rebuild_rows(cx);
+            assert_eq!(review.matching, 1);
+            assert_eq!((review.viewed, review.total), (2, 3));
+            review.query = "missing".into();
+            review.rebuild_rows(cx);
+            assert!(review.rows.is_empty());
+            review.query.clear();
         });
         recreated_review.update(cx, |review, cx| review.set_storage_key(None, cx));
         for _ in 0..5 {

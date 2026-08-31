@@ -34,8 +34,52 @@ pub(crate) fn digest(parts: &[&[u8]]) -> String {
     format!("{:x}", hash.finalize())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct Fingerprint(String);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(from = "SavedFingerprint")]
+pub(crate) struct Fingerprint {
+    value: String,
+    details: Option<ComparisonDetails>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedFingerprint {
+    Legacy(String),
+    Detailed {
+        value: String,
+        details: Option<ComparisonDetails>,
+    },
+}
+
+impl From<SavedFingerprint> for Fingerprint {
+    fn from(saved: SavedFingerprint) -> Self {
+        match saved {
+            SavedFingerprint::Legacy(value) => Self {
+                value,
+                details: None,
+            },
+            SavedFingerprint::Detailed { value, details } => Self { value, details },
+        }
+    }
+}
+
+impl PartialEq for Fingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+impl Eq for Fingerprint {}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ComparisonDetails {
+    base_content: String,
+    current_content: String,
+    base_exists: bool,
+    current_exists: bool,
+    base_mode: u32,
+    current_mode: u32,
+    renamed_from: Option<String>,
+}
 
 impl Fingerprint {
     pub fn new(
@@ -45,21 +89,67 @@ impl Fingerprint {
         base_mode: u32,
         current_mode: u32,
     ) -> Self {
-        Self(digest(&[
-            b"merge_base_comparison_v1",
-            path.as_bytes(),
-            &[base.is_some() as u8, current.is_some() as u8],
-            base.unwrap_or_default(),
-            current.unwrap_or_default(),
-            &base_mode.to_le_bytes(),
-            &current_mode.to_le_bytes(),
-        ]))
-    }
-    pub fn with_rename(self, source: Option<&str>) -> Self {
-        match source {
-            Some(source) => Self(digest(&[self.0.as_bytes(), b"rename", source.as_bytes()])),
-            None => self,
+        Self {
+            value: digest(&[
+                b"merge_base_comparison_v1",
+                path.as_bytes(),
+                &[base.is_some() as u8, current.is_some() as u8],
+                base.unwrap_or_default(),
+                current.unwrap_or_default(),
+                &base_mode.to_le_bytes(),
+                &current_mode.to_le_bytes(),
+            ]),
+            details: Some(ComparisonDetails {
+                base_content: digest(&[base.unwrap_or_default()]),
+                current_content: digest(&[current.unwrap_or_default()]),
+                base_exists: base.is_some(),
+                current_exists: current.is_some(),
+                base_mode,
+                current_mode,
+                renamed_from: None,
+            }),
         }
+    }
+    pub fn with_rename(mut self, source: Option<&str>) -> Self {
+        if let Some(source) = source {
+            self.value = digest(&[self.value.as_bytes(), b"rename", source.as_bytes()]);
+            if let Some(details) = &mut self.details {
+                details.renamed_from = Some(source.to_owned());
+            }
+        }
+        self
+    }
+
+    fn changes_from(&self, approved: &Self) -> Vec<&'static str> {
+        if self == approved {
+            return Vec::new();
+        }
+        let Some((current, previous)) = self.details.as_ref().zip(approved.details.as_ref()) else {
+            return vec!["Comparison changed"];
+        };
+        let mut reasons = Vec::new();
+        if current.base_content != previous.base_content {
+            reasons.push("Base changed");
+        }
+        if current.current_content != previous.current_content {
+            reasons.push("Content changed");
+        }
+        if current.base_exists != previous.base_exists
+            || current.current_exists != previous.current_exists
+        {
+            reasons.push("File added/deleted");
+        }
+        if current.base_mode != previous.base_mode || current.current_mode != previous.current_mode
+        {
+            reasons.push("Mode changed");
+        }
+        if current.renamed_from != previous.renamed_from {
+            reasons.push("Rename changed");
+        }
+        if reasons.is_empty() {
+            reasons.push("Comparison changed");
+        }
+        reasons
     }
 }
 
@@ -72,7 +162,7 @@ struct ReviewRecords {
 impl Default for ReviewRecords {
     fn default() -> Self {
         Self {
-            schema_version: 1,
+            schema_version: 2,
             viewed: BTreeMap::new(),
         }
     }
@@ -80,15 +170,16 @@ impl Default for ReviewRecords {
 
 impl ReviewRecords {
     fn restore(value: Option<&str>) -> Result<Self> {
-        let records = value
+        let mut records = value
             .map(serde_json::from_str::<Self>)
             .transpose()
             .context("Unable to read saved Branch Review progress")?
             .unwrap_or_default();
         ensure!(
-            records.schema_version == 1,
+            matches!(records.schema_version, 1 | 2),
             "Unsupported Branch Review state version"
         );
+        records.schema_version = 2;
         Ok(records)
     }
 
@@ -196,6 +287,37 @@ impl ReviewState {
         self.error.is_none() && self.records.is_viewed(path, fingerprint)
     }
 
+    pub fn change_reasons(&self, path: &str, fingerprint: &Fingerprint) -> Vec<&'static str> {
+        if self.error.is_some() {
+            return Vec::new();
+        }
+        self.records
+            .viewed
+            .get(path)
+            .map(|approved| fingerprint.changes_from(approved))
+            .unwrap_or_default()
+    }
+
+    pub fn enrich_approval(
+        &mut self,
+        path: &str,
+        fingerprint: &Fingerprint,
+        cx: &mut Context<Self>,
+    ) {
+        if self.error.is_none()
+            && self
+                .records
+                .viewed
+                .get(path)
+                .is_some_and(|saved| saved == fingerprint && saved.details.is_none())
+        {
+            self.records
+                .viewed
+                .insert(path.to_owned(), fingerprint.clone());
+            self.persist(cx);
+        }
+    }
+
     pub fn set_viewed(
         &mut self,
         path: String,
@@ -256,6 +378,83 @@ impl ReviewState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_approvals_keep_identity_and_explain_only_known_changes() {
+        let approved = fingerprint("a", Some("base"), Some("approved"));
+        let legacy =
+            serde_json::json!({"schema_version":1,"viewed":{"a":approved.value}}).to_string();
+        let records = ReviewRecords::restore(Some(&legacy)).unwrap();
+        assert!(records.is_viewed("a", &approved));
+        assert_eq!(records.schema_version, 2);
+        let revised = fingerprint("a", Some("base"), Some("revised"));
+        assert_eq!(
+            revised.changes_from(&records.viewed["a"]),
+            ["Comparison changed"]
+        );
+        let round_trip =
+            ReviewRecords::restore(Some(&serde_json::to_string(&records).unwrap())).unwrap();
+        assert!(round_trip.is_viewed("a", &approved));
+    }
+
+    #[test]
+    fn reasons_track_each_comparison_component_and_exact_undo() {
+        let approved = fingerprint("a", Some("base"), Some("approved"));
+        assert!(approved.changes_from(&approved).is_empty());
+        assert_eq!(
+            fingerprint("a", Some("base"), Some("revised")).changes_from(&approved),
+            ["Content changed"]
+        );
+        assert_eq!(
+            fingerprint("a", Some("new base"), Some("approved")).changes_from(&approved),
+            ["Base changed"]
+        );
+        let changed = Fingerprint::new("a", None, None, 0, 0).with_rename(Some("old-a"));
+        assert_eq!(
+            changed.changes_from(&approved),
+            [
+                "Base changed",
+                "Content changed",
+                "File added/deleted",
+                "Mode changed",
+                "Rename changed"
+            ]
+        );
+        assert_eq!(
+            Fingerprint::new("a", Some(b"base"), Some(b"approved"), 0o100644, 0o100755)
+                .changes_from(&approved),
+            ["Mode changed"]
+        );
+    }
+
+    #[gpui::test]
+    async fn matching_legacy_approval_is_enriched_and_manual_uncheck_remains_explicit(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let database = KeyValueStore::open_test_db("review_metadata_migration").await;
+        let approved = fingerprint("a", Some("base"), Some("approved"));
+        database
+            .write_kvp(
+                "review".into(),
+                serde_json::json!({"schema_version":1,"viewed":{"a":approved.value}}).to_string(),
+            )
+            .await
+            .unwrap();
+        let state = cx.new(|_| ReviewState::load("review".into(), database.clone()));
+        state.update(cx, |state, cx| state.enrich_approval("a", &approved, cx));
+        cx.run_until_parked();
+        let restored = ReviewState::load("review".into(), database.clone());
+        assert!(restored.is_viewed("a", &approved));
+        assert_eq!(
+            restored.change_reasons("a", &fingerprint("a", Some("base"), Some("revised"))),
+            ["Content changed"]
+        );
+        state.update(cx, |state, cx| state.set_viewed("a".into(), None, cx));
+        cx.run_until_parked();
+        let restored = ReviewState::load("review".into(), database);
+        assert!(!restored.is_viewed("a", &approved));
+        assert!(restored.change_reasons("a", &approved).is_empty());
+    }
 
     fn fingerprint(path: &str, base: Option<&str>, current: Option<&str>) -> Fingerprint {
         Fingerprint::new(
@@ -359,7 +558,7 @@ mod tests {
         let corrupted = ReviewState::load("review".into(), database);
         assert!(corrupted.error.is_some());
         assert!(!corrupted.is_viewed("a", &a));
-        assert!(ReviewRecords::restore(Some(r#"{"schema_version":2,"viewed":{}}"#)).is_err());
+        assert!(ReviewRecords::restore(Some(r#"{"schema_version":99,"viewed":{}}"#)).is_err());
     }
     #[gpui::test]
     async fn ordered_writes_failure_and_retry(cx: &mut gpui::TestAppContext) {

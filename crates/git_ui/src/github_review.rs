@@ -138,6 +138,10 @@ pub(crate) enum DiffSide {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum CommentTarget {
     General,
+    Edit {
+        comment_id: u64,
+        comment_kind: CommentKind,
+    },
     Reply {
         comment_id: u64,
     },
@@ -161,6 +165,8 @@ pub(crate) enum CommentKind {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct RemoteComment {
+    #[serde(default)]
+    pub thread: Option<Arc<ReviewThread>>,
     pub id: u64,
     pub body: Option<String>,
     pub user: GitHubUser,
@@ -183,8 +189,67 @@ pub(crate) struct DiscussionComment {
     pub comment: RemoteComment,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ReviewThread {
+    pub id: String,
+    pub is_resolved: bool,
+    pub is_outdated: bool,
+    pub viewer_can_resolve: bool,
+    pub viewer_can_unresolve: bool,
+    pub viewer_can_reply: bool,
+    #[serde(default)]
+    pub comments: Vec<ThreadComment>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ThreadComment {
+    #[serde(
+        rename = "fullDatabaseId",
+        deserialize_with = "deserialize_database_id"
+    )]
+    pub database_id: u64,
+    pub viewer_did_author: bool,
+    pub viewer_can_update: bool,
+    pub viewer_can_delete: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum DiscussionAction {
+    Delete {
+        comment_id: u64,
+        comment_kind: CommentKind,
+    },
+    Resolve {
+        thread_id: String,
+        resolved: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ApiMethod {
+    Get,
+    Post,
+    Patch,
+    Delete,
+}
+impl ApiMethod {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ApiRequest {
+    pub method: ApiMethod,
+    pub writing: bool,
     pub endpoint: String,
     pub body: Option<Value>,
 }
@@ -212,14 +277,15 @@ impl GitHubTransport for GhCli {
     fn request(&self, request: ApiRequest) -> BoxFuture<'static, Result<Value>> {
         let executor = self.executor.clone();
         async move {
-            ensure!((request.endpoint.starts_with("repos/") || (request.body.is_none() && request.endpoint.starts_with("search/issues?"))) && !request.endpoint.contains(['\n', '\r', '#']), "Invalid GitHub endpoint");
-            let writing = request.body.is_some();
+            ensure!((request.endpoint.starts_with("repos/") || request.endpoint == "graphql" || (!request.writing && (request.endpoint == "user" || request.endpoint.starts_with("search/issues?")))) && !request.endpoint.contains(['\n', '\r', '#']), "Invalid GitHub endpoint");
+            let writing = request.writing;
+            let has_body = request.body.is_some();
             let mut command = smol::process::Command::new("gh");
-            command.args(["api", "--hostname", "github.com", "--method", if writing { "POST" } else { "GET" },
+            command.args(["api", "--hostname", "github.com", "--method", request.method.as_str(),
                 "--header", "Accept: application/vnd.github+json", "--header", "X-GitHub-Api-Version: 2026-03-10", &request.endpoint])
                 .env("GH_PROMPT_DISABLED", "1").env("GH_DEBUG", "").kill_on_drop(true)
-                .stdin(if writing { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
-            if writing { command.args(["--input", "-"]); }
+                .stdin(if has_body { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
+            if has_body { command.args(["--input", "-"]); }
             let mut child = command.spawn().map_err(|_| GitHubFailure { message: "GitHub CLI could not start. Install gh and run gh auth login.".into(), outcome_unknown: false })?;
             let operation = async move {
                 if let Some(body) = request.body {
@@ -241,6 +307,7 @@ impl GitHubTransport for GhCli {
                     } else { ("GitHub request failed. Refresh to check its outcome before retrying.", false) };
                     return Err(GitHubFailure { message: message.into(), outcome_unknown: writing && !known }.into());
                 }
+                if request.method == ApiMethod::Delete && output.stdout.is_empty() { return Ok(Value::Null); }
                 serde_json::from_slice(&output.stdout).map_err(|_| GitHubFailure { message: "GitHub returned an unreadable response. Refresh before retrying a post.".into(), outcome_unknown: writing }.into())
             }.boxed();
             match futures::future::select(operation, executor.timer(Duration::from_secs(45)).boxed()).await {
@@ -264,6 +331,227 @@ impl GitHubClient {
 }
 
 impl GitHubClient {
+    async fn graphql(&self, query: &str, variables: Value, writing: bool) -> Result<Value> {
+        let response = self
+            .transport
+            .request(ApiRequest {
+                endpoint: "graphql".into(),
+                method: ApiMethod::Post,
+                writing,
+                body: Some(json!({"query": query, "variables": variables})),
+            })
+            .await?;
+        if response
+            .get("errors")
+            .is_some_and(|errors| errors.as_array().is_none_or(|errors| !errors.is_empty()))
+        {
+            return Err(GitHubFailure {
+                message:
+                    "GitHub could not complete the thread request. Refresh and check permissions."
+                        .into(),
+                outcome_unknown: writing,
+            }
+            .into());
+        }
+        response
+            .get("data")
+            .filter(|data| !data.is_null())
+            .cloned()
+            .ok_or_else(|| {
+                GitHubFailure {
+                    message: "GitHub returned incomplete thread data".into(),
+                    outcome_unknown: writing,
+                }
+                .into()
+            })
+    }
+
+    pub async fn viewer(&self) -> Result<GitHubUser> {
+        self.get("user".into()).await
+    }
+
+    pub async fn review_threads(
+        &self,
+        repo: &GitHubRepo,
+        number: u64,
+    ) -> Result<Vec<ReviewThread>> {
+        repo.validate()?;
+        let (owner, name) = repo
+            .full_name
+            .split_once('/')
+            .context("Invalid repository")?;
+        let mut cursor = Value::Null;
+        let mut threads = Vec::new();
+        loop {
+            let data = self
+                .graphql(
+                    THREADS_QUERY,
+                    json!({"owner":owner,"name":name,"number":number,"cursor":cursor}),
+                    false,
+                )
+                .await?;
+            let connection = &data["repository"]["pullRequest"]["reviewThreads"];
+            let nodes = connection["nodes"]
+                .as_array()
+                .context("GitHub thread list is unavailable")?;
+            for node in nodes {
+                let mut thread: ReviewThread = serde_json::from_value({
+                    let mut node = node.clone();
+                    node["comments"] = json!([]);
+                    node
+                })?;
+                thread.comments = serde_json::from_value(node["comments"]["nodes"].clone())?;
+                let mut replies = next_cursor(&node["comments"])?;
+                while let Some(cursor) = replies {
+                    let data = self
+                        .graphql(
+                            THREAD_COMMENTS_QUERY,
+                            json!({"id":thread.id,"cursor":cursor}),
+                            false,
+                        )
+                        .await?;
+                    let connection = &data["node"]["comments"];
+                    thread
+                        .comments
+                        .extend(serde_json::from_value::<Vec<ThreadComment>>(
+                            connection["nodes"].clone(),
+                        )?);
+                    let next = next_cursor(connection)?;
+                    ensure!(
+                        next.as_deref() != Some(&cursor),
+                        "GitHub repeated a comment page"
+                    );
+                    replies = next;
+                }
+                threads.push(thread);
+            }
+            match next_cursor(connection)? {
+                Some(next) => {
+                    ensure!(
+                        cursor.as_str() != Some(&next),
+                        "GitHub repeated a thread page"
+                    );
+                    cursor = json!(next);
+                }
+                None => return Ok(threads),
+            }
+        }
+    }
+
+    pub async fn update_comment(
+        &self,
+        repo: &GitHubRepo,
+        kind: CommentKind,
+        id: u64,
+        original: &str,
+        body: &str,
+    ) -> Result<RemoteComment> {
+        ensure!(!body.trim().is_empty(), "Write a comment before saving");
+        let endpoint = comment_endpoint(repo, kind, id)?;
+        let viewer = self.viewer().await?;
+        let current: RemoteComment = self.get(endpoint.clone()).await?;
+        ensure!(
+            current.user.login.eq_ignore_ascii_case(&viewer.login),
+            "Only your own comments can be edited"
+        );
+        ensure!(
+            current.body.as_deref().unwrap_or_default() == original,
+            "This comment changed on GitHub. Your draft is kept; refresh and compare before editing again."
+        );
+        let value = self
+            .transport
+            .request(ApiRequest {
+                endpoint,
+                method: ApiMethod::Patch,
+                writing: true,
+                body: Some(json!({"body":body})),
+            })
+            .await?;
+        serde_json::from_value(value).map_err(|_| {
+            GitHubFailure {
+                message: "The edit may have succeeded; refresh before retrying".into(),
+                outcome_unknown: true,
+            }
+            .into()
+        })
+    }
+
+    pub async fn discussion_action(
+        &self,
+        repo: &GitHubRepo,
+        number: u64,
+        action: &DiscussionAction,
+    ) -> Result<()> {
+        repo.validate()?;
+        match action {
+            DiscussionAction::Delete {
+                comment_id,
+                comment_kind,
+            } => {
+                let endpoint = comment_endpoint(repo, *comment_kind, *comment_id)?;
+                let viewer = self.viewer().await?;
+                let current: RemoteComment = self.get(endpoint.clone()).await?;
+                ensure!(
+                    current.user.login.eq_ignore_ascii_case(&viewer.login),
+                    "Only your own comments can be deleted"
+                );
+                self.transport
+                    .request(ApiRequest {
+                        endpoint,
+                        method: ApiMethod::Delete,
+                        writing: true,
+                        body: None,
+                    })
+                    .await?;
+            }
+            DiscussionAction::Resolve {
+                thread_id,
+                resolved,
+            } => {
+                let threads = self.review_threads(repo, number).await?;
+                let thread = threads
+                    .iter()
+                    .find(|thread| &thread.id == thread_id)
+                    .context("Thread no longer exists")?;
+                if thread.is_resolved == *resolved {
+                    return Ok(());
+                }
+                ensure!(
+                    if *resolved {
+                        thread.viewer_can_resolve
+                    } else {
+                        thread.viewer_can_unresolve
+                    },
+                    "GitHub does not permit this thread action"
+                );
+                let mutation = if *resolved {
+                    "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}"
+                } else {
+                    "mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{id isResolved}}}"
+                };
+                let data = self
+                    .graphql(mutation, json!({"id":thread_id}), true)
+                    .await?;
+                let operation = if *resolved {
+                    "resolveReviewThread"
+                } else {
+                    "unresolveReviewThread"
+                };
+                if data[operation]["thread"]["id"].as_str() != Some(thread_id)
+                    || data[operation]["thread"]["isResolved"].as_bool() != Some(*resolved)
+                {
+                    return Err(GitHubFailure {
+                        message: "GitHub did not confirm the thread state; refresh before retrying"
+                            .into(),
+                        outcome_unknown: true,
+                    }
+                    .into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub async fn repository(&self, full_name: &str) -> Result<GitHubRepo> {
         validate_repository_name(full_name)?;
         let repo: GitHubRepo = self.get(format!("repos/{full_name}")).await?;
@@ -275,6 +563,8 @@ impl GitHubClient {
             self.transport
                 .request(ApiRequest {
                     endpoint,
+                    method: ApiMethod::Get,
+                    writing: false,
                     body: None,
                 })
                 .await?,
@@ -462,6 +752,7 @@ impl GitHubClient {
         pr.validate(repo)?;
         ensure!(!body.trim().is_empty(), "Write a comment before posting");
         let (suffix, body) = match target {
+            CommentTarget::Edit { .. } => bail!("Use Save changes to edit a comment"),
             CommentTarget::General => (
                 format!("issues/{}/comments", pr.number),
                 json!({"body":body}),
@@ -504,8 +795,48 @@ impl GitHubClient {
                 (format!("pulls/{}/comments", pr.number), body)
             }
         };
-        serde_json::from_value(self.transport.request(ApiRequest { endpoint: repo.endpoint(&suffix), body: Some(body) }).await?).map_err(|_| GitHubFailure { message: "GitHub posted the comment but returned an unreadable response; refresh before retrying".into(), outcome_unknown: true }.into())
+        serde_json::from_value(self.transport.request(ApiRequest { endpoint: repo.endpoint(&suffix), method: ApiMethod::Post, writing: true, body: Some(body) }).await?).map_err(|_| GitHubFailure { message: "GitHub posted the comment but returned an unreadable response; refresh before retrying".into(), outcome_unknown: true }.into())
     }
+}
+
+const THREADS_QUERY: &str = "query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated viewerCanResolve viewerCanUnresolve viewerCanReply comments(first:100){nodes{fullDatabaseId viewerDidAuthor viewerCanUpdate viewerCanDelete} pageInfo{hasNextPage endCursor}}} pageInfo{hasNextPage endCursor}}}}}";
+const THREAD_COMMENTS_QUERY: &str = "query($id:ID!,$cursor:String){node(id:$id){... on PullRequestReviewThread{comments(first:100,after:$cursor){nodes{fullDatabaseId viewerDidAuthor viewerCanUpdate viewerCanDelete} pageInfo{hasNextPage endCursor}}}}}";
+
+fn deserialize_database_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<u64, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+        .ok_or_else(|| serde::de::Error::custom("Invalid GitHub comment ID"))
+}
+
+fn next_cursor(connection: &Value) -> Result<Option<String>> {
+    if connection["pageInfo"]["hasNextPage"]
+        .as_bool()
+        .context("Missing GitHub pagination")?
+    {
+        Ok(Some(
+            connection["pageInfo"]["endCursor"]
+                .as_str()
+                .filter(|cursor| !cursor.is_empty())
+                .context("Missing GitHub page cursor")?
+                .to_owned(),
+        ))
+    } else {
+        Ok(None)
+    }
+}
+
+fn comment_endpoint(repo: &GitHubRepo, kind: CommentKind, id: u64) -> Result<String> {
+    repo.validate()?;
+    ensure!(id > 0, "Invalid comment");
+    Ok(repo.endpoint(&match kind {
+        CommentKind::Conversation => format!("issues/comments/{id}"),
+        CommentKind::Inline => format!("pulls/comments/{id}"),
+        CommentKind::Review => bail!("Submitted review summaries are read-only"),
+    }))
 }
 
 pub(crate) fn pr_number(query: &str, repo: &GitHubRepo) -> Result<u64> {
@@ -804,6 +1135,8 @@ async fn checkout_from_remote(
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct CommentDraft {
+    #[serde(default)]
+    pub original_body: Option<String>,
     pub target: CommentTarget,
     pub body: String,
     pub outcome_unknown: bool,
@@ -1003,6 +1336,171 @@ mod tests {
     }
     fn comment() -> Value {
         json!({"id":1,"body":"Comment","user":{"login":"reviewer"}})
+    }
+
+    fn thread_page(resolved: bool, can_resolve: bool) -> Value {
+        json!({"data":{"repository":{"pullRequest":{"reviewThreads":{
+            "nodes":[{"id":"thread-1","isResolved":resolved,"isOutdated":false,"viewerCanResolve":can_resolve,"viewerCanUnresolve":true,"viewerCanReply":true,
+                "comments":{"nodes":[{"fullDatabaseId":"1","viewerDidAuthor":true,"viewerCanUpdate":true,"viewerCanDelete":true}],"pageInfo":{"hasNextPage":false}}}],
+            "pageInfo":{"hasNextPage":false}
+        }}}}})
+    }
+
+    #[test]
+    fn thread_and_reply_pages_are_read_only_even_with_post_transport() {
+        smol::block_on(async {
+            let mut first = thread_page(false, true);
+            first["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"] =
+                json!({"hasNextPage":true,"endCursor":"thread-page"});
+            first["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"][0]["comments"]["pageInfo"] =
+                json!({"hasNextPage":true,"endCursor":"reply-page"});
+            let replies = json!({"data":{"node":{"comments":{"nodes":[{"fullDatabaseId":"9007199254740993","viewerDidAuthor":false,"viewerCanUpdate":false,"viewerCanDelete":false}],"pageInfo":{"hasNextPage":false}}}}});
+            let last = json!({"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[],"pageInfo":{"hasNextPage":false}}}}}});
+            let (client, transport) = client(vec![Ok(first), Ok(replies), Ok(last)]);
+            let threads = client.review_threads(&repo(), 12).await.unwrap();
+            assert_eq!(threads.len(), 1);
+            assert_eq!(threads[0].comments.len(), 2);
+            assert_eq!(threads[0].comments[1].database_id, 9007199254740993);
+            let requests = transport.requests.lock().unwrap();
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request.method == ApiMethod::Post && !request.writing)
+            );
+            assert_eq!(
+                requests[1].body.as_ref().unwrap()["variables"]["cursor"],
+                "reply-page"
+            );
+            assert_eq!(
+                requests[2].body.as_ref().unwrap()["variables"]["cursor"],
+                "thread-page"
+            );
+        });
+    }
+
+    #[test]
+    fn comment_edits_validate_author_and_original_before_patch() {
+        smol::block_on(async {
+            let (client, transport) = client(vec![
+                Ok(json!({"login":"reviewer"})),
+                Ok(comment()),
+                Ok(comment()),
+            ]);
+            client
+                .update_comment(&repo(), CommentKind::Inline, 1, "Comment", "Edited")
+                .await
+                .unwrap();
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests[2].method, ApiMethod::Patch);
+            assert!(requests[2].writing);
+            assert_eq!(requests[2].endpoint, "repos/owner/project/pulls/comments/1");
+            assert_eq!(requests[2].body.as_ref().unwrap()["body"], "Edited");
+        });
+        for (viewer, original) in [("someone-else", "Comment"), ("reviewer", "old body")] {
+            smol::block_on(async {
+                let (client, transport) = client(vec![Ok(json!({"login":viewer})), Ok(comment())]);
+                assert!(
+                    client
+                        .update_comment(&repo(), CommentKind::Conversation, 1, original, "Edited")
+                        .await
+                        .is_err()
+                );
+                assert!(
+                    transport
+                        .requests
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .all(|request| !request.writing)
+                );
+            });
+        }
+    }
+
+    #[test]
+    fn deletion_has_no_body_and_submitted_reviews_stay_read_only() {
+        smol::block_on(async {
+            let (client, transport) = client(vec![
+                Ok(json!({"login":"reviewer"})),
+                Ok(comment()),
+                Ok(Value::Null),
+            ]);
+            client
+                .discussion_action(
+                    &repo(),
+                    12,
+                    &DiscussionAction::Delete {
+                        comment_id: 1,
+                        comment_kind: CommentKind::Conversation,
+                    },
+                )
+                .await
+                .unwrap();
+            let requests = transport.requests.lock().unwrap();
+            assert_eq!(requests[2].method, ApiMethod::Delete);
+            assert!(requests[2].writing && requests[2].body.is_none());
+            assert_eq!(
+                requests[2].endpoint,
+                "repos/owner/project/issues/comments/1"
+            );
+            assert!(comment_endpoint(&repo(), CommentKind::Review, 1).is_err());
+        });
+    }
+
+    #[test]
+    fn thread_actions_check_permissions_and_graphql_write_errors_are_uncertain() {
+        smol::block_on(async {
+            let (client, transport) = client(vec![Ok(thread_page(false, false))]);
+            assert!(
+                client
+                    .discussion_action(
+                        &repo(),
+                        12,
+                        &DiscussionAction::Resolve {
+                            thread_id: "thread-1".into(),
+                            resolved: true
+                        }
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(transport.requests.lock().unwrap().len(), 1);
+        });
+        for resolved in [false, true] {
+            smol::block_on(async {
+                let (client, transport) = client(vec![
+                    Ok(thread_page(!resolved, true)),
+                    Ok(json!({"errors":[{"message":"interrupted"}]})),
+                ]);
+                let error = client
+                    .discussion_action(
+                        &repo(),
+                        12,
+                        &DiscussionAction::Resolve {
+                            thread_id: "thread-1".into(),
+                            resolved,
+                        },
+                    )
+                    .await
+                    .unwrap_err();
+                assert!(
+                    error
+                        .downcast_ref::<GitHubFailure>()
+                        .unwrap()
+                        .outcome_unknown
+                );
+                let requests = transport.requests.lock().unwrap();
+                assert!(requests[1].writing);
+                let query = requests[1].body.as_ref().unwrap()["query"]
+                    .as_str()
+                    .unwrap();
+                assert!(query.contains(if resolved {
+                    "{resolveReviewThread"
+                } else {
+                    "{unresolveReviewThread"
+                }));
+            });
+        }
     }
     struct MockTransport {
         requests: Mutex<Vec<ApiRequest>>,
