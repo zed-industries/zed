@@ -17,3 +17,6 @@ gpui.workspace = true
 gpui_util.workspace = true
 path.workspace = true
 log.workspace = true
+
+[dev-dependencies]
+path = { workspace = true, features = ["test-support"] }

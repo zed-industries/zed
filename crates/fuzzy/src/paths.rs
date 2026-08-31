@@ -1,12 +1,15 @@
 use gpui::BackgroundExecutor;
 use path::{PathStyle, rel_path::RelPath};
 use std::{
-    cmp::{self, Ordering},
+    cmp::Ordering,
     sync::{
         Arc,
         atomic::{self, AtomicBool},
     },
 };
+
+#[cfg(not(target_family = "wasm"))]
+use std::cmp;
 
 use crate::{
     CharBag,
@@ -175,12 +178,18 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     let lowercase_query = &lowercase_query;
     let query_char_bag = CharBag::from_iter(lowercase_query.iter().copied());
 
-    let num_cpus = executor.num_cpus().min(path_count);
+    let num_cpus = if cfg!(target_family = "wasm") {
+        1
+    } else {
+        executor.num_cpus().min(path_count)
+    };
+    #[cfg(not(target_family = "wasm"))]
     let segment_size = path_count.div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
+    #[cfg(not(target_family = "wasm"))]
     executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
@@ -250,6 +259,50 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
             }
         })
         .await;
+
+    #[cfg(target_family = "wasm")]
+    {
+        let mut matcher = Matcher::new(query, lowercase_query, query_char_bag, smart_case, true);
+        for candidate_set in candidate_sets {
+            if cancel_flag.load(atomic::Ordering::Acquire) {
+                break;
+            }
+
+            let worktree_id = candidate_set.id();
+            let mut prefix = candidate_set
+                .prefix()
+                .as_unix_str()
+                .chars()
+                .collect::<Vec<_>>();
+            if !candidate_set.root_is_file() && !prefix.is_empty() {
+                prefix.push('/');
+            }
+            let lowercase_prefix = prefix
+                .iter()
+                .map(|character| simple_lowercase(*character))
+                .collect::<Vec<_>>();
+            matcher.match_candidates(
+                &prefix,
+                &lowercase_prefix,
+                candidate_set.candidates(0),
+                &mut segment_results[0],
+                cancel_flag,
+                |candidate, score, positions| PathMatch {
+                    score,
+                    worktree_id,
+                    positions: positions.clone(),
+                    path: Arc::from(candidate.path),
+                    is_dir: candidate.is_dir,
+                    path_prefix: candidate_set.prefix(),
+                    distance_to_relative_ancestor: relative_to
+                        .as_ref()
+                        .map_or(usize::MAX, |relative_to| {
+                            distance_between_paths(candidate.path, relative_to.as_ref())
+                        }),
+                },
+            );
+        }
+    }
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();

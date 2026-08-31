@@ -4,6 +4,12 @@ static MATCHERS: Mutex<Vec<nucleo::Matcher>> = Mutex::new(Vec::new());
 
 pub const LENGTH_PENALTY: f64 = 0.01;
 
+#[cfg(target_family = "wasm")]
+fn pool_cap() -> usize {
+    1
+}
+
+#[cfg(not(target_family = "wasm"))]
 fn pool_cap() -> usize {
     std::thread::available_parallelism()
         .map(|n| n.get())
