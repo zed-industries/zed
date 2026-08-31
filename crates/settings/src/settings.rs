@@ -26,8 +26,6 @@ pub mod private {
 
 use gpui::{App, Global};
 
-#[cfg(not(debug_assertions))]
-use rust_embed::RustEmbed;
 use std::env;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -118,18 +116,15 @@ impl fmt::Display for WorktreeId {
     }
 }
 
-#[cfg(not(debug_assertions))]
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "settings/*"]
-#[include = "keymaps/*"]
-#[exclude = "*.DS_Store"]
-pub struct SettingsAssets;
-
 // Dev builds read the checkout's files at runtime instead of embedding them;
 // see the `assets` crate for the rationale.
-#[cfg(debug_assertions)]
-util::dev_fs_embed!(pub struct SettingsAssets, "assets");
+util::fs_embed! {
+    pub struct SettingsAssets,
+    folder = "../../assets",
+    dev = "assets",
+    include = ["settings/*", "keymaps/*"],
+    exclude = ["*.DS_Store"],
+}
 
 pub fn init(cx: &mut App) {
     let settings = SettingsStore::new(cx, &default_settings());

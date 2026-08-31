@@ -24,25 +24,15 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-#[cfg(all(not(feature = "dynamic_prompts"), not(debug_assertions)))]
-mod language_configs_embedded {
-    use rust_embed::RustEmbed;
-
-    #[derive(RustEmbed)]
-    #[folder = "../grammars/src/"]
-    #[include = "*/config.toml"]
-    pub struct LanguageConfigs;
-}
-
-#[cfg(all(not(feature = "dynamic_prompts"), not(debug_assertions)))]
-use language_configs_embedded::LanguageConfigs;
-
 // Dev builds read grammars' language configs from the checkout at runtime
 // instead of embedding them, so no build-time path is baked into the binary.
-#[cfg(all(not(feature = "dynamic_prompts"), debug_assertions))]
-util::dev_fs_embed!(struct LanguageConfigs, "crates/grammars/src");
-#[cfg(all(not(feature = "dynamic_prompts"), debug_assertions))]
-use rust_embed::RustEmbed as _;
+#[cfg(not(feature = "dynamic_prompts"))]
+util::fs_embed! {
+    struct LanguageConfigs,
+    folder = "../grammars/src/",
+    dev = "crates/grammars/src",
+    include = ["*/config.toml"],
+}
 
 #[derive(Debug, Deserialize)]
 struct LanguageConfig {

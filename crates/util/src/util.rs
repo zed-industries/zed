@@ -672,68 +672,140 @@ pub fn dev_repo_root() -> Option<&'static std::path::Path> {
     .as_deref()
 }
 
-/// All files under a repo-relative directory, as sorted dir-relative paths with
-/// forward slashes. Backs the dev implementations of `rust_embed` asset sources.
-pub fn dev_embedded_file_names(repo_rel: &str) -> Vec<std::borrow::Cow<'static, str>> {
-    use std::borrow::Cow;
-    fn walk(dir: &std::path::Path, root: &std::path::Path, out: &mut Vec<Cow<'static, str>>) {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, root, out);
-            } else if path.file_name().is_some_and(|name| name != ".DS_Store") {
-                if let Ok(rel) = path.strip_prefix(root) {
-                    out.push(Cow::Owned(
-                        rel.components()
-                            .map(|component| component.as_os_str().to_string_lossy())
-                            .collect::<Vec<_>>()
-                            .join("/"),
-                    ));
-                }
-            }
-        }
-    }
-    let Some(root) = dev_repo_root().map(|root| root.join(repo_rel)) else {
-        return Vec::new();
-    };
-    let mut names = Vec::new();
-    walk(&root, &root, &mut names);
-    names.sort();
-    names
+/// Re-exports that back [`fs_embed!`] so a caller only needs to depend on `util`,
+/// not on `rust_embed` directly (the macro's dependency is an implementation
+/// detail). Hidden from the public API.
+#[doc(hidden)]
+pub mod __rust_embed {
+    pub use rust_embed::{EmbeddedFile, Filenames, Metadata, RustEmbed, utils};
 }
 
-/// A `rust_embed`-compatible asset source for dev builds: reads the checkout's
-/// files at runtime (live reload) instead of embedding them, and bakes no
-/// build-time path into the artifact. Pair it with the release `#[derive(RustEmbed)]`
-/// under `#[cfg(not(debug_assertions))]`; the two share one `impl AssetSource`.
-///
-/// `exclude_suffixes` drops files whose path ends with any of the given
-/// suffixes, mirroring the release `#[exclude = "*.ext"]` globs.
-#[macro_export]
-macro_rules! dev_fs_embed {
-    ($vis:vis struct $name:ident, $repo_rel:literal) => {
-        $crate::dev_fs_embed!($vis struct $name, $repo_rel, exclude_suffixes = []);
+/// Backs the dev arm of [`fs_embed!`]'s `iter`: every file under the repo-relative
+/// `dev` directory that passes the same rust_embed include/exclude globs the
+/// release derive uses, so the dev and release file sets are identical. Reuses
+/// rust_embed's own matcher rather than reimplementing glob semantics.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn __fs_embed_iter(dev: &str, includes: &[&str], excludes: &[&str]) -> rust_embed::Filenames {
+    let Some(root) = dev_repo_root().map(|root| root.join(dev)) else {
+        return rust_embed::Filenames::Dynamic(Box::new(
+            std::iter::empty::<std::borrow::Cow<'static, str>>(),
+        ));
     };
-    ($vis:vis struct $name:ident, $repo_rel:literal, exclude_suffixes = [$($suffix:literal),*]) => {
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    let names: Vec<std::borrow::Cow<'static, str>> =
+        rust_embed::utils::get_files(root.to_string_lossy().into_owned(), matcher)
+            .map(|entry| std::borrow::Cow::Owned(entry.rel_path))
+            .collect();
+    rust_embed::Filenames::Dynamic(Box::new(names.into_iter()))
+}
+
+/// Backs the dev arm of [`fs_embed!`]'s `get`: reads a single file from the
+/// checkout, returning `None` when the include/exclude globs filter it out so
+/// `get` matches release's embedded set exactly.
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn __fs_embed_get(
+    dev: &str,
+    file_path: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> Option<rust_embed::EmbeddedFile> {
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    if !matcher.is_path_included(file_path) {
+        return None;
+    }
+    let root = dev_repo_root()
+        .expect("dev asset loading requires running from within the checkout")
+        .join(dev);
+    rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
+}
+
+/// A `rust_embed` asset source that embeds files in release builds and reads them
+/// from the checkout at runtime in dev builds (edits show up on the next launch
+/// with no rebuild). One invocation replaces the previous pairing of a
+/// `#[cfg(not(debug_assertions))] #[derive(RustEmbed)]` struct with a separate
+/// dev macro, and keeps a single source of truth for the include/exclude globs.
+///
+/// It expands to both arms:
+/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding `folder`
+///   at build time, with the given `include`/`exclude` globs.
+/// * Dev (`debug_assertions`): a runtime filesystem source rooted at `dev`,
+///   applying those same globs through rust_embed's own matcher.
+///
+/// Two paths are required because the arms resolve from different bases: the
+/// release derive reads `folder` relative to the crate's `Cargo.toml` at build
+/// time (rust_embed's rule), while the dev arm resolves `dev` relative to the
+/// repository root at runtime via [`dev_repo_root`]. Baking the build-time path
+/// into the dev artifact would point at the wrong checkout from another worktree
+/// and is rejected by corgi, whose sandbox requires checkout-independent output.
+///
+/// ```ignore
+/// util::fs_embed! {
+///     pub struct Assets,
+///     folder = "../../assets",
+///     dev = "assets",
+///     include = ["fonts/**/*", "themes/**/*", "*.md"],
+///     exclude = ["themes/src/*", "*.DS_Store"],
+/// }
+/// ```
+#[macro_export]
+macro_rules! fs_embed {
+    (
+        $vis:vis struct $name:ident,
+        folder = $folder:literal,
+        dev = $dev:literal
+        $(, include = [$($include:literal),* $(,)?])?
+        $(, exclude = [$($exclude:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        // `crate_path` points the derive's generated code at util's re-export so
+        // the caller needs no direct `rust_embed` dependency.
+        #[cfg(not(debug_assertions))]
+        #[derive($crate::__rust_embed::RustEmbed)]
+        #[crate_path = "::util::__rust_embed"]
+        #[folder = $folder]
+        $($(#[include = $include])*)?
+        $($(#[exclude = $exclude])*)?
         $vis struct $name;
 
-        impl ::rust_embed::RustEmbed for $name {
-            fn get(file_path: &str) -> ::core::option::Option<::rust_embed::EmbeddedFile> {
-                let root = $crate::dev_repo_root()
-                    .expect("dev asset loading requires running from within the checkout")
-                    .join($repo_rel);
-                ::rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
+        #[cfg(debug_assertions)]
+        $vis struct $name;
+
+        // Mirror the derive's public surface: inherent `get`/`iter` (callable
+        // without the trait in scope) plus the trait impl (for generic bounds
+        // like `util::asset_str` and `handlebars::register_embed_templates`), so
+        // the two arms are interchangeable at call sites.
+        #[cfg(debug_assertions)]
+        impl $name {
+            pub fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                $crate::__fs_embed_get(
+                    $dev,
+                    file_path,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
             }
 
-            fn iter() -> ::rust_embed::Filenames {
-                ::rust_embed::Filenames::Dynamic(::std::boxed::Box::new(
-                    $crate::dev_embedded_file_names($repo_rel)
-                        .into_iter()
-                        .filter(|path| true $(&& !path.ends_with($suffix))*),
-                ))
+            pub fn iter(
+            ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
+            {
+                $crate::__fs_embed_iter($dev, &[$($($include),*)?], &[$($($exclude),*)?])
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        impl $crate::__rust_embed::RustEmbed for $name {
+            fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                <$name>::get(file_path)
+            }
+
+            fn iter() -> $crate::__rust_embed::Filenames {
+                $crate::__fs_embed_iter($dev, &[$($($include),*)?], &[$($($exclude),*)?])
             }
         }
     };

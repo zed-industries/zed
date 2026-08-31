@@ -1,21 +1,17 @@
 use anyhow::Result;
 use gpui::SharedString;
 use handlebars::Handlebars;
-#[cfg(not(debug_assertions))]
-use rust_embed::RustEmbed;
 use serde::Serialize;
 use std::sync::Arc;
 
-#[cfg(not(debug_assertions))]
-#[derive(RustEmbed)]
-#[folder = "src/templates"]
-#[include = "*.hbs"]
-struct Assets;
-
 // Dev builds read the checkout's templates at runtime instead of embedding
 // them; see the `assets` crate for the rationale.
-#[cfg(debug_assertions)]
-util::dev_fs_embed!(struct Assets, "crates/agent/src/templates");
+util::fs_embed! {
+    struct Assets,
+    folder = "src/templates",
+    dev = "crates/agent/src/templates",
+    include = ["*.hbs"],
+}
 
 pub struct Templates(Handlebars<'static>);
 

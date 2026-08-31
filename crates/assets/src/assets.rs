@@ -2,29 +2,26 @@
 
 use anyhow::Context as _;
 use gpui::{App, AssetSource, Result, SharedString};
-use rust_embed::RustEmbed;
 
-#[cfg(not(debug_assertions))]
-#[derive(RustEmbed)]
-#[folder = "../../assets"]
-#[include = "fonts/**/*"]
-#[include = "icons/**/*"]
-#[include = "images/**/*"]
-#[include = "themes/**/*"]
-#[exclude = "themes/src/*"]
-#[include = "sounds/**/*"]
-#[include = "prompts/**/*"]
-#[include = "*.md"]
-#[exclude = "*.DS_Store"]
-pub struct Assets;
-
-// Dev builds read assets from the checkout at runtime instead of embedding
-// them: edits are picked up on the next launch without a rebuild, and no
-// build-time checkout path is baked into the artifact. The latter matters for
-// corgi, whose build sandbox rejects artifacts that embed the build-time path
-// (and that path wouldn't exist at runtime anyway). See `util::dev_fs_embed!`.
-#[cfg(debug_assertions)]
-util::dev_fs_embed!(pub struct Assets, "assets");
+// Release builds embed the assets; dev builds read them from the checkout at
+// runtime so edits show up on the next launch without a rebuild and no
+// build-time path is baked in (which corgi's sandbox rejects). See
+// `util::fs_embed!`.
+util::fs_embed! {
+    pub struct Assets,
+    folder = "../../assets",
+    dev = "assets",
+    include = [
+        "fonts/**/*",
+        "icons/**/*",
+        "images/**/*",
+        "themes/**/*",
+        "sounds/**/*",
+        "prompts/**/*",
+        "*.md",
+    ],
+    exclude = ["themes/src/*", "*.DS_Store"],
+}
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>> {

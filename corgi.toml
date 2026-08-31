@@ -7,7 +7,7 @@
 # rebuild nothing.
 #
 # See the top-level Cargo.toml `[patch.crates-io]` for the local `scratch` patch
-# that lets cxx/webrtc-sys build under the sandbox, and `util::dev_fs_embed!` for
+# that lets cxx/webrtc-sys build under the sandbox, and `util::fs_embed!` for
 # how dev builds read embedded assets from the checkout instead of baking the
 # build path into the binary.
 
@@ -77,5 +77,5 @@ cli = ["../../script/uninstall.sh"]
 remote_server = ["../zed/Cargo.toml"]
 # `../zed/Cargo.toml`: build.rs reads it for ZED_PKG_VERSION. `../grammars/src`
 # and `src/prompts` are embedded in release builds; dev builds read them at
-# runtime via dev_fs_embed.
+# runtime via fs_embed.
 edit_prediction_cli = ["../zed/Cargo.toml", "../grammars/src", "src/prompts"]
