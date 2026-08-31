@@ -4181,6 +4181,71 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_diagnostic_range_spanning_line_terminator(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    // Some language servers (e.g. Pyright, ruff, pyrefly, ty on a missing `:`)
+    // report a syntax error whose range starts at the end of one line and ends
+    // at the start of the next, i.e. it spans only the line terminator itself.
+    let text = concat!(
+        "def main()\n", //
+        "    pass\n",
+    );
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.py": text })).await;
+
+    let project = Project::test(fs, [Path::new(path!("/dir"))], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/a.py"), cx)
+        })
+        .await
+        .unwrap();
+
+    project.update(cx, |project, cx| {
+        project.lsp_store().update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostic_entries(
+                    LanguageServerId(0),
+                    PathBuf::from(path!("/dir/a.py")),
+                    None,
+                    None,
+                    vec![DiagnosticEntry::new(
+                        Unclipped(PointUtf16::new(0, 11))..Unclipped(PointUtf16::new(1, 0)),
+                        Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "Expected `:`".into(),
+                            source_kind: DiagnosticSourceKind::Pushed,
+                            ..Diagnostic::default()
+                        },
+                    )],
+                    cx,
+                )
+                .unwrap();
+        })
+    });
+
+    // The range is pulled back onto the last character of the line it actually
+    // concerns, instead of covering nothing but the newline, so the diagnostic
+    // has a visible glyph to underline.
+    buffer.update(cx, |buffer, _| {
+        let chunks = chunks_with_diagnostics(buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("def main(", None),
+                (")", Some(DiagnosticSeverity::ERROR)),
+                ("\n    pass\n", None),
+            ]
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
