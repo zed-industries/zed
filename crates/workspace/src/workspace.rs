@@ -15659,6 +15659,41 @@ mod tests {
         }
     }
 
+    // Steals focus for itself as soon as it's constructed, like a real `Picker`
+    // auto-focusing its query editor when built. This is what exposes the
+    // previous-focus capture-order bug: `previous_focus_handle` must be captured
+    // before `build_view` runs, not after, or it ends up capturing the modal's
+    // own (self-stolen) focus handle instead of whatever was focused before it.
+    struct FocusStealingTestModal(FocusHandle);
+
+    impl FocusStealingTestModal {
+        fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+            let focus_handle = cx.focus_handle();
+            window.focus(&focus_handle, cx);
+            Self(focus_handle)
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for FocusStealingTestModal {}
+
+    impl Focusable for FocusStealingTestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+
+    impl ModalView for FocusStealingTestModal {}
+
+    impl Render for FocusStealingTestModal {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<FocusStealingTestModal>,
+        ) -> impl IntoElement {
+            div().track_focus(&self.0)
+        }
+    }
+
     #[gpui::test]
     async fn test_reopen_last_picker(cx: &mut gpui::TestAppContext) {
         init_test(cx);
@@ -15818,6 +15853,58 @@ mod tests {
                 .is_some()),
             "reopen with an active modal that dismisses after the action should reveal the stash"
         );
+    }
+
+    #[gpui::test]
+    async fn test_modal_restores_focus_captured_before_construction(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // Give focus to something representing whatever was focused before the
+        // modal was opened (e.g. a terminal panel, in the real bug this test guards).
+        let previously_focused_handle = workspace.update_in(cx, |_, window, cx| {
+            let handle = cx.focus_handle();
+            window.focus(&handle, cx);
+            handle
+        });
+        workspace.update_in(cx, |_, window, _cx| {
+            assert!(previously_focused_handle.is_focused(window));
+        });
+
+        // Open a modal whose construction steals focus for itself, mirroring a
+        // real `Picker` auto-focusing its query editor when built.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, FocusStealingTestModal::new);
+        });
+        cx.executor().run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<FocusStealingTestModal>(cx)
+                .is_some()
+        }));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+        });
+        cx.executor().run_until_parked();
+
+        // Focus should return to whatever was focused before the modal was
+        // opened, not to the modal's own (self-stolen) focus handle.
+        workspace.update_in(cx, |_, window, _cx| {
+            assert!(
+                previously_focused_handle.is_focused(window),
+                "dismissing the modal should restore focus to what was focused before it was \
+                 opened, even though the modal's own constructor stole focus for itself first"
+            );
+        });
     }
 
     #[gpui::test]
