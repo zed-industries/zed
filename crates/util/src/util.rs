@@ -727,29 +727,89 @@ pub fn __fs_embed_get(
 /// `#[cfg(not(debug_assertions))] #[derive(RustEmbed)]` struct with a separate
 /// dev macro, and keeps a single source of truth for the include/exclude globs.
 ///
-/// It takes one repository-root-relative directory and expands to both arms:
-/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding the
-///   directory at build time, with the given `include`/`exclude` globs.
-/// * Dev (`debug_assertions`): a runtime filesystem source that reads the same
-///   directory from the checkout (resolved via [`dev_repo_root`]), applying the
-///   same globs through rust_embed's own matcher.
+/// It expands to both arms:
+/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding `folder`
+///   at build time, with the given `include`/`exclude` globs.
+/// * Dev (`debug_assertions`): a runtime filesystem source rooted at `dev`,
+///   applying those same globs through rust_embed's own matcher.
 ///
-/// The dev arm resolves at runtime rather than baking the build-time path,
-/// because that path points at the wrong checkout from another worktree and is
-/// rejected by corgi, whose sandbox requires checkout-independent output. The
-/// release derive needs its `#[folder]` relative to the crate's `Cargo.toml`;
-/// the proc-macro derives that from the repo-relative directory (see
-/// [`util_macros::fs_embed`]), so callers give a single path.
+/// Two paths are required because the arms resolve from different bases: the
+/// release derive reads `folder` relative to the crate's `Cargo.toml` at build
+/// time (rust_embed's rule), while the dev arm resolves `dev` relative to the
+/// repository root at runtime via [`dev_repo_root`]. Baking the build-time path
+/// into the dev artifact would point at the wrong checkout from another worktree
+/// and is rejected by corgi, whose sandbox requires checkout-independent output.
 ///
 /// ```ignore
 /// util::fs_embed! {
 ///     pub struct Assets,
-///     "assets",
+///     folder = "../../assets",
+///     dev = "assets",
 ///     include = ["fonts/**/*", "themes/**/*", "*.md"],
 ///     exclude = ["themes/src/*", "*.DS_Store"],
 /// }
 /// ```
-pub use util_macros::fs_embed;
+#[macro_export]
+macro_rules! fs_embed {
+    (
+        $vis:vis struct $name:ident,
+        folder = $folder:literal,
+        dev = $dev:literal
+        $(, include = [$($include:literal),* $(,)?])?
+        $(, exclude = [$($exclude:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        // `crate_path` points the derive's generated code at util's re-export so
+        // the caller needs no direct `rust_embed` dependency.
+        #[cfg(not(debug_assertions))]
+        #[derive($crate::__rust_embed::RustEmbed)]
+        #[crate_path = "::util::__rust_embed"]
+        #[folder = $folder]
+        $($(#[include = $include])*)?
+        $($(#[exclude = $exclude])*)?
+        $vis struct $name;
+
+        #[cfg(debug_assertions)]
+        $vis struct $name;
+
+        // Mirror the derive's public surface: inherent `get`/`iter` (callable
+        // without the trait in scope) plus the trait impl (for generic bounds
+        // like `util::asset_str` and `handlebars::register_embed_templates`), so
+        // the two arms are interchangeable at call sites.
+        #[cfg(debug_assertions)]
+        impl $name {
+            pub fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                $crate::__fs_embed_get(
+                    $dev,
+                    file_path,
+                    &[$($($include),*)?],
+                    &[$($($exclude),*)?],
+                )
+            }
+
+            pub fn iter(
+            ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
+            {
+                $crate::__fs_embed_iter($dev, &[$($($include),*)?], &[$($($exclude),*)?])
+            }
+        }
+
+        #[cfg(debug_assertions)]
+        impl $crate::__rust_embed::RustEmbed for $name {
+            fn get(
+                file_path: &str,
+            ) -> ::core::option::Option<$crate::__rust_embed::EmbeddedFile> {
+                <$name>::get(file_path)
+            }
+
+            fn iter() -> $crate::__rust_embed::Filenames {
+                $crate::__fs_embed_iter($dev, &[$($($include),*)?], &[$($($exclude),*)?])
+            }
+        }
+    };
+}
 
 pub trait RangeExt<T> {
     fn sorted(&self) -> Self;
