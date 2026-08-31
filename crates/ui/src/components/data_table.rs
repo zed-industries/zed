@@ -667,17 +667,16 @@ pub fn render_table_row(
             .all(|width| matches!(width, Length::Definite(DefiniteLength::Absolute(_))))
     });
 
-    let mut filtered_cells: Vec<(AnyElement, Option<Length>)> = items
-        .map(IntoElement::into_any_element)
+    let cell_iter = items
         .into_vec()
         .into_iter()
+        .map(IntoElement::into_any_element)
         .zip(column_widths.into_vec())
         .enumerate()
         .filter(|(idx, _)| column_is_visible(column_filter, *idx))
-        .map(|(_, pair)| pair)
-        .collect();
+        .map(|(_, pair)| pair);
 
-    let render_section = |cells: Vec<(AnyElement, Option<Length>)>| {
+    let render_section = |cells: Box<dyn Iterator<Item = (AnyElement, Option<Length>)>>| {
         div()
             .flex()
             .flex_row()
@@ -691,9 +690,7 @@ pub fn render_table_row(
                 })
             })
             .children(
-                cells
-                    .into_iter()
-                    .map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
+                cells.map(|(cell, width)| render_cell(width, cell, &table_context, cx)),
             )
     };
 
@@ -704,6 +701,9 @@ pub fn render_table_row(
             .filter(|&idx| column_is_visible(column_filter, idx))
             .count();
 
+        let mut cells: Vec<_> = cell_iter.collect();
+        let scrollable_cells = cells.split_off(pinned_visible);
+
         // Scrollable section: overflow_x_scroll + track_scroll so GPUI handles the visual
         // shift natively without requiring per-scroll re-renders of list items.
         // restrict_scroll_to_axis lets vertical scroll events pass through to the list.
@@ -713,20 +713,18 @@ pub fn render_table_row(
             .overflow_x_scroll()
             .restrict_scroll_to_axis()
             .flex()
-            .child(render_section(
-                filtered_cells.drain(pinned_visible..).collect(),
-            ));
+            .child(render_section(Box::new(scrollable_cells.into_iter())));
 
         if let Some(ref handle) = table_context.h_scroll_handle {
             scrollable_section = scrollable_section.track_scroll(handle);
         }
 
-        let pinned_section = render_section(filtered_cells).flex_shrink_0();
+        let pinned_section = render_section(Box::new(cells.into_iter())).flex_shrink_0();
 
         row = row.child(pinned_section).child(scrollable_section);
     } else {
         row = row.child(
-            render_section(filtered_cells).when(!is_absolute_width_table, |this| this.size_full()),
+            render_section(Box::new(cell_iter)).when(!is_absolute_width_table, |this| this.size_full()),
         );
     }
 
