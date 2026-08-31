@@ -148,7 +148,7 @@ mod tests {
     use std::cell::Cell;
 
     use collections::HashMap;
-    use gpui::{InvalidKeystrokeError, PlatformKeyboardMapper};
+    use gpui::PlatformKeyboardMapper;
 
     use super::*;
 
@@ -184,25 +184,39 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_map_pending_keystrokes_uses_platform_mapper() -> Result<(), InvalidKeystrokeError> {
+    #[gpui::test]
+    fn test_map_pending_keystrokes_uses_platform_mapper(cx: &mut App) {
         let keyboard_mapper = TestKeyboardMapper {
             call_count: Cell::new(0),
         };
-        let keystroke = Keystroke::parse("ctrl-@")?;
+        let keystroke = Keystroke::parse("ctrl-@").expect("valid test keystroke");
 
         let mapped = map_pending_keystrokes(std::slice::from_ref(&keystroke), &keyboard_mapper);
 
         assert_eq!(keyboard_mapper.call_count.get(), 1);
-        let Some(mapped) = mapped.first() else {
+        let Some(mapped_keystroke) = mapped.first() else {
             panic!("expected mapped pending keystroke");
         };
-        assert_eq!(mapped.inner(), &keystroke);
+        assert_eq!(mapped_keystroke.inner(), &keystroke);
         #[cfg(target_os = "windows")]
         {
-            assert_eq!(mapped.modifiers(), &gpui::Modifiers::control_shift());
-            assert_eq!(mapped.key(), "2");
+            assert_eq!(
+                mapped_keystroke.modifiers(),
+                &gpui::Modifiers::control_shift()
+            );
+            assert_eq!(mapped_keystroke.key(), "2");
         }
-        Ok(())
+
+        let expected_display_text = if cfg!(target_os = "windows") {
+            "Ctrl-Shift-2"
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            "Ctrl-@"
+        } else {
+            "Control-@"
+        };
+        assert_eq!(
+            ui::text_for_keybinding_keystrokes(&mapped, cx),
+            expected_display_text
+        );
     }
 }
