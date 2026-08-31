@@ -9,10 +9,10 @@ use editor::{
     ui_scrollbar_settings_from_raw,
 };
 use gpui::{
-    Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    Action, AnyElement, App, ClipboardEntry, ClipboardItem, DismissEvent, Entity, EventEmitter,
+    ExternalPaths, FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription,
+    Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -25,7 +25,7 @@ use settings::{
 use std::{
     any::Any,
     cmp,
-    ops::Range as StdRange,
+    ops::{Range as StdRange, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -76,6 +76,56 @@ fn viewport_line_for_point(point: Point, display_offset: usize) -> Option<usize>
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+
+const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
+    "agent", // Cursor CLI and Grok both use this command.
+    "agy",
+    "aider",
+    "amp",
+    "claude",
+    "codex",
+    "copilot",
+    "crush",
+    "devin",
+    "droid",
+    "gemini",
+    "goose",
+    "grok",
+    "openhands",
+    "opencode",
+    "pi",
+    "qwen",
+];
+
+pub fn is_known_terminal_agent_command(command: &str) -> bool {
+    KNOWN_TERMINAL_AGENT_COMMANDS.contains(&command)
+}
+
+pub fn format_terminal_selection_reference(
+    project: &Project,
+    project_path: &project::ProjectPath,
+    line_range: &RangeInclusive<u32>,
+    working_directory: Option<&Path>,
+    cx: &App,
+) -> String {
+    let path_style = project.path_style(cx);
+    let absolute_path = project.absolute_path(project_path, cx);
+    let path = match (absolute_path, working_directory) {
+        (Some(absolute_path), Some(working_directory)) => path_style
+            .strip_prefix(&absolute_path, working_directory)
+            .map(|relative| relative.display(path_style).into_owned())
+            .unwrap_or_else(|| absolute_path.to_string_lossy().into_owned()),
+        (Some(absolute_path), None) => absolute_path.to_string_lossy().into_owned(),
+        (None, _) => project_path.path.display(path_style).into_owned(),
+    };
+    let start_line = line_range.start() + 1;
+    let end_line = line_range.end() + 1;
+    if start_line == end_line {
+        format!("{path}:{start_line}")
+    } else {
+        format!("{path}:{start_line}-{end_line}")
+    }
+}
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -914,6 +964,30 @@ impl TerminalView {
             return;
         };
 
+        let (foreground_process_command, working_directory) = {
+            let terminal = self.terminal.read(cx);
+            (
+                terminal.foreground_process_command_name(),
+                terminal.working_directory(),
+            )
+        };
+        let selection_reference = self.project.upgrade().and_then(|project| {
+            format_clipboard_selection_for_terminal_agent(
+                &clipboard,
+                foreground_process_command.as_deref(),
+                project.read(cx),
+                working_directory.as_deref(),
+                cx,
+            )
+        });
+
+        if let Some(selection_reference) = selection_reference {
+            self.terminal.update(cx, |terminal, _| {
+                terminal.paste(&selection_reference);
+            });
+            return;
+        }
+
         match clipboard.entries().first() {
             Some(ClipboardEntry::Image(image)) if !image.bytes.is_empty() => {
                 self.forward_ctrl_v(cx);
@@ -1103,6 +1177,42 @@ impl TerminalView {
                 }),
         )
     }
+}
+
+fn format_clipboard_selection_for_terminal_agent(
+    clipboard: &ClipboardItem,
+    foreground_process_command: Option<&str>,
+    project: &Project,
+    working_directory: Option<&Path>,
+    cx: &App,
+) -> Option<String> {
+    if !foreground_process_command.is_some_and(is_known_terminal_agent_command) {
+        return None;
+    }
+
+    let selections = clipboard.entries().iter().find_map(|entry| match entry {
+        ClipboardEntry::String(text) => text.metadata_json::<Vec<editor::ClipboardSelection>>(),
+        _ => None,
+    })?;
+    let [selection] = selections.as_slice() else {
+        return None;
+    };
+    let file_path = selection.file_path.as_deref()?;
+    let line_range = selection.line_range.as_ref()?;
+    if line_range.start() == line_range.end() {
+        return None;
+    }
+    let project_path = project.project_path_for_absolute_path(file_path, cx)?;
+    Some(format!(
+        "{} ",
+        format_terminal_selection_reference(
+            project,
+            &project_path,
+            line_range,
+            working_directory,
+            cx,
+        )
+    ))
 }
 
 fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
@@ -2170,7 +2280,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{ClipboardItem, TestAppContext, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2187,6 +2297,133 @@ mod tests {
         }
         text.push(' ');
         text
+    }
+
+    #[test]
+    fn test_is_known_terminal_agent_command() {
+        assert!(is_known_terminal_agent_command("claude"));
+        assert!(is_known_terminal_agent_command("codex"));
+        assert!(is_known_terminal_agent_command("opencode"));
+        assert!(!is_known_terminal_agent_command("cargo"));
+        assert!(!is_known_terminal_agent_command("internal-agent"));
+    }
+
+    #[gpui::test]
+    async fn test_format_clipboard_selection_for_terminal_agent(cx: &mut TestAppContext) {
+        let (project, _workspace) = init_test(cx).await;
+        let (worktree, _) = create_folder_wt(project.clone(), "/project", cx).await;
+        let file_entry = create_file_in_worktree(worktree.clone(), "main.rs", cx).await;
+
+        let selection = editor::ClipboardSelection {
+            len: 12,
+            is_entire_line: false,
+            first_line_indent: 0,
+            file_path: Some(PathBuf::from("/project/main.rs")),
+            line_range: Some(9..=41),
+        };
+        let clipboard = ClipboardItem::new_string_with_json_metadata(
+            "selected text".to_string(),
+            vec![selection.clone()],
+        );
+
+        cx.read(|cx| {
+            let project = project.read(cx);
+            let project_path = ProjectPath {
+                worktree_id: worktree.read(cx).id(),
+                path: file_entry.path.clone(),
+            };
+            assert_eq!(
+                format_terminal_selection_reference(
+                    project,
+                    &project_path,
+                    &(4..=4),
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                "main.rs:5"
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                Some("main.rs:10-42 ".to_string())
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/other")),
+                    cx,
+                ),
+                Some("/project/main.rs:10-42 ".to_string())
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &clipboard,
+                    Some("zsh"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+
+            let single_line_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![editor::ClipboardSelection {
+                    line_range: Some(9..=9),
+                    ..selection.clone()
+                }],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &single_line_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+
+            let multiple_selection_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![selection.clone(), selection.clone()],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &multiple_selection_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+
+            let external_file_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![editor::ClipboardSelection {
+                    file_path: Some(PathBuf::from("/other/main.rs")),
+                    ..selection
+                }],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &external_file_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                None
+            );
+        });
     }
 
     fn assert_drop_writes_to_terminal(

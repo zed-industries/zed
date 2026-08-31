@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
+use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
@@ -88,7 +88,10 @@ use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 
 use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
-use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
+use terminal_view::{
+    TerminalView, format_terminal_selection_reference, is_known_terminal_agent_command,
+    terminal_panel::TerminalPanel,
+};
 use text::OffsetRangeExt;
 use theme_settings::ThemeSettings;
 use ui::{
@@ -109,29 +112,6 @@ const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
 const TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
-const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
-    "agent", // Unfortunately, both Cursor cli + grok
-    "agy",
-    "aider",
-    "amp",
-    "claude",
-    "codex",
-    "copilot",
-    "crush",
-    "devin",
-    "droid",
-    "gemini",
-    "goose",
-    "grok",
-    "openhands",
-    "opencode",
-    "pi",
-    "qwen",
-];
-
-fn is_known_terminal_agent_command(command: &str) -> bool {
-    KNOWN_TERMINAL_AGENT_COMMANDS.contains(&command)
-}
 
 fn terminal_program_to_report(
     last_observed_program: &mut Option<String>,
@@ -769,7 +749,7 @@ fn format_selection_for_terminal(
 ) -> String {
     match selection {
         AgentContextSelection::Editor(ranges) => {
-            let path_style = project.read(cx).path_style(cx);
+            let project = project.read(cx);
             let mut parts: Vec<String> = Vec::new();
             for (buffer, range) in ranges {
                 let buffer = buffer.read(cx);
@@ -779,14 +759,13 @@ fn format_selection_for_terminal(
                 let snapshot = buffer.snapshot();
                 let point_range = range.to_point(&snapshot);
                 let line_range = point_range.start.row..=point_range.end.row;
-                let path = mention_path_for_terminal(
+                parts.push(format_terminal_selection_reference(
                     project,
                     &project_path,
+                    &line_range,
                     working_directory,
-                    path_style,
                     cx,
-                );
-                parts.push(format!("{path}{}", line_range_suffix(&line_range)));
+                ));
             }
             if parts.is_empty() {
                 String::new()
@@ -796,25 +775,6 @@ fn format_selection_for_terminal(
             }
         }
         AgentContextSelection::Terminal(texts) => texts.join("\n"),
-    }
-}
-
-/// Path for a terminal mention: relative to the terminal cwd if possible, else absolute.
-fn mention_path_for_terminal(
-    project: &Entity<Project>,
-    project_path: &ProjectPath,
-    working_directory: Option<&std::path::Path>,
-    path_style: util::paths::PathStyle,
-    cx: &App,
-) -> String {
-    let abs_path = project.read(cx).absolute_path(project_path, cx);
-    match (abs_path, working_directory) {
-        (Some(abs_path), Some(working_directory)) => path_style
-            .strip_prefix(&abs_path, working_directory)
-            .map(|relative| relative.display(path_style).into_owned())
-            .unwrap_or_else(|| abs_path.to_string_lossy().into_owned()),
-        (Some(abs_path), None) => abs_path.to_string_lossy().into_owned(),
-        (None, _) => project_path.path.display(path_style).into_owned(),
     }
 }
 
@@ -6910,14 +6870,6 @@ mod tests {
                 }
             });
         });
-    }
-
-    #[test]
-    fn test_is_known_terminal_agent_command() {
-        assert!(is_known_terminal_agent_command("claude"));
-        assert!(is_known_terminal_agent_command("codex"));
-        assert!(!is_known_terminal_agent_command("cargo"));
-        assert!(!is_known_terminal_agent_command("internal-agent"));
     }
 
     #[test]
