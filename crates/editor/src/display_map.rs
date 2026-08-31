@@ -2707,6 +2707,7 @@ pub mod tests {
     use lsp::LanguageServerId;
 
     use futures::stream::StreamExt;
+    use multi_buffer::PathKey;
     use rand::{Rng, prelude::*};
     use settings::{SettingsContent, SettingsStore};
     use std::{env, sync::Arc};
@@ -4118,6 +4119,197 @@ pub mod tests {
             chunks.push((chunk.text.to_string(), syntax_color, highlight_color));
         }
         chunks
+    }
+
+    /// Asserts that every header-like block in the snapshot references a
+    /// buffer that is still present in the multibuffer: the invariant whose
+    /// violation panics at render time with "buffer snapshot not found for
+    /// excerpt boundary" (ZED-7G6).
+    #[track_caller]
+    fn assert_headers_resolve(snapshot: &DisplaySnapshot) {
+        let end_row = DisplayRow(snapshot.max_point().row().0 + 1);
+        for (row, block) in snapshot.blocks_in_range(DisplayRow(0)..end_row) {
+            let excerpt = match block {
+                Block::BufferHeader { excerpt, .. } | Block::ExcerptBoundary { excerpt, .. } => {
+                    excerpt
+                }
+                Block::FoldedBuffer { first_excerpt, .. } => first_excerpt,
+                _ => continue,
+            };
+            assert!(
+                snapshot
+                    .buffer_snapshot()
+                    .buffer_for_id(excerpt.buffer_id())
+                    .is_some(),
+                "stale header block {:?} at {row:?} references buffer {:?}, \
+                 which is no longer in the multibuffer",
+                block.id(),
+                excerpt.buffer_id(),
+            );
+        }
+    }
+
+    /// Deterministic end-to-end regression test for ZED-7G6 ("buffer snapshot
+    /// not found for excerpt boundary"), driving a real `DisplayMap` with
+    /// ordinary operations. In a diff-backed multibuffer with all hunks
+    /// expanded, two folds inside an expanded deleted hunk are ordered only by
+    /// their diff base anchors. Replacing the diff's base text used to invert
+    /// that order (comparison filtered diff base anchors on validity, which
+    /// the base edit revoked for one anchor of the pair), silently unsorting
+    /// the fold map's persistent fold tree; subsequent syncs walked it with
+    /// forward-only cursors and emitted edits that misdescribed the changed
+    /// rows, until removing a buffer left its header block referencing a
+    /// buffer absent from the snapshot -- the state whose render-time
+    /// resolution panics.
+    ///
+    /// On pre-fix code this fails in the display map layers' internal
+    /// checks; in production builds, where those checks don't run, the same
+    /// corruption propagated to the stale header instead.
+    #[gpui::test]
+    async fn test_removing_buffer_removes_header_after_diff_base_changes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        fn excerpt_buffer(
+            multibuffer: &Entity<MultiBuffer>,
+            path: u64,
+            buffer: &Entity<Buffer>,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            multibuffer.update(cx, |multibuffer, cx| {
+                let max_point = buffer.read(cx).max_point();
+                multibuffer.set_excerpts_for_path(
+                    PathKey::sorted(path),
+                    buffer.clone(),
+                    [Point::zero()..max_point],
+                    0,
+                    cx,
+                );
+            });
+            cx.run_until_parked();
+        }
+
+        async fn set_base_text(
+            diff: &Entity<buffer_diff::BufferDiff>,
+            buffer: &Entity<Buffer>,
+            base_text: &str,
+            cx: &mut gpui::TestAppContext,
+        ) {
+            let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+            diff.update(cx, |diff, cx| {
+                diff.set_base_text(Some(base_text.to_string().into()), snapshot, cx)
+            })
+            .await;
+            cx.run_until_parked();
+        }
+
+        #[track_caller]
+        fn assert_headers(display_map: &Entity<DisplayMap>, cx: &mut gpui::TestAppContext) {
+            cx.run_until_parked();
+            let snapshot = display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+            assert_headers_resolve(&snapshot);
+        }
+
+        let buffer_a = cx.new(|cx| Buffer::local("bbb\nccc\nddd\n", cx));
+        let diff_a = cx.new(|cx| {
+            buffer_diff::BufferDiff::new_with_base_text(
+                "DEL1\nDEL2\nbbb\nccc\nddd\n",
+                &buffer_a.read(cx).text_snapshot(),
+                cx,
+            )
+        });
+        let buffer_b = cx.new(|cx| Buffer::local("xxx\nyyy\n", cx));
+        let buffer_b_id = buffer_b.read_with(cx, |buffer, _| buffer.remote_id());
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_all_diff_hunks_expanded(cx);
+            multibuffer
+        });
+        excerpt_buffer(&multibuffer, 0, &buffer_a, cx);
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.add_diff(diff_a.clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                multibuffer.clone(),
+                test_font(),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        assert_headers(&display_map, cx);
+
+        // Two folds inside the expanded deleted hunk (rows 0 and 1 are
+        // materialized from the base text), sharing a buffer position and
+        // ordered only by their diff base anchors: a narrow fold within
+        // "DEL1", then a wider fold from "DEL2" into the buffer's own rows.
+        display_map.update(cx, |display_map, cx| {
+            display_map.fold(
+                vec![
+                    Crease::simple(Point::new(0, 1)..Point::new(1, 0), FoldPlaceholder::test()),
+                    Crease::simple(Point::new(1, 1)..Point::new(2, 2), FoldPlaceholder::test()),
+                ],
+                cx,
+            );
+        });
+        assert_headers(&display_map, cx);
+
+        // Keep "DEL1" (the first fold's base anchors survive) but delete
+        // "DEL2" (the second fold's start anchor is tombstoned): the folds'
+        // relative order must not change.
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        assert_headers(&display_map, cx);
+
+        // Churn the buffers, the diff base, and buffer B's excerpts the way
+        // the original fuzz sequence did, syncing the display map after each
+        // group of operations.
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(4..5, "")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(1..1, "Q\n")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        set_base_text(&diff_a, &buffer_a, "DEL1\nbbb\nccc\nddd\n", cx).await;
+        assert_headers(&display_map, cx);
+
+        set_base_text(&diff_a, &buffer_a, "DEL2\nbbb\nccc\nddd\n", cx).await;
+        buffer_a.update(cx, |buffer, cx| {
+            buffer.edit([(2..2, "Q\n")], None, cx);
+        });
+        assert_headers(&display_map, cx);
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        excerpt_buffer(&multibuffer, 1, &buffer_b, cx);
+        assert_headers(&display_map, cx);
+
+        // Removing B must remove its header block: with the fold tree
+        // corrupted, the removal edit's rows were misdescribed by the time
+        // they reached the block map, B's header row went uncovered, and the
+        // header survived pointing at a buffer absent from the snapshot.
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts_for_buffer(buffer_b_id, cx);
+        });
+        assert_headers(&display_map, cx);
     }
 
     fn init_test(cx: &mut App, f: &dyn Fn(&mut SettingsContent)) {

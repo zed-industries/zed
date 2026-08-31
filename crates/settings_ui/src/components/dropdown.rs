@@ -8,37 +8,47 @@ use ui::{
 };
 
 #[derive(IntoElement)]
-pub struct EnumVariantDropdown<T>
-where
-    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
-{
+pub struct EnumVariantDropdown {
     id: ElementId,
-    current_value: T,
-    variants: &'static [T],
+    selected_index: usize,
     labels: &'static [&'static str],
     should_do_title_case: bool,
     tab_index: Option<isize>,
     disabled: bool,
     aria_label: Option<SharedString>,
     aria_description: Option<SharedString>,
-    on_change: Rc<dyn Fn(T, &mut ui::Window, &mut App) + 'static>,
+    on_change: Rc<dyn Fn(usize, &mut ui::Window, &mut App) + 'static>,
 }
 
-impl<T> EnumVariantDropdown<T>
-where
-    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
-{
-    pub fn new(
+impl EnumVariantDropdown {
+    pub fn new<T>(
         id: impl Into<ElementId>,
         current_value: T,
         variants: &'static [T],
         labels: &'static [&'static str],
         on_change: impl Fn(T, &mut ui::Window, &mut App) + 'static,
+    ) -> Self
+    where
+        T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
+    {
+        let selected_index = variants
+            .iter()
+            .position(|v| *v == current_value)
+            .unwrap_or(0);
+        Self::new_indexed(id, selected_index, labels, move |index, window, cx| {
+            on_change(variants[index], window, cx)
+        })
+    }
+
+    pub fn new_indexed(
+        id: impl Into<ElementId>,
+        selected_index: usize,
+        labels: &'static [&'static str],
+        on_change: impl Fn(usize, &mut ui::Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
-            current_value,
-            variants,
+            selected_index,
             labels,
             should_do_title_case: true,
             tab_index: None,
@@ -79,33 +89,25 @@ where
     }
 }
 
-impl<T> RenderOnce for EnumVariantDropdown<T>
-where
-    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + Sync + 'static,
-{
+impl RenderOnce for EnumVariantDropdown {
     fn render(self, window: &mut ui::Window, cx: &mut ui::App) -> impl gpui::IntoElement {
-        let current_value_label = self.labels[self
-            .variants
-            .iter()
-            .position(|v| *v == self.current_value)
-            .unwrap()];
+        let current_value_label = self.labels[self.selected_index];
 
         let context_menu = window.use_keyed_state(current_value_label, cx, |window, cx| {
             ContextMenu::new(window, cx, move |mut menu, _, _| {
-                for (&value, &label) in std::iter::zip(self.variants, self.labels) {
+                for (index, &label) in self.labels.iter().enumerate() {
                     let on_change = self.on_change.clone();
-                    let current_value = self.current_value;
                     menu = menu.toggleable_entry(
                         if self.should_do_title_case {
                             label.to_title_case()
                         } else {
                             label.to_string()
                         },
-                        value == current_value,
+                        index == self.selected_index,
                         IconPosition::End,
                         None,
                         move |window, cx| {
-                            on_change(value, window, cx);
+                            on_change(index, window, cx);
                         },
                     );
                 }

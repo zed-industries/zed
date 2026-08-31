@@ -115,6 +115,7 @@ pub struct Buffer {
     was_dirty_before_starting_transaction: Option<bool>,
     reload_task: Option<Task<Result<()>>>,
     language: Option<Arc<Language>>,
+    content_language_detection_enabled: bool,
     autoindent_requests: Vec<Arc<AutoindentRequest>>,
     wait_for_autoindent_txs: Vec<oneshot::Sender<()>>,
     pending_autoindent: Option<Task<()>>,
@@ -1144,6 +1145,7 @@ impl Buffer {
             wait_for_autoindent_txs: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
+            content_language_detection_enabled: false,
             remote_selections: Default::default(),
             diagnostics: Default::default(),
             diagnostics_timestamp: Lamport::MIN,
@@ -1293,6 +1295,7 @@ impl Buffer {
                     merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
+                content_language_detection_enabled: self.content_language_detection_enabled,
                 has_conflict: self.has_conflict,
                 has_unsaved_edits: Cell::new(self.has_unsaved_edits.get_mut().clone()),
                 _subscriptions: vec![cx.subscribe(&this, Self::on_base_buffer_event)],
@@ -1474,6 +1477,14 @@ impl Buffer {
     /// Sets whether the buffer has a Byte Order Mark.
     pub fn set_has_bom(&mut self, has_bom: bool) {
         self.has_bom = has_bom;
+    }
+
+    pub fn set_content_language_detection_enabled(&mut self, enabled: bool) {
+        self.content_language_detection_enabled = enabled;
+    }
+
+    pub fn content_language_detection_enabled(&self) -> bool {
+        self.content_language_detection_enabled
     }
 
     /// Assign a language to the buffer.
@@ -5187,13 +5198,30 @@ impl BufferSnapshot {
     where
         T: 'a + Clone + ToOffset,
     {
+        self.diagnostic_entries_in_range_with_server_id(search_range, reversed)
+            .map(|(_, entry)| entry)
+    }
+
+    /// Returns the stored entries that intersect the given range along with the
+    /// language server that produced each diagnostic.
+    pub fn diagnostic_entries_in_range_with_server_id<'a, T>(
+        &'a self,
+        search_range: Range<T>,
+        reversed: bool,
+    ) -> impl 'a + Iterator<Item = (LanguageServerId, &'a DiagnosticEntry<Anchor>)>
+    where
+        T: 'a + Clone + ToOffset,
+    {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
-            .map(|(_, collection)| {
-                collection
-                    .entries_in_range::<T>(search_range.clone(), self, true, reversed)
-                    .peekable()
+            .map(|(server_id, collection)| {
+                (
+                    *server_id,
+                    collection
+                        .entries_in_range::<T>(search_range.clone(), self, true, reversed)
+                        .peekable(),
+                )
             })
             .collect();
 
@@ -5201,7 +5229,7 @@ impl BufferSnapshot {
             let (next_ix, _) = iterators
                 .iter_mut()
                 .enumerate()
-                .flat_map(|(ix, iter)| Some((ix, iter.peek()?)))
+                .flat_map(|(ix, (_, iter))| Some((ix, iter.peek()?)))
                 .min_by(|(_, a), (_, b)| {
                     let cmp = a
                         .range
@@ -5213,7 +5241,9 @@ impl BufferSnapshot {
                         .then(a.diagnostic.group_id.cmp(&b.diagnostic.group_id));
                     if reversed { cmp.reverse() } else { cmp }
                 })?;
-            iterators[next_ix].next()
+            let (server_id, iterator) = iterators.get_mut(next_ix)?;
+            let server_id = *server_id;
+            iterator.next().map(|entry| (server_id, entry))
         })
     }
 
@@ -5880,7 +5910,7 @@ pub(crate) fn contiguous_ranges(
     })
 }
 
-#[derive(Default, Debug)]
+#[derive(Clone, Default, Debug)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
     scope_context: Option<CharScopeContext>,
