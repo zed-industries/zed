@@ -360,6 +360,10 @@ pub enum Event {
         notification_id: SharedString,
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
+    LanguageDetected {
+        buffer: Entity<Buffer>,
+        language_name: LanguageName,
+    },
     LanguageNotFound(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
@@ -3702,10 +3706,14 @@ impl Project {
                 buffer,
                 new_language,
             } => {
-                let Some(_) = new_language else {
+                if let Some(language) = new_language {
+                    cx.emit(Event::LanguageDetected {
+                        buffer: buffer.clone(),
+                        language_name: language.name(),
+                    });
+                } else {
                     cx.emit(Event::LanguageNotFound(buffer.clone()));
-                    return;
-                };
+                }
             }
             LspStoreEvent::RefreshInlayHints { server_id } => cx.emit(Event::RefreshInlayHints {
                 server_id: *server_id,

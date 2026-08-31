@@ -3,9 +3,10 @@ use std::sync::{Arc, OnceLock};
 
 use db::kvp::KeyValueStore;
 use editor::Editor;
-use extension_host::ExtensionStore;
+use extension_host::{ExtensionSettings, ExtensionStore};
 use gpui::{AppContext as _, Context, Entity, SharedString, Window};
-use language::Buffer;
+use language::{Buffer, LanguageName};
+use settings::Settings;
 use ui::prelude::*;
 use util::ResultExt;
 use util::rel_path::RelPath;
@@ -81,6 +82,40 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("zig", &["zig"]),
 ];
 
+struct OptionalExtensionSuggestion {
+    extension_id: &'static str,
+    languages: &'static [&'static str],
+}
+
+const OPTIONAL_EXTENSION_SUGGESTIONS: &[OptionalExtensionSuggestion] =
+    &[OptionalExtensionSuggestion {
+        extension_id: "emmet",
+        // Extension manifests are not available until installation, so keep this in sync with the
+        // languages in the Emmet extension's extension.toml.
+        languages: &[
+            "Angular",
+            "Blade",
+            "CSS",
+            "Django",
+            "ERB",
+            "Elixir",
+            "HEEx",
+            "HTML",
+            "HTML+ERB",
+            "JavaScript",
+            "Jinja2",
+            "LESS",
+            "Liquid",
+            "Nunjucks",
+            "PHP",
+            "SCSS",
+            "Statamic Antlers",
+            "TSX",
+            "Twig",
+            "Vue.js",
+        ],
+    }];
+
 fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
     static SUGGESTIONS_BY_PATH_SUFFIX: OnceLock<HashMap<&str, Arc<str>>> = OnceLock::new();
     SUGGESTIONS_BY_PATH_SUFFIX.get_or_init(|| {
@@ -99,7 +134,7 @@ fn suggested_extensions() -> &'static HashMap<&'static str, Arc<str>> {
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct SuggestedExtension {
     pub extension_id: Arc<str>,
-    pub file_name_or_extension: Arc<str>,
+    pub display_name: Arc<str>,
 }
 
 /// Returns the suggested extension for the given [`Path`].
@@ -107,7 +142,7 @@ fn suggested_extension(path: &RelPath) -> Option<SuggestedExtension> {
     let file_extension: Option<Arc<str>> = path.extension().map(|extension| extension.into());
     let file_name: Option<Arc<str>> = path.file_name().map(|name| name.into());
 
-    let (file_name_or_extension, extension_id) = None
+    let (display_name, extension_id) = None
         // We suggest against file names first, as these suggestions will be more
         // specific than ones based on the file extension.
         .or_else(|| {
@@ -127,33 +162,104 @@ fn suggested_extension(path: &RelPath) -> Option<SuggestedExtension> {
 
     Some(SuggestedExtension {
         extension_id: extension_id.clone(),
-        file_name_or_extension,
+        display_name,
     })
 }
 
-fn language_extension_key(extension_id: &str) -> String {
+fn suggested_extension_for_language(
+    language_name: &LanguageName,
+    suggestions: &[OptionalExtensionSuggestion],
+    mut extension_is_eligible: impl FnMut(&str) -> bool,
+) -> Option<SuggestedExtension> {
+    suggestions
+        .iter()
+        .filter(|suggestion| suggestion.languages.contains(&language_name.as_ref()))
+        .find(|suggestion| extension_is_eligible(suggestion.extension_id))
+        .map(|suggestion| SuggestedExtension {
+            extension_id: suggestion.extension_id.into(),
+            display_name: language_name.as_ref().into(),
+        })
+}
+
+fn extension_suggestion_key(extension_id: &str) -> String {
     format!("{}_extension_suggest", extension_id)
 }
 
-pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Context<Workspace>) {
+pub(crate) fn suggest_for_path(
+    buffer: Entity<Buffer>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     let Some(file) = buffer.read(cx).file().cloned() else {
         return;
     };
 
     let Some(SuggestedExtension {
         extension_id,
-        file_name_or_extension,
+        display_name,
     }) = suggested_extension(file.path())
     else {
         return;
     };
 
-    let key = language_extension_key(&extension_id);
+    let key = extension_suggestion_key(&extension_id);
     let kvp = KeyValueStore::global(cx);
     let Ok(None) = kvp.read_kvp(&key) else {
         return;
     };
 
+    show_suggestion(buffer, extension_id, display_name, window, cx);
+}
+
+pub(crate) fn suggest_for_language(
+    buffer: Entity<Buffer>,
+    language_name: &LanguageName,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let extension_store = ExtensionStore::global(cx);
+    let extension_store = extension_store.read(cx);
+    let extension_settings = ExtensionSettings::get_global(cx);
+    let kvp = KeyValueStore::global(cx);
+
+    let Some(SuggestedExtension {
+        extension_id,
+        display_name,
+    }) = suggested_extension_for_language(
+        language_name,
+        OPTIONAL_EXTENSION_SUGGESTIONS,
+        |extension_id| {
+            !extension_store
+                .installed_extensions()
+                .contains_key(extension_id)
+                && !extension_store
+                    .outstanding_operations()
+                    .contains_key(extension_id)
+                && extension_settings
+                    .auto_install_extensions
+                    .get(extension_id)
+                    .copied()
+                    != Some(true)
+                && matches!(
+                    kvp.read_kvp(&extension_suggestion_key(extension_id)),
+                    Ok(None)
+                )
+        },
+    )
+    else {
+        return;
+    };
+
+    show_suggestion(buffer, extension_id, display_name, window, cx);
+}
+
+fn show_suggestion(
+    buffer: Entity<Buffer>,
+    extension_id: Arc<str>,
+    display_name: Arc<str>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     cx.on_next_frame(window, move |workspace, _, cx| {
         let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
             return;
@@ -174,7 +280,7 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
                 MessageNotification::new(
                     format!(
                         "Do you want to install the recommended '{}' extension for '{}' files?",
-                        extension_id, file_name_or_extension
+                        extension_id, display_name
                     ),
                     cx,
                 )
@@ -195,7 +301,7 @@ pub(crate) fn suggest(buffer: Entity<Buffer>, window: &mut Window, cx: &mut Cont
                 .secondary_icon(IconName::Close)
                 .secondary_icon_color(Color::Error)
                 .secondary_on_click(move |_window, cx| {
-                    let key = language_extension_key(&extension_id);
+                    let key = extension_suggestion_key(&extension_id);
                     let kvp = KeyValueStore::global(cx);
                     cx.background_spawn(async move {
                         kvp.write_kvp(key, "dismissed".to_string()).await.log_err()
@@ -218,35 +324,108 @@ mod tests {
             suggested_extension(rel_path("Cargo.toml")),
             Some(SuggestedExtension {
                 extension_id: "toml".into(),
-                file_name_or_extension: "toml".into()
+                display_name: "toml".into()
             })
         );
         assert_eq!(
             suggested_extension(rel_path("Cargo.lock")),
             Some(SuggestedExtension {
                 extension_id: "toml".into(),
-                file_name_or_extension: "Cargo.lock".into()
+                display_name: "Cargo.lock".into()
             })
         );
         assert_eq!(
             suggested_extension(rel_path("Dockerfile")),
             Some(SuggestedExtension {
                 extension_id: "dockerfile".into(),
-                file_name_or_extension: "Dockerfile".into()
+                display_name: "Dockerfile".into()
             })
         );
         assert_eq!(
             suggested_extension(rel_path("a/b/c/d/.gitignore")),
             Some(SuggestedExtension {
                 extension_id: "git-firefly".into(),
-                file_name_or_extension: ".gitignore".into()
+                display_name: ".gitignore".into()
             })
         );
         assert_eq!(
             suggested_extension(rel_path("a/b/c/d/test.gleam")),
             Some(SuggestedExtension {
                 extension_id: "gleam".into(),
-                file_name_or_extension: "gleam".into()
+                display_name: "gleam".into()
+            })
+        );
+    }
+
+    #[test]
+    fn test_suggested_extension_for_language() {
+        for language_name in [
+            "Angular",
+            "Blade",
+            "CSS",
+            "Django",
+            "ERB",
+            "Elixir",
+            "HEEx",
+            "HTML",
+            "HTML+ERB",
+            "JavaScript",
+            "Jinja2",
+            "LESS",
+            "Liquid",
+            "Nunjucks",
+            "PHP",
+            "SCSS",
+            "Statamic Antlers",
+            "TSX",
+            "Twig",
+            "Vue.js",
+        ] {
+            assert_eq!(
+                suggested_extension_for_language(
+                    &LanguageName::new(language_name),
+                    OPTIONAL_EXTENSION_SUGGESTIONS,
+                    |_| true,
+                ),
+                Some(SuggestedExtension {
+                    extension_id: "emmet".into(),
+                    display_name: language_name.into(),
+                })
+            );
+        }
+
+        assert_eq!(
+            suggested_extension_for_language(
+                &LanguageName::new("Rust"),
+                OPTIONAL_EXTENSION_SUGGESTIONS,
+                |_| true,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_suggested_extension_for_language_uses_first_eligible_suggestion() {
+        let suggestions = [
+            OptionalExtensionSuggestion {
+                extension_id: "first",
+                languages: &["HTML"],
+            },
+            OptionalExtensionSuggestion {
+                extension_id: "second",
+                languages: &["HTML"],
+            },
+        ];
+
+        assert_eq!(
+            suggested_extension_for_language(
+                &LanguageName::new("HTML"),
+                &suggestions,
+                |extension_id| extension_id != "first",
+            ),
+            Some(SuggestedExtension {
+                extension_id: "second".into(),
+                display_name: "HTML".into(),
             })
         );
     }

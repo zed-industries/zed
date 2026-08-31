@@ -282,11 +282,25 @@ pub fn init(cx: &mut App) {
                 }
             });
 
-        cx.subscribe_in(workspace.project(), window, |_, _, event, window, cx| {
-            if let project::Event::LanguageNotFound(buffer) = event {
-                extension_suggest::suggest(buffer.clone(), window, cx);
-            }
-        })
+        cx.subscribe_in(
+            workspace.project(),
+            window,
+            |_, _, event, window, cx| match event {
+                project::Event::LanguageDetected {
+                    buffer,
+                    language_name,
+                } => extension_suggest::suggest_for_language(
+                    buffer.clone(),
+                    language_name,
+                    window,
+                    cx,
+                ),
+                project::Event::LanguageNotFound(buffer) => {
+                    extension_suggest::suggest_for_path(buffer.clone(), window, cx)
+                }
+                _ => {}
+            },
+        )
         .detach();
     })
     .detach();
