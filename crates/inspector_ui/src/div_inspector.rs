@@ -445,7 +445,7 @@ impl DivInspector {
                 DiagnosticEntry::new(
                     range,
                     Diagnostic {
-                        message: "unrecognized".to_string(),
+                        message: "unrecognized".into(),
                         severity: DiagnosticSeverity::WARNING,
                         is_primary: true,
                         group_id: ix,
