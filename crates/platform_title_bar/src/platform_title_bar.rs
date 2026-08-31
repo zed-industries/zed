@@ -287,8 +287,9 @@ impl Render for PlatformTitleBar {
             .bg(titlebar_color)
             .content_stretch()
             // iOS has no window chrome, so a window carrying a title bar needs
-            // an in-bar way back to whatever it covers.
-            .when(cfg!(target_os = "ios"), |this| {
+            // an in-bar way back to whatever it covers. Only offer it while
+            // another window is open: closing the last one quits the app.
+            .when(cfg!(target_os = "ios") && cx.windows().len() > 1, |this| {
                 this.child(
                     IconButton::new("platform-title-bar-back", IconName::ArrowLeft)
                         .icon_size(IconSize::Small)
