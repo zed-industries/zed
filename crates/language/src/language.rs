@@ -96,7 +96,9 @@ pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
     ToolchainMetadata, ToolchainScope,
 };
-use tree_sitter::{self, QueryCursor, WasmStore, wasmtime};
+use tree_sitter::{self, QueryCursor};
+#[cfg(not(target_os = "ios"))]
+use tree_sitter::{WasmStore, wasmtime};
 use util::rel_path::RelPath;
 
 pub use available_languages::AvailableLanguage;
@@ -140,6 +142,10 @@ where
 {
     let mut parser = PARSERS.lock().pop().unwrap_or_else(|| {
         let mut parser = Parser::new();
+        // Wasm grammars need a JIT, and iOS forbids executable pages: creating
+        // the store kills the process with a codesigning violation. Only
+        // native grammars are available there anyway.
+        #[cfg(not(target_os = "ios"))]
         parser
             .set_wasm_store(WasmStore::new(&WASM_ENGINE).unwrap())
             .unwrap();
@@ -165,6 +171,7 @@ where
     func(cursor.deref_mut())
 }
 
+#[cfg(not(target_os = "ios"))]
 static WASM_ENGINE: LazyLock<wasmtime::Engine> = LazyLock::new(|| {
     wasmtime::Engine::new(&wasmtime::Config::new()).expect("Failed to create Wasmtime engine")
 });
