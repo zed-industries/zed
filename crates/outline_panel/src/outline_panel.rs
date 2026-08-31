@@ -145,6 +145,7 @@ pub struct OutlinePanel {
     max_width_item_index: Option<usize>,
     preserve_selection_on_buffer_fold_toggles: HashSet<BufferId>,
     pending_default_expansion_depth: Option<usize>,
+    default_depth_applied_buffers: HashSet<BufferId>,
     outline_children_cache: HashMap<BufferId, HashMap<(Range<Anchor>, usize), bool>>,
     hide_symbols_override: Option<bool>,
 }
@@ -793,17 +794,30 @@ impl OutlinePanel {
                         let old_hide_symbols = outline_panel_settings.multi_buffer_hide_symbols;
                         outline_panel_settings = *new_settings;
 
-                        if old_hide_symbols != new_settings.multi_buffer_hide_symbols {
+                        let mut update_cached_entries = false;
+                        if old_hide_symbols != outline_panel_settings.multi_buffer_hide_symbols {
                             outline_panel.hide_symbols_override = None;
                             outline_panel.update_non_fs_items(window, cx);
-                            outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-                        } else if old_expansion_depth != new_settings.expand_outlines_with_depth {
+                            outline_panel.remap_selection_for_hidden_symbols(window, cx);
+                            update_cached_entries = true;
+                        }
+                        if old_expansion_depth != outline_panel_settings.expand_outlines_with_depth
+                        {
                             let old_collapsed_entries = outline_panel.collapsed_entries.clone();
                             outline_panel
                                 .collapsed_entries
                                 .retain(|entry| !matches!(entry, CollapsedEntry::Outline(..)));
 
-                            let new_depth = new_settings.expand_outlines_with_depth;
+                            let new_depth = outline_panel_settings.expand_outlines_with_depth;
+                            outline_panel.pending_default_expansion_depth = Some(new_depth);
+                            outline_panel.default_depth_applied_buffers = outline_panel
+                                .buffers
+                                .iter()
+                                .filter(|(_, buffer)| {
+                                    matches!(buffer.outlines, OutlineState::Outlines(_))
+                                })
+                                .map(|(buffer_id, _)| *buffer_id)
+                                .collect();
 
                             for (buffer_id, buffer) in &outline_panel.buffers {
                                 if let OutlineState::Outlines(outlines) = &buffer.outlines {
@@ -828,12 +842,11 @@ impl OutlinePanel {
                             }
 
                             if old_collapsed_entries != outline_panel.collapsed_entries {
-                                outline_panel.update_cached_entries(
-                                    Some(UPDATE_DEBOUNCE),
-                                    window,
-                                    cx,
-                                );
+                                update_cached_entries = true;
                             }
+                        }
+                        if update_cached_entries {
+                            outline_panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
                         } else {
                             cx.notify();
                         }
@@ -897,6 +910,7 @@ impl OutlinePanel {
                 new_entries_for_fs_update: HashSet::default(),
                 preserve_selection_on_buffer_fold_toggles: HashSet::default(),
                 pending_default_expansion_depth: None,
+                default_depth_applied_buffers: HashSet::default(),
                 fs_entries_update_task: Task::ready(()),
                 fs_entries_update_pending: false,
                 cached_entries_update_task: Task::ready(()),
@@ -3218,6 +3232,7 @@ impl OutlinePanel {
         self.pinned = false;
         self.mode = ItemsDisplayMode::Outline;
         self.pending_default_expansion_depth = None;
+        self.default_depth_applied_buffers.clear();
     }
 
     fn location_for_editor_selection(
@@ -3482,7 +3497,11 @@ impl OutlinePanel {
                     outline_panel
                         .update_in(cx, |outline_panel, window, cx| {
                             let pending_default_depth =
-                                outline_panel.pending_default_expansion_depth.take();
+                                outline_panel.pending_default_expansion_depth.filter(|_| {
+                                    outline_panel
+                                        .default_depth_applied_buffers
+                                        .insert(buffer_id)
+                                });
 
                             let debounce =
                                 if first_update.fetch_and(false, atomic::Ordering::AcqRel) {
@@ -3527,9 +3546,59 @@ impl OutlinePanel {
             .is_some_and(|active_editor| active_editor.read(cx).buffer().read(cx).is_singleton())
     }
 
+    fn multi_buffer_active(&self, cx: &App) -> bool {
+        self.active_editor()
+            .is_some_and(|active_editor| !active_editor.read(cx).buffer().read(cx).is_singleton())
+    }
+
     fn hide_symbols_active(&self, cx: &App) -> bool {
         self.hide_symbols_override
             .unwrap_or(OutlinePanelSettings::get_global(cx).multi_buffer_hide_symbols)
+    }
+
+    fn remap_selection_for_hidden_symbols(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.multi_buffer_active(cx) || !self.hide_symbols_active(cx) {
+            return;
+        }
+        let buffer_id = match self.selected_entry() {
+            Some(PanelEntry::Outline(OutlineEntry::Excerpt(excerpt))) => {
+                Some(excerpt.context.start.buffer_id)
+            }
+            Some(PanelEntry::Outline(OutlineEntry::Outline(outline))) => {
+                Some(outline.range.start.buffer_id)
+            }
+            Some(PanelEntry::Search(search_entry)) => {
+                let match_start = search_entry.match_range.start;
+                self.active_editor().and_then(|editor| {
+                    let multi_buffer_snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    multi_buffer_snapshot
+                        .anchor_to_buffer_anchor(match_start)
+                        .map(|(anchor, _)| anchor.buffer_id)
+                })
+            }
+            Some(PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_)) | None => None,
+        };
+        let Some(buffer_id) = buffer_id else {
+            return;
+        };
+        let file_entry = self
+            .fs_entries
+            .iter()
+            .find(|fs_entry| match fs_entry {
+                FsEntry::File(FsEntryFile {
+                    buffer_id: file_buffer_id,
+                    ..
+                })
+                | FsEntry::ExternalFile(FsEntryExternalFile {
+                    buffer_id: file_buffer_id,
+                    ..
+                }) => *file_buffer_id == buffer_id,
+                FsEntry::Directory(..) => false,
+            })
+            .cloned();
+        if let Some(file_entry) = file_entry {
+            self.select_entry(PanelEntry::Fs(file_entry), false, window, cx);
+        }
     }
 
     fn invalidate_outlines(&mut self, ids: &[BufferId]) {
@@ -3549,7 +3618,7 @@ impl OutlinePanel {
         // Hide-symbols mode never renders outline rows, so fetching outlines would be wasted
         // work; `update_fs_entries`'s completion only refreshes cached entries once this is
         // empty, so the gate has to live here rather than in `fetch_outdated_outlines` alone.
-        if !self.is_singleton_active(cx) && self.hide_symbols_active(cx) {
+        if self.multi_buffer_active(cx) && self.hide_symbols_active(cx) {
             return HashSet::default();
         }
         self.fs_entries
@@ -4594,8 +4663,12 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.multi_buffer_active(cx) {
+            return;
+        }
         self.hide_symbols_override = Some(!self.hide_symbols_active(cx));
         self.update_non_fs_items(window, cx);
+        self.remap_selection_for_hidden_symbols(window, cx);
         self.update_cached_entries(None, window, cx);
         cx.notify();
     }
@@ -4889,7 +4962,7 @@ impl OutlinePanel {
         };
 
         let has_query = self.query(cx).is_some();
-        let show_symbols_toggle = !self.is_singleton_active(cx);
+        let show_symbols_toggle = self.multi_buffer_active(cx);
         let hide_symbols = self.hide_symbols_active(cx);
         let (hide_symbols_icon, hide_symbols_tooltip) = if hide_symbols {
             (IconName::FileCodeOff, "Show Symbols")
@@ -4933,7 +5006,11 @@ impl OutlinePanel {
                         this.child(
                             IconButton::new("toggle_symbols", hide_symbols_icon)
                                 .shape(IconButtonShape::Square)
-                                .tooltip(Tooltip::text(hide_symbols_tooltip))
+                                .tooltip(Tooltip::for_action_title_in(
+                                    hide_symbols_tooltip,
+                                    &ToggleSymbols,
+                                    &self.focus_handle,
+                                ))
                                 .on_click(cx.listener(|outline_panel, _, window, cx| {
                                     outline_panel.toggle_symbols(&ToggleSymbols, window, cx);
                                 })),
@@ -4941,7 +5018,11 @@ impl OutlinePanel {
                     })
                     .child(
                         IconButton::new(pin_button_id, icon)
-                            .tooltip(Tooltip::text(icon_tooltip))
+                            .tooltip(Tooltip::for_action_title_in(
+                                icon_tooltip,
+                                &ToggleActiveEditorPin,
+                                &self.focus_handle,
+                            ))
                             .shape(IconButtonShape::Square)
                             .on_click(cx.listener(|outline_panel, _, window, cx| {
                                 outline_panel.toggle_active_editor_pin(
@@ -6913,6 +6994,75 @@ outline: struct OutlineEntryExcerpt
         })
     }
 
+    async fn open_buffer(
+        project: &Entity<Project>,
+        abs_path: &str,
+        cx: &mut VisualTestContext,
+    ) -> Entity<language::Buffer> {
+        project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(abs_path, cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap()
+    }
+
+    fn add_multi_buffer_editor(
+        workspace: &Entity<Workspace>,
+        project: &Entity<Project>,
+        excerpts: &[(&Entity<language::Buffer>, Vec<Range<language::Point>>)],
+        cx: &mut VisualTestContext,
+    ) -> Entity<Editor> {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let multibuffer = cx.new(|cx| {
+                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+                for (buffer, ranges) in excerpts {
+                    let ranges = if ranges.is_empty() {
+                        vec![language::Point::default()..buffer.read(cx).max_point()]
+                    } else {
+                        ranges.clone()
+                    };
+                    multibuffer.set_excerpts_for_buffer((*buffer).clone(), ranges, 0, cx);
+                }
+                multibuffer
+            });
+            let editor = cx
+                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+            editor.update(cx, |editor, cx| {
+                window.focus(&editor.focus_handle(cx), cx);
+            });
+            editor
+        })
+    }
+
+    fn settle_outline_panel(outline_panel: &Entity<OutlinePanel>, cx: &mut VisualTestContext) {
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.update_non_fs_items(window, cx);
+            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+    }
+
+    fn update_outline_panel_settings(
+        cx: &mut VisualTestContext,
+        update: impl FnOnce(&mut settings::OutlinePanelSettingsContent),
+    ) {
+        cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    update(settings.outline_panel.get_or_insert_default());
+                });
+            });
+        });
+    }
+
     fn display_entries(
         project: &Entity<Project>,
         multi_buffer_snapshot: &MultiBufferSnapshot,
@@ -6923,6 +7073,9 @@ outline: struct OutlineEntryExcerpt
         let project = project.read(cx);
         let mut display_string = String::new();
         for entry in cached_entries {
+            if matches!(entry.entry, PanelEntry::Outline(OutlineEntry::Excerpt(_))) {
+                continue;
+            }
             if !display_string.is_empty() {
                 display_string += "\n";
             }
@@ -8339,60 +8492,15 @@ outline: struct Foo  <==== selected
             outline_panel.set_active(true, window, cx)
         });
 
-        let buffer_one = project
-            .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/test/src/one.rs"), cx)
-                    .unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-        let buffer_two = project
-            .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/test/src/two.rs"), cx)
-                    .unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            let multibuffer = cx.new(|cx| {
-                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
-                multibuffer.set_excerpts_for_buffer(
-                    buffer_one.clone(),
-                    [Default::default()..buffer_one.read(cx).max_point()],
-                    0,
-                    cx,
-                );
-                multibuffer.set_excerpts_for_buffer(
-                    buffer_two.clone(),
-                    [Default::default()..buffer_two.read(cx).max_point()],
-                    0,
-                    cx,
-                );
-                multibuffer
-            });
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor.update(cx, |editor, cx| {
-                window.focus(&editor.focus_handle(cx), cx);
-            });
-        });
-
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
-        outline_panel.update_in(cx, |panel, window, cx| {
-            panel.update_non_fs_items(window, cx);
-            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-        });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
+        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
 
         outline_panel.update(cx, |panel, _cx| {
             assert!(
@@ -8407,15 +8515,26 @@ outline: struct Foo  <==== selected
         let collapsed_entries_snapshot =
             outline_panel.read_with(cx, |panel, _cx| panel.collapsed_entries.clone());
 
-        cx.update(|_, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .outline_panel
-                        .get_or_insert_default()
-                        .multi_buffer_hide_symbols = Some(true);
-                });
-            });
+        let struct_two_outline = outline_panel.read_with(cx, |panel, _cx| {
+            panel
+                .cached_entries
+                .iter()
+                .find_map(|entry| match &entry.entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if outline.text == "pub struct Two" =>
+                    {
+                        Some(entry.entry.clone())
+                    }
+                    _ => None,
+                })
+                .expect("expected an outline row for `pub struct Two`")
+        });
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_entry(struct_two_outline, true, window, cx);
+        });
+
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(true);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
@@ -8436,6 +8555,17 @@ outline: struct Foo  <==== selected
             );
         });
 
+        outline_panel.update(cx, |panel, cx| {
+            let buffer_two_id = buffer_two.read(cx).remote_id();
+            match panel.selected_entry() {
+                Some(PanelEntry::Fs(FsEntry::File(file))) => assert_eq!(
+                    file.buffer_id, buffer_two_id,
+                    "hiding symbols should remap the selected outline to its containing file"
+                ),
+                other => panic!("expected the file row of two.rs to be selected, got {other:?}"),
+            }
+        });
+
         outline_panel.update_in(cx, |panel, window, cx| {
             panel.toggle_symbols(&ToggleSymbols, window, cx);
         });
@@ -8443,7 +8573,7 @@ outline: struct Foo  <==== selected
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
         cx.run_until_parked();
 
-        outline_panel.update(cx, |panel, _cx| {
+        outline_panel.update(cx, |panel, cx| {
             assert!(
                 panel.cached_entries.iter().any(|entry| matches!(
                     entry.entry,
@@ -8455,6 +8585,14 @@ outline: struct Foo  <==== selected
                 panel.collapsed_entries, collapsed_entries_snapshot,
                 "toggling hide-symbols should not mutate collapsed_entries"
             );
+            let buffer_two_id = buffer_two.read(cx).remote_id();
+            match panel.selected_entry() {
+                Some(PanelEntry::Fs(FsEntry::File(file))) => assert_eq!(
+                    file.buffer_id, buffer_two_id,
+                    "re-showing symbols should keep the remapped file row selected"
+                ),
+                other => panic!("expected the file row of two.rs to stay selected, got {other:?}"),
+            }
         });
 
         outline_panel.update_in(cx, |panel, window, cx| {
@@ -8481,15 +8619,8 @@ outline: struct Foo  <==== selected
         // `hide_symbols_override` is `Some(true)` here while the setting is still `true` too,
         // so flipping the setting to `false` makes the override disagree with the incoming
         // settings change, exercising the settings-observer's override reset.
-        cx.update(|_, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .outline_panel
-                        .get_or_insert_default()
-                        .multi_buffer_hide_symbols = Some(false);
-                });
-            });
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(false);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
@@ -8653,6 +8784,14 @@ outline: fn main"
                 "singleton editors should be exempt from hide-symbols mode"
             );
         });
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_symbols(&ToggleSymbols, window, cx);
+            assert_eq!(
+                panel.hide_symbols_override, None,
+                "toggling symbols in a singleton view should be a no-op and not arm the override"
+            );
+        });
     }
 
     #[gpui::test(iterations = 10)]
@@ -8753,15 +8892,8 @@ outline: fn main"
             );
         });
 
-        cx.update(|_, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings
-                        .outline_panel
-                        .get_or_insert_default()
-                        .multi_buffer_hide_symbols = Some(true);
-                });
-            });
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(true);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -8790,7 +8922,7 @@ rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
-        fn_lifetime_fn.rs
+        fn_lifetime_fn.rs  <==== selected
       inlay_hints.rs
       static_index.rs
     rust-analyzer/src/
@@ -8798,7 +8930,8 @@ rust-analyzer/
         analysis_stats.rs
       config.rs"
                 ),
-                "directories and files should still render in hide-symbols mode"
+                "directories and files should still render in hide-symbols mode, \
+                 with the previously selected search match remapped to its file"
             );
         });
 
@@ -8825,9 +8958,12 @@ rust-analyzer/
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                select_first_in_all_matches(
-                    "search: match config.«param_names_for_lifetime_elision_hints» {"
-                )
+                all_matches.replacen(
+                    "fn_lifetime_fn.rs",
+                    &format!("fn_lifetime_fn.rs{SELECTED_MARKER}"),
+                    1,
+                ),
+                "re-showing search matches should keep the remapped file row selected"
             );
         });
     }
@@ -8878,97 +9014,33 @@ rust-analyzer/
             outline_panel.set_active(true, window, cx)
         });
 
-        let buffer_one = project
-            .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/test/src/one.rs"), cx)
-                    .unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-        let buffer_two = project
-            .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/test/src/two.rs"), cx)
-                    .unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
-        let buffer_three = project
-            .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/test/src/three.rs"), cx)
-                    .unwrap();
-                project.open_buffer(path, cx)
-            })
-            .await
-            .unwrap();
+        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
+        let buffer_three = open_buffer(&project, path!("/test/src/three.rs"), cx).await;
 
-        workspace.update_in(cx, |workspace, window, cx| {
-            let multibuffer = cx.new(|cx| {
-                let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
-                multibuffer.set_excerpts_for_buffer(
-                    buffer_one.clone(),
-                    [
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[
+                (
+                    &buffer_one,
+                    vec![
                         language::Point::new(0, 0)..language::Point::new(2, 1),
                         language::Point::new(4, 0)..language::Point::new(6, 1),
                     ],
-                    0,
-                    cx,
-                );
-                multibuffer.set_excerpts_for_buffer(
-                    buffer_two.clone(),
-                    [language::Point::new(0, 0)..language::Point::new(2, 1)],
-                    0,
-                    cx,
-                );
-                multibuffer.set_excerpts_for_buffer(
-                    buffer_three.clone(),
-                    [language::Point::new(2, 0)..language::Point::new(2, 22)],
-                    0,
-                    cx,
-                );
-                multibuffer
-            });
-            let editor = cx
-                .new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
-            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor.update(cx, |editor, cx| {
-                window.focus(&editor.focus_handle(cx), cx);
-            });
-        });
-
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
-        outline_panel.update_in(cx, |panel, window, cx| {
-            panel.update_non_fs_items(window, cx);
-            panel.update_cached_entries(Some(UPDATE_DEBOUNCE), window, cx);
-        });
-        cx.executor()
-            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
-        cx.run_until_parked();
-
-        let expected_entries = [
-            "test/",
-            "  src/",
-            "    one.rs",
-            "      ",
-            "        outline: fn alpha",
-            "      ",
-            "        outline: fn beta",
-            "    three.rs",
-            "      ",
-            "        outline: mod epsilon",
-            "          outline: fn zeta",
-            "    two.rs",
-            "      ",
-            "        outline: struct Gamma",
-            "          outline: field",
-        ]
-        .join("\n");
+                ),
+                (
+                    &buffer_two,
+                    vec![language::Point::new(0, 0)..language::Point::new(2, 1)],
+                ),
+                (
+                    &buffer_three,
+                    vec![language::Point::new(2, 0)..language::Point::new(2, 22)],
+                ),
+            ],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
 
         outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
@@ -8979,10 +9051,450 @@ rust-analyzer/
                     None,
                     cx,
                 ),
-                expected_entries,
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: fn alpha
+        outline: fn beta
+    three.rs
+        outline: mod epsilon
+          outline: fn zeta
+    two.rs
+        outline: struct Gamma
+          outline: field"
+                ),
                 "each excerpt should only show outlines intersecting its range, \
                  without duplicating outlines from other excerpts of the same buffer \
                  and without outlines that lie outside every excerpt"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_simultaneous_hide_symbols_and_depth_settings_change(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "src": {
+                    "one.rs": indoc!("
+                        pub fn one() {
+                            let x = 1;
+                        }
+                    "),
+                    "two.rs": indoc!("
+                        pub struct Two {
+                            field: i32,
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |panel, _cx| {
+            assert!(
+                panel.cached_entries.iter().any(|entry| matches!(
+                    entry.entry,
+                    PanelEntry::Outline(OutlineEntry::Outline(_))
+                )),
+                "expected outline rows before the settings change"
+            );
+            assert_eq!(
+                panel
+                    .collapsed_entries
+                    .iter()
+                    .filter(|entry| matches!(entry, CollapsedEntry::Outline(..)))
+                    .count(),
+                0,
+                "no outline should be collapsed at the default expansion depth"
+            );
+        });
+
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(true);
+            settings.expand_outlines_with_depth = Some(0);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |panel, _cx| {
+            assert!(
+                panel.cached_entries.iter().all(|entry| matches!(
+                    entry.entry,
+                    PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_)
+                )),
+                "hide-symbols mode should only show fs entries, got {:#?}",
+                panel.cached_entries
+            );
+            assert_eq!(
+                panel
+                    .collapsed_entries
+                    .iter()
+                    .filter(|entry| matches!(entry, CollapsedEntry::Outline(..)))
+                    .count(),
+                1,
+                "a depth change arriving together with a hide-symbols change should still \
+                 collapse the only outline with children (struct Two)"
+            );
+        });
+
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(false);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(500));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: pub fn one
+    two.rs
+        outline: pub struct Two"
+                ),
+                "after re-showing symbols, the depth applied during the combined settings \
+                 change should keep struct Two collapsed, hiding its field"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_filtered_symbol_selection_survives_hide_symbols(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "src": {
+                    "one.rs": indoc!("
+                        fn alpha() {
+                            let one = 1;
+                        }
+                    "),
+                    "two.rs": indoc!("
+                        pub struct Two {
+                            field: i32,
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.filter_editor.update(cx, |filter_editor, cx| {
+                filter_editor.set_text("alpha", window, cx);
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let alpha_outline = outline_panel.read_with(cx, |panel, _cx| {
+            panel
+                .cached_entries
+                .iter()
+                .find_map(|entry| match &entry.entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if outline.text == "fn alpha" =>
+                    {
+                        Some(entry.entry.clone())
+                    }
+                    _ => None,
+                })
+                .expect("expected the filtered view to contain the `fn alpha` outline")
+        });
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.select_entry(alpha_outline, true, window, cx);
+        });
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.toggle_symbols(&ToggleSymbols, window, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            assert_eq!(
+                panel.cached_entries.len(),
+                0,
+                "hiding symbols with a symbol-only filter should show an empty list, got {:#?}",
+                panel.cached_entries
+            );
+            let buffer_one_id = buffer_one.read(cx).remote_id();
+            match panel.selected_entry() {
+                Some(PanelEntry::Fs(FsEntry::File(file))) => assert_eq!(
+                    file.buffer_id, buffer_one_id,
+                    "the filtered outline selection should remap to its containing file"
+                ),
+                other => panic!("expected the file row of one.rs to be selected, got {other:?}"),
+            }
+            panel.select_next(&SelectNext, window, cx);
+            panel.select_previous(&SelectPrevious, window, cx);
+        });
+
+        outline_panel.update_in(cx, |panel, window, cx| {
+            panel.filter_editor.update(cx, |filter_editor, cx| {
+                filter_editor.set_text("", window, cx);
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    panel.selected_entry(),
+                    cx,
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs  <==== selected
+    two.rs"
+                ),
+                "clearing the filter should reveal the remapped file row still selected"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_default_depth_applies_to_all_buffers(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .outline_panel
+                        .get_or_insert_default()
+                        .expand_outlines_with_depth = Some(0);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "src": {
+                    "one.rs": indoc!("
+                        mod alpha {
+                            fn a() {}
+                        }
+                    "),
+                    "two.rs": indoc!("
+                        pub struct Two {
+                            field: i32,
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                panel
+                    .collapsed_entries
+                    .iter()
+                    .filter(|entry| matches!(entry, CollapsedEntry::Outline(..)))
+                    .count(),
+                2,
+                "the default expansion depth should collapse parent outlines in every \
+                 buffer of the multi-buffer, not just the first fetched one"
+            );
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: mod alpha
+    two.rs
+        outline: pub struct Two"
+                ),
+                "both files should render only their collapsed parent outlines"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_depth_change_while_symbols_hidden_applies_on_reveal(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .outline_panel
+                        .get_or_insert_default()
+                        .multi_buffer_hide_symbols = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                "src": {
+                    "one.rs": indoc!("
+                        mod alpha {
+                            fn a() {}
+                        }
+                    "),
+                    "two.rs": indoc!("
+                        pub struct Two {
+                            field: i32,
+                        }
+                    "),
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer_one = open_buffer(&project, path!("/test/src/one.rs"), cx).await;
+        let buffer_two = open_buffer(&project, path!("/test/src/two.rs"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_one, Vec::new()), (&buffer_two, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |panel, _cx| {
+            assert!(
+                panel.cached_entries.iter().all(|entry| matches!(
+                    entry.entry,
+                    PanelEntry::Fs(_) | PanelEntry::FoldedDirs(_)
+                )),
+                "symbols should be hidden and outlines unfetched before the settings change"
+            );
+        });
+
+        update_outline_panel_settings(cx, |settings| {
+            settings.multi_buffer_hide_symbols = Some(false);
+            settings.expand_outlines_with_depth = Some(0);
+        });
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(panel, cx),
+                    &panel.cached_entries,
+                    None,
+                    cx
+                ),
+                indoc!(
+                    "
+test/
+  src/
+    one.rs
+        outline: mod alpha
+    two.rs
+        outline: pub struct Two"
+                ),
+                "a depth change while symbols were hidden should apply to outlines \
+                 fetched after the symbols are shown again"
             );
         });
     }
