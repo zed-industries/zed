@@ -2360,7 +2360,10 @@ mod tests {
                     Some(Path::new("/other")),
                     cx,
                 ),
-                Some("/project/main.rs:10-42 ".to_string())
+                Some(format!(
+                    "{}:10-42 ",
+                    Path::new("/project").join("main.rs").display()
+                ))
             );
             assert_eq!(
                 format_clipboard_selection_for_terminal_agent(
