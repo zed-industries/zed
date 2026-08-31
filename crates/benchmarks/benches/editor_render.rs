@@ -5,6 +5,7 @@ use editor::{
     actions::{DeleteToPreviousWordStart, SelectAll, SplitSelectionIntoLines},
 };
 use gpui::{App, AppContext as _, BenchAppContext, BorrowAppContext as _, Focusable as _};
+use indoc::{formatdoc, indoc};
 use language::{Buffer, Capability, DiskState, File, LocalFile};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use settings::{LocalSettingsKind, LocalSettingsPath, SettingsStore, WorktreeId};
@@ -178,15 +179,32 @@ fn editor_render_with_editorconfig(cx: &mut BenchAppContext) {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             let nested_configs = [
                 ("", jetbrains_editorconfig()),
-                ("src", "[*.{ts,tsx}]\nindent_size = 2\n".to_string()),
+                (
+                    "src",
+                    indoc! {"
+                        [*.{ts,tsx}]
+                        indent_size = 2
+                    "}
+                    .to_string(),
+                ),
                 (
                     "src/app",
-                    "[*]\ntrim_trailing_whitespace = false\n\n[*.ts]\nmax_line_length = 100\n"
-                        .to_string(),
+                    indoc! {"
+                        [*]
+                        trim_trailing_whitespace = false
+
+                        [*.ts]
+                        max_line_length = 100
+                    "}
+                    .to_string(),
                 ),
                 (
                     "src/app/components",
-                    "[*.{ts,tsx}]\nindent_style = space\n".to_string(),
+                    indoc! {"
+                        [*.{ts,tsx}]
+                        indent_style = space
+                    "}
+                    .to_string(),
                 ),
             ];
             for (directory, content) in nested_configs {
@@ -270,9 +288,18 @@ fn indented_code_text(line_count: usize) -> String {
 }
 
 fn jetbrains_editorconfig() -> String {
-    let mut content = String::from(
-        "[*]\ncharset = utf-8\nend_of_line = lf\nindent_size = 4\nindent_style = space\ninsert_final_newline = true\nmax_line_length = 150\ntab_width = 4\ntrim_trailing_whitespace = false\n",
-    );
+    let mut content = indoc! {"
+        [*]
+        charset = utf-8
+        end_of_line = lf
+        indent_size = 4
+        indent_style = space
+        insert_final_newline = true
+        max_line_length = 150
+        tab_width = 4
+        trim_trailing_whitespace = false
+    "}
+    .to_string();
     for key_index in 0..750 {
         content.push_str(&format!("ij_continuation_option_{key_index:04} = false\n"));
     }
@@ -311,8 +338,11 @@ fn jetbrains_editorconfig() -> String {
         "*.{appxmanifest,asax,ascx,aspx,axaml,build,cg,cginc,compute,cs,cshtml,dtd,fs,fsi,fsscript,fsx,hlsl,hlsli,hlslinc,master,ml,mli,nuspec,paml,razor,resw,resx,shader,skin,usf,ush,vb,xaml,xamlx,xoml,xsd}",
     ];
     for (section_index, section) in sections.iter().enumerate() {
-        content.push_str(&format!("\n[{section}]\n"));
-        content.push_str("indent_size = 2\n");
+        content.push_str(&formatdoc! {"
+
+            [{section}]
+            indent_size = 2
+        "});
         for key_index in 0..40 {
             content.push_str(&format!(
                 "ij_section_{section_index:02}_option_{key_index:02} = false\n"
