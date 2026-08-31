@@ -106,7 +106,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     file_status_label_color, render_breadcrumb_text,
 };
-pub use git::blame::BlameRenderer;
+pub use git::blame::{BlameRenderer, GitBlame};
 pub use git::{
     DiffHunkDelegate, ResolvedDiffHunk, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
     RestoreOnlyUnstagedDiffHunkDelegate, UncommittedDiffHunkDelegate, render_diff_hunk_controls,
@@ -158,7 +158,7 @@ use futures::{
     future::{self, Shared},
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
-use git::blame::{GitBlame, GlobalBlameRenderer};
+use git::blame::GlobalBlameRenderer;
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
     AvailableSpace, Background, Bounds, ClickEvent, ClipboardEntry, ClipboardItem, Context,
@@ -186,8 +186,9 @@ use language::{
         self, AllLanguageSettings, LanguageSettings, LspInsertMode, RewrapBehavior,
         WordsCompletionMode, all_language_settings,
     },
-    point_from_lsp, point_to_lsp, text_diff_with_options,
+    point_to_lsp, text_diff_with_options,
 };
+use language_detection::detect_language;
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
@@ -273,6 +274,7 @@ pub use zed_actions::editor::RevealInFileManager;
 use zed_actions::editor::{MoveDown, MoveUp};
 
 use crate::{
+    bookmarks::BookmarksTabState,
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
     hover_links::{find_url, find_url_from_range},
@@ -294,6 +296,8 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
 const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 const MAX_SELECTION_HISTORY_LEN: usize = 1024;
+const MIN_LANGUAGE_DETECTION_LEN: usize = 20;
+const LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(200);
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
@@ -915,6 +919,28 @@ struct ActionFetchReady {
     actions: Rc<[AvailableCodeAction]>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum GutterLineNumberWidth {
+    #[default]
+    Dynamic,
+    Sticky {
+        min_digits: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct ScrollRangeHold {
+    held: bool,
+    settled: Option<SettledScrollRange>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SettledScrollRange {
+    range: Size<Pixels>,
+    editor_width: Pixels,
+    editor_bounds_size: Size<Pixels>,
+}
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -980,6 +1006,8 @@ pub struct Editor {
     enable_runnables: bool,
     enable_code_lens: bool,
     enable_mouse_wheel_zoom: bool,
+    gutter_line_number_width: GutterLineNumberWidth,
+    scroll_range_hold: Option<ScrollRangeHold>,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1106,6 +1134,8 @@ pub struct Editor {
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
+    bookmarks_tab_state: Option<Entity<BookmarksTabState>>,
+    bookmarks_tab_subscription: Option<Subscription>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_hover_button: (Option<GutterHoverButton>, Option<Task<()>>),
     pub(crate) gutter_diff_review_indicator: (Option<PhantomDiffReviewIndicator>, Option<Task<()>>),
@@ -1128,6 +1158,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    language_detection_task: Task<()>,
     load_diff_task: Option<Shared<Task<()>>>,
     diff_hunk_delegate: Option<Arc<dyn DiffHunkDelegate>>,
     selection_mark_mode: bool,
@@ -1207,6 +1238,7 @@ pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
     offset_content: bool,
+    gutter_line_number_width: GutterLineNumberWidth,
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
@@ -1829,6 +1861,9 @@ impl Editor {
         clone.needs_initial_data_update = self.enable_lsp_data;
         clone.enable_runnables = self.enable_runnables;
         clone.enable_code_lens = self.enable_code_lens;
+        if let Some(bookmarks_tab_state) = self.bookmarks_tab_state.clone() {
+            clone.set_bookmarks_tab_state(bookmarks_tab_state, cx);
+        }
         clone
     }
 
@@ -2076,7 +2111,12 @@ impl Editor {
                         }
                     }
 
-                    project::Event::EntryRenamed(transaction, project_path, abs_path) => {
+                    project::Event::EntryRenamed {
+                        transaction,
+                        new_project_path,
+                        new_abs_path,
+                        ..
+                    } => {
                         let Some(workspace) = editor.workspace() else {
                             return;
                         };
@@ -2095,8 +2135,8 @@ impl Editor {
                                         p.update(cx, |pane, _| {
                                             pane.nav_history_mut().rename_item(
                                                 entity_id,
-                                                project_path.clone(),
-                                                abs_path.clone().into(),
+                                                new_project_path.clone(),
+                                                new_abs_path.clone().into(),
                                             );
                                         })
                                     });
@@ -2167,6 +2207,12 @@ impl Editor {
                         editor.refresh_inline_values(cx);
                     }
                     _ => {}
+                },
+            ));
+            project_subscriptions.push(cx.observe(
+                &project.read(cx).bookmark_store(),
+                |_, _, cx| {
+                    cx.notify();
                 },
             ));
             let git_store = project.read(cx).git_store().clone();
@@ -2291,6 +2337,8 @@ impl Editor {
             offset_content: !matches!(mode, EditorMode::SingleLine),
             breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
+            gutter_line_number_width: GutterLineNumberWidth::Dynamic,
+            scroll_range_hold: None,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
@@ -2412,6 +2460,8 @@ impl Editor {
             pending_blame_hover_observation: None,
 
             bookmark_store,
+            bookmarks_tab_state: None,
+            bookmarks_tab_subscription: None,
             breakpoint_store,
             gutter_hover_button: (None, None),
             gutter_diff_review_indicator: (None, None),
@@ -2452,6 +2502,7 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: Default::default(),
             registered_buffers: HashMap::default(),
+            language_detection_task: Task::ready(()),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
@@ -2787,6 +2838,14 @@ impl Editor {
             key_context.add("diffs_expanded");
         }
 
+        if self
+            .nav_history
+            .as_ref()
+            .is_some_and(ItemNavHistory::is_preview_item)
+        {
+            key_context.add("in_preview");
+        }
+
         key_context
     }
 
@@ -2877,6 +2936,9 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            buffer.update(cx, |buffer, _| {
+                buffer.set_content_language_detection_enabled(true);
+            });
             workspace.update_in(cx, |workspace, window, cx| {
                 let editor =
                     cx.new(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
@@ -2924,6 +2986,9 @@ impl Editor {
 
         cx.spawn_in(window, async move |workspace, cx| {
             let buffer = create.await?;
+            buffer.update(cx, |buffer, _| {
+                buffer.set_content_language_detection_enabled(true);
+            });
             workspace.update_in(cx, move |workspace, window, cx| {
                 workspace.split_item(
                     direction,
@@ -3013,6 +3078,7 @@ impl Editor {
             mode: self.mode.clone(),
             show_gutter: self.show_gutter,
             offset_content: self.offset_content,
+            gutter_line_number_width: self.gutter_line_number_width,
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
@@ -3070,6 +3136,99 @@ impl Editor {
 
     pub fn set_in_project_search(&mut self, in_project_search: bool) {
         self.in_project_search = in_project_search;
+    }
+
+    /// Lets the gutter grow to fit the widest line number seen but never shrink,
+    /// until [`Editor::reset_gutter_line_number_width`] is called.
+    pub fn enable_sticky_gutter_line_number(&mut self, cx: &mut Context<Self>) {
+        if self.gutter_line_number_width == GutterLineNumberWidth::Dynamic {
+            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: 0 };
+            self.latch_gutter_line_number_width(cx);
+        }
+    }
+
+    pub fn reset_gutter_line_number_width(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.gutter_line_number_width,
+            GutterLineNumberWidth::Sticky { min_digits } if min_digits != 0
+        ) {
+            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: 0 };
+            cx.notify();
+        }
+    }
+
+    /// Shrinks the sticky gutter width down to fit the current content and keeps latching from
+    /// there, so a settled search snaps to its real width instead of staying stuck at the widest
+    /// line number seen mid-typing.
+    pub fn refit_gutter_line_number_width(&mut self, cx: &mut Context<Self>) {
+        let GutterLineNumberWidth::Sticky { min_digits } = self.gutter_line_number_width else {
+            return;
+        };
+        let digits = self.widest_line_number_digits(cx);
+        if digits != min_digits {
+            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: digits };
+            cx.notify();
+        }
+    }
+
+    fn latch_gutter_line_number_width(&mut self, cx: &mut Context<Self>) {
+        let GutterLineNumberWidth::Sticky { min_digits } = self.gutter_line_number_width else {
+            return;
+        };
+        let digits = self.widest_line_number_digits(cx);
+        if digits > min_digits {
+            self.gutter_line_number_width = GutterLineNumberWidth::Sticky { min_digits: digits };
+            cx.notify();
+        }
+    }
+
+    fn widest_line_number_digits(&self, cx: &App) -> usize {
+        let snapshot = self.buffer.read(cx).read(cx);
+        if snapshot.is_empty() {
+            return 0;
+        }
+        (snapshot.widest_line_number().max(1).ilog10() + 1) as usize
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn min_gutter_line_number_digits(&self) -> Option<usize> {
+        match self.gutter_line_number_width {
+            GutterLineNumberWidth::Dynamic => None,
+            GutterLineNumberWidth::Sticky { min_digits } => Some(min_digits),
+        }
+    }
+
+    pub fn hold_scrollbar_range(&mut self, hold: bool) {
+        self.scroll_range_hold.get_or_insert_default().held = hold;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn is_scrollbar_range_held(&self) -> Option<bool> {
+        Some(self.scroll_range_hold?.held)
+    }
+
+    fn frozen_scroll_range(
+        &mut self,
+        is_rewrapping: bool,
+        current_range: Size<Pixels>,
+        current_editor_width: Pixels,
+        current_editor_bounds_size: Size<Pixels>,
+    ) -> Option<SettledScrollRange> {
+        let hold = self.scroll_range_hold.as_mut()?;
+        let current = SettledScrollRange {
+            range: current_range,
+            editor_width: current_editor_width,
+            editor_bounds_size: current_editor_bounds_size,
+        };
+        if !hold.held && !is_rewrapping {
+            hold.settled = Some(current);
+            return None;
+        }
+        let settled = hold.settled.get_or_insert(current);
+        if settled.editor_bounds_size != current_editor_bounds_size {
+            *settled = current;
+        }
+        Some(*settled)
     }
 
     pub fn set_custom_context_menu(
@@ -3330,7 +3489,12 @@ impl Editor {
             cx.notify();
             return;
         }
-        if self.show_git_blame_gutter {
+        if self.show_git_blame_gutter
+            && !self
+                .blame
+                .as_ref()
+                .is_some_and(|blame| blame.read(cx).is_static())
+        {
             self.show_git_blame_gutter = false;
             cx.notify();
             return;
@@ -6249,10 +6413,33 @@ impl Editor {
         }
 
         let display_snapshot = self.display_snapshot(cx);
+        let text_layout_details = self.text_layout_details(window, cx);
+
+        let font_id = text_layout_details
+            .text_system
+            .resolve_font(&text_layout_details.editor_style.text.font());
+        let font_size = text_layout_details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(text_layout_details.rem_size);
+        let Ok(space_width) = text_layout_details
+            .text_system
+            .advance(font_id, font_size, ' ')
+            .map(|advance| advance.width)
+        else {
+            return;
+        };
+        if space_width <= px(0.) {
+            return;
+        }
+        let buffer_snapshot = display_snapshot.buffer_snapshot();
+        let tab_size = display_snapshot.tab_snapshot().tab_size.get();
 
         struct CursorData {
             anchor: Anchor,
-            point: Point,
+            row: u32,
+            x: Pixels,
         }
         let cursor_data: Vec<CursorData> = self
             .selections
@@ -6264,29 +6451,50 @@ impl Editor {
                 } else {
                     selection.tail()
                 };
+                let point = anchor.to_point(buffer_snapshot);
+                let mut prefix = String::new();
+                let mut column = 0;
+                for chunk in buffer_snapshot.text_for_range(Point::new(point.row, 0)..point) {
+                    for ch in chunk.chars() {
+                        if ch == '\t' {
+                            let tab_len = tab_size - column % tab_size;
+                            prefix.extend(iter::repeat_n(' ', tab_len as usize));
+                            column += tab_len;
+                        } else {
+                            prefix.push(ch);
+                            column += 1;
+                        }
+                    }
+                }
+                let run = text_layout_details.editor_style.text.to_run(prefix.len());
+                let x = text_layout_details
+                    .text_system
+                    .layout_line(&prefix, font_size, &[run], None)
+                    .width;
                 CursorData {
-                    anchor: anchor,
-                    point: anchor.to_point(&display_snapshot.buffer_snapshot()),
+                    anchor,
+                    row: point.row,
+                    x,
                 }
             })
             .collect();
 
         let rows_anchors_count: Vec<usize> = cursor_data
             .iter()
-            .map(|cursor| cursor.point.row)
+            .map(|cursor| cursor.row)
             .chunk_by(|&row| row)
             .into_iter()
             .map(|(_, group)| group.count())
             .collect();
         let max_columns = rows_anchors_count.iter().max().copied().unwrap_or(0);
-        let mut rows_column_offset = vec![0; rows_anchors_count.len()];
+        let mut rows_x_offset = vec![px(0.); rows_anchors_count.len()];
         let mut edits = Vec::new();
 
         for column_idx in 0..max_columns {
             let mut cursor_index = 0;
 
-            // Calculate target_column => position that the selections will go
-            let mut target_column = 0;
+            // Calculate target_x => position that the selections will go
+            let mut target_x = px(0.);
             for (row_idx, cursor_count) in rows_anchors_count.iter().enumerate() {
                 // Skip rows that don't have this column
                 if column_idx >= *cursor_count {
@@ -6294,10 +6502,9 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let adjusted_column = point.column + rows_column_offset[row_idx];
-                if adjusted_column > target_column {
-                    target_column = adjusted_column;
+                let adjusted_x = cursor_data[cursor_index + column_idx].x + rows_x_offset[row_idx];
+                if adjusted_x > target_x {
+                    target_x = adjusted_x;
                 }
                 cursor_index += cursor_count;
             }
@@ -6311,15 +6518,15 @@ impl Editor {
                     continue;
                 }
 
-                let point = &cursor_data[cursor_index + column_idx].point;
-                let spaces_needed = target_column - point.column - rows_column_offset[row_idx];
+                let cursor = &cursor_data[cursor_index + column_idx];
+                let spaces_needed = ((target_x - cursor.x - rows_x_offset[row_idx]) / space_width)
+                    .round()
+                    .max(0.) as u32;
                 if spaces_needed > 0 {
-                    let anchor = cursor_data[cursor_index + column_idx]
-                        .anchor
-                        .bias_left(&display_snapshot);
+                    let anchor = cursor.anchor.bias_left(&display_snapshot);
                     edits.push((anchor..anchor, " ".repeat(spaces_needed as usize)));
                 }
-                rows_column_offset[row_idx] += spaces_needed;
+                rows_x_offset[row_idx] += space_width * spaces_needed as f32;
 
                 cursor_index += *cursor_count;
             }
@@ -7983,6 +8190,11 @@ impl Editor {
             return None;
         }
         let rename = self.take_rename(false, window, cx)?;
+        let new_name = rename.editor.read(cx).text(cx);
+        if new_name.trim().is_empty() {
+            return Some(Task::ready(Ok(())));
+        }
+
         let workspace = self.workspace()?.downgrade();
         let (buffer, start) = self
             .buffer
@@ -7997,7 +8209,6 @@ impl Editor {
         }
 
         let old_name = rename.old_name;
-        let new_name = rename.editor.read(cx).text(cx);
 
         let rename = self.semantics_provider.as_ref()?.perform_rename(
             &buffer,
@@ -8158,8 +8369,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.read_only(cx) {
+            return Task::ready(Ok(()));
+        }
         let buffer = self.buffer.clone();
-        let (buffers, target) = match target {
+        let (mut buffers, target) = match target {
             FormatTarget::Buffers(buffers) => (buffers, LspFormatTarget::Buffers),
             FormatTarget::Ranges(selection_ranges) => {
                 let multi_buffer = buffer.read(cx);
@@ -8184,6 +8398,8 @@ impl Editor {
                 (buffers, LspFormatTarget::Ranges(buffer_id_to_ranges))
             }
         };
+
+        buffers.retain(|buffer| !buffer.read(cx).read_only());
 
         let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
         let selections_prev = transaction_id_prev
@@ -9030,7 +9246,26 @@ impl Editor {
                     } else {
                         end.row().0
                     };
+                    let mut header_rows = snapshot
+                        .blocks_in_range(
+                            DisplayRow(start_row)..DisplayRow(end_row.saturating_add(1)),
+                        )
+                        .filter(|(_, block)| block.is_header())
+                        .map(|(block_row, block)| {
+                            block_row.0..block_row.0.saturating_add(block.height())
+                        })
+                        .peekable();
                     for row in start_row..=end_row {
+                        while header_rows
+                            .next_if(|header_range| header_range.end <= row)
+                            .is_some()
+                        {}
+                        if header_rows
+                            .peek()
+                            .is_some_and(|header_range| header_range.contains(&row))
+                        {
+                            continue;
+                        }
                         let used_index =
                             used_highlight_orders.entry(row).or_insert(highlight.index);
                         if highlight.index >= *used_index {
@@ -9616,6 +9851,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
+                self.latch_gutter_line_number_width(cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions_for_selection(window, cx);
                 self.refresh_single_line_folds(window, cx);
@@ -9635,8 +9871,9 @@ impl Editor {
                         cx.emit(EditorEvent::TitleChanged);
                     }
 
+                    let buffer_id = buffer.read(cx).remote_id();
+
                     if self.project.is_some() {
-                        let buffer_id = buffer.read(cx).remote_id();
                         self.register_buffer(buffer_id, cx);
                         self.update_lsp_data(Some(buffer_id), window, cx);
                         self.refresh_inlay_hints(
@@ -9644,6 +9881,8 @@ impl Editor {
                             cx,
                         );
                     }
+
+                    self.detect_buffer_language(buffer_id, cx);
                 }
 
                 cx.emit(EditorEvent::BufferEdited);
@@ -9751,6 +9990,10 @@ impl Editor {
             multi_buffer::Event::FileHandleChanged => {
                 cx.emit(EditorEvent::TitleChanged);
                 cx.emit(EditorEvent::FileHandleChanged);
+            }
+            multi_buffer::Event::CapabilityChanged => {
+                cx.emit(EditorEvent::CapabilityChanged);
+                cx.notify();
             }
             multi_buffer::Event::Reloaded | multi_buffer::Event::BufferDiffChanged => {
                 cx.emit(EditorEvent::TitleChanged)
@@ -10215,7 +10458,7 @@ impl Editor {
                                 let allow_new_preview = PreviewTabsSettings::get_global(cx)
                                     .enable_preview_from_multibuffer;
                                 workspace.open_project_item::<Self>(
-                                    pane.clone(),
+                                    split.then_some(pane.clone()),
                                     buffer,
                                     true,
                                     true,
@@ -10567,14 +10810,25 @@ impl Editor {
         &mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
     ) -> Subscription {
+        self.register_action_erased(
+            TypeId::of::<A>(),
+            Arc::new(move |action, window, cx| {
+                listener(action.downcast_ref().unwrap(), window, cx)
+            }),
+        )
+    }
+
+    fn register_action_erased(
+        &mut self,
+        action_type: TypeId,
+        listener: Arc<dyn Fn(&dyn Any, &mut Window, &mut App)>,
+    ) -> Subscription {
         let id = self.next_editor_action_id.post_inc();
-        let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
             id,
             Box::new(move |_, window, _| {
                 let listener = listener.clone();
-                window.on_action(TypeId::of::<A>(), move |action, phase, window, cx| {
-                    let action = action.downcast_ref().unwrap();
+                window.on_action(action_type, move |action, phase, window, cx| {
                     if phase == DispatchPhase::Bubble {
                         listener(action, window, cx)
                     }
@@ -10895,6 +11149,55 @@ impl Editor {
         self.refresh_folding_ranges(for_buffer, window, cx);
         self.refresh_code_lenses(for_buffer, window, cx);
         self.refresh_document_symbols(for_buffer, cx);
+    }
+
+    fn is_eligible_for_language_detection(buffer: &Buffer) -> bool {
+        buffer.file().is_none()
+            && buffer.content_language_detection_enabled()
+            && buffer.len() >= MIN_LANGUAGE_DETECTION_LEN
+    }
+
+    fn detect_buffer_language(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        self.language_detection_task = Task::ready(());
+        if !EditorSettings::get_global(cx).language_detection {
+            return;
+        }
+        let Some(buffer_entity) = self.buffer().read(cx).buffer(buffer_id) else {
+            return;
+        };
+        let buffer = buffer_entity.read(cx);
+        if !Self::is_eligible_for_language_detection(buffer) {
+            return;
+        }
+        self.language_detection_task = cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(LANGUAGE_DETECTION_DEBOUNCE_TIMEOUT)
+                .await;
+            let Some((buffer_snapshot, language_registry)) =
+                buffer_entity.read_with(cx, |buffer, cx| {
+                    if !EditorSettings::get_global(cx).language_detection
+                        || !Self::is_eligible_for_language_detection(buffer)
+                    {
+                        return None;
+                    }
+                    Some((buffer.snapshot(), buffer.language_registry()?))
+                })
+            else {
+                return;
+            };
+            let buffer_version = buffer_snapshot.version().clone();
+            let detected_language =
+                cx.update(|cx| detect_language(buffer_snapshot, language_registry, cx));
+            if let Some(detected_language) = detected_language.await {
+                buffer_entity.update(cx, |buffer, cx| {
+                    if !buffer.version().changed_since(&buffer_version)
+                        && Self::is_eligible_for_language_detection(buffer)
+                    {
+                        buffer.set_language(Some(detected_language), cx);
+                    }
+                });
+            }
+        });
     }
 
     fn register_visible_buffers(&mut self, cx: &mut Context<Self>) {
@@ -11657,8 +11960,14 @@ impl EditorSnapshot {
             let line_gutter_width = if show_line_numbers {
                 // Avoid flicker-like gutter resizes when the line number gains another digit by
                 // only resizing the gutter on files with > 10**min_line_number_digits lines.
-                let min_width_for_number_on_gutter =
-                    ch_advance * gutter_settings.min_line_number_digits as f32;
+                let sticky_min_digits = match self.gutter_line_number_width {
+                    GutterLineNumberWidth::Dynamic => 0,
+                    GutterLineNumberWidth::Sticky { min_digits } => min_digits,
+                };
+                let min_digits = gutter_settings
+                    .min_line_number_digits
+                    .max(sticky_min_digits);
+                let min_width_for_number_on_gutter = ch_advance * min_digits as f32;
                 self.max_line_number_width(style, window)
                     .max(min_width_for_number_on_gutter)
             } else {
@@ -11895,6 +12204,7 @@ pub enum EditorEvent {
     Blurred,
     DirtyChanged,
     Saved,
+    CapabilityChanged,
     TitleChanged,
     FileHandleChanged,
     SelectionsChanged {

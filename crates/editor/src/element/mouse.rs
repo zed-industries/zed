@@ -4,17 +4,16 @@ use std::time::{Duration, Instant};
 use collections::HashMap;
 use feature_flags::{DiffReviewFeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    AnyElement, App, AvailableSpace, ClickEvent, Context, DefiniteLength, DispatchPhase, Element,
-    MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
-    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, TextStyleRefinement,
-    Window, anchored, deferred, point, px,
+    AnyElement, App, AvailableSpace, ClickEvent, Context, DispatchPhase, Element, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent,
+    ParentElement, Pixels, PressureStage, ScrollDelta, ScrollWheelEvent, Window, anchored,
+    deferred, point, px,
 };
 use multi_buffer::MultiBufferRow;
 use project::DisableAiSettings;
 use settings::Settings;
 use sum_tree::Bias;
 use text::SelectionGoal;
-use theme_settings::BufferLineHeight;
 use util::{RangeExt, debug_panic, post_inc};
 
 use super::{EditorElement, EditorLayout, LineNumberLayout, PositionMap, SplitSide};
@@ -322,33 +321,25 @@ impl EditorElement {
             }
         })?;
 
-        let text_style = TextStyleRefinement {
-            line_height: Some(DefiniteLength::Fraction(
-                BufferLineHeight::Comfortable.value(),
-            )),
-            ..Default::default()
-        };
-        window.with_text_style(Some(text_style), |window| {
-            let mut element = self.editor.read_with(cx, |editor, _| {
-                let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
-                let context_menu = mouse_context_menu.context_menu.clone();
+        let mut element = self.editor.read_with(cx, |editor, _| {
+            let mouse_context_menu = editor.mouse_context_menu.as_ref()?;
+            let context_menu = mouse_context_menu.context_menu.clone();
 
-                Some(
-                    deferred(
-                        anchored()
-                            .position(position)
-                            .child(context_menu)
-                            .anchor(gpui::Anchor::TopLeft)
-                            .snap_to_window_with_margin(px(8.)),
-                    )
-                    .with_priority(1)
-                    .into_any(),
+            Some(
+                deferred(
+                    anchored()
+                        .position(position)
+                        .child(context_menu)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .snap_to_window_with_margin(px(8.)),
                 )
-            })?;
+                .with_priority(1)
+                .into_any(),
+            )
+        })?;
 
-            element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
-            Some(element)
-        })
+        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+        Some(element)
     }
 
     pub(super) fn paint_mouse_listeners(

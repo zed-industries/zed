@@ -14,7 +14,6 @@ use gpui::{
     StatefulInteractiveElement, StyleRefinement, Styled, Subscription, Task, TaskExt,
     TextStyleRefinement, Window, canvas, div, px,
 };
-use itertools::Itertools;
 use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement, MarkdownStyle};
@@ -37,6 +36,7 @@ pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
 pub const MIN_POPOVER_LINE_HEIGHT: f32 = 4.;
 pub const POPOVER_RIGHT_OFFSET: Pixels = px(8.0);
 pub const HOVER_POPOVER_GAP: Pixels = px(10.);
+const MAX_HOVER_BYTES: usize = 100_000;
 
 /// Bindable action which uses the most recent selection head to trigger a hover
 pub fn hover(editor: &mut Editor, _: &Hover, window: &mut Window, cx: &mut Context<Editor>) {
@@ -407,15 +407,15 @@ fn show_hover(
                 let subscription =
                     this.update(cx, |_, cx| cx.observe(&markdown, |_, _, cx| cx.notify()))?;
 
-                let local_diagnostic = DiagnosticEntry {
-                    diagnostic: local_diagnostic.diagnostic.to_owned(),
-                    range: snapshot
+                let local_diagnostic = DiagnosticEntry::new(
+                    snapshot
                         .buffer_snapshot()
                         .anchor_before(local_diagnostic.range.start)
                         ..snapshot
                             .buffer_snapshot()
                             .anchor_after(local_diagnostic.range.end),
-                };
+                    local_diagnostic.diagnostic.to_owned(),
+                );
 
                 let scroll_handle = ScrollHandle::new();
 
@@ -660,18 +660,7 @@ fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let combined_text = blocks
-        .iter()
-        .map(|block| match &block.kind {
-            project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
-                Cow::Borrowed(block.text.trim())
-            }
-            project::HoverBlockKind::Code { language } => {
-                Cow::Owned(format!("```{}\n{}\n```", language, block.text.trim()))
-            }
-        })
-        .join("\n\n");
-
+    let combined_text = combine_hover_blocks(blocks);
     cx.new_window_entity(|_window, cx| {
         Markdown::new(
             combined_text.into(),
@@ -681,6 +670,221 @@ fn parse_blocks(
         )
     })
     .ok()
+}
+
+fn combine_hover_blocks(blocks: &[HoverBlock]) -> String {
+    let mut combined = String::new();
+    let mut budget = MAX_HOVER_BYTES;
+    let mut dropped_blocks = false;
+    let last_block_index = blocks
+        .iter()
+        .rposition(|block| !block.text.trim().is_empty());
+    for (index, block) in blocks.iter().enumerate() {
+        let text = block.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        let separator = if combined.is_empty() { "" } else { "\n\n" };
+        let is_last_block = Some(index) == last_block_index;
+        let reserved_for_dropped_marker = if is_last_block { 0 } else { "\n\n…".len() };
+        let mut truncated_inline = false;
+        let piece = match &block.kind {
+            project::HoverBlockKind::PlainText | project::HoverBlockKind::Markdown => {
+                let Some(block_budget) =
+                    budget.checked_sub(separator.len() + reserved_for_dropped_marker)
+                else {
+                    dropped_blocks = true;
+                    break;
+                };
+                match fit_in_budget(text.len(), block_budget) {
+                    BudgetFit::Fits => Cow::Borrowed(text),
+                    BudgetFit::TooSmall => {
+                        dropped_blocks = true;
+                        break;
+                    }
+                    BudgetFit::NeedsTruncation => {
+                        truncated_inline = true;
+                        Cow::Owned(truncate_hover_markdown(text, block_budget))
+                    }
+                }
+            }
+            project::HoverBlockKind::Code { language } => {
+                let language = language.replace(['`', '\r', '\n'], "");
+                let fence = wrapping_code_fence(text);
+                let overhead = separator.len()
+                    + reserved_for_dropped_marker
+                    + fence.len() * 2
+                    + language.len()
+                    + "\n\n".len();
+                let Some(block_budget) = budget.checked_sub(overhead) else {
+                    dropped_blocks = true;
+                    break;
+                };
+                let text = match fit_in_budget(text.len(), block_budget) {
+                    BudgetFit::Fits => Cow::Borrowed(text),
+                    BudgetFit::TooSmall => {
+                        dropped_blocks = true;
+                        break;
+                    }
+                    BudgetFit::NeedsTruncation => {
+                        truncated_inline = true;
+                        Cow::Owned(format!(
+                            "{}…",
+                            truncated_to_byte_budget(text, block_budget.saturating_sub("…".len()))
+                        ))
+                    }
+                };
+                Cow::Owned(format!("{fence}{language}\n{text}\n{fence}"))
+            }
+        };
+        budget = budget.saturating_sub(separator.len() + piece.len());
+        combined.push_str(separator);
+        combined.push_str(&piece);
+        if truncated_inline {
+            dropped_blocks = !is_last_block;
+            break;
+        }
+    }
+    if dropped_blocks {
+        if !combined.is_empty() {
+            combined.push_str("\n\n");
+        }
+        combined.push('…');
+    }
+    combined
+}
+
+enum BudgetFit {
+    Fits,
+    NeedsTruncation,
+    TooSmall,
+}
+
+fn fit_in_budget(len: usize, budget: usize) -> BudgetFit {
+    if len <= budget {
+        BudgetFit::Fits
+    } else if budget <= "…".len() {
+        BudgetFit::TooSmall
+    } else {
+        BudgetFit::NeedsTruncation
+    }
+}
+
+fn truncated_to_byte_budget(text: &str, budget: usize) -> &str {
+    let mut end = budget.min(text.len());
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+fn wrapping_code_fence(text: &str) -> String {
+    let mut longest_run = 0;
+    let mut current_run = 0;
+    for byte in text.bytes() {
+        if byte == b'`' {
+            current_run += 1;
+            longest_run = longest_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    "`".repeat((longest_run + 1).max(3))
+}
+
+fn truncate_hover_markdown(text: &str, max_len: usize) -> String {
+    let mut cut = max_len.saturating_sub("…".len()).min(text.len());
+    loop {
+        let mut truncated = truncated_to_byte_budget(text, cut);
+        if let Some(&split_byte) = text.as_bytes().get(truncated.len())
+            && (split_byte == b'`' || split_byte == b'~')
+        {
+            let mut end = truncated.len();
+            while end > 0 && text.as_bytes()[end - 1] == split_byte {
+                end -= 1;
+            }
+            truncated = &text[..end];
+        }
+        if let Some(&next_byte) = text.as_bytes().get(truncated.len())
+            && next_byte != b'\n'
+            && !truncated.ends_with('\n')
+            && ends_with_code_fence_line(truncated)
+        {
+            let line_start = truncated.rfind('\n').map_or(0, |index| index + 1);
+            truncated = &text[..line_start];
+        }
+        let ellipsis = if ends_with_code_fence_line(truncated) {
+            "\n…"
+        } else {
+            "…"
+        };
+        let closing_fence = unclosed_code_fence(truncated);
+        let total_len = truncated.len()
+            + ellipsis.len()
+            + closing_fence
+                .as_ref()
+                .map_or(0, |fence| "\n".len() + fence.len());
+        if total_len <= max_len || truncated.is_empty() {
+            return match closing_fence {
+                Some(fence) => format!("{truncated}{ellipsis}\n{fence}"),
+                None => format!("{truncated}{ellipsis}"),
+            };
+        }
+        cut = truncated.len().saturating_sub(total_len - max_len);
+    }
+}
+
+fn ends_with_code_fence_line(text: &str) -> bool {
+    text.lines()
+        .next_back()
+        .is_some_and(|line| parse_code_fence(line).is_some())
+}
+
+struct CodeFence {
+    fence_char: char,
+    len: usize,
+    has_info: bool,
+}
+
+fn parse_code_fence(line: &str) -> Option<CodeFence> {
+    let trimmed = line.trim_start_matches(' ');
+    if line.len() - trimmed.len() > 3 {
+        return None;
+    }
+    let first_char @ ('`' | '~') = trimmed.chars().next()? else {
+        return None;
+    };
+    let len = trimmed.chars().take_while(|&c| c == first_char).count();
+    if len < 3 {
+        return None;
+    }
+    let info = trimmed[len..].trim();
+    if first_char == '`' && info.contains('`') {
+        return None;
+    }
+    Some(CodeFence {
+        fence_char: first_char,
+        len,
+        has_info: !info.is_empty(),
+    })
+}
+
+fn unclosed_code_fence(markdown: &str) -> Option<String> {
+    let mut open_fence: Option<CodeFence> = None;
+    for line in markdown.lines() {
+        let Some(fence) = parse_code_fence(line) else {
+            continue;
+        };
+        match &open_fence {
+            None => open_fence = Some(fence),
+            Some(open) => {
+                if fence.fence_char == open.fence_char && fence.len >= open.len && !fence.has_info {
+                    open_fence = None;
+                }
+            }
+        }
+    }
+    open_fence.map(|fence| fence.fence_char.to_string().repeat(fence.len))
 }
 
 pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
@@ -1249,7 +1453,12 @@ impl DiagnosticPopover {
                             ),
                     )
                     .child(div().absolute().top_1().right_1().child({
-                        let message = self.local_diagnostic.diagnostic.message.clone();
+                        let message = self
+                            .local_diagnostic
+                            .diagnostic
+                            .message
+                            .as_shared_string()
+                            .clone();
                         CopyButton::new("copy-diagnostic", message).tooltip_label("Copy Diagnostic")
                     }))
                     .custom_scrollbars(
@@ -1807,6 +2016,355 @@ mod tests {
                 "No empty string hovers should be shown"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_oversized_hover_truncated(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fˇn test() { println!(); }
+        "});
+        cx.update_editor(|editor, window, cx| hover(editor, &Hover, window, cx));
+        let symbol_range = cx.lsp_range(indoc! {"
+            «fn» test() { println!(); }
+        "});
+
+        let oversized_content = "a".repeat(MAX_HOVER_BYTES + 1234);
+        cx.set_request_handler::<lsp::request::HoverRequest, _, _>(move |_, _, _| {
+            let contents = oversized_content.clone();
+            async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: contents,
+                    }),
+                    range: Some(symbol_range),
+                }))
+            }
+        })
+        .next()
+        .await;
+        cx.dispatch_action(Hover);
+
+        cx.condition(|editor, _| editor.hover_state.visible()).await;
+        cx.editor(|editor, _, cx| {
+            let rendered_text = editor
+                .hover_state
+                .info_popovers
+                .first()
+                .unwrap()
+                .get_rendered_text(cx);
+
+            assert_eq!(
+                rendered_text,
+                "a".repeat(MAX_HOVER_BYTES - "…".len()) + "…",
+                "Oversized hover contents should be truncated before display"
+            );
+        });
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_closes_open_code_fence() {
+        let text = "intro\n```rust\nlet aaa = 1;";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 1 + "…\n```".len()),
+            "intro\n```rust\nlet aaa = 1…\n```",
+            "Truncating inside a code block should close its fence"
+        );
+
+        let text = "~~~~\ncode\nmore code";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 5 + "…\n~~~~".len()),
+            "~~~~\ncode\nmore…\n~~~~",
+            "The closing fence should match the opening fence's character and length"
+        );
+
+        let text = "```rust\ncode\n```\nafter text";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 5 + "…".len()),
+            "```rust\ncode\n```\nafter…",
+            "Truncating after a closed code block should not add a fence"
+        );
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_respects_char_boundaries() {
+        assert_eq!(
+            truncate_hover_markdown("€€€€€", 12),
+            "€€€…",
+            "Three euro signs and the ellipsis fill the budget exactly"
+        );
+        assert_eq!(
+            truncate_hover_markdown("€€€€€", 11),
+            "€€…",
+            "Truncation should back off to the nearest char boundary"
+        );
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_never_exceeds_budget() {
+        let text = format!("intro\n{}\n{}", "`".repeat(1000), "x".repeat(2000));
+        assert_eq!(
+            truncate_hover_markdown(&text, 500),
+            "intro\n…",
+            "A budget landing inside a giant fence run must not emit the run unclosed"
+        );
+        assert_eq!(
+            truncate_hover_markdown(&text, 2000),
+            "intro\n…",
+            "A block whose closing fence cannot fit must be dropped entirely"
+        );
+    }
+
+    #[test]
+    fn test_truncate_hover_markdown_ellipsis_preserves_fence_lines() {
+        let prefix = "intro\n```rust\ncode\n```";
+        let text = format!("{prefix}\nmore text past the budget");
+        assert_eq!(
+            truncate_hover_markdown(&text, prefix.len() + "\n…".len()),
+            format!("{prefix}\n…"),
+            "An ellipsis appended right after a closing fence would reopen the block"
+        );
+
+        let prefix = "body\n```rust";
+        let text = format!("{prefix}\ncode past the budget");
+        assert_eq!(
+            truncate_hover_markdown(&text, prefix.len() + "\n…\n```".len()),
+            format!("{prefix}\n…\n```"),
+            "An ellipsis appended to an opening fence would join its info string"
+        );
+    }
+
+    #[test]
+    fn test_backtick_fence_with_backtick_info_is_not_a_fence() {
+        let text = "```js`x\nnot a code block";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 6 + "…".len()),
+            "```js`x\nnot a code…",
+            "A backtick fence with a backtick in its info string is paragraph text"
+        );
+    }
+
+    #[test]
+    fn test_truncation_does_not_forge_fences_from_partial_lines() {
+        let text = "```js`x\nnot a code block";
+        assert_eq!(
+            truncate_hover_markdown(text, "```js".len() + "…".len()),
+            "…",
+            "Cutting \"```js`x\" down to \"```js\" would forge a fence out of paragraph text"
+        );
+
+        let text = "intro\n```rustacean\ncode";
+        assert_eq!(
+            truncate_hover_markdown(text, "intro\n```rust".len() + "…".len()),
+            "intro\n…",
+            "A fence with a cut-off info string would open a block the original does not have"
+        );
+
+        let text = "intro\n```rust\ncode\n``` and more text";
+        assert_eq!(
+            truncate_hover_markdown(text, "intro\n```rust\ncode\n```".len() + "\n…".len()),
+            "intro\n```rust\ncode\n…\n```",
+            "\"``` and more text\" does not close the block, so the cut must stay inside it"
+        );
+    }
+
+    #[test]
+    fn test_hover_blocks_share_byte_budget() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 20),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "b".repeat(100),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "never shown".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let second_block_budget = 20 - "\n\n…".len() - "\n\n".len();
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!(
+                "{}\n\n{}…\n\n…",
+                "a".repeat(MAX_HOVER_BYTES - 20),
+                "b".repeat(second_block_budget - "…".len())
+            ),
+            "The byte budget applies to the hover as a whole, and dropping the last block must leave a marker"
+        );
+        assert_eq!(
+            combined.len(),
+            MAX_HOVER_BYTES,
+            "The truncated hover must use the whole byte budget"
+        );
+    }
+
+    #[test]
+    fn test_dropped_hover_blocks_leave_ellipsis() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - "\n\n…".len()),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "never shown".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\n…", "a".repeat(MAX_HOVER_BYTES - "\n\n…".len())),
+            "Blocks dropped after an exactly fitting block must leave a truncation indicator"
+        );
+        assert_eq!(
+            combined.len(),
+            MAX_HOVER_BYTES,
+            "The dropped-blocks indicator must fit within the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_whitespace_hover_blocks_are_skipped() {
+        let mut blocks = vec![HoverBlock {
+            text: "a".repeat(MAX_HOVER_BYTES - 6),
+            kind: HoverBlockKind::Markdown,
+        }];
+        blocks.extend((0..100).map(|_| HoverBlock {
+            text: " ".to_owned(),
+            kind: HoverBlockKind::Markdown,
+        }));
+        blocks.push(HoverBlock {
+            text: "bbb".to_owned(),
+            kind: HoverBlockKind::Markdown,
+        });
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\nbbb", "a".repeat(MAX_HOVER_BYTES - 6)),
+            "Whitespace-only blocks must not emit separators or consume the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_unaffordable_code_fence_overhead_drops_the_block() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 6),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "let x = 1;".to_owned(),
+                kind: HoverBlockKind::Code {
+                    language: "rust".to_owned(),
+                },
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}\n\n…", "a".repeat(MAX_HOVER_BYTES - 6)),
+            "A code block whose fence overhead does not fit must be dropped, not overflow the budget"
+        );
+    }
+
+    #[test]
+    fn test_dropping_the_last_block_stays_within_the_budget() {
+        let blocks = [
+            HoverBlock {
+                text: "a".repeat(MAX_HOVER_BYTES - 2),
+                kind: HoverBlockKind::Markdown,
+            },
+            HoverBlock {
+                text: "bbb".to_owned(),
+                kind: HoverBlockKind::Markdown,
+            },
+        ];
+        let combined = combine_hover_blocks(&blocks);
+        assert_eq!(
+            combined,
+            format!("{}…\n\n…", "a".repeat(MAX_HOVER_BYTES - 8)),
+            "Reserving the dropped-blocks marker must keep the total within the budget"
+        );
+        assert_eq!(combined.len(), MAX_HOVER_BYTES);
+    }
+
+    #[test]
+    fn test_code_hover_budget_includes_fence_overhead() {
+        let blocks = [HoverBlock {
+            text: "x".repeat(MAX_HOVER_BYTES),
+            kind: HoverBlockKind::Code {
+                language: "rust".to_owned(),
+            },
+        }];
+        let overhead = "```rust\n".len() + "…\n```".len();
+        assert_eq!(
+            combine_hover_blocks(&blocks),
+            format!("```rust\n{}…\n```", "x".repeat(MAX_HOVER_BYTES - overhead)),
+            "The fence markup must be counted against the byte budget"
+        );
+    }
+
+    #[test]
+    fn test_truncation_does_not_split_fence_runs() {
+        let text = "text\n`````\ncode";
+        assert_eq!(
+            truncate_hover_markdown(text, 10),
+            "text\n…",
+            "Cutting a ````` run down to ``` would forge a fence the original does not have"
+        );
+        assert_eq!(
+            truncate_hover_markdown(text, 10 + "\n…\n`````".len()),
+            "text\n`````\n…\n`````",
+            "A cut right after a full fence run keeps the fence and closes it"
+        );
+    }
+
+    #[test]
+    fn test_tab_indented_fence_is_content() {
+        let text = "```rust\ncode\n\t```\nmore code";
+        assert_eq!(
+            truncate_hover_markdown(text, text.len() - 5 + "…\n```".len()),
+            "```rust\ncode\n\t```\nmore…\n```",
+            "A tab-indented fence is indented too far to close the block"
+        );
+    }
+
+    #[test]
+    fn test_code_hover_language_is_sanitized() {
+        let blocks = [HoverBlock {
+            text: "let x = 1;".to_owned(),
+            kind: HoverBlockKind::Code {
+                language: "ru`st\n".to_owned(),
+            },
+        }];
+        assert_eq!(
+            combine_hover_blocks(&blocks),
+            "```rust\nlet x = 1;\n```",
+            "Backticks and newlines in the language id would break the fence line"
+        );
+    }
+
+    #[test]
+    fn test_wrapping_code_fence_outgrows_content_backticks() {
+        assert_eq!(wrapping_code_fence("let a = 1;"), "```");
+        assert_eq!(wrapping_code_fence("let a = \"``\";"), "```");
+        assert_eq!(wrapping_code_fence("docs with ``` inside"), "````");
+        assert_eq!(wrapping_code_fence("````"), "`````");
     }
 
     #[gpui::test]

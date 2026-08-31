@@ -5,7 +5,7 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, WeakEntity};
 use http_client::{
-    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt as _,
     http::{HeaderName, HeaderValue},
 };
 use language_model::{
@@ -21,7 +21,7 @@ use rand::RngCore as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::form_urlencoded;
 use util::ResultExt as _;
 
@@ -37,7 +37,14 @@ const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 const CREDENTIALS_KEY: &str = "https://chatgpt.com/backend-api/codex";
-const TOKEN_REFRESH_BUFFER_MS: u64 = 5 * 60 * 1000;
+const TOKEN_REFRESH_BUFFER_MS: u64 = Duration::from_mins(5).as_millis() as u64;
+/// Requests the complete account catalog without Codex CLI version filtering.
+///
+/// The backend treats this exact version as an ungated sentinel. Other versions
+/// are compared with each model's `minimal_client_version`.
+const UNGATED_MODEL_CATALOG_CLIENT_VERSION: &str = "0.0.0";
+// Codex applies the same bound because model discovery is a startup-critical request.
+const MODEL_CATALOG_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct CodexCredentials {
@@ -62,8 +69,12 @@ pub struct State {
     load_task: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
     credentials_provider: Arc<dyn CredentialsProvider>,
     http_client: Arc<dyn HttpClient>,
+    client_version: SharedString,
+    available_models: Vec<ChatGptModel>,
     auth_generation: u64,
+    model_catalog_generation: u64,
     last_auth_error: Option<SharedString>,
+    last_model_catalog_error: Option<SharedString>,
 }
 
 #[derive(Debug)]
@@ -82,7 +93,11 @@ impl std::fmt::Display for RefreshError {
 }
 
 impl State {
-    /// Creates the state and starts loading any persisted credentials.
+    /// Creates state and starts loading persisted credentials.
+    ///
+    /// Model discovery requests the ungated account catalog because host
+    /// application versions are unrelated to Codex CLI compatibility versions.
+    ///
     /// [`State::load_task`] resolves once the load finishes.
     pub fn new(
         http_client: Arc<dyn HttpClient>,
@@ -96,17 +111,39 @@ impl State {
                     let result = credentials_provider
                         .read_credentials(CREDENTIALS_KEY, cx)
                         .await;
-                    this.update(cx, |state, cx| {
-                        if let Ok(Some((_, bytes))) = result {
-                            match serde_json::from_slice::<CodexCredentials>(&bytes) {
-                                Ok(creds) => state.credentials = Some(creds),
-                                Err(err) => {
-                                    log::warn!(
-                                        "Failed to deserialize ChatGPT subscription credentials: {err}"
-                                    );
+                    let refresh_models_task = this.update(cx, |state, cx| {
+                        match result {
+                            Ok(Some((_, bytes))) => {
+                                match serde_json::from_slice::<CodexCredentials>(&bytes) {
+                                    Ok(credentials) => {
+                                        state.auth_generation =
+                                            state.auth_generation.wrapping_add(1);
+                                        state.credentials = Some(credentials);
+                                    }
+                                    Err(error) => {
+                                        log::warn!(
+                                            "Failed to deserialize ChatGPT subscription credentials: {error}"
+                                        );
+                                    }
                                 }
                             }
+                            Ok(None) => {}
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to load ChatGPT subscription credentials: {error:#}"
+                                );
+                            }
                         }
+                        state
+                            .is_authenticated()
+                            .then(|| state.refresh_model_catalog(cx))
+                    })?;
+                    if let Some(refresh_models_task) = refresh_models_task
+                        && let Err(error) = refresh_models_task.await
+                    {
+                        log::warn!("Failed to refresh ChatGPT models: {error:#}");
+                    }
+                    this.update(cx, |state, cx| {
                         state.load_task = None;
                         cx.notify();
                     })?;
@@ -122,8 +159,12 @@ impl State {
             load_task: Some(load_task),
             credentials_provider,
             http_client,
+            client_version: UNGATED_MODEL_CATALOG_CLIENT_VERSION.into(),
+            available_models: ChatGptModel::all(),
             auth_generation: 0,
+            model_catalog_generation: 0,
             last_auth_error: None,
+            last_model_catalog_error: None,
         }
     }
 
@@ -143,10 +184,89 @@ impl State {
         self.last_auth_error.clone()
     }
 
+    pub fn model_catalog_error(&self) -> Option<SharedString> {
+        self.last_model_catalog_error.clone()
+    }
+
+    pub fn available_models(&self) -> &[ChatGptModel] {
+        &self.available_models
+    }
+
+    pub fn default_model(&self) -> Option<ChatGptModel> {
+        self.available_models.first().cloned()
+    }
+
+    pub fn default_fast_model(&self) -> Option<ChatGptModel> {
+        self.available_models
+            .iter()
+            .find(|model| model.id() == "gpt-5.6-luna")
+            .cloned()
+    }
+
     /// The in-flight task loading persisted credentials, or `None` once the
     /// initial load has finished.
     pub fn load_task(&self) -> Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>> {
         self.load_task.clone()
+    }
+
+    fn refresh_model_catalog(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), Arc<anyhow::Error>>> {
+        self.model_catalog_generation = self.model_catalog_generation.wrapping_add(1);
+        let model_catalog_generation = self.model_catalog_generation;
+        let http_client = self.http_client.clone();
+        let client_version = self.client_version.clone();
+
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                let credentials = get_fresh_credentials(&this, &http_client, cx)
+                    .await
+                    .map_err(|error| anyhow!("{error}"))?;
+                let request =
+                    list_models(http_client.as_ref(), &credentials, client_version.as_ref());
+                let timeout = cx
+                    .background_executor()
+                    .timer(MODEL_CATALOG_REQUEST_TIMEOUT);
+                futures::select! {
+                    result = request.fuse() => result,
+                    () = timeout.fuse() => Err(anyhow!(
+                        "ChatGPT models request timed out after {MODEL_CATALOG_REQUEST_TIMEOUT:?}"
+                    )),
+                }
+            }
+            .await;
+
+            match result {
+                Ok(models) => this
+                    .update(cx, |state, cx| {
+                        if state.model_catalog_generation == model_catalog_generation {
+                            state.available_models = models;
+                            state.last_model_catalog_error = None;
+                            cx.notify();
+                        }
+                    })
+                    .map_err(Arc::new),
+                Err(error) => {
+                    let error = Arc::new(error);
+                    this.update(cx, |state, cx| {
+                        if state.model_catalog_generation == model_catalog_generation {
+                            state.last_model_catalog_error =
+                                Some(format!("Failed to load models: {error:#}").into());
+                            cx.notify();
+                        }
+                    })
+                    .map_err(Arc::new)?;
+                    Err(error)
+                }
+            }
+        })
+    }
+
+    fn reset_model_catalog(&mut self) {
+        self.model_catalog_generation = self.model_catalog_generation.wrapping_add(1);
+        self.available_models = ChatGptModel::all();
+        self.last_model_catalog_error = None;
     }
 
     /// Starts the browser-based OAuth sign-in flow. No-op while a sign-in is
@@ -173,13 +293,19 @@ impl State {
 
                     match persist_result {
                         Ok(()) => {
-                            this.update(cx, |state, cx| {
+                            let refresh_models_task = this.update(cx, |state, cx| {
+                                state.auth_generation = state.auth_generation.wrapping_add(1);
                                 state.credentials = Some(creds);
-                                state.sign_in_task = None;
                                 state.last_auth_error = None;
+                                state.refresh_model_catalog(cx)
+                            })?;
+                            if let Err(error) = refresh_models_task.await {
+                                log::warn!("Failed to refresh ChatGPT models: {error:#}");
+                            }
+                            this.update(cx, |state, cx| {
+                                state.sign_in_task = None;
                                 cx.notify();
-                            })
-                            .log_err();
+                            })?;
                         }
                         Err(err) => {
                             log::error!(
@@ -222,6 +348,7 @@ impl State {
         self.sign_in_task = None;
         self.refresh_task = None;
         self.last_auth_error = None;
+        self.reset_model_catalog();
         cx.notify();
 
         let credentials_provider = self.credentials_provider.clone();
@@ -235,20 +362,6 @@ impl State {
     }
 }
 
-//
-// The ChatGPT Subscription provider routes requests to chatgpt.com/backend-api/codex,
-// which only supports a subset of OpenAI models. This list is maintained separately
-// from the standard OpenAI API model list (open_ai::Model).
-//
-// TODO: The Codex CLI fetches this list dynamically from
-// `GET <codex_base_url>/models?client_version=...` (see
-// codex-rs/codex-api/src/endpoint/models.rs in openai/codex) and falls back to
-// a bundled models.json. Beyond going stale, the static approach also can't
-// model per-account access (e.g. free accounts cannot use gpt-5.4 even though
-// paid accounts can), so the backend still rejects some requests. The bundled
-// list at
-// codex-rs/models-manager/models.json (openai/codex) is the closest
-// approximation; the entries below mirror that file's picker-visible models.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChatGptModel {
     Gpt56Sol,
@@ -257,6 +370,18 @@ pub enum ChatGptModel {
     Gpt55,
     Gpt54,
     Gpt54Mini,
+    Discovered(Box<DiscoveredChatGptModel>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DiscoveredChatGptModel {
+    id: String,
+    display_name: String,
+    max_token_count: u64,
+    supports_images: bool,
+    default_reasoning_effort: Option<ReasoningEffort>,
+    supported_reasoning_efforts: Vec<ReasoningEffort>,
+    supports_priority: bool,
 }
 
 impl ChatGptModel {
@@ -279,6 +404,7 @@ impl ChatGptModel {
             Self::Gpt55 => "gpt-5.5",
             Self::Gpt54 => "gpt-5.4",
             Self::Gpt54Mini => "gpt-5.4-mini",
+            Self::Discovered(model) => &model.id,
         }
     }
 
@@ -290,6 +416,7 @@ impl ChatGptModel {
             Self::Gpt55 => "GPT-5.5",
             Self::Gpt54 => "GPT-5.4",
             Self::Gpt54Mini => "GPT-5.4 Mini",
+            Self::Discovered(model) => &model.display_name,
         }
     }
 
@@ -297,6 +424,7 @@ impl ChatGptModel {
         match self {
             Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => 372_000,
             Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => 272_000,
+            Self::Discovered(model) => model.max_token_count,
         }
     }
 
@@ -307,7 +435,10 @@ impl ChatGptModel {
     }
 
     fn supports_images(&self) -> bool {
-        true
+        match self {
+            Self::Discovered(model) => model.supports_images,
+            _ => true,
+        }
     }
 
     fn default_reasoning_effort(&self) -> Option<ReasoningEffort> {
@@ -316,10 +447,11 @@ impl ChatGptModel {
             Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 | Self::Gpt54Mini => {
                 Some(ReasoningEffort::Medium)
             }
+            Self::Discovered(model) => model.default_reasoning_effort,
         }
     }
 
-    fn supported_reasoning_efforts(&self) -> &'static [ReasoningEffort] {
+    fn supported_reasoning_efforts(&self) -> &[ReasoningEffort] {
         match self {
             Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna => &[
                 ReasoningEffort::Low,
@@ -334,6 +466,7 @@ impl ChatGptModel {
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
+            Self::Discovered(model) => &model.supported_reasoning_efforts,
         }
     }
 
@@ -349,6 +482,7 @@ impl ChatGptModel {
         match self {
             Self::Gpt56Sol | Self::Gpt56Terra | Self::Gpt56Luna | Self::Gpt55 | Self::Gpt54 => true,
             Self::Gpt54Mini => false,
+            Self::Discovered(model) => model.supports_priority,
         }
     }
 }
@@ -430,6 +564,150 @@ fn codex_extra_headers(
         header_pairs.push((HeaderName::from_static("thread-id"), value));
     }
     CustomHeaders::new(header_pairs)
+}
+
+#[derive(Deserialize)]
+struct ModelsResponse {
+    models: Vec<CatalogModel>,
+}
+
+#[derive(Deserialize)]
+struct CatalogModel {
+    slug: String,
+    display_name: String,
+    default_reasoning_level: Option<String>,
+    #[serde(default)]
+    supported_reasoning_levels: Vec<ReasoningEffortPreset>,
+    visibility: ModelVisibility,
+    priority: i32,
+    #[serde(default)]
+    additional_speed_tiers: Vec<String>,
+    #[serde(default)]
+    service_tiers: Vec<ModelServiceTier>,
+    context_window: Option<u64>,
+    max_context_window: Option<u64>,
+    input_modalities: Option<Vec<String>>,
+}
+
+#[derive(Deserialize)]
+struct ReasoningEffortPreset {
+    effort: String,
+}
+
+#[derive(Deserialize)]
+struct ModelServiceTier {
+    id: String,
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum ModelVisibility {
+    List,
+    Hide,
+    None,
+}
+
+impl From<CatalogModel> for ChatGptModel {
+    fn from(model: CatalogModel) -> Self {
+        let default_reasoning_effort = model
+            .default_reasoning_level
+            .as_deref()
+            .and_then(parse_reasoning_effort);
+        let mut supported_reasoning_efforts = model
+            .supported_reasoning_levels
+            .iter()
+            .filter_map(|preset| parse_reasoning_effort(&preset.effort))
+            .collect::<Vec<_>>();
+        if supported_reasoning_efforts.is_empty()
+            && let Some(default_reasoning_effort) = default_reasoning_effort
+        {
+            supported_reasoning_efforts.push(default_reasoning_effort);
+        }
+        let supports_priority = model
+            .additional_speed_tiers
+            .iter()
+            .any(|tier| tier == "fast")
+            || model.service_tiers.iter().any(|tier| tier.id == "priority");
+        let supports_images = model
+            .input_modalities
+            .as_ref()
+            .is_none_or(|modalities| modalities.iter().any(|modality| modality == "image"));
+
+        Self::Discovered(Box::new(DiscoveredChatGptModel {
+            id: model.slug,
+            display_name: model.display_name,
+            max_token_count: model
+                .context_window
+                .or(model.max_context_window)
+                .unwrap_or(272_000),
+            supports_images,
+            default_reasoning_effort,
+            supported_reasoning_efforts,
+            supports_priority,
+        }))
+    }
+}
+
+fn parse_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
+    match effort {
+        "none" => Some(ReasoningEffort::None),
+        "minimal" => Some(ReasoningEffort::Minimal),
+        "low" => Some(ReasoningEffort::Low),
+        "medium" => Some(ReasoningEffort::Medium),
+        "high" => Some(ReasoningEffort::High),
+        "xhigh" => Some(ReasoningEffort::XHigh),
+        "max" => Some(ReasoningEffort::Max),
+        _ => None,
+    }
+}
+
+async fn list_models(
+    http_client: &dyn HttpClient,
+    credentials: &CodexCredentials,
+    client_version: &str,
+) -> Result<Vec<ChatGptModel>> {
+    let query = form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_version", client_version)
+        .finish();
+    let uri = format!("{CODEX_BASE_URL}/models?{query}");
+    let extra_headers = codex_extra_headers(credentials, None);
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header("Accept", "application/json")
+        .header(
+            "Authorization",
+            format!("Bearer {}", credentials.access_token),
+        )
+        .extra_headers(&extra_headers)
+        .body(AsyncBody::default())
+        .context("failed to build ChatGPT models request")?;
+    let mut response = http_client
+        .send(request)
+        .await
+        .context("failed to request ChatGPT models")?;
+    let status = response.status();
+    let mut body = String::new();
+    smol::io::AsyncReadExt::read_to_string(response.body_mut(), &mut body)
+        .await
+        .context("failed to read ChatGPT models response")?;
+    if !status.is_success() {
+        return Err(anyhow!(
+            "ChatGPT models request failed (HTTP {status}): {body}"
+        ));
+    }
+
+    let mut models = serde_json::from_str::<ModelsResponse>(&body)
+        .context("failed to parse ChatGPT models response")?
+        .models;
+    models.retain(|model| model.visibility == ModelVisibility::List);
+    models.sort_by_key(|model| model.priority);
+    if models.is_empty() {
+        return Err(anyhow!(
+            "ChatGPT models response did not contain any picker-visible models"
+        ));
+    }
+    Ok(models.into_iter().map(ChatGptModel::from).collect())
 }
 
 impl LanguageModel for OpenAiSubscribedLanguageModel {
@@ -519,7 +797,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 })
                 .await?;
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            let mut event_stream = mapper.map_stream(response_stream.boxed());
+            let mut event_stream = language_model::stream_in_background(
+                mapper.map_stream(response_stream.boxed()).boxed(),
+                cx.background_executor().clone(),
+            );
             let mut compacted_context = None;
             let mut usage = language_model::TokenUsage::default();
 
@@ -611,6 +892,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
         let request_limiter = self.request_limiter.clone();
+        let executor = cx.background_executor().clone();
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
@@ -636,7 +918,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         async move {
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            Ok(mapper.map_stream(future.await?.boxed()).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(future.await?.boxed()).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
@@ -735,6 +1020,7 @@ async fn get_fresh_credentials(
                             s.credentials = None;
                             s.last_auth_error =
                                 Some("Your session has expired. Please sign in again.".into());
+                            s.reset_model_catalog();
                             cx.notify();
                         })
                         .ok();
@@ -1328,10 +1614,34 @@ mod tests {
             .lock()
             .replace(("Bearer".to_string(), creds_json));
 
-        let http: Arc<dyn HttpClient> = FakeHttpClient::create(|_| async {
+        let http: Arc<dyn HttpClient> = FakeHttpClient::create(|request| async move {
+            assert_eq!(
+                request.uri().to_string(),
+                "https://chatgpt.com/backend-api/codex/models?client_version=0.0.0"
+            );
             Ok(http_client::Response::builder()
                 .status(200)
-                .body(http_client::AsyncBody::default())?)
+                .body(http_client::AsyncBody::from(
+                    serde_json::json!({
+                        "models": [{
+                            "slug": "gpt-account-default",
+                            "display_name": "Account Default",
+                            "default_reasoning_level": "medium",
+                            "supported_reasoning_levels": [{
+                                "effort": "medium",
+                                "description": "Medium"
+                            }],
+                            "visibility": "list",
+                            "priority": 0,
+                            "additional_speed_tiers": [],
+                            "service_tiers": [],
+                            "context_window": 128_000,
+                            "max_context_window": null,
+                            "input_modalities": ["text"]
+                        }]
+                    })
+                    .to_string(),
+                ))?)
         });
 
         let state = cx.new(|cx| State::new(http, creds_provider, cx));
@@ -1347,6 +1657,277 @@ mod tests {
             let state = state.read(cx);
             assert!(state.is_authenticated());
             assert!(state.load_task().is_none());
+            assert_eq!(
+                state.available_models().first().map(ChatGptModel::id),
+                Some("gpt-account-default")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_model_catalog_uses_account_visible_models(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|request| async move {
+            assert_eq!(request.method(), Method::GET);
+            assert_eq!(
+                request.uri().to_string(),
+                "https://chatgpt.com/backend-api/codex/models?client_version=1.2.3"
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("authorization")
+                    .and_then(|value| value.to_str().ok()),
+                Some("Bearer fresh_access")
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("chatgpt-account-id")
+                    .and_then(|value| value.to_str().ok()),
+                Some("account-123")
+            );
+            assert_eq!(
+                request
+                    .headers()
+                    .get("originator")
+                    .and_then(|value| value.to_str().ok()),
+                Some("zed")
+            );
+            Ok(http_client::Response::builder()
+                .status(200)
+                .body(http_client::AsyncBody::from(
+                    serde_json::json!({
+                        "models": [
+                            {
+                                "slug": "gpt-5.6-sol",
+                                "display_name": "GPT-5.6 Sol",
+                                "default_reasoning_level": "low",
+                                "supported_reasoning_levels": [{
+                                    "effort": "low",
+                                    "description": "Low"
+                                }],
+                                "visibility": "hide",
+                                "priority": 0,
+                                "additional_speed_tiers": ["fast"],
+                                "service_tiers": [],
+                                "context_window": 372_000,
+                                "max_context_window": null,
+                                "input_modalities": ["text", "image"]
+                            },
+                            {
+                                "slug": "gpt-5.6-luna",
+                                "display_name": "GPT-5.6 Luna",
+                                "default_reasoning_level": "medium",
+                                "supported_reasoning_levels": [{
+                                    "effort": "medium",
+                                    "description": "Medium"
+                                }],
+                                "visibility": "list",
+                                "priority": 2,
+                                "additional_speed_tiers": [],
+                                "service_tiers": [{"id": "priority"}],
+                                "context_window": 372_000,
+                                "max_context_window": null,
+                                "input_modalities": ["text", "image"]
+                            },
+                            {
+                                "slug": "gpt-5.5",
+                                "display_name": "GPT-5.5",
+                                "default_reasoning_level": "medium",
+                                "supported_reasoning_levels": [{
+                                    "effort": "medium",
+                                    "description": "Medium"
+                                }],
+                                "visibility": "list",
+                                "priority": 1,
+                                "additional_speed_tiers": [],
+                                "service_tiers": [],
+                                "context_window": 272_000,
+                                "max_context_window": null,
+                                "input_modalities": ["text"]
+                            }
+                        ]
+                    })
+                    .to_string(),
+                ))?)
+        });
+        let mut credentials = make_fresh_credentials();
+        credentials.account_id = Some("account-123".to_string());
+        let state = make_state(http_client, Some(credentials), cx);
+        state.update(cx, |state, _cx| {
+            state.client_version = "1.2.3".into();
+        });
+
+        state
+            .update(cx, |state, cx| state.refresh_model_catalog(cx))
+            .await
+            .expect("model discovery should succeed");
+
+        cx.read(|cx| {
+            let state = state.read(cx);
+            let model_ids = state
+                .available_models()
+                .iter()
+                .map(ChatGptModel::id)
+                .collect::<Vec<_>>();
+            assert_eq!(model_ids, ["gpt-5.5", "gpt-5.6-luna"]);
+            assert_eq!(
+                state.default_model().as_ref().map(ChatGptModel::id),
+                Some("gpt-5.5")
+            );
+            assert_eq!(
+                state.default_fast_model().as_ref().map(ChatGptModel::id),
+                Some("gpt-5.6-luna")
+            );
+            let default_model = state
+                .available_models()
+                .iter()
+                .find(|model| model.id() == "gpt-5.5")
+                .expect("default model should be present");
+            let fast_model = state
+                .available_models()
+                .iter()
+                .find(|model| model.id() == "gpt-5.6-luna")
+                .expect("fast model should be present");
+            assert!(!default_model.supports_images());
+            assert!(fast_model.supports_priority());
+            assert!(state.model_catalog_error().is_none());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_model_catalog_failure_preserves_fallback_models(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|_| async move {
+            Ok(http_client::Response::builder()
+                .status(500)
+                .body(http_client::AsyncBody::from("backend unavailable"))?)
+        });
+        let state = make_state(http_client, Some(make_fresh_credentials()), cx);
+        let fallback_model_ids = cx.read(|cx| {
+            state
+                .read(cx)
+                .available_models()
+                .iter()
+                .map(ChatGptModel::id)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        });
+
+        state
+            .update(cx, |state, cx| state.refresh_model_catalog(cx))
+            .await
+            .expect_err("model discovery should fail");
+
+        cx.read(|cx| {
+            let state = state.read(cx);
+            let model_ids = state
+                .available_models()
+                .iter()
+                .map(ChatGptModel::id)
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            assert_eq!(model_ids, fallback_model_ids);
+            assert!(
+                state
+                    .model_catalog_error()
+                    .is_some_and(|error| error.contains("backend unavailable"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_model_catalog_request_times_out(cx: &mut TestAppContext) {
+        let http_client = FakeHttpClient::create(|_| {
+            futures::future::pending::<Result<http_client::Response<AsyncBody>>>()
+        });
+        let state = make_state(http_client, Some(make_fresh_credentials()), cx);
+
+        let refresh_task = state.update(cx, |state, cx| state.refresh_model_catalog(cx));
+        cx.run_until_parked();
+        cx.executor().advance_clock(MODEL_CATALOG_REQUEST_TIMEOUT);
+        cx.run_until_parked();
+
+        let error = refresh_task
+            .await
+            .expect_err("model discovery should time out");
+        assert!(
+            error.to_string().contains("timed out after 5s"),
+            "unexpected model discovery error: {error:#}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_obsolete_model_catalog_cannot_replace_newer_models(cx: &mut TestAppContext) {
+        let (release_obsolete_request, obsolete_request) =
+            futures::channel::oneshot::channel::<()>();
+        let obsolete_request = Arc::new(Mutex::new(Some(obsolete_request)));
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let obsolete_request = obsolete_request.clone();
+            let request_count = request_count.clone();
+            move |_| {
+                let obsolete_request = obsolete_request.clone();
+                let request_count = request_count.clone();
+                async move {
+                    let request_index = request_count.fetch_add(1, Ordering::SeqCst);
+                    if request_index == 0 {
+                        let receiver = obsolete_request.lock().take();
+                        if let Some(receiver) = receiver {
+                            receiver.await.expect("obsolete request should be released");
+                        }
+                    }
+                    let model_id = if request_index == 0 {
+                        "obsolete-model"
+                    } else {
+                        "current-model"
+                    };
+                    Ok(http_client::Response::builder().status(200).body(
+                        http_client::AsyncBody::from(
+                            serde_json::json!({
+                                "models": [{
+                                    "slug": model_id,
+                                    "display_name": model_id,
+                                    "default_reasoning_level": "medium",
+                                    "supported_reasoning_levels": [],
+                                    "visibility": "list",
+                                    "priority": 0,
+                                    "additional_speed_tiers": [],
+                                    "service_tiers": [],
+                                    "context_window": 128_000,
+                                    "max_context_window": null,
+                                    "input_modalities": ["text"]
+                                }]
+                            })
+                            .to_string(),
+                        ),
+                    )?)
+                }
+            }
+        });
+        let state = make_state(http_client, Some(make_fresh_credentials()), cx);
+
+        let obsolete_refresh = state.update(cx, |state, cx| state.refresh_model_catalog(cx));
+        cx.run_until_parked();
+        state
+            .update(cx, |state, cx| state.refresh_model_catalog(cx))
+            .await
+            .expect("newer model discovery should succeed");
+        release_obsolete_request
+            .send(())
+            .expect("obsolete request should remain connected");
+        obsolete_refresh
+            .await
+            .expect("obsolete model discovery may still complete");
+
+        cx.read(|cx| {
+            assert_eq!(
+                state
+                    .read(cx)
+                    .available_models()
+                    .first()
+                    .map(ChatGptModel::id),
+                Some("current-model")
+            );
         });
     }
 
@@ -1643,8 +2224,12 @@ mod tests {
             load_task: None,
             credentials_provider,
             http_client,
+            client_version: "0.0.0".into(),
+            available_models: ChatGptModel::all(),
             auth_generation: 0,
+            model_catalog_generation: 0,
             last_auth_error: None,
+            last_model_catalog_error: None,
         })
     }
 
