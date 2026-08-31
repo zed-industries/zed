@@ -264,6 +264,7 @@ const FILE_SUFFIXES_BY_ICON_KEY: &[(&str, &[&str])] = &[
             "bash_logout",
             "bash_profile",
             "bashrc",
+            "inputrc",
             "brushrc",
             "fish",
             "nu",
