@@ -999,7 +999,7 @@ pub(crate) async fn build_buffer(
             line_ending,
             text,
         );
-        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite);
+        let mut buffer = Buffer::build(buffer, Some(blob), Capability::ReadWrite, cx);
         buffer.set_language_async(language, cx);
         buffer
     });
