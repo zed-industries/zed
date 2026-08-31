@@ -164,8 +164,9 @@ impl ModalLayer {
                 return;
             }
         }
+        let previous_focus_handle = window.focused(cx);
         let new_modal = cx.new(|cx| build_view(window, cx));
-        self.show_modal(Box::new(new_modal), window, cx);
+        self.show_modal(Box::new(new_modal), previous_focus_handle, window, cx);
         cx.emit(ModalOpenedEvent);
     }
 
@@ -174,6 +175,7 @@ impl ModalLayer {
     fn show_modal(
         &mut self,
         modal: Box<dyn ModalViewHandle>,
+        previous_focus_handle: Option<FocusHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -190,7 +192,7 @@ impl ModalLayer {
                     }
                 }),
             ],
-            previous_focus_handle: window.focused(cx),
+            previous_focus_handle,
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
@@ -214,7 +216,8 @@ impl ModalLayer {
         let Some(modal) = self.stashed_modal.take() else {
             return false;
         };
-        self.show_modal(modal, window, cx);
+        let previous_focus_handle = window.focused(cx);
+        self.show_modal(modal, previous_focus_handle, window, cx);
         cx.emit(ModalOpenedEvent);
         true
     }
