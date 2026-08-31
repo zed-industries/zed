@@ -78,6 +78,22 @@ pub(crate) fn register_window(window: *const super::window::IosWindow) {
     }
 }
 
+pub(crate) fn window_count() -> usize {
+    unsafe { (*window_list().0.get()).len() }
+}
+
+/// Makes the most recently registered window key again, so closing a
+/// secondary window reveals the one beneath it.
+pub(crate) fn make_last_window_key() {
+    unsafe {
+        if let Some(&window) = (*window_list().0.get()).last()
+            && let Some(window) = window.as_ref()
+        {
+            window.make_key_and_visible();
+        }
+    }
+}
+
 pub(crate) fn unregister_window(window: *const super::window::IosWindow) {
     unsafe {
         (*window_list().0.get()).retain(|registered_window| *registered_window != window);

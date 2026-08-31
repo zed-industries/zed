@@ -250,6 +250,10 @@ fn register_metal_view_class() -> &'static AnyClass {
                 sel!(gpuiHandleScroll:),
                 handle_scroll_gesture as unsafe extern "C" fn(*mut AnyObject, Sel, *mut AnyObject),
             );
+            decl.add_method(
+                sel!(gpuiGoBack),
+                handle_go_back as unsafe extern "C" fn(*mut AnyObject, Sel),
+            );
         }
 
         decl.register();
@@ -541,6 +545,19 @@ fn register_text_input_view_class() -> &'static AnyClass {
     class!(GPUITextInputView)
 }
 
+unsafe extern "C" fn handle_go_back(this: *mut AnyObject, _sel: Sel) {
+    unsafe {
+        let window_ptr: *mut std::ffi::c_void = {
+            #[allow(deprecated)]
+            *(*this).get_ivar(GPUI_WINDOW_IVAR)
+        };
+        if window_ptr.is_null() {
+            return;
+        }
+        (*(window_ptr as *const IosWindow)).request_close();
+    }
+}
+
 /// Whether a touch is a trackpad/mouse secondary (right) click.
 fn is_secondary_click(touch: *mut AnyObject, event: *mut AnyObject) -> bool {
     const UI_TOUCH_TYPE_INDIRECT_POINTER: i64 = 3;
@@ -810,7 +827,50 @@ impl IosWindow {
         }
 
         Self::install_scroll_recognizer(self.view);
+        if super::ffi::window_count() > 1 {
+            self.install_back_button();
+        }
         Self::register_keyboard_observers();
+    }
+
+    /// Secondary windows (settings, and anything else GPUI opens in its own
+    /// window) cover the workspace on iOS and have no window chrome, so give
+    /// them a native way back.
+    fn install_back_button(&self) {
+        unsafe {
+            let button: *mut AnyObject = msg_send![class!(UIButton), buttonWithType: 1i64];
+            if button.is_null() {
+                return;
+            }
+            let title = super::util::nsstring("‹ Back");
+            let _: () = msg_send![button, setTitle: title, forState: 0u64];
+            let frame = ObjcCGRect {
+                x: 12.0,
+                y: 8.0,
+                width: 90.0,
+                height: 36.0,
+            };
+            let _: () = msg_send![button, setFrame: frame];
+            let _: () = msg_send![button, addTarget: self.view, action: sel!(gpuiGoBack), forControlEvents: 1u64 << 6];
+            let _: () = msg_send![self.view, addSubview: button];
+        }
+    }
+
+    pub(super) fn make_key_and_visible(&self) {
+        unsafe {
+            let _: () = msg_send![self.window, makeKeyAndVisible];
+        }
+    }
+
+    fn request_close(&self) {
+        let should_close = self
+            .should_close_callback
+            .borrow_mut()
+            .as_mut()
+            .map_or(true, |callback| callback());
+        if should_close && let Some(callback) = self.close_callback.borrow_mut().take() {
+            callback();
+        }
     }
 
     /// Adds a pan recognizer limited to indirect pointers (trackpad/mouse) so
@@ -1300,6 +1360,9 @@ impl IosWindow {
 impl Drop for IosWindow {
     fn drop(&mut self) {
         super::ffi::unregister_window(self);
+        // iOS shows a single scene, so a secondary window (e.g. settings)
+        // hides the workspace. Bring the previous one back when it closes.
+        super::ffi::make_last_window_key();
 
         unsafe {
             #[allow(deprecated)]

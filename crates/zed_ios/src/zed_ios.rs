@@ -148,6 +148,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
     languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     menu::init();
     language_model::init(cx);
+    language_models::init(user_store.clone(), client.clone(), cx);
     zed_actions::init();
     theme_selector::init(cx);
     outline::init(cx);
