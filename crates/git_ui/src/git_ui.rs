@@ -36,6 +36,7 @@ use crate::{
 pub mod branch_diff;
 pub mod branch_picker;
 mod branch_review;
+pub mod branch_review_panel;
 mod commit_context_menu;
 mod commit_modal;
 pub mod commit_tooltip;
@@ -47,6 +48,8 @@ pub mod git_panel;
 mod git_panel_settings;
 pub mod git_picker;
 mod git_runtime_diagnostics;
+mod github_review;
+mod github_review_ui;
 pub mod multi_diff_view;
 pub mod picker_prompt;
 pub mod project_diff;
@@ -111,6 +114,7 @@ pub fn init(cx: &mut App) {
         staged_diff::StagedDiff::register(workspace, cx);
         unstaged_diff::UnstagedDiff::register(workspace, cx);
         branch_diff::BranchDiff::register(workspace, cx);
+        branch_review_panel::register(workspace);
         CommitModal::register(workspace);
         git_panel::register(workspace);
         repository_selector::register(workspace);

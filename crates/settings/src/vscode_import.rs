@@ -187,6 +187,7 @@ impl VsCodeSettings {
             call_hierarchy: None,
             file_finder: None,
             git: self.git_settings_content(),
+            branch_review_panel: None,
             git_panel: self.git_panel_settings_content(),
             global_lsp_settings: skip_default(GlobalLspSettingsContent {
                 semantic_token_rules: self.semantic_token_rules(),

@@ -57,16 +57,29 @@ struct Folder {
     total: usize,
 }
 
+pub(crate) enum ReviewEvent {
+    OpenDiff,
+    Reply(u64),
+}
+
+impl gpui::EventEmitter<ReviewEvent> for BranchReview {}
+
 pub(crate) struct BranchReview {
     project: Entity<Project>,
     diff: WeakEntity<DiffMultibuffer>,
     list: Entity<DiffBufferList>,
     entries: BTreeMap<RepoPath, ReviewEntry>,
+    comments: Vec<crate::github_review::PublishedComment>,
+    comment_blocks: Vec<(
+        Entity<editor::Editor>,
+        Vec<editor::display_map::CustomBlockId>,
+    )>,
     rows: Vec<Row>,
     collapsed: HashSet<String>,
     selected: Option<RepoPath>,
     state: Option<Entity<ReviewState>>,
     scope: Option<ReviewScope>,
+    storage_key: Option<String>,
     state_subscription: Option<Subscription>,
     generation: u64,
     loading: bool,
@@ -95,11 +108,14 @@ impl BranchReview {
             diff: diff.downgrade(),
             list,
             entries: BTreeMap::new(),
+            comments: Vec::new(),
+            comment_blocks: Vec::new(),
             rows: Vec::new(),
             collapsed: HashSet::default(),
             selected: None,
             state: None,
             scope: None,
+            storage_key: None,
             state_subscription: None,
             generation: 0,
             loading: true,
@@ -113,6 +129,186 @@ impl BranchReview {
         };
         this.refresh(cx);
         this
+    }
+
+    pub fn comparison_for_path(
+        &self,
+        path: &str,
+        cx: &App,
+    ) -> Option<(Option<String>, Option<String>)> {
+        if !self.scope_matches(cx) {
+            return None;
+        }
+        let entry = self
+            .entries
+            .iter()
+            .find_map(|(entry_path, entry)| (entry_path.as_unix_str() == path).then_some(entry))?;
+        if entry.error.is_some() {
+            return None;
+        }
+        let buffer = entry.buffer.as_ref()?.read(cx);
+        let diff = entry.diff.as_ref()?.read(cx);
+        let deleted = !buffer.is_dirty()
+            && buffer.file().is_some_and(|file| {
+                matches!(
+                    file.disk_state(),
+                    language::DiskState::Deleted
+                        | language::DiskState::Historic { was_deleted: true }
+                )
+            });
+        Some(((!deleted).then(|| buffer.text()), diff.base_text_string(cx)))
+    }
+
+    pub fn path_for_buffer(&self, buffer_id: language::BufferId, cx: &App) -> Option<RepoPath> {
+        self.entries.iter().find_map(|(path, entry)| {
+            (entry
+                .buffer
+                .as_ref()
+                .is_some_and(|buffer| buffer.read(cx).remote_id() == buffer_id)
+                || entry
+                    .diff
+                    .as_ref()
+                    .is_some_and(|diff| diff.read(cx).base_text(cx).remote_id() == buffer_id))
+            .then(|| path.clone())
+        })
+    }
+
+    pub fn set_comments(
+        &mut self,
+        comments: Vec<crate::github_review::PublishedComment>,
+        cx: &mut Context<Self>,
+    ) {
+        self.comments = comments;
+        let review = cx.weak_entity();
+        cx.defer(move |cx| {
+            review
+                .update(cx, |review, cx| review.update_comment_blocks(cx))
+                .log_err();
+        });
+    }
+
+    fn update_comment_blocks(&mut self, cx: &mut Context<Self>) {
+        use editor::display_map::{BlockPlacement, BlockProperties, BlockStyle};
+        for (editor, ids) in self.comment_blocks.drain(..) {
+            editor.update(cx, |editor, cx| {
+                editor.remove_blocks(ids.into_iter().collect(), None, cx)
+            });
+        }
+        if self.comments.is_empty() || !self.scope_matches(cx) {
+            return;
+        }
+        let Some(diff) = self.diff.upgrade() else {
+            return;
+        };
+        let split = diff.read(cx).editor().clone();
+        let right = split.read(cx).rhs_editor().clone();
+        let left = split.read(cx).lhs_editor().cloned();
+        for published in &self.comments {
+            let comment = &published.comment;
+            let (Some(path), Some(line), Some(side)) = (&comment.path, comment.line, comment.side)
+            else {
+                continue;
+            };
+            let Some(entry) = self.entries.iter().find_map(|(entry_path, entry)| {
+                (entry_path.as_unix_str() == path).then_some(entry)
+            }) else {
+                continue;
+            };
+            let (Some(buffer), Some(diff)) = (&entry.buffer, &entry.diff) else {
+                continue;
+            };
+            let current = buffer.read(cx).snapshot();
+            let base = diff.read(cx).base_text(cx);
+            if current.text() != published.current.clone().unwrap_or_default()
+                || base.text() != published.base.clone().unwrap_or_default()
+            {
+                continue;
+            }
+            let (editor, target) = match side {
+                crate::github_review::DiffSide::Right => (&right, &current),
+                crate::github_review::DiffSide::Left => {
+                    let Some(left) = &left else {
+                        continue;
+                    };
+                    (left, &base)
+                }
+            };
+            if line == 0 || line > target.max_point().row + 1 {
+                continue;
+            }
+            let anchor = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(target.anchor_before(language::Point::new(line - 1, 0)));
+            let Some(anchor) = anchor else {
+                continue;
+            };
+            let review = cx.weak_entity();
+            let buffer = buffer.clone();
+            let diff = diff.clone();
+            let comment = comment.clone();
+            let ids = editor.update(cx, |editor, cx| {
+                editor.insert_blocks(
+                    [BlockProperties {
+                        placement: BlockPlacement::Below(anchor),
+                        height: Some(3),
+                        style: BlockStyle::Flex,
+                        priority: 0,
+                        render: std::sync::Arc::new(move |cx| {
+                            if buffer.read(cx.app).version() != *current.version()
+                                || diff.read(cx.app).base_text(cx.app).version() != base.version()
+                            {
+                                return div().into_any_element();
+                            }
+                            let review = review.clone();
+                            let id = comment.in_reply_to_id.unwrap_or(comment.id);
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .px_2()
+                                .bg(cx.app.theme().colors().panel_background)
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .child(
+                                            Label::new(format!("GitHub · {}", comment.user.login))
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(comment.body.clone().unwrap_or_default())
+                                                .size(LabelSize::Small)
+                                                .line_clamp(2),
+                                        ),
+                                )
+                                .child(
+                                    Button::new(("reply-inline", comment.id as usize), "Reply")
+                                        .on_click(move |_, _, cx| {
+                                            review
+                                                .update(cx, |_, cx| cx.emit(ReviewEvent::Reply(id)))
+                                                .log_err();
+                                        }),
+                                )
+                                .into_any_element()
+                        }),
+                    }],
+                    None,
+                    cx,
+                )
+            });
+            self.comment_blocks.push((editor.clone(), ids));
+        }
+    }
+
+    pub fn set_storage_key(&mut self, key: Option<String>, cx: &mut Context<Self>) {
+        if self.storage_key != key {
+            self.storage_key = key;
+            self.state = None;
+            self.refresh(cx);
+        }
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -229,7 +425,11 @@ impl BranchReview {
                     if this.generation != generation {
                         return Ok(());
                     }
-                    let state = ReviewState::for_scope(&scope, cx)?;
+                    let state = if let Some(key) = &this.storage_key {
+                        ReviewState::for_key(key.clone(), cx)?
+                    } else {
+                        ReviewState::for_scope(&scope, cx)?
+                    };
                     this.state_subscription =
                         Some(cx.observe(&state, |this, _, cx| this.rebuild_rows(cx)));
                     this.state = Some(state);
@@ -551,6 +751,14 @@ impl BranchReview {
     }
 
     fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
+        if !self.comments.is_empty() {
+            let review = cx.weak_entity();
+            cx.defer(move |cx| {
+                review
+                    .update(cx, |review, cx| review.update_comment_blocks(cx))
+                    .log_err();
+            });
+        }
         let mut root = Folder::default();
         for (path, entry) in &self.entries {
             if !entry.changed {
@@ -703,6 +911,7 @@ impl BranchReview {
                     )
                     .end_slot(Label::new(status).size(LabelSize::XSmall).color(color))
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        cx.emit(ReviewEvent::OpenDiff);
                         this.selected = Some(path.clone());
                         if let Some(entry) = this.entries.get(&path)
                             && let Some(repository) = this.list.read(cx).repo()
@@ -761,18 +970,15 @@ impl Render for BranchReview {
             .or_else(|| self.list.read(cx).tree_diff_error().map(str::to_owned));
         let saving = state.is_some_and(|state| state.saving);
         v_flex()
-            .h_full()
-            .w(rems(20.))
-            .flex_shrink_0()
-            .border_r_1()
-            .border_color(cx.theme().colors().border)
+            .size_full()
+            .min_h_0()
             .bg(cx.theme().colors().panel_background)
             .child(
                 h_flex()
                     .px_2()
                     .py_1()
                     .justify_between()
-                    .child(Label::new("Branch Review").size(LabelSize::Small))
+                    .child(Label::new("Files").size(LabelSize::Small))
                     .child(
                         IconButton::new("refresh-review", IconName::ArrowCircle)
                             .tooltip(Tooltip::text("Refresh comparison"))
@@ -915,12 +1121,24 @@ mod tests {
             review.toggle_viewed(&b, cx);
             assert_eq!(review.viewed, 2);
         });
+        review.update(cx, |review, cx| {
+            let comment = serde_json::from_value(json!({"id":1, "body":"Native GitHub thread", "user":{"login":"reviewer"}, "path":"src/a.txt", "side":"RIGHT", "line":1})).unwrap();
+            review.set_comments(vec![crate::github_review::PublishedComment { comment, current: Some("reviewed a".into()), base: Some("base a".into()) }], cx);
+        });
+        cx.run_until_parked();
+        review.read_with(cx, |review, _| assert_eq!(review.comment_blocks.len(), 1));
         let editor = diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
         editor.update_in(cx, |editor, window, cx| {
             cx.focus_self(window);
             editor.insert("edited ", window, cx);
         });
         cx.run_until_parked();
+        review.read_with(cx, |review, _| {
+            assert!(
+                review.comment_blocks.is_empty(),
+                "Local edits must remove uncertain inline thread positions"
+            )
+        });
         diff.read_with(cx, |diff, cx| assert!(workspace::Item::is_dirty(diff, cx)));
         assert_eq!(
             fs.read_file_sync(path!("/project/src/a.txt")).unwrap(),
@@ -945,6 +1163,118 @@ mod tests {
         review.read_with(cx, |review, cx| {
             assert!(!review.is_viewed(&a, cx));
             assert!(review.is_viewed(&b, cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn pr_progress_survives_new_checkout_branches_and_revalidates_only_changed_files(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({".git":{"logs":{"refs":{"heads":{"review-old":"created old\n", "review-new":"created new\n"}}}}, "src":{"a.txt":"reviewed a", "b.txt":"reviewed b"}})).await;
+        let git_dir = Path::new(path!("/project/.git"));
+        fs.set_branch_name(git_dir, Some("review-old"));
+        fs.set_head_and_index_for_repo(
+            git_dir,
+            &[
+                ("src/a.txt", "reviewed a".into()),
+                ("src/b.txt", "reviewed b".into()),
+            ],
+        );
+        fs.set_merge_base_content_for_repo(
+            git_dir,
+            &[
+                ("src/a.txt", "base a".into()),
+                ("src/b.txt", "base b".into()),
+            ],
+        );
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let diff = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project.clone(), workspace.clone(), window, cx)
+            })
+            .await
+            .unwrap();
+        let review = diff.read_with(cx, |diff, _| diff.review.clone());
+        let key = "github_review_v1:test_pr_across_revisions".to_string();
+        review.update(cx, |review, cx| {
+            review.set_storage_key(Some(key.clone()), cx)
+        });
+        for _ in 0..5 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        cx.run_until_parked();
+        let a = RepoPath::new("src/a.txt").unwrap();
+        let b = RepoPath::new("src/b.txt").unwrap();
+        let c = RepoPath::new("src/c.txt").unwrap();
+        review.update(cx, |review, cx| {
+            review.toggle_viewed(&a, cx);
+            review.toggle_viewed(&b, cx);
+        });
+        cx.run_until_parked();
+        review.read_with(cx, |review, cx| {
+            assert!(review.is_viewed(&a, cx));
+            assert!(review.is_viewed(&b, cx));
+        });
+        fs.insert_file(path!("/project/src/b.txt"), b"revised b".to_vec())
+            .await;
+        fs.insert_file(path!("/project/src/c.txt"), b"new c".to_vec())
+            .await;
+        fs.set_head_and_index_for_repo(
+            git_dir,
+            &[
+                ("src/a.txt", "reviewed a".into()),
+                ("src/b.txt", "revised b".into()),
+                ("src/c.txt", "new c".into()),
+            ],
+        );
+        fs.set_branch_name(git_dir, Some("review-new"));
+        for _ in 0..5 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        cx.run_until_parked();
+        let recreated = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project, workspace, window, cx)
+            })
+            .await
+            .unwrap();
+        let recreated_review = recreated.read_with(cx, |diff, _| diff.review.clone());
+        recreated_review.update(cx, |review, cx| review.set_storage_key(Some(key), cx));
+        for _ in 0..5 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        cx.run_until_parked();
+        recreated_review.read_with(cx, |review, cx| {
+            assert!(review.is_viewed(&a, cx));
+            assert!(!review.is_viewed(&b, cx));
+            assert!(!review.is_viewed(&c, cx));
+            assert_eq!((review.viewed, review.total), (1, 3));
+        });
+        recreated_review.update(cx, |review, cx| review.set_storage_key(None, cx));
+        for _ in 0..5 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        cx.run_until_parked();
+        recreated_review.read_with(cx, |review, cx| {
+            assert!(
+                !review.is_viewed(&a, cx),
+                "PR progress must not leak into local branch review"
+            )
         });
     }
 

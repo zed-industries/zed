@@ -115,7 +115,10 @@ pub(crate) struct ReviewState {
 
 impl ReviewState {
     pub fn for_scope(scope: &ReviewScope, cx: &mut App) -> Result<Entity<Self>> {
-        let key = scope.key()?;
+        Self::for_key(scope.key()?, cx)
+    }
+
+    pub fn for_key(key: String, cx: &mut App) -> Result<Entity<Self>> {
         if !cx.has_global::<ReviewStates>() {
             cx.set_global(ReviewStates::default());
         }

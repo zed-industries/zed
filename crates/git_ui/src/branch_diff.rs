@@ -43,7 +43,7 @@ use zed_actions::agent::ReviewBranchDiff;
 gpui::actions!(
     git,
     [
-        /// Opens native Branch Review against the default branch.
+        /// Opens the native Branch Review dock panel.
         OpenBranchReview,
     ]
 );
@@ -83,7 +83,7 @@ impl BranchDiff {
             Self::deploy_branch_diff(workspace, window, cx)
         });
         workspace.register_action(|workspace, _: &OpenBranchReview, window, cx| {
-            Self::deploy_branch_diff(workspace, window, cx)
+            workspace.focus_panel::<crate::branch_review_panel::BranchReviewPanel>(window, cx);
         });
         workspace.register_action(Self::compare_with_branch);
         workspace::register_serializable_item::<Self>(cx);
@@ -147,7 +147,7 @@ impl BranchDiff {
             .detach_and_notify_err(workspace_weak, window, cx);
     }
 
-    fn compare_with_branch(
+    pub(crate) fn compare_with_branch(
         workspace: &mut Workspace,
         _: &CompareWithBranch,
         window: &mut Window,
@@ -373,9 +373,12 @@ impl BranchDiff {
         workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let diff_event_subscription = cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
-            cx.emit(event.clone())
-        });
+        let diff_event_subscription = Subscription::join(
+            cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
+                cx.emit(event.clone())
+            }),
+            cx.observe(&diff, |_, _, cx| cx.notify()),
+        );
         let review =
             cx.new(|cx| crate::branch_review::BranchReview::new(project.clone(), diff.clone(), cx));
         Self {
@@ -446,7 +449,6 @@ impl BranchDiff {
             .detach_and_notify_err(workspace, window, cx);
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn editor(&self, cx: &App) -> Entity<SplittableEditor> {
         self.diff.read(cx).editor().clone()
     }
@@ -652,7 +654,6 @@ impl Render for BranchDiff {
             .size_full()
             .on_action(cx.listener(Self::review_diff))
             .flex()
-            .child(self.review.clone())
             .child(div().flex_1().min_w_0().h_full().child(self.diff.clone()))
     }
 }

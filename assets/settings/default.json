@@ -1017,6 +1017,11 @@
     // Default width of the collaboration panel.
     "default_width": 240,
   },
+  "branch_review_panel": {
+    "button": true,
+    "dock": "left",
+    "default_width": 320
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
