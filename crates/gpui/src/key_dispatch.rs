@@ -650,7 +650,247 @@ mod tests {
         )
     }
 
+    struct PendingInputTestView {
+        focus_handle: FocusHandle,
+        action_count: Rc<Cell<usize>>,
+        secondary_action_count: Rc<Cell<usize>>,
+    }
+
+    #[derive(Clone)]
+    struct PendingTextInputTestView {
+        focus_handle: FocusHandle,
+        text: Rc<RefCell<String>>,
+        action_count: Rc<Cell<usize>>,
+    }
+
+    impl PendingTextInputTestView {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+                text: Rc::default(),
+                action_count: Rc::default(),
+            }
+        }
+    }
+
+    impl Element for PendingTextInputTestView {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            Some("pending-text-input-test".into())
+        }
+
+        fn source_location(&self) -> Option<&'static panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, Self::RequestLayoutState) {
+            (window.request_layout(Style::default(), [], cx), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> Self::PrepaintState {
+            window.set_focus_handle(&self.focus_handle, cx);
+        }
+
+        fn paint(
+            &mut self,
+            _: Option<&GlobalElementId>,
+            _: Option<&InspectorElementId>,
+            _: Bounds<Pixels>,
+            _: &mut Self::RequestLayoutState,
+            _: &mut Self::PrepaintState,
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            let mut key_context = KeyContext::default();
+            key_context.add("Terminal");
+            window.set_key_context(key_context);
+            window.handle_input(&self.focus_handle, self.clone(), cx);
+            let action_count = self.action_count.clone();
+            window.on_action(
+                std::any::TypeId::of::<TestAction>(),
+                move |_, phase, _, _| {
+                    if phase == DispatchPhase::Bubble {
+                        action_count.set(action_count.get() + 1);
+                    }
+                },
+            );
+        }
+    }
+
+    impl IntoElement for PendingTextInputTestView {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl InputHandler for PendingTextInputTestView {
+        fn selected_text_range(
+            &mut self,
+            _: bool,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<UTF16Selection> {
+            None
+        }
+
+        fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+            None
+        }
+
+        fn text_for_range(
+            &mut self,
+            _: Range<usize>,
+            _: &mut Option<Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<String> {
+            None
+        }
+
+        fn replace_text_in_range(
+            &mut self,
+            replacement_range: Option<Range<usize>>,
+            text: &str,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            if replacement_range.is_some() {
+                unimplemented!()
+            }
+            self.text.borrow_mut().push_str(text)
+        }
+
+        fn replace_and_mark_text_in_range(
+            &mut self,
+            replacement_range: Option<Range<usize>>,
+            new_text: &str,
+            _: Option<Range<usize>>,
+            _: &mut Window,
+            _: &mut App,
+        ) {
+            if replacement_range.is_some() {
+                unimplemented!()
+            }
+            self.text.borrow_mut().push_str(new_text)
+        }
+
+        fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+        fn prefers_ime_for_printable_keys(&mut self, _: &mut Window, _: &mut App) -> bool {
+            true
+        }
+
+        fn bounds_for_range(
+            &mut self,
+            _: Range<usize>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<Bounds<Pixels>> {
+            None
+        }
+
+        fn character_index_for_point(
+            &mut self,
+            _: Point<Pixels>,
+            _: &mut Window,
+            _: &mut App,
+        ) -> Option<usize> {
+            None
+        }
+    }
+
+    impl Render for PendingTextInputTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.clone()
+        }
+    }
+
     struct PendingInputTimeoutPauseOwner;
+
+    impl Render for PendingInputTestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            use crate::{InteractiveElement as _, Styled as _};
+            let action_count = self.action_count.clone();
+            let secondary_action_count = self.secondary_action_count.clone();
+            crate::div()
+                .key_context("Terminal")
+                .track_focus(&self.focus_handle)
+                .size_full()
+                .on_action(move |_: &TestAction, _, _| {
+                    action_count.set(action_count.get() + 1);
+                })
+                .on_action(move |_: &SecondaryTestAction, _, _| {
+                    secondary_action_count.set(secondary_action_count.get() + 1);
+                })
+        }
+    }
+
+    fn setup_pending_input_test(
+        cx: &mut TestAppContext,
+        bindings: impl IntoIterator<Item = KeyBinding>,
+    ) -> (&mut VisualTestContext, Rc<Cell<usize>>, Rc<Cell<usize>>) {
+        cx.update(|cx| cx.bind_keys(bindings));
+
+        let action_count = Rc::new(Cell::new(0));
+        let secondary_action_count = Rc::new(Cell::new(0));
+        let (view, cx) = cx.add_window_view(|_, cx| PendingInputTestView {
+            focus_handle: cx.focus_handle(),
+            action_count: action_count.clone(),
+            secondary_action_count: secondary_action_count.clone(),
+        });
+        let focus_handle = cx.update(|_, cx| view.read(cx).focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+
+        (cx, action_count, secondary_action_count)
+    }
+
+    fn setup_pending_input_timeout_test(
+        cx: &mut TestAppContext,
+    ) -> (&mut VisualTestContext, Rc<Cell<usize>>, Rc<Cell<usize>>) {
+        setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h j", TestAction, Some("Terminal")),
+            ],
+        )
+    }
+
+    fn query_prefers_ime_for_printable_keys(cx: &mut VisualTestContext) -> Option<bool> {
+        let mut platform_window = cx.test_window(cx.window_handle());
+        let mut input_handler = platform_window.take_input_handler()?;
+        let prefers_ime = input_handler.query_prefers_ime_for_printable_keys();
+        platform_window.set_input_handler(input_handler);
+        Some(prefers_ime)
+    }
+
+    fn simulate_pending_binding(cx: &mut VisualTestContext) {
+        cx.simulate_modifiers_change(crate::Modifiers::control());
+        cx.simulate_keystrokes("ctrl-b");
+        cx.simulate_modifiers_change(crate::Modifiers::default());
+    }
 
     #[test]
     fn test_keybinding_for_action_bounds() {
@@ -1065,53 +1305,43 @@ mod tests {
     }
 
     #[crate::test]
-    fn test_pending_input_timeout_dispatches_shorter_binding(cx: &mut TestAppContext) {
-        struct TestView {
-            focus_handle: FocusHandle,
-            action_count: Rc<Cell<usize>>,
-            secondary_action_count: Rc<Cell<usize>>,
-        }
-
-        impl Render for TestView {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                use crate::{InteractiveElement as _, Styled as _};
-                let action_count = self.action_count.clone();
-                let secondary_action_count = self.secondary_action_count.clone();
-                crate::div()
-                    .key_context("Terminal")
-                    .track_focus(&self.focus_handle)
-                    .size_full()
-                    .on_action(move |_: &TestAction, _, _| {
-                        action_count.set(action_count.get() + 1);
-                    })
-                    .on_action(move |_: &SecondaryTestAction, _, _| {
-                        secondary_action_count.set(secondary_action_count.get() + 1);
-                    })
-            }
-        }
-
+    fn test_printable_pending_input_replays_on_timeout(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            cx.bind_keys([
-                KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
-                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
-                KeyBinding::new("ctrl-b h j", TestAction, Some("Terminal")),
-            ]);
+            cx.bind_keys([KeyBinding::new("j k", TestAction, Some("Terminal"))]);
         });
-
-        let action_count = Rc::new(Cell::new(0));
-        let secondary_action_count = Rc::new(Cell::new(0));
-        let (view, cx) = cx.add_window_view(|_, cx| TestView {
-            focus_handle: cx.focus_handle(),
-            action_count: action_count.clone(),
-            secondary_action_count: secondary_action_count.clone(),
-        });
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
+        let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
         cx.update(|window, cx| {
-            window.focus(&view.read(cx).focus_handle.clone(), cx);
+            window.focus(&focus_handle, cx);
             window.activate_window();
         });
-        cx.simulate_modifiers_change(crate::Modifiers::control());
-        cx.simulate_keystrokes("ctrl-b");
-        cx.simulate_modifiers_change(crate::Modifiers::default());
+
+        cx.simulate_keystrokes("j");
+
+        cx.update(|window, _| {
+            let pending_input = window.pending_input().expect("pending input");
+            assert_eq!(pending_input.keystrokes().len(), 1);
+            assert!(pending_input.timeout().is_some());
+        });
+        test.update(cx, |test, _| {
+            assert_eq!(test.action_count.get(), 0);
+            assert_eq!(test.text.borrow().as_str(), "");
+        });
+
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        test.update(cx, |test, _| {
+            assert_eq!(test.action_count.get(), 0);
+            assert_eq!(test.text.borrow().as_str(), "j");
+        });
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_dispatches_shorter_binding(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
         cx.update(|window, _| {
             assert_eq!(
                 window
@@ -1130,12 +1360,130 @@ mod tests {
         assert_eq!(action_count.get(), 0);
 
         // Emulate a countdown indicator re-rendering the window while waiting for the timeout.
-        for _ in 0..7 {
+        for _ in 0..10 {
             cx.executor()
                 .advance_clock(crate::PENDING_INPUT_TIMEOUT / 10);
             cx.update(|window, _| window.refresh());
             cx.run_until_parked();
         }
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+    }
+
+    #[crate::test]
+    fn test_running_pending_input_timeout_resets_when_binding_advances(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 4 / 5);
+        cx.run_until_parked();
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 2);
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT);
+        });
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT / 5);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 0);
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 4 / 5);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_starts_when_binding_becomes_ambiguous(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h j", TestAction, Some("Terminal")),
+            ],
+        );
+        simulate_pending_binding(cx);
+
+        cx.update(|window, _| {
+            let pending_input = window.pending_input().expect("pending input");
+            assert_eq!(pending_input.keystrokes().len(), 1);
+            assert!(pending_input.timeout().is_none());
+        });
+
+        cx.simulate_keystrokes("h");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let pending_input = window.pending_input().expect("pending input");
+            let timeout = pending_input.timeout().expect("pending input timeout");
+            assert_eq!(pending_input.keystrokes().len(), 2);
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT);
+        });
+
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_invalid_continuation_while_timeout_paused_replays_pending_input(
+        cx: &mut TestAppContext,
+    ) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-b h", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("x", SecondaryTestAction, Some("Terminal")),
+            ],
+        );
+        simulate_pending_binding(cx);
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(window.pending_input_is_none()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_pauses_and_resumes(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 7 / 10);
+        cx.run_until_parked();
 
         let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
         let other_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
@@ -1160,23 +1508,68 @@ mod tests {
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
         assert_eq!(action_count.get(), 0);
 
-        drop(pause_owner);
-        cx.update(|_, _| {});
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, false, cx));
+        });
         cx.run_until_parked();
-        for _ in 0..3 {
-            cx.executor()
-                .advance_clock(crate::PENDING_INPUT_TIMEOUT / 10);
-            cx.update(|window, _| window.refresh());
-            cx.run_until_parked();
-        }
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT * 3 / 10);
+        });
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 3 / 10);
+        cx.run_until_parked();
 
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
         assert_eq!(action_count.get(), 1);
         assert_eq!(secondary_action_count.get(), 0);
+    }
 
-        cx.simulate_modifiers_change(crate::Modifiers::control());
-        cx.simulate_keystrokes("ctrl-b");
-        cx.simulate_modifiers_change(crate::Modifiers::default());
+    #[crate::test]
+    fn test_pending_input_timeout_resumes_when_owner_is_released(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 7 / 10);
+        cx.run_until_parked();
+
+        let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
+        });
+        cx.run_until_parked();
+
+        drop(pause_owner);
+        cx.update(|_, _| {});
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
+            assert_eq!(timeout.remaining(cx), crate::PENDING_INPUT_TIMEOUT * 3 / 10);
+        });
+
+        cx.executor()
+            .advance_clock(crate::PENDING_INPUT_TIMEOUT * 3 / 10);
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+    }
+
+    #[crate::test]
+    fn test_pending_input_timeout_resets_when_binding_advances(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
         cx.executor()
             .advance_clock(crate::PENDING_INPUT_TIMEOUT / 2);
         cx.run_until_parked();
@@ -1207,26 +1600,25 @@ mod tests {
             .advance_clock(crate::PENDING_INPUT_TIMEOUT * 2);
         cx.run_until_parked();
         cx.update(|window, _| assert!(window.has_pending_keystrokes()));
-        assert_eq!(action_count.get(), 1);
+        assert_eq!(action_count.get(), 0);
         assert_eq!(secondary_action_count.get(), 0);
 
-        drop(pause_owner);
-        cx.update(|_, _| {});
+        cx.update(|window, cx| {
+            assert!(window.set_pending_input_timeout_paused(&pause_owner, false, cx));
+        });
         cx.run_until_parked();
         cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
         cx.run_until_parked();
 
         cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
-        assert_eq!(action_count.get(), 1);
+        assert_eq!(action_count.get(), 0);
         assert_eq!(secondary_action_count.get(), 1);
+    }
 
-        cx.update(|window, cx| {
-            let focus_handle = view.read(cx).focus_handle.clone();
-            window.focus(&focus_handle, cx);
-        });
-        cx.simulate_modifiers_change(crate::Modifiers::control());
-        cx.simulate_keystrokes("ctrl-b");
-        cx.simulate_modifiers_change(crate::Modifiers::default());
+    #[crate::test]
+    fn test_clearing_pending_input_invalidates_timeout_pause(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_timeout_test(cx);
+        simulate_pending_binding(cx);
         let pause_owner = cx.update(|_, cx| cx.new(|_| PendingInputTimeoutPauseOwner));
         cx.update(|window, cx| {
             assert!(window.set_pending_input_timeout_paused(&pause_owner, true, cx));
@@ -1241,191 +1633,23 @@ mod tests {
         cx.run_until_parked();
 
         cx.update(|window, _| assert!(window.pending_input_is_none()));
-        assert_eq!(action_count.get(), 1);
-        assert_eq!(secondary_action_count.get(), 1);
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 0);
     }
 
     #[crate::test]
     fn test_input_handler_pending(cx: &mut TestAppContext) {
-        #[derive(Clone)]
-        struct CustomElement {
-            focus_handle: FocusHandle,
-            text: Rc<RefCell<String>>,
-            action_count: Rc<Cell<usize>>,
-        }
-        impl CustomElement {
-            fn new(cx: &mut Context<Self>) -> Self {
-                Self {
-                    focus_handle: cx.focus_handle(),
-                    text: Rc::default(),
-                    action_count: Rc::default(),
-                }
-            }
-        }
-        impl Element for CustomElement {
-            type RequestLayoutState = ();
-
-            type PrepaintState = ();
-
-            fn id(&self) -> Option<ElementId> {
-                Some("custom".into())
-            }
-            fn source_location(&self) -> Option<&'static panic::Location<'static>> {
-                None
-            }
-            fn request_layout(
-                &mut self,
-                _: Option<&GlobalElementId>,
-                _: Option<&InspectorElementId>,
-                window: &mut Window,
-                cx: &mut App,
-            ) -> (LayoutId, Self::RequestLayoutState) {
-                (window.request_layout(Style::default(), [], cx), ())
-            }
-            fn prepaint(
-                &mut self,
-                _: Option<&GlobalElementId>,
-                _: Option<&InspectorElementId>,
-                _: Bounds<Pixels>,
-                _: &mut Self::RequestLayoutState,
-                window: &mut Window,
-                cx: &mut App,
-            ) -> Self::PrepaintState {
-                window.set_focus_handle(&self.focus_handle, cx);
-            }
-            fn paint(
-                &mut self,
-                _: Option<&GlobalElementId>,
-                _: Option<&InspectorElementId>,
-                _: Bounds<Pixels>,
-                _: &mut Self::RequestLayoutState,
-                _: &mut Self::PrepaintState,
-                window: &mut Window,
-                cx: &mut App,
-            ) {
-                let mut key_context = KeyContext::default();
-                key_context.add("Terminal");
-                window.set_key_context(key_context);
-                window.handle_input(&self.focus_handle, self.clone(), cx);
-                let action_count = self.action_count.clone();
-                window.on_action(
-                    std::any::TypeId::of::<TestAction>(),
-                    move |_, phase, _, _| {
-                        if phase == DispatchPhase::Bubble {
-                            action_count.set(action_count.get() + 1);
-                        }
-                    },
-                );
-            }
-        }
-        impl IntoElement for CustomElement {
-            type Element = Self;
-
-            fn into_element(self) -> Self::Element {
-                self
-            }
-        }
-
-        impl InputHandler for CustomElement {
-            fn selected_text_range(
-                &mut self,
-                _: bool,
-                _: &mut Window,
-                _: &mut App,
-            ) -> Option<UTF16Selection> {
-                None
-            }
-
-            fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
-                None
-            }
-
-            fn text_for_range(
-                &mut self,
-                _: Range<usize>,
-                _: &mut Option<Range<usize>>,
-                _: &mut Window,
-                _: &mut App,
-            ) -> Option<String> {
-                None
-            }
-
-            fn replace_text_in_range(
-                &mut self,
-                replacement_range: Option<Range<usize>>,
-                text: &str,
-                _: &mut Window,
-                _: &mut App,
-            ) {
-                if replacement_range.is_some() {
-                    unimplemented!()
-                }
-                self.text.borrow_mut().push_str(text)
-            }
-
-            fn replace_and_mark_text_in_range(
-                &mut self,
-                replacement_range: Option<Range<usize>>,
-                new_text: &str,
-                _: Option<Range<usize>>,
-                _: &mut Window,
-                _: &mut App,
-            ) {
-                if replacement_range.is_some() {
-                    unimplemented!()
-                }
-                self.text.borrow_mut().push_str(new_text)
-            }
-
-            fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
-
-            fn prefers_ime_for_printable_keys(&mut self, _: &mut Window, _: &mut App) -> bool {
-                true
-            }
-
-            fn bounds_for_range(
-                &mut self,
-                _: Range<usize>,
-                _: &mut Window,
-                _: &mut App,
-            ) -> Option<Bounds<Pixels>> {
-                None
-            }
-
-            fn character_index_for_point(
-                &mut self,
-                _: Point<Pixels>,
-                _: &mut Window,
-                _: &mut App,
-            ) -> Option<usize> {
-                None
-            }
-        }
-        impl Render for CustomElement {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                self.clone()
-            }
-        }
-
         cx.update(|cx| {
             cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
             cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
             cx.bind_keys([KeyBinding::new("ctrl-x k", TestAction, Some("Terminal"))]);
         });
-        let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
+        let (test, cx) = cx.add_window_view(|_, cx| PendingTextInputTestView::new(cx));
         let focus_handle = test.update(cx, |test, _| test.focus_handle.clone());
         cx.update(|window, cx| {
             window.focus(&focus_handle, cx);
             window.activate_window();
         });
-
-        let query_prefers_ime_for_printable_keys = |cx: &mut VisualTestContext| {
-            let mut platform_window = cx.test_window(cx.window_handle());
-            let mut input_handler = platform_window.take_input_handler()?;
-            let prefers_ime = input_handler.query_prefers_ime_for_printable_keys();
-            platform_window.set_input_handler(input_handler);
-            Some(prefers_ime)
-        };
 
         assert_eq!(query_prefers_ime_for_printable_keys(cx), Some(true));
         cx.simulate_keystrokes("ctrl-x");

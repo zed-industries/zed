@@ -293,9 +293,56 @@ fn group_bindings(
 mod tests {
     #[cfg(target_os = "windows")]
     use gpui::Modifiers;
-    use gpui::{InvalidKeystrokeError, Keystroke};
+    use gpui::{
+        Action as _, Entity, FocusHandle, InvalidKeystrokeError, KeyBinding, Keystroke,
+        TestAppContext, VisualTestContext, actions,
+    };
 
     use super::*;
+
+    actions!(
+        which_key_modal_test,
+        [FirstBinding, SecondBinding, ThirdBinding]
+    );
+
+    struct TestView {
+        focus_handle: FocusHandle,
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("WhichKeyModalTest")
+                .track_focus(&self.focus_handle)
+                .on_action(|_: &FirstBinding, _, _| {})
+                .on_action(|_: &SecondBinding, _, _| {})
+                .on_action(|_: &ThirdBinding, _, _| {})
+        }
+    }
+
+    fn setup_modal_test<'a>(
+        cx: &'a mut TestAppContext,
+        bindings: impl IntoIterator<Item = KeyBinding>,
+        pending_keystrokes: &str,
+    ) -> (Entity<WhichKeyModal>, &'a mut VisualTestContext) {
+        cx.update(|cx| cx.bind_keys(bindings));
+        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
+            focus_handle: cx.focus_handle(),
+        });
+        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
+        cx.update(|window, cx| {
+            window.focus(&focus_handle, cx);
+            window.activate_window();
+        });
+        cx.simulate_keystrokes(pending_keystrokes);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(window.has_pending_keystrokes()));
+
+        let modal = cx.update(|window, cx| {
+            cx.new(|cx| WhichKeyModal::new(WeakEntity::new_invalid(), window, cx))
+        });
+        (modal, cx)
+    }
 
     #[test]
     fn test_group_bindings_preserves_keybinding_keystrokes() -> Result<(), InvalidKeystrokeError> {
@@ -316,5 +363,39 @@ mod tests {
             vec![(vec![keystroke], SharedString::from("test action"))]
         );
         Ok(())
+    }
+
+    #[gpui::test]
+    fn test_which_key_modal_groups_and_orders_pending_bindings(cx: &mut TestAppContext) {
+        let (modal, cx) = setup_modal_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-b h", FirstBinding, Some("WhichKeyModalTest")),
+                KeyBinding::new("ctrl-b h j", SecondBinding, Some("WhichKeyModalTest")),
+                KeyBinding::new("ctrl-b k", ThirdBinding, Some("WhichKeyModalTest")),
+            ],
+            "ctrl-b",
+        );
+
+        let h = KeybindingKeystroke::from_keystroke(
+            Keystroke::parse("h").expect("valid test keystroke"),
+        );
+        let k = KeybindingKeystroke::from_keystroke(
+            Keystroke::parse("k").expect("valid test keystroke"),
+        );
+        let h_text = cx.update(|_, cx| text_for_keybinding_keystrokes(&[h], cx));
+        let k_text = cx.update(|_, cx| text_for_keybinding_keystrokes(&[k], cx));
+        let expected_bindings = vec![
+            (
+                k_text.into(),
+                command_palette::humanize_action_name(ThirdBinding.name()).into(),
+            ),
+            (h_text.into(), SharedString::from("+2 keybinds")),
+        ];
+
+        assert_eq!(
+            modal.read_with(cx, |modal, _| modal.bindings.clone()),
+            expected_bindings
+        );
     }
 }

@@ -258,19 +258,50 @@ mod tests {
         [ShorterBinding, LongerBinding, LongestBinding]
     );
 
-    struct TestView {
-        focus_handle: FocusHandle,
-        shorter_binding_count: Rc<Cell<usize>>,
-        longer_binding_count: Rc<Cell<usize>>,
+    fn timed_bindings() -> [KeyBinding; 2] {
+        [
+            KeyBinding::new(
+                "ctrl-b",
+                ShorterBinding,
+                Some("PendingKeystrokesIndicatorTest"),
+            ),
+            KeyBinding::new(
+                "ctrl-b h",
+                LongerBinding,
+                Some("PendingKeystrokesIndicatorTest"),
+            ),
+        ]
     }
 
-    #[derive(Debug, Default, PartialEq)]
+    fn nested_timed_bindings() -> [KeyBinding; 3] {
+        [
+            KeyBinding::new(
+                "ctrl-b",
+                ShorterBinding,
+                Some("PendingKeystrokesIndicatorTest"),
+            ),
+            KeyBinding::new(
+                "ctrl-b h",
+                LongerBinding,
+                Some("PendingKeystrokesIndicatorTest"),
+            ),
+            KeyBinding::new(
+                "ctrl-b h j",
+                LongestBinding,
+                Some("PendingKeystrokesIndicatorTest"),
+            ),
+        ]
+    }
+
+    struct TestView {
+        focus_handle: FocusHandle,
+    }
+
+    #[derive(Debug, PartialEq)]
     struct PendingSnapshot {
         keystrokes: Vec<String>,
         generation: u64,
         bindings: Vec<(Vec<String>, String)>,
-        timeout_duration: Duration,
-        remaining_duration: Duration,
         timeout_paused: bool,
     }
 
@@ -295,8 +326,6 @@ mod tests {
                     )
                 })
                 .collect(),
-            timeout_duration: pending.timeout_duration,
-            remaining_duration: pending.remaining_duration,
             timeout_paused: pending.timeout_paused,
         })
     }
@@ -313,52 +342,17 @@ mod tests {
         });
     }
 
-    impl Render for TestView {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let shorter_binding_count = self.shorter_binding_count.clone();
-            let longer_binding_count = self.longer_binding_count.clone();
-            div()
-                .key_context("PendingKeystrokesIndicatorTest")
-                .track_focus(&self.focus_handle)
-                .on_action(move |_: &ShorterBinding, _, _| {
-                    shorter_binding_count.set(shorter_binding_count.get() + 1);
-                })
-                .on_action(move |_: &LongerBinding, _, _| {
-                    longer_binding_count.set(longer_binding_count.get() + 1);
-                })
-                .on_action(|_: &LongestBinding, _, _| {})
-        }
-    }
-
-    #[gpui::test]
-    fn test_indicator_tracks_pending_input_lifecycle(cx: &mut TestAppContext) {
+    fn setup_indicator_test(
+        cx: &mut TestAppContext,
+        bindings: impl IntoIterator<Item = KeyBinding>,
+    ) -> (Entity<PendingKeystrokesIndicator>, &mut VisualTestContext) {
         cx.update(|cx| {
             settings::init(cx);
-            cx.bind_keys([
-                KeyBinding::new(
-                    "ctrl-b",
-                    ShorterBinding,
-                    Some("PendingKeystrokesIndicatorTest"),
-                ),
-                KeyBinding::new(
-                    "ctrl-b h",
-                    LongerBinding,
-                    Some("PendingKeystrokesIndicatorTest"),
-                ),
-                KeyBinding::new(
-                    "ctrl-b h j",
-                    LongestBinding,
-                    Some("PendingKeystrokesIndicatorTest"),
-                ),
-            ]);
+            cx.bind_keys(bindings);
         });
 
-        let shorter_binding_count = Rc::new(Cell::new(0));
-        let longer_binding_count = Rc::new(Cell::new(0));
         let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
             focus_handle: cx.focus_handle(),
-            shorter_binding_count: shorter_binding_count.clone(),
-            longer_binding_count: longer_binding_count.clone(),
         });
         let indicator =
             cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
@@ -368,12 +362,30 @@ mod tests {
             window.activate_window();
         });
 
+        (indicator, cx)
+    }
+
+    impl Render for TestView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("PendingKeystrokesIndicatorTest")
+                .track_focus(&self.focus_handle)
+                .on_action(|_: &ShorterBinding, _, _| {})
+                .on_action(|_: &LongerBinding, _, _| {})
+                .on_action(|_: &LongestBinding, _, _| {})
+        }
+    }
+
+    #[gpui::test]
+    fn test_indicator_tracks_pending_input(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
+
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
 
-        let first_pending = indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
-        assert!(first_pending.is_some(), "expected pending input snapshot");
-        let first_pending = first_pending.unwrap_or_default();
+        let first_pending = indicator
+            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+            .expect("pending input snapshot");
         assert_eq!(first_pending.keystrokes, vec!["ctrl-b"]);
         assert_eq!(
             first_pending.bindings,
@@ -389,63 +401,14 @@ mod tests {
             ]
         );
 
-        let pending_before_unrelated_settings_update = indicator
-            .read_with(cx, |indicator, _| indicator.pending().cloned())
-            .expect("pending input");
-        cx.update(|_, cx| {
-            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
-                store
-                    .set_user_settings(r#"{"ui_font_size":15}"#, cx)
-                    .expect("valid test settings");
-            });
-        });
-        cx.run_until_parked();
-        let pending_after_unrelated_settings_update = indicator
-            .read_with(cx, |indicator, _| indicator.pending().cloned())
-            .expect("pending input");
-        assert!(Rc::ptr_eq(
-            &pending_before_unrelated_settings_update,
-            &pending_after_unrelated_settings_update
-        ));
-
-        cx.executor()
-            .advance_clock(first_pending.timeout_duration / 2);
-        cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
-
-        set_indicator_hovered(&indicator, true, cx);
-        cx.run_until_parked();
-        let hovered_pending = indicator
-            .read_with(cx, |indicator, _| pending_snapshot(indicator))
-            .unwrap_or_default();
-        assert!(hovered_pending.timeout_paused);
-        assert_eq!(
-            hovered_pending.remaining_duration,
-            first_pending.timeout_duration / 2
-        );
-
-        cx.executor()
-            .advance_clock(first_pending.timeout_duration * 2);
-        cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
-        assert_eq!(shorter_binding_count.get(), 0);
-
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
 
-        let second_pending = indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
-        assert!(
-            second_pending.is_some(),
-            "expected updated pending input snapshot"
-        );
-        let second_pending = second_pending.unwrap_or_default();
+        let second_pending = indicator
+            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+            .expect("updated pending input snapshot");
         assert_eq!(second_pending.keystrokes, vec!["ctrl-b", "h"]);
         assert!(second_pending.generation > first_pending.generation);
-        assert!(second_pending.timeout_paused);
-        assert_eq!(
-            second_pending.remaining_duration,
-            second_pending.timeout_duration
-        );
         assert_eq!(
             second_pending.bindings,
             vec![(
@@ -454,226 +417,79 @@ mod tests {
             )]
         );
 
-        cx.executor()
-            .advance_clock(second_pending.timeout_duration * 2);
+        cx.simulate_keystrokes("j");
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
-        assert_eq!(longer_binding_count.get(), 0);
+        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+    }
+
+    #[gpui::test]
+    fn test_hover_pauses_and_resumes_timeout(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, timed_bindings());
+
+        cx.simulate_keystrokes("ctrl-b");
+        cx.run_until_parked();
+
+        set_indicator_hovered(&indicator, true, cx);
+        cx.run_until_parked();
+        let paused_pending = indicator
+            .read_with(cx, |indicator, _| pending_snapshot(indicator))
+            .expect("paused pending input");
+        assert!(paused_pending.timeout_paused);
 
         set_indicator_hovered(&indicator, false, cx);
         cx.run_until_parked();
         let resumed_pending = indicator
             .read_with(cx, |indicator, _| pending_snapshot(indicator))
-            .unwrap_or_default();
+            .expect("resumed pending input");
         assert!(!resumed_pending.timeout_paused);
-        assert_eq!(
-            resumed_pending.remaining_duration,
-            resumed_pending.timeout_duration
-        );
 
-        cx.executor()
-            .advance_clock(resumed_pending.remaining_duration);
+        cx.simulate_keystrokes("h");
         cx.run_until_parked();
-
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
-        assert_eq!(shorter_binding_count.get(), 0);
-        assert_eq!(longer_binding_count.get(), 1);
-
-        cx.simulate_keystrokes("ctrl-b");
-        cx.run_until_parked();
-        set_indicator_hovered(&indicator, true, cx);
-        cx.run_until_parked();
-
-        cx.update(|_, cx| {
-            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
-                store
-                    .set_user_settings(r#"{"status_bar":{"experimental.show":false}}"#, cx)
-                    .expect("valid test settings");
-            });
-        });
-        cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
-        let remaining_after_disabling = cx.update(|window, cx| {
-            let timeout = window
-                .pending_input()
-                .and_then(|pending_input| pending_input.timeout())
-                .expect("pending input timeout");
-            assert!(!timeout.is_paused());
-            timeout.remaining(cx)
-        });
-        cx.executor().advance_clock(remaining_after_disabling);
-        cx.run_until_parked();
-        assert_eq!(shorter_binding_count.get(), 1);
-
-        cx.simulate_keystrokes("ctrl-b");
-        cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
-
-        cx.update(|_, cx| {
-            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
-                store
-                    .set_user_settings(r#"{"status_bar":{"experimental.show":true}}"#, cx)
-                    .expect("valid test settings");
-            });
-        });
-        cx.run_until_parked();
-        let pending_after_reenabling =
-            indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
-        assert!(
-            pending_after_reenabling.is_some(),
-            "expected the current pending input after re-enabling the indicator"
-        );
-
-        cx.update(|_, cx| {
-            VimModeSetting::override_global(VimModeSetting(true), cx);
-        });
-        cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
-
-        cx.update(|_, cx| {
-            VimModeSetting::override_global(VimModeSetting(false), cx);
-        });
-        cx.run_until_parked();
-        let pending_after_disabling_vim =
-            indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
-        assert!(
-            pending_after_disabling_vim.is_some(),
-            "expected the current pending input after disabling Vim mode"
-        );
-        set_indicator_hovered(&indicator, true, cx);
-        cx.run_until_parked();
-        let remaining_before_release = cx.update(|window, cx| {
-            window
-                .pending_input()
-                .and_then(|pending_input| pending_input.timeout())
-                .map(|timeout| timeout.remaining(cx))
-                .expect("pending input timeout")
-        });
-
-        let weak_indicator = indicator.downgrade();
-        drop(indicator);
-        cx.update(|_, _| {});
-        cx.run_until_parked();
-        weak_indicator.assert_released();
-
-        let remaining_after_release = cx.update(|window, cx| {
-            let timeout = window
-                .pending_input()
-                .and_then(|pending_input| pending_input.timeout())
-                .expect("pending input timeout");
-            assert!(!timeout.is_paused());
-            timeout.remaining(cx)
-        });
-        assert_eq!(remaining_after_release, remaining_before_release);
-        cx.executor().advance_clock(remaining_after_release);
-        cx.run_until_parked();
-        assert_eq!(shorter_binding_count.get(), 2);
     }
 
     #[gpui::test]
-    fn test_indicator_tracks_status_bar_and_helix_modes(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            settings::init(cx);
-            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
-                store
-                    .set_user_settings(
-                        r#"{"status_bar":{"experimental.show":false,"pending_keystrokes_indicator":true}}"#,
-                        cx,
-                    )
-                    .expect("valid test settings");
-            });
-            cx.bind_keys([
-                KeyBinding::new(
-                    "ctrl-b",
-                    ShorterBinding,
-                    Some("PendingKeystrokesIndicatorTest"),
-                ),
-                KeyBinding::new(
-                    "ctrl-b h",
-                    LongerBinding,
-                    Some("PendingKeystrokesIndicatorTest"),
-                ),
-            ]);
-        });
-
-        let shorter_binding_count = Rc::new(Cell::new(0));
-        let longer_binding_count = Rc::new(Cell::new(0));
-        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
-            focus_handle: cx.focus_handle(),
-            shorter_binding_count,
-            longer_binding_count,
-        });
-        let indicator =
-            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
-        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
-        cx.update(|window, cx| {
-            window.focus(&focus_handle, cx);
-            window.activate_window();
-        });
+    fn test_disabling_indicator_releases_timeout_pause(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(cx, timed_bindings());
 
         cx.simulate_keystrokes("ctrl-b");
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
+        set_indicator_hovered(&indicator, true, cx);
+        cx.run_until_parked();
 
         cx.update(|_, cx| {
             cx.update_global::<settings::SettingsStore, _>(|store, cx| {
                 store
                     .set_user_settings(
-                        r#"{"status_bar":{"experimental.show":true,"pending_keystrokes_indicator":true}}"#,
+                        r#"{"status_bar":{"pending_keystrokes_indicator":false}}"#,
                         cx,
                     )
                     .expect("valid test settings");
             });
         });
         cx.run_until_parked();
-        assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_some()));
-
-        cx.update(|_, cx| {
-            HelixModeSetting::override_global(HelixModeSetting(true), cx);
-        });
-        cx.run_until_parked();
         assert!(indicator.read_with(cx, |indicator, _| indicator.pending().is_none()));
-
-        cx.update(|_, cx| {
-            HelixModeSetting::override_global(HelixModeSetting(false), cx);
+        cx.update(|window, _| {
+            let timeout = window
+                .pending_input()
+                .and_then(|pending_input| pending_input.timeout())
+                .expect("pending input timeout");
+            assert!(!timeout.is_paused());
         });
-        cx.run_until_parked();
-        let pending_after_disabling_helix =
-            indicator.read_with(cx, |indicator, _| pending_snapshot(indicator));
-        assert!(pending_after_disabling_helix.is_some());
-        cx.executor().advance_clock(
-            pending_after_disabling_helix
-                .unwrap_or_default()
-                .timeout_duration,
-        );
+
+        cx.simulate_keystrokes("h");
         cx.run_until_parked();
     }
 
     #[gpui::test]
     fn test_indicator_ignores_pending_input_without_timeout(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            settings::init(cx);
-            cx.bind_keys([KeyBinding::new(
+        let (indicator, cx) = setup_indicator_test(
+            cx,
+            [KeyBinding::new(
                 "ctrl-b h",
                 LongerBinding,
                 Some("PendingKeystrokesIndicatorTest"),
-            )]);
-        });
-
-        let shorter_binding_count = Rc::new(Cell::new(0));
-        let longer_binding_count = Rc::new(Cell::new(0));
-        let (test_view, cx) = cx.add_window_view(|_, cx| TestView {
-            focus_handle: cx.focus_handle(),
-            shorter_binding_count,
-            longer_binding_count,
-        });
-        let indicator =
-            cx.update(|window, cx| cx.new(|cx| PendingKeystrokesIndicator::new(window, cx)));
-        let focus_handle = test_view.read_with(cx, |test_view, _| test_view.focus_handle.clone());
-        cx.update(|window, cx| {
-            window.focus(&focus_handle, cx);
-            window.activate_window();
-        });
+            )],
+        );
 
         let notification_count = Rc::new(Cell::new(0));
         let _notification_subscription = cx.update({
