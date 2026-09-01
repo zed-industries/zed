@@ -3,7 +3,7 @@ use crate::stash::GitStash;
 use crate::status::{
     DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
 };
-use crate::{Oid, RunHook, SHORT_SHA_LENGTH};
+use crate::{Oid, RunHook, SHA256_HEX_LENGTH, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_channel::Sender;
 use collections::HashMap;
@@ -350,7 +350,7 @@ impl Worktree {
             .unwrap_or(&self.sha[..self.sha.len().min(SHORT_SHA_LENGTH)])
     }
 
-    pub fn directory_name(&self, main_worktree_path: Option<&Path>) -> String {
+    pub fn directory_name(&self, name_anchor_path: Option<&Path>) -> String {
         if self.is_main {
             return "main worktree".to_string();
         }
@@ -361,14 +361,14 @@ impl Worktree {
             .and_then(|name| name.to_str())
             .unwrap_or(self.display_name());
 
-        if let Some(main_path) = main_worktree_path {
-            let main_dir = main_path.file_name().and_then(|n| n.to_str());
-            if main_dir == Some(dir_name) {
+        if let Some(name_anchor_path) = name_anchor_path {
+            let name_anchor_dir = name_anchor_path.file_name().and_then(|name| name.to_str());
+            if name_anchor_dir == Some(dir_name) {
                 if let Some(parent_name) = self
                     .path
                     .parent()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
+                    .and_then(|parent| parent.file_name())
+                    .and_then(|name| name.to_str())
                 {
                     return parent_name.to_string();
                 }
@@ -764,7 +764,7 @@ pub struct SearchCommitArgs {
 
 pub fn commit_hash_search_query(query: &str) -> Option<&str> {
     let query = query.trim();
-    (7..=40)
+    (SHORT_SHA_LENGTH..=SHA256_HEX_LENGTH)
         .contains(&query.len())
         .then_some(query)
         .filter(|query| query.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -1379,6 +1379,19 @@ pub async fn get_git_committer(cx: &AsyncApp) -> GitCommitter {
     .await
 }
 
+fn parse_remote_urls(stdout: &str) -> HashMap<String, String> {
+    let mut urls = HashMap::default();
+    for line in stdout.lines() {
+        if let Some((line, suffix)) = line.rsplit_once(" (fetch)")
+            && (suffix.is_empty() || suffix.starts_with(" [") && suffix.ends_with(']'))
+            && let Some((name, url)) = line.split_once(char::is_whitespace)
+        {
+            urls.insert(name.to_string(), url.trim_start().to_string());
+        }
+    }
+    urls
+}
+
 impl GitRepository for RealGitRepository {
     fn path(&self) -> PathBuf {
         self.git_dir.clone()
@@ -1735,17 +1748,11 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
         self.executor
             .spawn(async move {
-                let mut urls = HashMap::default();
                 if let Ok(stdout) = git.run(&["remote", "-v"]).await {
-                    for line in stdout.lines() {
-                        if let Some(line) = line.strip_suffix(" (fetch)")
-                            && let Some((name, url)) = line.split_once(char::is_whitespace)
-                        {
-                            urls.insert(name.to_string(), url.trim_start().to_string());
-                        }
-                    }
+                    parse_remote_urls(&stdout)
+                } else {
+                    HashMap::default()
                 }
-                urls
             })
             .boxed()
     }
@@ -4266,6 +4273,26 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
 
+    #[test]
+    fn test_commit_hash_search_query_accepts_sha1_and_sha256_hashes() {
+        assert_eq!(
+            commit_hash_search_query("0123456789abcdef0123456789abcdef01234567"),
+            Some("0123456789abcdef0123456789abcdef01234567")
+        );
+        assert_eq!(
+            commit_hash_search_query(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ),
+            Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(
+            commit_hash_search_query(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+            ),
+            None
+        );
+    }
+
     fn disable_git_global_config() {
         unsafe {
             std::env::set_var("GIT_CONFIG_GLOBAL", "");
@@ -6681,6 +6708,39 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_parse_remote_urls() {
+        let stdout = concat!(
+            "origin\thttps://github.com/zed-industries/zed.git (fetch) [blob:none]\n",
+            "origin\thttps://github.com/zed-industries/zed.git (push)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (fetch)\n",
+            "upstream\t/Users/user/My Projects/upstream.git (push)\n",
+            "a\t/x (fetch) dir (fetch)\n",
+            "a\t/x (fetch) dir (push)\n",
+            "archive\t/tmp/remote [archive].git (fetch)\n",
+            "archive\t/tmp/remote [archive].git (push)\n",
+        );
+
+        let remote_urls = parse_remote_urls(stdout);
+        assert_eq!(remote_urls.len(), 4);
+        assert_eq!(
+            remote_urls.get("origin").map(String::as_str),
+            Some("https://github.com/zed-industries/zed.git")
+        );
+        assert_eq!(
+            remote_urls.get("upstream").map(String::as_str),
+            Some("/Users/user/My Projects/upstream.git")
+        );
+        assert_eq!(
+            remote_urls.get("a").map(String::as_str),
+            Some("/x (fetch) dir")
+        );
+        assert_eq!(
+            remote_urls.get("archive").map(String::as_str),
+            Some("/tmp/remote [archive].git")
+        );
+    }
+
     #[gpui::test]
     async fn test_remote_urls(cx: &mut TestAppContext) {
         disable_git_global_config();
@@ -6717,6 +6777,12 @@ mod tests {
         ])
         .await
         .unwrap();
+        git.run(&["config", "remote.origin.promisor", "true"])
+            .await
+            .unwrap();
+        git.run(&["config", "remote.origin.partialclonefilter", "blob:none"])
+            .await
+            .unwrap();
 
         let remote_urls = repo.remote_urls().await;
         assert_eq!(remote_urls.len(), 2);

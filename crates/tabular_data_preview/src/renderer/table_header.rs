@@ -669,7 +669,7 @@ impl TabularDataPreviewPane {
         .trigger_with_tooltip(
             IconButton::new(
                 ElementId::NamedInteger("filter-button".into(), col.get() as u64),
-                IconName::Filter,
+                IconName::FilterFunnel,
             )
             .icon_size(IconSize::Small)
             .style(if has_active_filters {

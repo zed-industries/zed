@@ -210,10 +210,6 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
-    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        LanguageModelToolSchemaFormat::JsonSchema
-    }
-
     fn max_token_count(&self) -> u64;
     fn max_output_tokens(&self) -> Option<u64> {
         None

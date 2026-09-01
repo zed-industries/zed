@@ -3130,6 +3130,16 @@ Unspecified values have a `false` value, hints won't be toggled if all the modif
 
 - `enabled`: Whether to enable automatic JSX tag closing
 
+## Language Detection
+
+- Description: Whether to automatically detect the language of an untitled buffer from its contents. Languages explicitly selected from the language selector are not changed.
+- Setting: `language_detection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Languages
 
 - Description: Configuration for specific languages.
@@ -3593,6 +3603,14 @@ Examples:
 **Options**
 
 `boolean` values
+
+## Call Hierarchy
+
+### Modal Max Width
+
+- Description: Max-width of the call hierarchy modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
+- Setting: `modal_max_width`
+- Default: `medium`
 
 ## File Finder
 
@@ -5276,7 +5294,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
     "dock": "right",
     "entry_spacing": "comfortable",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5813,7 +5831,7 @@ You can define these in user or project settings; project settings are merged on
     "default_width": 300,
     "dock": "left",
     "file_icons": true,
-    "folder_icons": true,
+    "folder_indicator": "icon",
     "git_status": true,
     "indent_size": 20,
     "auto_reveal_entries": true,
@@ -5823,7 +5841,8 @@ You can define these in user or project settings; project settings are merged on
     },
     "scrollbar": {
       "show": null
-    }
+    },
+    "multi_buffer_hide_symbols": false
   }
 }
 ```
