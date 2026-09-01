@@ -7,7 +7,7 @@ use std::{
 use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
-use gpui::{App, Entity, Pixels, Task};
+use gpui::{App, Entity, Pixels, Task, TaskExt};
 use itertools::Itertools;
 use language::{
     BufferRow,
@@ -16,8 +16,8 @@ use language::{
 use lsp::LanguageServerId;
 use multi_buffer::{Anchor, MultiBufferSnapshot};
 use project::{
-    HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip, InlayHintTooltip,
-    InvalidationStrategy, ResolveState,
+    CodeAction, HoverBlock, HoverBlockKind, InlayHintLabel, InlayHintLabelPartTooltip,
+    InlayHintTooltip, InvalidationStrategy, LspAction, ResolveState,
     lsp_store::{CacheInlayHints, ResolvedHint},
 };
 use text::{Bias, BufferId};
@@ -32,6 +32,34 @@ use crate::{
     hover_popover::{self, InlayHover},
     inlays::InlaySplice,
 };
+
+#[derive(Debug)]
+pub(crate) struct HoveredInlayHintCommand {
+    highlight: InlayHighlight,
+    buffer_id: BufferId,
+    action: CodeAction,
+}
+
+impl HoveredInlayHintCommand {
+    pub(crate) fn contains_point(
+        &self,
+        snapshot: &EditorSnapshot,
+        point_for_position: PointForPosition,
+    ) -> bool {
+        if point_for_position.column_overshoot_after_line_end != 0
+            || point_for_position.as_valid().is_some()
+            || !snapshot.can_resolve(&self.highlight.inlay_position)
+        {
+            return false;
+        }
+        let hovered_offset =
+            snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left);
+        let hint_start = snapshot.anchor_to_inlay_offset(self.highlight.inlay_position);
+        let part_range = InlayOffset(hint_start.0 + self.highlight.range.start)
+            ..InlayOffset(hint_start.0 + self.highlight.range.end);
+        part_range.contains(&hovered_offset)
+    }
+}
 
 pub fn inlay_hint_settings(
     location: Anchor,
@@ -53,6 +81,7 @@ pub struct LspInlayHintData {
     hint_chunk_fetching: HashMap<BufferId, (Global, HashSet<Range<BufferRow>>)>,
     invalidate_hints_for_buffers: HashSet<BufferId>,
     pub added_hints: HashMap<InlayId, Option<InlayHintKind>>,
+    hovered_command: Option<HoveredInlayHintCommand>,
 }
 
 impl LspInlayHintData {
@@ -68,6 +97,7 @@ impl LspInlayHintData {
             invalidate_debounce: debounce_value(settings.edit_debounce_ms),
             append_debounce: debounce_value(settings.scroll_debounce_ms),
             allowed_hint_kinds: settings.enabled_inlay_hint_kinds(),
+            hovered_command: None,
         }
     }
 
@@ -101,6 +131,7 @@ impl LspInlayHintData {
         self.hint_refresh_tasks.clear();
         self.hint_chunk_fetching.clear();
         self.added_hints.clear();
+        self.hovered_command = None;
     }
 
     /// Like `clear`, but only wipes tracking state for the given buffer IDs.
@@ -595,6 +626,7 @@ impl Editor {
         };
         let mut go_to_definition_updated = false;
         let mut hover_updated = false;
+        let mut inlay_command_updated = false;
         if let Some(hovered_offset) = hovered_offset {
             let buffer_snapshot = self.buffer().read(cx).snapshot(cx);
             let previous_valid_anchor = buffer_snapshot.anchor_at(
@@ -619,13 +651,12 @@ impl Editor {
                 })
                 .max_by_key(|hint| hint.id)
             {
-                if let Some(ResolvedHint::Resolved(cached_hint)) = buffer_snapshot
-                    .anchor_to_buffer_anchor(hovered_hint.position)
-                    .and_then(|(anchor, _)| {
+                if let Some((buffer_anchor, _)) =
+                    buffer_snapshot.anchor_to_buffer_anchor(hovered_hint.position)
+                    && let Some(ResolvedHint::Resolved(cached_hint)) =
                         lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store.resolved_hint(anchor.buffer_id, hovered_hint.id, cx)
+                            lsp_store.resolved_hint(buffer_anchor.buffer_id, hovered_hint.id, cx)
                         })
-                    })
                 {
                     match cached_hint.resolve_state {
                         ResolveState::Resolved => {
@@ -693,6 +724,24 @@ impl Editor {
                                             inlay_position: hovered_hint.position,
                                             range: highlight_start..highlight_end,
                                         };
+                                        if let Some((server_id, command)) =
+                                            hovered_hint_part.command
+                                            && let Some(inlay_hints) = self.inlay_hints.as_mut()
+                                        {
+                                            inlay_command_updated = true;
+                                            inlay_hints.hovered_command =
+                                                Some(HoveredInlayHintCommand {
+                                                    highlight: highlight.clone(),
+                                                    buffer_id: buffer_anchor.buffer_id,
+                                                    action: CodeAction {
+                                                        server_id,
+                                                        range: cached_hint.position
+                                                            ..cached_hint.position,
+                                                        lsp_action: LspAction::Command(command),
+                                                        resolved: true,
+                                                    },
+                                                });
+                                        }
                                         if let Some(tooltip) = hovered_hint_part.tooltip {
                                             hover_popover::hover_at_inlay(
                                                 self,
@@ -756,6 +805,40 @@ impl Editor {
         if !hover_updated {
             hover_popover::hover_at(self, None, mouse_position, window, cx);
         }
+        if !inlay_command_updated && let Some(inlay_hints) = self.inlay_hints.as_mut() {
+            inlay_hints.hovered_command = None;
+        }
+    }
+
+    pub(crate) fn hovered_inlay_hint_command(&self) -> Option<&HoveredInlayHintCommand> {
+        self.inlay_hints.as_ref()?.hovered_command.as_ref()
+    }
+
+    pub(crate) fn activate_hovered_inlay_hint_command(
+        &mut self,
+        snapshot: &EditorSnapshot,
+        down: PointForPosition,
+        up: PointForPosition,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(state) = self.hovered_inlay_hint_command().filter(|state| {
+            state.contains_point(snapshot, down) && state.contains_point(snapshot, up)
+        }) else {
+            return false;
+        };
+        let Some(buffer) = self.buffer().read(cx).buffer(state.buffer_id) else {
+            return false;
+        };
+        let Some(project) = self.project().cloned() else {
+            return false;
+        };
+        let action = state.action.clone();
+        project
+            .update(cx, |project, cx| {
+                project.apply_code_action(buffer, action, true, cx)
+            })
+            .detach_and_log_err(cx);
+        true
     }
 
     fn inlay_hints_for_buffer(

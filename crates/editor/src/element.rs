@@ -5576,6 +5576,19 @@ impl EditorElement {
                         CursorStyle::PointingHand,
                         &layout.position_map.text_hitbox,
                     );
+                } else if !window.modifiers().modified()
+                    && let Some(hovered_command) = editor.hovered_inlay_hint_command()
+                    && hovered_command.contains_point(
+                        &layout.position_map.snapshot,
+                        layout
+                            .position_map
+                            .point_for_position(window.mouse_position()),
+                    )
+                {
+                    window.set_cursor_style(
+                        CursorStyle::PointingHand,
+                        &layout.position_map.text_hitbox,
+                    );
                 } else {
                     window.set_cursor_style(CursorStyle::IBeam, &layout.position_map.text_hitbox);
                 };

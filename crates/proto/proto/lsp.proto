@@ -548,6 +548,7 @@ message InlayHintLabelPart {
   PointUtf16 location_range_start = 4;
   PointUtf16 location_range_end = 5;
   optional uint64 language_server_id = 6;
+  optional CodeAction command = 7;
 }
 
 message InlayHintTooltip {
