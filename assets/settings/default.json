@@ -192,9 +192,10 @@
   "reveal_if_open": false,
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
-  // Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-  // the panel when it is already focused, instead of just moving focus back
-  // to the editor.
+  // Whether invoking a panel's ToggleFocus action while the panel is already
+  // focused closes the panel, instead of just moving focus back to the
+  // editor. This only applies to a panel's focus-toggle action, not to its
+  // regular visibility-toggle action.
   "close_panel_on_toggle": false,
   // Relative size of the drop target in the editor that will open dropped file as a split pane (0-0.5)
   // E.g. 0.25 == If you drop onto the top/bottom quarter of the pane a new vertical split will be used

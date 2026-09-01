@@ -135,9 +135,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-    /// Whether toggling a panel (e.g. with its keyboard shortcut) also closes
-    /// the panel when it is already focused, instead of just moving focus back
-    /// to the editor.
+    /// Whether invoking a panel's `ToggleFocus` action while the panel is
+    /// already focused closes the panel, instead of just moving focus back
+    /// to the editor. This only applies to a panel's focus-toggle action, not
+    /// to its regular visibility-toggle action.
     ///
     /// Default: false
     pub close_panel_on_toggle: Option<bool>,
