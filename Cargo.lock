@@ -12453,6 +12453,7 @@ dependencies = [
  "file_icons",
  "futures 0.3.32",
  "fuzzy",
+ "git",
  "gpui",
  "itertools 0.14.0",
  "language",

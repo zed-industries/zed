@@ -12,7 +12,8 @@ use editor::{
 };
 use file_icons::FileIcons;
 
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use fuzzy::{CharBag, StringMatch, StringMatchCandidate, match_strings};
+use git::status::{FileStatus, GitSummary};
 use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Bounds, ClipboardItem, Context,
     DismissEvent, Div, ElementId, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -30,7 +31,7 @@ use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use std::{
     cmp,
     collections::BTreeMap,
-    hash::Hash,
+    hash::{Hash, Hasher},
     ops::Range,
     path::{Path, PathBuf},
     sync::{
@@ -60,7 +61,7 @@ use workspace::{
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
 };
-use worktree::{Entry, ProjectEntryId, WorktreeId};
+use worktree::{Entry, EntryKind, ProjectEntryId, Worktree, WorktreeId};
 
 use crate::outline_panel_settings::OutlinePanelSettingsScrollbarProxy;
 
@@ -387,6 +388,10 @@ enum OutlineState {
 struct FoldedDirsEntry {
     worktree_id: WorktreeId,
     entries: Vec<GitEntry>,
+    /// `GitEntry` carries no deleted-ness of its own, so this is tracked alongside the
+    /// folded chain: true when any directory folded into `entries` was synthesized for a
+    /// deleted file (see `FsEntryDirectory::is_deleted`).
+    is_deleted: bool,
 }
 
 // TODO: collapse the inner enums into panel entry
@@ -435,10 +440,12 @@ impl PartialEq for PanelEntry {
                 Self::FoldedDirs(FoldedDirsEntry {
                     worktree_id: worktree_id_a,
                     entries: entries_a,
+                    ..
                 }),
                 Self::FoldedDirs(FoldedDirsEntry {
                     worktree_id: worktree_id_b,
                     entries: entries_b,
+                    ..
                 }),
             ) => worktree_id_a == worktree_id_b && entries_a == entries_b,
             (Self::Outline(a), Self::Outline(b)) => a == b,
@@ -578,6 +585,7 @@ struct FsEntryFile {
     entry: GitEntry,
     buffer_id: BufferId,
     excerpts: Vec<ExcerptRange<language::Anchor>>,
+    is_deleted: bool,
 }
 
 impl PartialEq for FsEntryFile {
@@ -598,6 +606,7 @@ impl Hash for FsEntryFile {
 struct FsEntryDirectory {
     worktree_id: WorktreeId,
     entry: GitEntry,
+    is_deleted: bool,
 }
 
 impl PartialEq for FsEntryDirectory {
@@ -635,6 +644,82 @@ enum FsEntry {
     ExternalFile(FsEntryExternalFile),
     Directory(FsEntryDirectory),
     File(FsEntryFile),
+}
+
+/// Deleted files have no worktree entry — `File::project_entry_id` returns `None` for
+/// `DiskState::Deleted` — but the panel's tree is keyed entirely by `ProjectEntryId`.
+/// Derive a stable id from the path so collapse state survives panel updates, and take it
+/// from the top of the id space: real ids are handed out by a counter that starts at 0 and
+/// increments, so the two ranges cannot meet.
+///
+/// Two synthesized paths could in principle hash to the same id; the consequence is two
+/// rows sharing collapse state, not a panic.
+fn synthetic_entry_id(worktree_id: WorktreeId, path: &RelPath) -> ProjectEntryId {
+    let mut hasher = collections::FxHasher::default();
+    worktree_id.hash(&mut hasher);
+    path.hash(&mut hasher);
+    ProjectEntryId::from_usize(usize::MAX - (hasher.finish() as usize >> 1))
+}
+
+/// Builds a placeholder worktree `Entry` for a path that no longer exists on disk. Only the
+/// fields the outline panel actually reads (`id`, `path`, `kind`, `git_summary`, `is_ignored`)
+/// carry meaning here; the rest are left at their disk-oriented defaults since nothing in this
+/// panel consults them for synthetic entries.
+fn synthetic_entry(id: ProjectEntryId, kind: EntryKind, path: Arc<RelPath>) -> Entry {
+    Entry {
+        id,
+        kind,
+        path,
+        inode: 0,
+        mtime: None,
+        canonical_path: None,
+        is_ignored: false,
+        is_hidden: false,
+        is_always_included: false,
+        is_external: false,
+        is_private: false,
+        size: 0,
+        char_bag: CharBag::default(),
+        is_fifo: false,
+    }
+}
+
+/// Falls back to resolving a buffer's worktree entry from its `File`'s path when the normal
+/// `project_entry_id`-based lookup finds nothing. That lookup fails for a deleted file — its
+/// `File` still carries a `path` and `worktree`, but `project_entry_id()` returns `None` for
+/// `DiskState::Deleted` — which would otherwise leave auto-reveal unable to tell which
+/// ancestor directories to expand. Mints the same synthetic id the tree-building code uses,
+/// so the returned entry's id matches the one already in `new_worktree_entries`.
+fn deleted_buffer_worktree_entry(
+    project: &Project,
+    buffer_id: BufferId,
+    cx: &App,
+) -> Option<(Entity<Worktree>, Entry)> {
+    let buffer = project.buffer_for_id(buffer_id, cx)?;
+    let file = File::from_dyn(buffer.read(cx).file())?;
+    if file.project_entry_id().is_some() {
+        return None;
+    }
+    let worktree = file.worktree.clone();
+    let worktree_id = worktree.read(cx).id();
+    let entry = synthetic_entry(
+        synthetic_entry_id(worktree_id, &file.path),
+        EntryKind::File,
+        file.path.clone(),
+    );
+    Some((worktree, entry))
+}
+
+struct BufferExcerpts {
+    is_new: bool,
+    is_folded: bool,
+    excerpts: Vec<ExcerptRange<language::Anchor>>,
+    entry_id: Option<ProjectEntryId>,
+    worktree: Option<worktree::Snapshot>,
+    status: Option<FileStatus>,
+    /// Present whenever the buffer has a `File`, including deleted ones whose
+    /// `project_entry_id()` is `None`.
+    path: Option<Arc<RelPath>>,
 }
 
 struct ActiveItem {
@@ -2116,6 +2201,7 @@ impl OutlinePanel {
                             let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
                             Some((worktree, entry))
                         })
+                        .or_else(|| deleted_buffer_worktree_entry(project, *buffer_id, cx))
                 }),
                 PanelEntry::Outline(outline_entry) => {
                     let buffer_id = outline_entry.buffer_id();
@@ -2145,18 +2231,29 @@ impl OutlinePanel {
                             .buffer_for_id(buffer_id, cx)
                             .and_then(|buffer| buffer.read(cx).entry_id(cx));
 
-                        entry_id.and_then(|entry_id| {
-                            project
-                                .worktree_for_entry(entry_id, cx)
-                                .and_then(|worktree| {
-                                    let worktree_id = worktree.read(cx).id();
-                                    outline_panel
-                                        .collapsed_entries
-                                        .remove(&CollapsedEntry::File(worktree_id, buffer_id));
-                                    let entry = worktree.read(cx).entry_for_id(entry_id)?.clone();
-                                    Some((worktree, entry))
-                                })
-                        })
+                        entry_id
+                            .and_then(|entry_id| {
+                                project
+                                    .worktree_for_entry(entry_id, cx)
+                                    .and_then(|worktree| {
+                                        let worktree_id = worktree.read(cx).id();
+                                        outline_panel
+                                            .collapsed_entries
+                                            .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                                        let entry =
+                                            worktree.read(cx).entry_for_id(entry_id)?.clone();
+                                        Some((worktree, entry))
+                                    })
+                            })
+                            .or_else(|| {
+                                let (worktree, entry) =
+                                    deleted_buffer_worktree_entry(project, buffer_id, cx)?;
+                                let worktree_id = worktree.read(cx).id();
+                                outline_panel
+                                    .collapsed_entries
+                                    .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                                Some((worktree, entry))
+                            })
                     })?
                 }
                 PanelEntry::Fs(FsEntry::ExternalFile(..)) => None,
@@ -2173,19 +2270,29 @@ impl OutlinePanel {
                                 .buffer_for_id(buffer_id, cx)
                                 .and_then(|buffer| buffer.read(cx).entry_id(cx));
 
-                            entry_id.and_then(|entry_id| {
-                                project
-                                    .worktree_for_entry(entry_id, cx)
-                                    .and_then(|worktree| {
-                                        let worktree_id = worktree.read(cx).id();
-                                        outline_panel
-                                            .collapsed_entries
-                                            .remove(&CollapsedEntry::File(worktree_id, buffer_id));
-                                        let entry =
-                                            worktree.read(cx).entry_for_id(entry_id)?.clone();
-                                        Some((worktree, entry))
-                                    })
-                            })
+                            entry_id
+                                .and_then(|entry_id| {
+                                    project
+                                        .worktree_for_entry(entry_id, cx)
+                                        .and_then(|worktree| {
+                                            let worktree_id = worktree.read(cx).id();
+                                            outline_panel.collapsed_entries.remove(
+                                                &CollapsedEntry::File(worktree_id, buffer_id),
+                                            );
+                                            let entry =
+                                                worktree.read(cx).entry_for_id(entry_id)?.clone();
+                                            Some((worktree, entry))
+                                        })
+                                })
+                                .or_else(|| {
+                                    let (worktree, entry) =
+                                        deleted_buffer_worktree_entry(project, buffer_id, cx)?;
+                                    let worktree_id = worktree.read(cx).id();
+                                    outline_panel
+                                        .collapsed_entries
+                                        .remove(&CollapsedEntry::File(worktree_id, buffer_id));
+                                    Some((worktree, entry))
+                                })
                         })
                     })
                     .transpose()?
@@ -2197,29 +2304,24 @@ impl OutlinePanel {
                     let worktree_id = worktree.read(cx).id();
                     let mut dirs_to_expand = Vec::new();
                     {
-                        let mut traversal = worktree.read(cx).traverse_from_path(
-                            true,
-                            true,
-                            true,
-                            buffer_entry.path.as_ref(),
-                        );
-                        let mut current_entry = buffer_entry;
-                        loop {
-                            if current_entry.is_dir()
-                                && outline_panel
-                                    .collapsed_entries
-                                    .remove(&CollapsedEntry::Dir(worktree_id, current_entry.id))
+                        let worktree = worktree.read(cx);
+                        // Walk ancestors by path rather than via `Traversal::back_to_parent`:
+                        // for a deleted file, `buffer_entry` is a synthesized entry that isn't
+                        // actually present in the worktree, so a traversal seeded from its path
+                        // would land on whatever real entry sorts nearest it instead. Ancestor
+                        // directories may themselves be synthetic (a wholly deleted directory),
+                        // so fall back to the same deterministic id used when the tree was built.
+                        for ancestor in buffer_entry.path.ancestors().skip(1) {
+                            let ancestor_id = worktree
+                                .entry_for_path(ancestor)
+                                .map(|entry| entry.id)
+                                .unwrap_or_else(|| synthetic_entry_id(worktree_id, ancestor));
+                            if outline_panel
+                                .collapsed_entries
+                                .remove(&CollapsedEntry::Dir(worktree_id, ancestor_id))
                             {
-                                dirs_to_expand.push(current_entry.id);
+                                dirs_to_expand.push(ancestor_id);
                             }
-
-                            if traversal.back_to_parent()
-                                && let Some(parent_entry) = traversal.entry()
-                            {
-                                current_entry = parent_entry.clone();
-                                continue;
-                            }
-                            break;
                         }
                     }
                     for dir_to_expand in dirs_to_expand {
@@ -2384,7 +2486,10 @@ impl OutlinePanel {
         };
         let (item_id, label_element, icon) = match rendered_entry {
             FsEntry::File(FsEntryFile {
-                worktree_id, entry, ..
+                worktree_id,
+                entry,
+                is_deleted,
+                ..
             }) => {
                 let name = self.entry_name(worktree_id, entry, cx);
                 let color =
@@ -2404,6 +2509,7 @@ impl OutlinePanel {
                             .unwrap_or_default(),
                     )
                     .color(color)
+                    .when(*is_deleted, |label| label.strikethrough())
                     .into_any_element(),
                     reserve_chevron_slot(
                         settings.folder_indicator,
@@ -2439,6 +2545,7 @@ impl OutlinePanel {
                             .unwrap_or_default(),
                     )
                     .color(color)
+                    .when(directory.is_deleted, |label| label.strikethrough())
                     .into_any_element(),
                     icon.unwrap_or_else(empty_icon),
                 )
@@ -2546,6 +2653,7 @@ impl OutlinePanel {
                         .unwrap_or_default(),
                 )
                 .color(color)
+                .when(folded_dir.is_deleted, |label| label.strikethrough())
                 .into_any_element(),
                 icon.unwrap_or_else(empty_icon),
             )
@@ -2826,6 +2934,7 @@ impl OutlinePanel {
                             let file = File::from_dyn(buffer_snapshot.file());
                             let entry_id = file.and_then(|file| file.project_entry_id());
                             let worktree = file.map(|file| file.worktree.read(cx).snapshot());
+                            let path = file.map(|file| file.path.clone());
                             let is_new = new_entries.contains(&buffer_id)
                                 || !outline_panel.buffers.contains_key(&buffer_id);
                             let is_folded = active_editor.read(cx).is_buffer_folded(buffer_id, cx);
@@ -2834,10 +2943,16 @@ impl OutlinePanel {
                                 .display_status_for_buffer_id(buffer_id, cx);
                             buffer_excerpts
                                 .entry(buffer_id)
-                                .or_insert_with(|| {
-                                    (is_new, is_folded, Vec::new(), entry_id, worktree, status)
+                                .or_insert_with(|| BufferExcerpts {
+                                    is_new,
+                                    is_folded,
+                                    excerpts: Vec::new(),
+                                    entry_id,
+                                    worktree,
+                                    status,
+                                    path,
                                 })
-                                .2
+                                .excerpts
                                 .push(excerpt_range.clone());
 
                             new_buffers
@@ -2887,9 +3002,20 @@ impl OutlinePanel {
                         HashMap<ProjectEntryId, (BufferId, Vec<ExcerptRange<Anchor>>)>,
                     >::default();
                     let mut external_excerpts = HashMap::default();
+                    let mut deleted_entries = HashSet::<ProjectEntryId>::default();
 
-                    for (buffer_id, (is_new, is_folded, excerpts, entry_id, worktree, status)) in
-                        buffer_excerpts
+                    for (
+                        buffer_id,
+                        BufferExcerpts {
+                            is_new,
+                            is_folded,
+                            excerpts,
+                            entry_id,
+                            worktree,
+                            status,
+                            path,
+                        },
+                    ) in buffer_excerpts
                     {
                         if is_folded {
                             match &worktree {
@@ -2979,14 +3105,115 @@ impl OutlinePanel {
                                         .or_insert_with(HashMap::default)
                                         .extend(entries_to_add);
                                 }
-                                None => {
-                                    if processed_external_buffers.insert(buffer_id) {
-                                        external_excerpts
-                                            .entry(buffer_id)
-                                            .or_insert_with(Vec::new)
-                                            .extend(excerpts);
+                                None => match path {
+                                    // The buffer's file still has a path even though it has no
+                                    // worktree entry (`DiskState::Deleted`): synthesize entries
+                                    // for it and its ancestor chain so it renders nested in the
+                                    // tree instead of falling back to a flat external file.
+                                    Some(path) => {
+                                        let file_id = synthetic_entry_id(worktree_id, &path);
+                                        deleted_entries.insert(file_id);
+                                        worktree_excerpts
+                                            .entry(worktree_id)
+                                            .or_default()
+                                            .insert(file_id, (buffer_id, excerpts));
+
+                                        let mut entries_to_add = HashMap::default();
+                                        entries_to_add.insert(
+                                            file_id,
+                                            GitEntry {
+                                                git_summary: status
+                                                    .map(|status| status.summary())
+                                                    .unwrap_or_default(),
+                                                entry: synthetic_entry(
+                                                    file_id,
+                                                    EntryKind::File,
+                                                    path.clone(),
+                                                ),
+                                            },
+                                        );
+
+                                        for ancestor in path.ancestors().skip(1) {
+                                            let (ancestor_id, ancestor_entry) = match worktree
+                                                .entry_for_path(ancestor)
+                                            {
+                                                Some(real_entry) => {
+                                                    let is_root =
+                                                        worktree.root_entry().map(|entry| entry.id)
+                                                            == Some(real_entry.id);
+                                                    if is_root {
+                                                        root_entries.insert(real_entry.id);
+                                                        if auto_fold_dirs {
+                                                            unfolded_dirs.insert(real_entry.id);
+                                                        }
+                                                    }
+                                                    if is_new {
+                                                        new_collapsed_entries.remove(
+                                                            &CollapsedEntry::Dir(
+                                                                worktree_id,
+                                                                real_entry.id,
+                                                            ),
+                                                        );
+                                                    }
+                                                    let git_summary = GitTraversal::new(
+                                                        &repo_snapshots,
+                                                        worktree.traverse_from_path(
+                                                            true, true, true, ancestor,
+                                                        ),
+                                                    )
+                                                    .entry()
+                                                    .map(|entry| entry.git_summary)
+                                                    .unwrap_or_default();
+                                                    (
+                                                        real_entry.id,
+                                                        GitEntry {
+                                                            git_summary,
+                                                            entry: real_entry.clone(),
+                                                        },
+                                                    )
+                                                }
+                                                None => {
+                                                    let dir_id =
+                                                        synthetic_entry_id(worktree_id, ancestor);
+                                                    deleted_entries.insert(dir_id);
+                                                    if is_new {
+                                                        new_collapsed_entries.remove(
+                                                            &CollapsedEntry::Dir(
+                                                                worktree_id,
+                                                                dir_id,
+                                                            ),
+                                                        );
+                                                    }
+                                                    (
+                                                        dir_id,
+                                                        GitEntry {
+                                                            git_summary: GitSummary::default(),
+                                                            entry: synthetic_entry(
+                                                                dir_id,
+                                                                EntryKind::Dir,
+                                                                ancestor.into(),
+                                                            ),
+                                                        },
+                                                    )
+                                                }
+                                            };
+                                            entries_to_add.insert(ancestor_id, ancestor_entry);
+                                        }
+
+                                        new_worktree_entries
+                                            .entry(worktree_id)
+                                            .or_insert_with(HashMap::default)
+                                            .extend(entries_to_add);
                                     }
-                                }
+                                    None => {
+                                        if processed_external_buffers.insert(buffer_id) {
+                                            external_excerpts
+                                                .entry(buffer_id)
+                                                .or_insert_with(Vec::new)
+                                                .extend(excerpts);
+                                        }
+                                    }
+                                },
                             }
                         } else if processed_external_buffers.insert(buffer_id) {
                             external_excerpts
@@ -3025,10 +3252,12 @@ impl OutlinePanel {
                                             }
                                         }
 
+                                        let is_deleted = deleted_entries.contains(&entry.id);
                                         if entry.is_dir() {
                                             Some(FsEntry::Directory(FsEntryDirectory {
                                                 worktree_id,
                                                 entry,
+                                                is_deleted,
                                             }))
                                         } else {
                                             let (buffer_id, excerpts) = worktree_excerpts
@@ -3041,6 +3270,7 @@ impl OutlinePanel {
                                                 buffer_id,
                                                 entry,
                                                 excerpts,
+                                                is_deleted,
                                             }))
                                         }
                                     })
@@ -3946,6 +4176,7 @@ impl OutlinePanel {
                                             .map(|entry| entry.path.as_ref())
                                 {
                                     folded_dirs.entries.push(directory_entry.entry.clone());
+                                    folded_dirs.is_deleted |= directory_entry.is_deleted;
                                     folded_dirs_entry = Some((folded_depth, folded_dirs))
                                 } else {
                                     if !is_singleton {
@@ -3963,6 +4194,8 @@ impl OutlinePanel {
                                                 folded_dirs
                                                     .entries
                                                     .push(directory_entry.entry.clone());
+                                                folded_dirs.is_deleted |=
+                                                    directory_entry.is_deleted;
                                                 should_add = false;
                                             }
                                             let new_folded_dirs =
@@ -3985,6 +4218,7 @@ impl OutlinePanel {
                                             FoldedDirsEntry {
                                                 worktree_id: directory_entry.worktree_id,
                                                 entries: vec![directory_entry.entry.clone()],
+                                                is_deleted: directory_entry.is_deleted,
                                             },
                                         ))
                                     };
@@ -3995,6 +4229,7 @@ impl OutlinePanel {
                                     FoldedDirsEntry {
                                         worktree_id: directory_entry.worktree_id,
                                         entries: vec![directory_entry.entry.clone()],
+                                        is_deleted: directory_entry.is_deleted,
                                     },
                                 ));
                             }
@@ -4242,6 +4477,7 @@ impl OutlinePanel {
                 1 => PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                     worktree_id: folded_dirs_entry.worktree_id,
                     entry: folded_dirs_entry.entries[0].clone(),
+                    is_deleted: folded_dirs_entry.is_deleted,
                 })),
                 _ => entry,
             }
@@ -6323,6 +6559,431 @@ two/  <==== selected
                 )
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_deleted_file_nests_under_existing_parent(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "dir": {
+                    "a.txt": "hello world",
+                    "b.txt": "hello there",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        // Build a plain multi-buffer (not a project search) so nothing else reacts to the
+        // file deletion below: `ProjectSearchView` actively prunes excerpts for paths that
+        // disappear from disk (`remove_excerpts_for_paths` in
+        // `search::project_search::ProjectSearchView::search`), which would remove the
+        // deleted file's row for reasons unrelated to the outline panel's own classifier.
+        let buffer_a = open_buffer(&project, path!("/root/dir/a.txt"), cx).await;
+        let buffer_b = open_buffer(&project, path!("/root/dir/b.txt"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        let expected_tree = "root/\n  dir/\n    a.txt\n    b.txt";
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                expected_tree,
+                "sanity check: both files should be nested under dir/ before any deletion"
+            );
+        });
+
+        // Delete the file after its buffer is already open in the multi-buffer — this
+        // yields `DiskState::Deleted` without any git plumbing. Its parent directory `dir`
+        // still has a real entry on disk (via `b.txt`), so this exercises the "existing
+        // parent" branch of the classifier's ancestor-chain synthesis.
+        fs.remove_file(Path::new(path!("/root/dir/a.txt")), Default::default())
+            .await
+            .unwrap();
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                expected_tree,
+                "Deleted file should still be nested under its surviving parent directory, \
+                 not flattened into the external files list (display_entries panics on \
+                 FsEntry::ExternalFile, so reaching this assertion is itself proof)"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_deleted_file_in_deleted_directory(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "keep.txt": "hello there",
+                "dir": {
+                    "sub": {
+                        "a.txt": "hello world"
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+        // Disable auto-folding so the synthesized `dir` and `dir/sub` ancestor directories
+        // each render as their own row instead of collapsing into a single "dir/sub/" row,
+        // making it possible to assert on each synthesized directory's depth individually.
+        update_outline_panel_settings(cx, |settings| {
+            settings.auto_fold_dirs = Some(false);
+        });
+
+        // Plain multi-buffer, not a project search — see comment in
+        // `test_deleted_file_nests_under_existing_parent` for why.
+        let buffer_keep = open_buffer(&project, path!("/root/keep.txt"), cx).await;
+        let buffer_a = open_buffer(&project, path!("/root/dir/sub/a.txt"), cx).await;
+        add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_keep, Vec::new()), (&buffer_a, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        let expected_tree = "root/\n  dir/\n    sub/\n      a.txt\n  keep.txt";
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                expected_tree,
+                "sanity check: nested file should render at the correct depth before deletion"
+            );
+        });
+
+        // Remove the whole containing directory recursively, so neither `dir`, `dir/sub`,
+        // nor `dir/sub/a.txt` has a real worktree entry left — the entire ancestor chain
+        // must be synthesized, not just the file itself.
+        fs.remove_dir(
+            Path::new(path!("/root/dir")),
+            project::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &project,
+                    &snapshot(outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                    cx,
+                ),
+                expected_tree,
+                "Both synthesized ancestor directories (dir, dir/sub) should be rendered, \
+                 with the deleted file nested at the correct depth beneath them"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_untitled_buffer_still_external(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(path!("/root"), json!({ "existing.txt": "hello" }))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        // A buffer with no `File` at all (never saved, no path) — distinct from a deleted
+        // file, which still carries a `File` with a path. This must still become
+        // `FsEntry::ExternalFile`, so assert via `fs_entries` directly since
+        // `display_entries` panics on that variant.
+        let untitled_buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("untitled content", None, true, cx)
+        });
+        add_multi_buffer_editor(&workspace, &project, &[(&untitled_buffer, Vec::new())], cx);
+        settle_outline_panel(&outline_panel, cx);
+
+        outline_panel.update(cx, |outline_panel, _cx| {
+            assert!(
+                outline_panel
+                    .fs_entries
+                    .iter()
+                    .any(|entry| matches!(entry, FsEntry::ExternalFile(_))),
+                "Buffer with no File should still render as FsEntry::ExternalFile, got {:#?}",
+                outline_panel.fs_entries
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_reveal_deleted_file_through_outline(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "dir": {
+                    "a.rs": "pub fn foo() {\n    let x = 1;\n}\n",
+                    "b.rs": "pub fn bar() {}\n",
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        project.read_with(cx, |project, _| project.languages().add(rust_lang()));
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        // Plain multi-buffer, not a project search — see comment in
+        // `test_deleted_file_nests_under_existing_parent` for why.
+        let buffer_a = open_buffer(&project, path!("/root/dir/a.rs"), cx).await;
+        let buffer_b = open_buffer(&project, path!("/root/dir/b.rs"), cx).await;
+        let editor = add_multi_buffer_editor(
+            &workspace,
+            &project,
+            &[(&buffer_a, Vec::new()), (&buffer_b, Vec::new())],
+            cx,
+        );
+        settle_outline_panel(&outline_panel, cx);
+
+        // Delete `a.rs` after its buffer is already open; `dir` keeps a real worktree entry
+        // via `b.rs`, so this exercises the "existing parent" branch, same as
+        // `test_deleted_file_nests_under_existing_parent`.
+        fs.remove_file(Path::new(path!("/root/dir/a.rs")), Default::default())
+            .await
+            .unwrap();
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        let (worktree_id, dir_entry_id) = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .fs_entries
+                .iter()
+                .find_map(|entry| match entry {
+                    FsEntry::Directory(FsEntryDirectory {
+                        worktree_id, entry, ..
+                    }) if entry.path.file_name() == Some("dir") => Some((*worktree_id, entry.id)),
+                    _ => None,
+                })
+                .expect("`dir` should still have a worktree entry after `a.rs` is deleted")
+        });
+
+        let buffer_a_id = buffer_a.read_with(cx, |buffer, _cx| buffer.remote_id());
+        let outline_start = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .cached_entries
+                .iter()
+                .find_map(|cached_entry| match &cached_entry.entry {
+                    PanelEntry::Outline(OutlineEntry::Outline(outline))
+                        if outline.range.start.buffer_id == buffer_a_id =>
+                    {
+                        Some(outline.range.start)
+                    }
+                    _ => None,
+                })
+                .expect("deleted `a.rs` should still contribute an outline entry")
+        });
+
+        // Manually collapse `dir` to prove auto-reveal expands it again, rather than it
+        // already being expanded for some unrelated reason.
+        outline_panel.update(cx, |outline_panel, _cx| {
+            outline_panel
+                .collapsed_entries
+                .insert(CollapsedEntry::Dir(worktree_id, dir_entry_id));
+        });
+        outline_panel.read_with(cx, |outline_panel, _cx| {
+            assert!(
+                outline_panel
+                    .collapsed_entries
+                    .contains(&CollapsedEntry::Dir(worktree_id, dir_entry_id)),
+                "sanity check: dir should be collapsed before the cursor moves into the \
+                 deleted file"
+            );
+        });
+
+        // Move the cursor into the deleted file's symbol — `location_for_editor_selection`
+        // resolves this to `PanelEntry::Outline`, the arm that actually fires for real-world
+        // auto-reveal, exercising the deleted-buffer fallback in that arm together with the
+        // path-based ancestor walk.
+        let multibuffer_anchor = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .anchor_in_excerpt(outline_start)
+        });
+        let multibuffer_anchor =
+            multibuffer_anchor.expect("deleted file's excerpt should still be present");
+        cx.update(|window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(Some(multibuffer_anchor..multibuffer_anchor))
+                });
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.read_with(cx, |outline_panel, _cx| {
+            assert!(
+                !outline_panel
+                    .collapsed_entries
+                    .contains(&CollapsedEntry::Dir(worktree_id, dir_entry_id)),
+                "auto-reveal through the Outline arm should expand the deleted file's \
+                 ancestor directory, got {:#?}",
+                outline_panel.collapsed_entries
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_folded_single_deleted_directory_keeps_is_deleted(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // `push_entry` converts a `FoldedDirsEntry` with exactly one directory back into a
+        // plain `FsEntry::Directory` (the `1 =>` arm of its `match folded_dirs_entry.entries.len()`).
+        // Auto-fold's chain-building always sweeps a directory's only child into its parent's
+        // `FoldedDirsEntry` (either as a continuing link or as the chain's final label
+        // segment), so a natural fs tree can't be shaped to make `generate_cached_entries`
+        // hand `push_entry` a length-1 chain — that would require a directory whose sole
+        // subdirectory never gets visited at all. Exercise `push_entry` directly instead,
+        // using a real directory entry from the panel's own worktree so the conversion is
+        // tested against realistic data, only the `is_deleted` marking is injected by hand.
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "dir": {
+                    "a.txt": "hello world"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root"))], cx).await;
+        let (window, workspace) = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update_in(cx, |outline_panel, window, cx| {
+            outline_panel.set_active(true, window, cx)
+        });
+
+        let buffer_a = open_buffer(&project, path!("/root/dir/a.txt"), cx).await;
+        add_multi_buffer_editor(&workspace, &project, &[(&buffer_a, Vec::new())], cx);
+        settle_outline_panel(&outline_panel, cx);
+
+        let (worktree_id, dir_entry) = outline_panel.read_with(cx, |outline_panel, _cx| {
+            outline_panel
+                .fs_entries
+                .iter()
+                .find_map(|entry| match entry {
+                    FsEntry::Directory(FsEntryDirectory {
+                        worktree_id, entry, ..
+                    }) if entry.path.file_name() == Some("dir") => {
+                        Some((*worktree_id, entry.clone()))
+                    }
+                    _ => None,
+                })
+                .expect("`dir` should have a real worktree entry")
+        });
+
+        let folded_dirs = FoldedDirsEntry {
+            worktree_id,
+            entries: vec![dir_entry],
+            is_deleted: true,
+        };
+
+        let mut generation_state = GenerationState::default();
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.push_entry(
+                &mut generation_state,
+                false,
+                PanelEntry::FoldedDirs(folded_dirs),
+                0,
+                cx,
+            );
+        });
+
+        assert_eq!(
+            generation_state.entries.len(),
+            1,
+            "push_entry should emit exactly one row for a single-entry FoldedDirsEntry, got \
+             {:#?}",
+            generation_state.entries
+        );
+        match &generation_state.entries[0].entry {
+            PanelEntry::Fs(FsEntry::Directory(directory)) => {
+                assert!(
+                    directory.is_deleted,
+                    "a single-entry FoldedDirsEntry marked deleted should convert into a \
+                     Directory row that keeps that marking, got {directory:#?}"
+                );
+            }
+            other => panic!(
+                "expected push_entry to convert the length-1 FoldedDirsEntry into a plain \
+                 Fs::Directory, got {other:#?}"
+            ),
+        }
     }
 
     #[gpui::test]
