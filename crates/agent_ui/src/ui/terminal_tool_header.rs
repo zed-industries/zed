@@ -29,7 +29,11 @@ impl RenderOnce for TerminalSandboxWarning {
             .border_t_1()
             .border_color(cx.theme().colors().border)
             .child(Label::new(title).size(LabelSize::Small))
-            .child(Label::new(detail).size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Label::new(detail)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
             .child(
                 Button::new("sandbox-docs", "View Sandboxing Docs")
                     .label_size(LabelSize::Small)
