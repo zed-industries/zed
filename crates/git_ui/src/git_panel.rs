@@ -2086,9 +2086,8 @@ impl GitPanel {
         };
 
         if window.modifiers().shift {
-            if let Some(target_ix) = self.selected_entry {
-                self.apply_range_gesture(selected_entry, target_ix);
-            }
+            let target_ix = candidate.unwrap_or(selected_entry);
+            self.apply_range_gesture(selected_entry, target_ix);
         } else {
             self.mark_range_gesture = None;
         }
@@ -2100,7 +2099,7 @@ impl GitPanel {
         self.scroll_to_selected_entry(cx);
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
+    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == GitPanelTab::History {
             self.select_next_history_entry(cx);
             return;
@@ -2170,6 +2169,12 @@ impl GitPanel {
             }
         };
 
+        if window.modifiers().shift {
+            let target_ix = candidate.unwrap_or(selected_entry);
+            self.apply_range_gesture(selected_entry, target_ix);
+        } else {
+            self.mark_range_gesture = None;
+        }
         let Some(candidate) = candidate else {
             return;
         };
@@ -5567,6 +5572,16 @@ impl GitPanel {
                     .retain(|key| directories.contains_key(key));
             }
             GitPanelViewMode::Flat => self.marked_directories.clear(),
+        }
+        if !self.marked_entries.is_empty() {
+            let present_paths: HashSet<RepoPath> = self
+                .entries
+                .iter()
+                .filter_map(|entry| entry.status_entry())
+                .map(|entry| entry.repo_path.clone())
+                .collect();
+            self.marked_entries
+                .retain(|path| present_paths.contains(path));
         }
         // The rebuild may have reordered rows, invalidating the anchor index.
         self.mark_range_gesture = None;
@@ -14204,7 +14219,7 @@ mod tests {
     #[gpui::test]
     async fn test_mark_range_tree_marks_dirs_skips_headers(cx: &mut TestAppContext) {
         init_test(cx);
-        let (_project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
             cx,
             json!({
                 ".git": {},
@@ -14383,7 +14398,7 @@ mod tests {
     #[gpui::test]
     async fn test_directory_selection_is_explicit(cx: &mut TestAppContext) {
         init_test(cx);
-        let (_project, _workspace, panel, mut cx) = setup_git_panel_with_changes(
+        let (_, _, _, panel, mut cx) = setup_git_panel_with_changes(
             cx,
             json!({
                 ".git": {},
@@ -14551,7 +14566,7 @@ mod tests {
             .unwrap()
             .clone();
         panel.update_in(&mut cx, |panel, window, cx| {
-            panel.toggle_staged_for_entry(&a_entry, window, cx);
+            panel.toggle_staged_for_entry(&a_entry, StageIntent::Toggle, window, cx);
         });
         settle_git_panel(&project, &panel, &mut cx).await;
 
