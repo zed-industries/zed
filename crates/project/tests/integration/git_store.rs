@@ -1264,6 +1264,55 @@ mod git_worktrees {
     }
 
     #[gpui::test]
+    async fn test_new_worktree_paths_use_bare_repository_identity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let default_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "../worktrees")
+                .unwrap()
+        });
+        let repository_relative_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("plum-warbler", "worktrees")
+                .unwrap()
+        });
+
+        assert_eq!(
+            default_path,
+            PathBuf::from(path!("/worktrees/zed/plum-warbler/zed"))
+        );
+        assert_eq!(
+            repository_relative_path,
+            PathBuf::from(path!("/zed/worktrees/plum-warbler/zed"))
+        );
+    }
+
+    #[gpui::test]
     async fn test_git_worktrees_list_and_create(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -1388,6 +1437,87 @@ mod git_worktrees {
         let worktree_parent = PathBuf::from(path!("/worktrees/root/feature/nested"));
         let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/root/feature"));
         let worktree_base = PathBuf::from(path!("/worktrees/root"));
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.create_worktree(
+                    git::repository::CreateWorktreeTarget::NewBranch {
+                        branch_name: "feature/nested".to_string(),
+                        base_sha: Some("abc123".to_string()),
+                    },
+                    worktree_path.clone(),
+                )
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+
+        cx.update(|cx| {
+            repository.update(cx, |repository, _| {
+                repository.remove_worktree(worktree_path.clone(), false)
+            })
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        cx.executor().run_until_parked();
+
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_path).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_parent).await);
+        assert!(!Fs::is_dir(fs.as_ref(), &worktree_intermediate_parent).await);
+        assert!(Fs::is_dir(fs.as_ref(), &worktree_base).await);
+    }
+
+    #[gpui::test]
+    async fn test_remove_worktree_uses_bare_repository_identity_for_managed_parent_directories(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/zed"),
+            json!({
+                ".bare": {
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /zed/.bare/worktrees/main",
+                    "file.txt": "content",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/zed/main").as_ref()], cx).await;
+        cx.executor().run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project.repositories(cx).values().next().unwrap().clone()
+        });
+        let worktree_path = repository.read_with(cx, |repository, _| {
+            repository
+                .path_for_new_linked_worktree("feature/nested", "../worktrees")
+                .unwrap()
+        });
+        let worktree_parent = PathBuf::from(path!("/worktrees/zed/feature/nested"));
+        let worktree_intermediate_parent = PathBuf::from(path!("/worktrees/zed/feature"));
+        let worktree_base = PathBuf::from(path!("/worktrees/zed"));
+
+        assert_eq!(
+            worktree_path,
+            PathBuf::from(path!("/worktrees/zed/feature/nested/zed"))
+        );
 
         cx.update(|cx| {
             repository.update(cx, |repository, _| {

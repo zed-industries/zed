@@ -2,11 +2,11 @@ use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{
     Attrs, AttrsList, Ellipsize, Family, Font as CosmicTextFont,
-    FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine,
+    FontFeatures as CosmicFontFeatures, FontSystem, ShapeBuffer, ShapeLine, Stretch, Style, Weight,
 };
 use gpui::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun, GlyphId,
-    LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
+    IsZero as _, LineLayout, Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     SUBPIXEL_VARIANTS_Y, ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point,
     size,
 };
@@ -44,6 +44,7 @@ struct CosmicTextSystemState {
     font_system: FontSystem,
     scratch: ShapeBuffer,
     swash_scale_context: ScaleContext,
+    pending_glyph_images: HashMap<RenderGlyphParams, swash::scale::image::Image>,
     /// Contains all already loaded fonts, including all faces. Indexed by `FontId`.
     loaded_fonts: Vec<LoadedFont>,
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
@@ -61,6 +62,27 @@ struct LoadedFont {
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
 }
 
+struct FontMatchProperties {
+    primary_family_name: SharedString,
+    stretch: Stretch,
+    style: Style,
+    weight: Weight,
+    features: CosmicFontFeatures,
+    fallback_chain: Arc<[(FontId, SharedString)]>,
+}
+
+impl FontMatchProperties {
+    fn attributes<'a>(&'a self, font_id: FontId, family_name: &'a str) -> Attrs<'a> {
+        Attrs::new()
+            .metadata(font_id.0)
+            .family(Family::Name(family_name))
+            .stretch(self.stretch)
+            .style(self.style)
+            .weight(self.weight)
+            .font_features(self.features.clone())
+    }
+}
+
 impl CosmicTextSystem {
     pub fn new(system_font_fallback: &str) -> Self {
         let font_system = FontSystem::new();
@@ -69,6 +91,7 @@ impl CosmicTextSystem {
             font_system,
             scratch: ShapeBuffer::default(),
             swash_scale_context: ScaleContext::new(),
+            pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
@@ -85,6 +108,7 @@ impl CosmicTextSystem {
             font_system,
             scratch: ShapeBuffer::default(),
             swash_scale_context: ScaleContext::new(),
+            pending_glyph_images: HashMap::default(),
             loaded_fonts: Vec::new(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
@@ -130,6 +154,10 @@ impl PlatformTextSystem for CosmicTextSystem {
         let ix = find_best_match(font, candidates, &state)?;
 
         Ok(candidates[ix])
+    }
+
+    fn prewarm_fonts(&self, font_ids: &[FontId]) {
+        self.0.write().prewarm_fonts(font_ids);
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
@@ -206,6 +234,43 @@ impl PlatformTextSystem for CosmicTextSystem {
 impl CosmicTextSystemState {
     fn loaded_font(&self, font_id: FontId) -> &LoadedFont {
         &self.loaded_fonts[font_id.0]
+    }
+
+    fn font_match_properties(&self, font_id: FontId) -> Option<FontMatchProperties> {
+        let loaded_font = self.loaded_font(font_id);
+        let Some(face) = self.font_system.db().face(loaded_font.font.id()) else {
+            log::warn!("font face not found in database for font_id {:?}", font_id);
+            return None;
+        };
+        let Some(first_family) = face.families.first() else {
+            log::warn!("font face has no family names for font_id {:?}", font_id);
+            return None;
+        };
+
+        Some(FontMatchProperties {
+            primary_family_name: first_family.0.clone().into(),
+            stretch: face.stretch,
+            style: face.style,
+            weight: face.weight,
+            features: loaded_font.features.clone(),
+            fallback_chain: Arc::clone(&loaded_font.user_fallback_chain),
+        })
+    }
+
+    fn prewarm_fonts(&mut self, font_ids: &[FontId]) {
+        for &font_id in font_ids {
+            let Some(properties) = self.font_match_properties(font_id) else {
+                continue;
+            };
+            let primary_attributes =
+                properties.attributes(font_id, &properties.primary_family_name);
+            self.font_system.get_font_matches(&primary_attributes);
+
+            for (fallback_id, fallback_name) in &*properties.fallback_chain {
+                let fallback_attributes = properties.attributes(*fallback_id, fallback_name);
+                self.font_system.get_font_matches(&fallback_attributes);
+            }
+        }
     }
 
     #[profiling::function]
@@ -323,10 +388,14 @@ impl CosmicTextSystemState {
 
     fn raster_bounds(&mut self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let image = self.render_glyph_image(params)?;
-        Ok(Bounds {
+        let bounds = Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
             size: size(image.placement.width.into(), image.placement.height.into()),
-        })
+        };
+        if !bounds.is_zero() {
+            self.pending_glyph_images.insert(params.clone(), image);
+        }
+        Ok(bounds)
     }
 
     #[profiling::function]
@@ -339,7 +408,10 @@ impl CosmicTextSystemState {
             anyhow::bail!("glyph bounds are empty");
         }
 
-        let mut image = self.render_glyph_image(params)?;
+        let mut image = match self.pending_glyph_images.remove(params) {
+            Some(image) => image,
+            None => self.render_glyph_image(params)?,
+        };
         let bitmap_size = glyph_bounds.size;
         match image.content {
             swash::scale::image::Content::Color | swash::scale::image::Content::SubpixelMask => {
@@ -552,54 +624,19 @@ impl CosmicTextSystemState {
         for run in font_runs {
             let run_end = offs + run.len;
 
-            let loaded_font = self.loaded_font(run.font_id);
-            let Some(face) = self.font_system.db().face(loaded_font.font.id()) else {
-                log::warn!(
-                    "font face not found in database for font_id {:?}",
-                    run.font_id
-                );
-                offs = run_end;
-                continue;
-            };
-            let Some(first_family) = face.families.first() else {
-                log::warn!(
-                    "font face has no family names for font_id {:?}",
-                    run.font_id
-                );
+            let Some(properties) = self.font_match_properties(run.font_id) else {
                 offs = run_end;
                 continue;
             };
 
-            let primary_family_name: SharedString = first_family.0.clone().into();
-            let primary_stretch = face.stretch;
-            let primary_style = face.style;
-            let primary_weight = face.weight;
-            let primary_features = loaded_font.features.clone();
-            let fallback_chain = Arc::clone(&loaded_font.user_fallback_chain);
-
-            // build one `Attrs` per slot up front. each clone of span attrs
-            // would otherwise re-allocate the `font_features` Vec.
-            let primary_attrs = Attrs::new()
-                .metadata(run.font_id.0)
-                .family(Family::Name(&primary_family_name))
-                .stretch(primary_stretch)
-                .style(primary_style)
-                .weight(primary_weight)
-                .font_features(primary_features.clone());
-            let fallback_attrs: SmallVec<[Attrs<'_>; 4]> = fallback_chain
+            let primary_attrs = properties.attributes(run.font_id, &properties.primary_family_name);
+            let fallback_attrs: SmallVec<[Attrs<'_>; 4]> = properties
+                .fallback_chain
                 .iter()
-                .map(|(fb_id, fb_name)| {
-                    Attrs::new()
-                        .metadata(fb_id.0)
-                        .family(Family::Name(fb_name))
-                        .stretch(primary_stretch)
-                        .style(primary_style)
-                        .weight(primary_weight)
-                        .font_features(primary_features.clone())
-                })
+                .map(|(font_id, family_name)| properties.attributes(*font_id, family_name))
                 .collect();
 
-            let spans = if fallback_chain.is_empty() {
+            let spans = if properties.fallback_chain.is_empty() {
                 let mut spans = SmallVec::<[RunSpan; 4]>::new();
                 spans.push(RunSpan {
                     start: offs,
@@ -611,7 +648,14 @@ impl CosmicTextSystemState {
             } else {
                 let loaded_fonts = &self.loaded_fonts;
                 let covers = |id: FontId, ch: char| charmap_covers(loaded_fonts, id, ch);
-                compute_run_spans(text, offs, run.len, run.font_id, &fallback_chain, &covers)
+                compute_run_spans(
+                    text,
+                    offs,
+                    run.len,
+                    run.font_id,
+                    &properties.fallback_chain,
+                    &covers,
+                )
             };
 
             for span in spans {
