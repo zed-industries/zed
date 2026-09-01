@@ -322,7 +322,7 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
 struct MissingGlyphCallbackEntry {
-    active: Rc<Cell<bool>>,
+    registration: Rc<()>,
     callback: Option<MissingGlyphCallback>,
 }
 
@@ -332,25 +332,24 @@ struct MissingGlyphCallbackSlot {
 }
 
 impl MissingGlyphCallbackSlot {
-    fn replace(&self, callback: MissingGlyphCallback) -> Rc<Cell<bool>> {
-        let active = Rc::new(Cell::new(true));
-        let previous = self.entry.borrow_mut().replace(MissingGlyphCallbackEntry {
-            active: active.clone(),
+    fn replace(&self, callback: MissingGlyphCallback) -> Rc<()> {
+        let registration = Rc::new(());
+        self.entry.borrow_mut().replace(MissingGlyphCallbackEntry {
+            registration: registration.clone(),
             callback: Some(callback),
         });
-        if let Some(previous) = previous {
-            previous.active.set(false);
-        }
-        active
+        registration
     }
 
     fn invoke(&self, missing_glyphs: &[MissingGlyph], cx: &mut App) {
-        let Some((active, mut callback)) = self.entry.borrow_mut().as_mut().and_then(|entry| {
-            entry
-                .callback
-                .take()
-                .map(|callback| (entry.active.clone(), callback))
-        }) else {
+        let Some((registration, mut callback)) =
+            self.entry.borrow_mut().as_mut().and_then(|entry| {
+                entry
+                    .callback
+                    .take()
+                    .map(|callback| (entry.registration.clone(), callback))
+            })
+        else {
             return;
         };
         callback(missing_glyphs, cx);
@@ -358,8 +357,8 @@ impl MissingGlyphCallbackSlot {
         let mut entry = self.entry.borrow_mut();
         let is_current = entry
             .as_ref()
-            .is_some_and(|entry| Rc::ptr_eq(&entry.active, &active));
-        if is_current && active.get() {
+            .is_some_and(|entry| Rc::ptr_eq(&entry.registration, &registration));
+        if is_current {
             let Some(entry) = entry.as_mut() else {
                 return;
             };
@@ -367,12 +366,11 @@ impl MissingGlyphCallbackSlot {
         }
     }
 
-    fn remove(&self, active: &Rc<Cell<bool>>) -> bool {
-        active.set(false);
+    fn remove(&self, registration: &Rc<()>) -> bool {
         let mut entry = self.entry.borrow_mut();
         let is_current = entry
             .as_ref()
-            .is_some_and(|entry| Rc::ptr_eq(&entry.active, active));
+            .is_some_and(|entry| Rc::ptr_eq(&entry.registration, registration));
         if is_current {
             entry.take();
         }
@@ -2086,7 +2084,7 @@ impl App {
         &self,
         callback: impl FnMut(&[MissingGlyph], &mut App) + 'static,
     ) -> Subscription {
-        let active = self.missing_glyph_callback.replace(Box::new(callback));
+        let registration = self.missing_glyph_callback.replace(Box::new(callback));
 
         if let Some(receiver) = self.text_system.take_missing_glyph_receiver() {
             let callback = self.missing_glyph_callback.clone();
@@ -2102,7 +2100,7 @@ impl App {
         let callback = self.missing_glyph_callback.clone();
         let text_system = self.text_system.clone();
         Subscription::new(move || {
-            if callback.remove(&active) {
+            if callback.remove(&registration) {
                 text_system.disable_missing_glyph_reporting();
             }
         })

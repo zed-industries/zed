@@ -29,7 +29,6 @@ use std::{
     collections::VecDeque,
     fmt::{Debug, Display, Formatter},
     hash::{Hash, Hasher},
-    mem,
     ops::{Deref, DerefMut, Range},
     sync::{
         Arc,
@@ -100,48 +99,50 @@ pub trait MissingGlyphSink: Send + Sync {
 struct MissingGlyphState {
     reported: FxHashSet<MissingGlyph>,
     reported_order: VecDeque<MissingGlyph>,
-    pending: Vec<MissingGlyph>,
+    generation: usize,
+}
+
+struct QueuedMissingGlyph {
+    generation: usize,
+    missing_glyph: MissingGlyph,
 }
 
 /// Collects missing-glyph reports without invoking application code during layout.
 struct MissingGlyphReporter {
     state: Arc<Mutex<MissingGlyphState>>,
-    wake_sender: async_channel::Sender<()>,
+    sender: async_channel::Sender<QueuedMissingGlyph>,
 }
 
 impl MissingGlyphSink for MissingGlyphReporter {
     fn report(&self, missing_glyphs: Vec<MissingGlyph>) {
-        if self.wake_sender.is_closed() {
+        if self.sender.is_closed() {
             return;
         }
 
         let mut state = self.state.lock();
-        let mut added = false;
         for missing_glyph in missing_glyphs {
-            if state.pending.len() == MAX_REPORTED_MISSING_GLYPHS {
-                break;
+            if state.reported.contains(&missing_glyph) {
+                continue;
             }
-            if state.reported.insert(missing_glyph.clone()) {
-                state.reported_order.push_back(missing_glyph.clone());
-                state.pending.push(missing_glyph);
-                added = true;
-            }
-            while state.reported.len() > MAX_REPORTED_MISSING_GLYPHS {
-                if let Some(expired) = state.reported_order.pop_front() {
-                    state.reported.remove(&expired);
+            let queued = QueuedMissingGlyph {
+                generation: state.generation,
+                missing_glyph: missing_glyph.clone(),
+            };
+            match self.sender.try_send(queued) {
+                Ok(()) => {
+                    state.reported.insert(missing_glyph.clone());
+                    state.reported_order.push_back(missing_glyph);
+                    while state.reported.len() > MAX_REPORTED_MISSING_GLYPHS {
+                        if let Some(expired) = state.reported_order.pop_front() {
+                            state.reported.remove(&expired);
+                        }
+                    }
                 }
-            }
-        }
-        drop(state);
-
-        if added {
-            match self.wake_sender.try_send(()) {
-                Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
-                Err(async_channel::TrySendError::Closed(())) => {
-                    let mut state = self.state.lock();
+                Err(async_channel::TrySendError::Full(_)) => break,
+                Err(async_channel::TrySendError::Closed(_)) => {
                     state.reported.clear();
                     state.reported_order.clear();
-                    state.pending.clear();
+                    return;
                 }
             }
         }
@@ -153,14 +154,14 @@ impl MissingGlyphReporter {
         let mut state = self.state.lock();
         state.reported.clear();
         state.reported_order.clear();
-        state.pending.clear();
+        state.generation = state.generation.wrapping_add(1);
     }
 }
 
 /// Receives batches of grapheme clusters that exhausted font fallback.
 pub(crate) struct MissingGlyphReceiver {
     state: Arc<Mutex<MissingGlyphState>>,
-    wake_receiver: async_channel::Receiver<()>,
+    receiver: async_channel::Receiver<QueuedMissingGlyph>,
 }
 
 impl MissingGlyphReceiver {
@@ -173,10 +174,21 @@ impl MissingGlyphReceiver {
         &self,
     ) -> std::result::Result<Vec<MissingGlyph>, async_channel::RecvError> {
         loop {
-            self.wake_receiver.recv().await?;
-            let pending = mem::take(&mut self.state.lock().pending);
-            if !pending.is_empty() {
-                return Ok(pending);
+            let queued = self.receiver.recv().await?;
+            let mut missing_glyphs = Vec::new();
+            if queued.generation == self.state.lock().generation {
+                missing_glyphs.push(queued.missing_glyph);
+            }
+            while missing_glyphs.len() < MAX_REPORTED_MISSING_GLYPHS {
+                let Ok(queued) = self.receiver.try_recv() else {
+                    break;
+                };
+                if queued.generation == self.state.lock().generation {
+                    missing_glyphs.push(queued.missing_glyph);
+                }
+            }
+            if !missing_glyphs.is_empty() {
+                return Ok(missing_glyphs);
             }
         }
     }
@@ -184,10 +196,10 @@ impl MissingGlyphReceiver {
 
 impl Drop for MissingGlyphReceiver {
     fn drop(&mut self) {
+        while self.receiver.try_recv().is_ok() {}
         let mut state = self.state.lock();
         state.reported.clear();
         state.reported_order.clear();
-        state.pending.clear();
     }
 }
 
@@ -208,7 +220,7 @@ pub struct TextSystem {
 impl TextSystem {
     /// Create a new TextSystem with the given platform text system.
     pub fn new(platform_text_system: Arc<dyn PlatformTextSystem>) -> Self {
-        let (wake_sender, wake_receiver) = async_channel::bounded(1);
+        let (sender, receiver) = async_channel::bounded(MAX_REPORTED_MISSING_GLYPHS);
         let missing_glyph_state = Arc::<Mutex<MissingGlyphState>>::default();
         TextSystem {
             platform_text_system,
@@ -233,11 +245,11 @@ impl TextSystem {
             font_generation: Arc::default(),
             missing_glyph_reporter: Arc::new(MissingGlyphReporter {
                 state: missing_glyph_state.clone(),
-                wake_sender,
+                sender,
             }),
             missing_glyph_receiver: Mutex::new(Some(MissingGlyphReceiver {
                 state: missing_glyph_state,
-                wake_receiver,
+                receiver,
             })),
         }
     }
@@ -1418,11 +1430,11 @@ mod missing_glyph_tests {
 
     #[test]
     fn bounds_retained_missing_glyphs() {
-        let (wake_sender, _wake_receiver) = async_channel::bounded(1);
+        let (sender, receiver) = async_channel::bounded(MAX_REPORTED_MISSING_GLYPHS);
         let state = Arc::<Mutex<MissingGlyphState>>::default();
         let reporter = MissingGlyphReporter {
             state: state.clone(),
-            wake_sender,
+            sender,
         };
         reporter.report(
             (0..MAX_REPORTED_MISSING_GLYPHS)
@@ -1431,7 +1443,7 @@ mod missing_glyph_tests {
                 })
                 .collect(),
         );
-        state.lock().pending.clear();
+        assert!(receiver.try_recv().is_ok());
 
         let newest = MissingGlyph::new("newest".into(), FallbackFontClass::Monospace);
         reporter.report(vec![newest.clone()]);
@@ -1444,15 +1456,15 @@ mod missing_glyph_tests {
 
     #[test]
     fn dropping_receiver_closes_and_clears_reports() {
-        let (wake_sender, wake_receiver) = async_channel::bounded(1);
+        let (sender, receiver) = async_channel::bounded(MAX_REPORTED_MISSING_GLYPHS);
         let state = Arc::<Mutex<MissingGlyphState>>::default();
         let reporter = MissingGlyphReporter {
             state: state.clone(),
-            wake_sender,
+            sender,
         };
         let receiver = MissingGlyphReceiver {
             state: state.clone(),
-            wake_receiver,
+            receiver,
         };
         reporter.report(vec![MissingGlyph::new(
             "missing".into(),
@@ -1461,10 +1473,9 @@ mod missing_glyph_tests {
 
         drop(receiver);
 
-        assert!(reporter.wake_sender.is_closed());
+        assert!(reporter.sender.is_closed());
         let state = state.lock();
         assert!(state.reported.is_empty());
         assert!(state.reported_order.is_empty());
-        assert!(state.pending.is_empty());
     }
 }

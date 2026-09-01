@@ -819,14 +819,8 @@ impl CosmicTextSystemState {
         missing_text_indices.sort_unstable();
         missing_text_indices.dedup();
 
-        let mut font_run_end = 0;
-        let font_runs = font_runs
-            .iter()
-            .map(|font_run| {
-                font_run_end += font_run.len;
-                (font_run_end, font_run.font_id)
-            })
-            .collect::<SmallVec<[_; 8]>>();
+        let mut font_run_index = 0;
+        let mut font_run_end = font_runs.first().map_or(0, |font_run| font_run.len);
         let mut missing_glyphs = Vec::new();
         let mut missing_index = 0;
         for (grapheme_start, grapheme) in text.grapheme_indices(true) {
@@ -844,7 +838,19 @@ impl CosmicTextSystemState {
                 continue;
             }
 
-            let font_class = self.fallback_font_class(&font_runs, text_index);
+            while font_run_end <= text_index && font_run_index + 1 < font_runs.len() {
+                font_run_index += 1;
+                let Some(font_run) = font_runs.get(font_run_index) else {
+                    break;
+                };
+                font_run_end += font_run.len;
+            }
+            let font_class = self.fallback_font_class(
+                font_runs
+                    .get(font_run_index)
+                    .or_else(|| font_runs.last())
+                    .map(|font_run| font_run.font_id),
+            );
             missing_glyphs.push(MissingGlyph::new(grapheme.into(), font_class));
             while missing_text_indices
                 .get(missing_index)
@@ -856,17 +862,11 @@ impl CosmicTextSystemState {
         missing_glyphs
     }
 
-    fn fallback_font_class(
-        &self,
-        font_runs: &[(usize, FontId)],
-        text_index: usize,
-    ) -> FallbackFontClass {
-        let font_run_index =
-            font_runs.partition_point(|(font_run_end, _)| *font_run_end <= text_index);
-        let Some((_, font_id)) = font_runs.get(font_run_index).or_else(|| font_runs.last()) else {
+    fn fallback_font_class(&self, font_id: Option<FontId>) -> FallbackFontClass {
+        let Some(font_id) = font_id else {
             return FallbackFontClass::Proportional;
         };
-        let loaded_font = self.loaded_font(*font_id);
+        let loaded_font = self.loaded_font(font_id);
         let is_monospace = self
             .font_system
             .db()
