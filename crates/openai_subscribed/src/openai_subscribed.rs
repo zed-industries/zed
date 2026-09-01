@@ -797,7 +797,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                 })
                 .await?;
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            let mut event_stream = mapper.map_stream(response_stream.boxed());
+            let mut event_stream = language_model::stream_in_background(
+                mapper.map_stream(response_stream.boxed()).boxed(),
+                cx.background_executor().clone(),
+            );
             let mut compacted_context = None;
             let mut usage = language_model::TokenUsage::default();
 
@@ -889,6 +892,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
         let state = self.state.downgrade();
         let http_client = self.http_client.clone();
         let request_limiter = self.request_limiter.clone();
+        let executor = cx.background_executor().clone();
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
@@ -914,7 +918,10 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         async move {
             let mapper = OpenAiResponseEventMapper::new(PROVIDER_ID);
-            Ok(mapper.map_stream(future.await?.boxed()).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(future.await?.boxed()).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }

@@ -174,7 +174,7 @@ impl RemoteBufferStore {
             proto::create_buffer_for_peer::Variant::State(mut state) => {
                 let buffer_id = BufferId::new(state.id)?;
 
-                let buffer_result = maybe!({
+                let buffer_file_result = maybe!({
                     let mut buffer_file = None;
                     if let Some(file) = state.file.take() {
                         let worktree_id = worktree::WorktreeId::from_proto(file.worktree_id);
@@ -188,12 +188,15 @@ impl RemoteBufferStore {
                         buffer_file = Some(Arc::new(File::from_proto(file, worktree, cx)?)
                             as Arc<dyn language::File>);
                     }
-                    Buffer::from_proto(replica_id, capability, state, buffer_file)
+                    anyhow::Ok(buffer_file)
                 });
 
-                match buffer_result {
-                    Ok(buffer) => {
-                        let buffer = cx.new(|_| buffer);
+                match buffer_file_result {
+                    Ok(buffer_file) => {
+                        let buffer = cx.new(|cx| {
+                            Buffer::from_proto(replica_id, capability, state, buffer_file, cx)
+                                .expect("buffer_id was validated above")
+                        });
                         self.loading_remote_buffers_by_id.insert(buffer_id, buffer);
                     }
                     Err(error) => {
@@ -704,8 +707,9 @@ impl LocalBufferStore {
                             )
                         })
                         .await;
-                    cx.insert_entity(reservation, |_| {
-                        let mut buffer = Buffer::build(text_buffer, Some(loaded.file), capability);
+                    cx.insert_entity(reservation, |cx| {
+                        let mut buffer =
+                            Buffer::build(text_buffer, Some(loaded.file), capability, cx);
                         buffer.set_encoding(loaded.encoding);
                         buffer.set_has_bom(loaded.has_bom);
                         buffer
@@ -725,6 +729,7 @@ impl LocalBufferStore {
                             is_private: false,
                         })),
                         Capability::ReadWrite,
+                        cx,
                     );
                     apply_initial_line_ending(&mut buffer, cx);
                     buffer
@@ -1497,7 +1502,7 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        let mtime = envelope.payload.mtime.map(|time| time.into());
         this.update(&mut cx, move |this, cx| {
             if let Some(buffer) = this.get_possibly_incomplete(buffer_id) {
                 buffer.update(cx, |buffer, cx| {
@@ -1526,9 +1531,10 @@ impl BufferStore {
     ) -> Result<()> {
         let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
         let version = deserialize_version(&envelope.payload.version);
-        let mtime = envelope.payload.mtime.clone().map(|time| time.into());
+        let mtime = envelope.payload.mtime.map(|time| time.into());
         let line_ending = deserialize_line_ending(
-            proto::LineEnding::from_i32(envelope.payload.line_ending)
+            proto::LineEnding::try_from(envelope.payload.line_ending)
+                .ok()
                 .context("missing line ending")?,
         );
         this.update(&mut cx, |this, cx| {
@@ -1663,6 +1669,18 @@ impl BufferStore {
 
     pub fn forget_shared_buffers_for(&mut self, peer_id: &proto::PeerId) {
         self.shared_buffers.remove(peer_id);
+    }
+
+    pub fn is_shared(&self, buffer_id: BufferId, cx: &App) -> bool {
+        self.shared_buffers
+            .values()
+            .any(|buffers| buffers.contains_key(&buffer_id))
+            || self.as_remote().is_some_and(|remote| {
+                remote
+                    .shared_with_me
+                    .iter()
+                    .any(|buffer| buffer.read(cx).remote_id() == buffer_id)
+            })
     }
 
     pub fn update_peer_id(&mut self, old_peer_id: &proto::PeerId, new_peer_id: proto::PeerId) {
