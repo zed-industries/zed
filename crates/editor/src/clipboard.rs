@@ -400,7 +400,7 @@ impl Editor {
                     is_entire_line,
                     selection.range(),
                     &buffer,
-                    self.project.as_ref(),
+                    None,
                     cx,
                 ));
             }

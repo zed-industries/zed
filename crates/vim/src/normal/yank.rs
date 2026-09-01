@@ -200,7 +200,7 @@ impl Vim {
                     false,
                     start..end,
                     &buffer,
-                    editor.project(),
+                    if is_yank { editor.project() } else { None },
                     cx,
                 ));
             }

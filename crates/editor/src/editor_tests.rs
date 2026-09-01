@@ -10571,6 +10571,26 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
         Some(2..=4),
         "line range should use original file rows 2-4, excluding the column-zero endpoint, not multibuffer rows 0-2"
     );
+
+    editor.update_in(cx, |editor, window, cx| editor.cut(&Cut, window, cx));
+    let cut_source_locations = cx.read_from_clipboard().and_then(|item| {
+        item.entries().first().and_then(|entry| match entry {
+            gpui::ClipboardEntry::String(text) => text
+                .metadata_json::<Vec<ClipboardSelection>>()
+                .map(|selections| {
+                    selections
+                        .into_iter()
+                        .map(|selection| (selection.file_path, selection.line_range))
+                        .collect::<Vec<_>>()
+                }),
+            _ => None,
+        })
+    });
+    assert_eq!(
+        cut_source_locations,
+        Some(vec![(None, None)]),
+        "cut text should not retain its source location after it is removed"
+    );
 }
 
 #[gpui::test]
