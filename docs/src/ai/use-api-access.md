@@ -349,7 +349,7 @@ image support, or a custom endpoint.
 
 Use SLNG API access when you have an SLNG API key. SLNG provides regional voice AI infrastructure with TTS and STT models across EU, AU, and Asia.
 
-1. Sign up at [SLNG Dashboard](https://slng.ai/dashboard) and create an API key.
+1. Sign up at [SLNG](https://app.slng.ai/sign-in) and create an API key.
 2. Open Agent Settings with {#action agent::OpenSettings} and go to the SLNG section.
 3. Enter your SLNG API key.
 
