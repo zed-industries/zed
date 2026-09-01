@@ -116,20 +116,20 @@ function GenerateLicenses {
 function BuildZedAndItsFriends {
     Write-Output "Building Zed and its friends, for channel: $channel"
     # Build zed.exe, cli.exe and auto_update_helper.exe
-    cargo build --release --package zed --package cli --package auto_update_helper --target $target
+    cargo --config .cargo/bundle-config.toml build --release --package zed --package cli --package auto_update_helper --target $target
     Copy-Item -Path ".\$CargoOutDir\zed.exe" -Destination "$innoDir\Zed.exe" -Force
     Copy-Item -Path ".\$CargoOutDir\cli.exe" -Destination "$innoDir\cli.exe" -Force
     Copy-Item -Path ".\$CargoOutDir\auto_update_helper.exe" -Destination "$innoDir\auto_update_helper.exe" -Force
     # Build explorer_command_injector.dll
     switch ($channel) {
         "stable" {
-            cargo build --release --features stable --no-default-features --package explorer_command_injector --target $target
+            cargo --config .cargo/bundle-config.toml build --release --features stable --no-default-features --package explorer_command_injector --target $target
         }
         "preview" {
-            cargo build --release --features preview --no-default-features --package explorer_command_injector --target $target
+            cargo --config .cargo/bundle-config.toml build --release --features preview --no-default-features --package explorer_command_injector --target $target
         }
         default {
-            cargo build --release --package explorer_command_injector --target $target
+            cargo --config .cargo/bundle-config.toml build --release --package explorer_command_injector --target $target
         }
     }
     Copy-Item -Path ".\$CargoOutDir\explorer_command_injector.dll" -Destination "$innoDir\zed_explorer_command_injector.dll" -Force
@@ -137,7 +137,7 @@ function BuildZedAndItsFriends {
 
 function BuildRemoteServer {
     Write-Output "Building remote_server for $target"
-    cargo build --release --package remote_server --target $target
+    cargo --config .cargo/bundle-config.toml build --release --package remote_server --target $target
 
     # Create zipped remote server binary
     $remoteServerSrc = (Resolve-Path ".\$CargoOutDir\remote_server.exe").Path
