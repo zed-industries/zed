@@ -1012,6 +1012,7 @@
     "context": "ProjectPanel && not_editing",
     "bindings": {
       "space": "project_panel::Open",
+      "enter": "project_panel::OpenPermanent",
     },
   },
   {

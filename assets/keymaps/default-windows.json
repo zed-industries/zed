@@ -1004,6 +1004,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "project_panel::Open",
+      "enter": "project_panel::OpenPermanent",
     },
   },
   {
