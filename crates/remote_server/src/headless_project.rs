@@ -479,28 +479,6 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
-            LspStoreEvent::LanguageServerPrompt(prompt) => {
-                let request = self.session.request(proto::LanguageServerPromptRequest {
-                    project_id: REMOTE_SERVER_PROJECT_ID,
-                    actions: prompt
-                        .actions
-                        .iter()
-                        .map(|action| action.title.to_string())
-                        .collect(),
-                    level: Some(prompt_to_proto(prompt)),
-                    lsp_name: prompt.lsp_name.clone(),
-                    message: prompt.message.clone(),
-                });
-                let prompt = prompt.clone();
-                cx.background_spawn(async move {
-                    let response = request.await?;
-                    if let Some(action_response) = response.action_response {
-                        prompt.respond(action_response as usize).await;
-                    }
-                    anyhow::Ok(())
-                })
-                .detach();
-            }
             LspStoreEvent::LanguageServerShowDocument(show_document_request) => {
                 let request = self
                     .session
@@ -524,11 +502,28 @@ impl HeadlessProject {
                     });
                 let show_document_request = show_document_request.clone();
                 cx.background_spawn(async move {
-                    let success = request
-                        .await
-                        .map(|response| response.success)
-                        .unwrap_or(false);
-                    show_document_request.respond(success).await;
+                    show_document_request.respond(request.await.is_ok());
+                })
+                .detach();
+            }
+            LspStoreEvent::LanguageServerPrompt(prompt) => {
+                let request = self.session.request(proto::LanguageServerPromptRequest {
+                    project_id: REMOTE_SERVER_PROJECT_ID,
+                    actions: prompt
+                        .actions
+                        .iter()
+                        .map(|action| action.title.to_string())
+                        .collect(),
+                    level: Some(prompt_to_proto(prompt)),
+                    lsp_name: prompt.lsp_name.clone(),
+                    message: prompt.message.clone(),
+                });
+                let prompt = prompt.clone();
+                cx.background_spawn(async move {
+                    let response = request.await?;
+                    if let Some(action_response) = response.action_response {
+                        prompt.respond(action_response as usize).await;
+                    }
                     anyhow::Ok(())
                 })
                 .detach();

@@ -966,10 +966,6 @@ message LanguageServerShowDocumentRequest {
   optional PointUtf16 selection_end = 6;
 }
 
-message LanguageServerShowDocumentResponse {
-  bool success = 1;
-}
-
 message ExecuteLspCommand {
   uint64 project_id = 1;
   uint64 language_server_id = 2;

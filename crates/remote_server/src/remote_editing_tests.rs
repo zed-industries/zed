@@ -4469,17 +4469,13 @@ async fn test_remote_lsp_show_document(cx: &mut TestAppContext, server_cx: &mut 
         let shown_uri = shown_uri.clone();
         let handled_requests = handled_requests.clone();
         move |cx| {
-            cx.subscribe(&project, move |_, event, cx| {
+            cx.subscribe(&project, move |_, event, _| {
                 if let project::Event::LanguageServerShowDocument(request) = event {
                     assert_eq!(request.uri, shown_uri);
                     assert_eq!(request.selection, Some(shown_selection));
                     assert_eq!((request.external, request.take_focus), (false, true));
                     handled_requests.fetch_add(1, Ordering::Release);
-                    let request = request.clone();
-                    cx.background_spawn(async move {
-                        request.respond(true).await;
-                    })
-                    .detach();
+                    request.clone().respond(true);
                 }
             })
             .detach();

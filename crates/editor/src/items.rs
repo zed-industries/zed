@@ -2508,48 +2508,25 @@ fn compute_modified_ranges(
     merged
 }
 
-pub(crate) fn register_lsp_show_document_handler(
-    workspace: &mut Workspace,
-    window: Option<&mut Window>,
-    cx: &mut Context<Workspace>,
-) {
-    let Some(window) = window else {
-        return;
-    };
-    let project = workspace.project().clone();
-    cx.subscribe_in(&project, window, |workspace, _, event, window, cx| {
-        if let project::Event::LanguageServerShowDocument(request) = event {
-            handle_lsp_show_document(workspace, request, window, cx);
-        }
-    })
-    .detach();
-}
-
-fn handle_lsp_show_document(
+pub(crate) fn handle_lsp_show_document(
     workspace: &mut Workspace,
     request: &LanguageServerShowDocumentRequest,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) {
+) -> Task<()> {
     let request = request.clone();
     if request.external {
         cx.open_url(request.uri.as_str());
-        cx.background_spawn(async move {
-            request.respond(true).await;
-        })
-        .detach();
-        return;
+        request.respond(true);
+        return Task::ready(());
     }
     let Ok(abs_path) = request.uri.to_file_path() else {
         log::error!(
             "language server requested to show document with unsupported uri {}",
             request.uri.as_str()
         );
-        cx.background_spawn(async move {
-            request.respond(false).await;
-        })
-        .detach();
-        return;
+        request.respond(false);
+        return Task::ready(());
     };
     let open_task = workspace.open_abs_path(
         abs_path,
@@ -2591,9 +2568,8 @@ fn handle_lsp_show_document(
                 false
             }
         };
-        request.respond(success).await;
+        request.respond(success);
     })
-    .detach();
 }
 
 #[cfg(test)]

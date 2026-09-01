@@ -10,11 +10,10 @@ use gpui::{
     Render, SharedString, WeakEntity, Window, actions,
 };
 use lsp::{LanguageServerId, LanguageServerName};
-use notifications::status_toast::StatusToast;
 use picker::{Picker, PickerDelegate};
-use project::Project;
+use project::{LspStore, Project};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
-use util::ResultExt;
+use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
 actions!(lsp_command_selector, [Toggle, ToggleArgumentsFocus]);
@@ -30,11 +29,29 @@ pub struct LspCommandSelector {
 impl LspCommandSelector {
     fn register(workspace: &mut Workspace, _: Option<&mut Window>, _: &mut Context<Workspace>) {
         workspace.register_action_renderer(|div, workspace, _, cx| {
-            let commands_available = workspace
-                .active_item(cx)
-                .and_then(|item| item.act_as::<Editor>(cx))
-                .and_then(|editor| editor.read(cx).active_buffer(cx))
-                .is_some_and(|buffer| has_available_commands(&buffer, workspace.project(), cx));
+            let any_server_advertises_commands = workspace
+                .project()
+                .read(cx)
+                .lsp_store()
+                .read(cx)
+                .lsp_server_capabilities
+                .values()
+                .any(|capabilities| {
+                    capabilities
+                        .execute_command_provider
+                        .as_ref()
+                        .is_some_and(|provider| !provider.commands.is_empty())
+                });
+            let commands_available = any_server_advertises_commands
+                && workspace
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                    .and_then(|editor| active_buffer(&editor, cx))
+                    .is_some_and(|buffer| {
+                        command_providers(&buffer, workspace.project(), cx)
+                            .next()
+                            .is_some()
+                    });
             if !commands_available {
                 return div;
             }
@@ -50,23 +67,21 @@ impl LspCommandSelector {
         cx: &mut Context<Workspace>,
     ) -> Option<()> {
         let buffer = workspace
-            .active_item(cx)?
-            .act_as::<Editor>(cx)?
-            .read(cx)
-            .active_buffer(cx)?;
-        let project = workspace.project().clone();
-        let commands = available_commands(&buffer, &project, cx);
-        let workspace_handle = cx.weak_entity();
+            .active_item(cx)
+            .and_then(|item| item.act_as::<Editor>(cx))
+            .and_then(|editor| active_buffer(&editor, cx))?;
+        let project = workspace.project();
+        let commands = available_commands(&buffer, project, cx);
+        let lsp_store = project.read(cx).lsp_store();
         workspace.toggle_modal(window, cx, move |window, cx| {
-            LspCommandSelector::new(workspace_handle, project, commands, window, cx)
+            LspCommandSelector::new(lsp_store, commands, window, cx)
         });
         Some(())
     }
 
     fn new(
-        workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
-        commands: Vec<AvailableCommand>,
+        lsp_store: Entity<LspStore>,
+        commands: BTreeSet<AvailableCommand>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -81,8 +96,7 @@ impl LspCommandSelector {
         });
         let delegate = LspCommandSelectorDelegate::new(
             cx.entity().downgrade(),
-            workspace,
-            project,
+            lsp_store,
             arguments_editor,
             commands,
         );
@@ -138,10 +152,11 @@ struct AvailableCommand {
 
 pub struct LspCommandSelectorDelegate {
     selector: WeakEntity<LspCommandSelector>,
-    workspace: WeakEntity<Workspace>,
-    project: Entity<Project>,
+    lsp_store: Entity<LspStore>,
     arguments_editor: Entity<Editor>,
     commands: Arc<[AvailableCommand]>,
+    execution_error: Option<SharedString>,
+    is_executing: bool,
     candidates: Arc<[StringMatchCandidate]>,
     matches: Vec<StringMatch>,
     selected_index: usize,
@@ -150,11 +165,11 @@ pub struct LspCommandSelectorDelegate {
 impl LspCommandSelectorDelegate {
     fn new(
         selector: WeakEntity<LspCommandSelector>,
-        workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
+        lsp_store: Entity<LspStore>,
         arguments_editor: Entity<Editor>,
-        commands: Vec<AvailableCommand>,
+        commands: BTreeSet<AvailableCommand>,
     ) -> Self {
+        let commands = commands.into_iter().collect::<Arc<[_]>>();
         let candidates = commands
             .iter()
             .enumerate()
@@ -162,10 +177,11 @@ impl LspCommandSelectorDelegate {
             .collect::<Arc<[_]>>();
         Self {
             selector,
-            workspace,
-            project,
+            lsp_store,
             arguments_editor,
-            commands: commands.into(),
+            commands,
+            execution_error: None,
+            is_executing: false,
             candidates,
             matches: Vec::new(),
             selected_index: 0,
@@ -200,6 +216,10 @@ impl PickerDelegate for LspCommandSelectorDelegate {
         self.matches.len()
     }
 
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        !self.is_executing && self.matches.get(ix).is_some()
+    }
+
     fn has_another_open_menu(&self, window: &Window, cx: &App) -> bool {
         self.arguments_editor
             .focus_handle(cx)
@@ -207,6 +227,9 @@ impl PickerDelegate for LspCommandSelectorDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        if self.is_executing {
+            return;
+        }
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -214,50 +237,47 @@ impl PickerDelegate for LspCommandSelectorDelegate {
             return;
         };
         let arguments = self.parse_arguments(cx);
-        let task = self.project.update(cx, |project, cx| {
-            project.lsp_store().update(cx, |lsp_store, cx| {
-                lsp_store.execute_lsp_command(
-                    command.server_id,
-                    command.command.to_string(),
-                    arguments,
-                    cx,
-                )
-            })
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.execute_lsp_command(
+                command.server_id,
+                command.command.to_string(),
+                arguments,
+                cx,
+            )
         });
-        let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            match task.await {
-                Ok(Some(result)) => {
-                    log::info!("LSP command {} returned {result}", command.command)
+        self.is_executing = true;
+        self.execution_error = None;
+        self.arguments_editor
+            .update(cx, |editor, _| editor.set_read_only(true));
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| match task.await {
+            Ok(result) => {
+                if let Some(result) = result {
+                    log::info!("LSP command {} returned {result}", command.command);
                 }
-                Ok(None) => {}
-                Err(error) => {
-                    log::error!(
-                        "Failed to execute LSP command {}: {error:?}",
-                        command.command
-                    );
-                    workspace
-                        .update(cx, |workspace, cx| {
-                            let status_toast = StatusToast::new(
-                                format!(
-                                    "Failed to execute LSP command {}: {error:#}",
-                                    command.command
-                                ),
-                                cx,
-                                |this, _| {
-                                    this.icon(Icon::new(IconName::Warning).color(Color::Error))
-                                        .dismiss_button(true)
-                                },
-                            );
-                            workspace.toggle_status_toast(status_toast, cx);
-                        })
-                        .ok();
-                }
+                this.update_in(cx, |this, window, cx| {
+                    this.delegate.dismissed(window, cx);
+                })
+                .log_err();
             }
-            anyhow::Ok(())
+            Err(error) => {
+                let error = format!(
+                    "Failed to execute LSP command {}: {error:#}",
+                    command.command
+                );
+                log::error!("{error}");
+                this.update(cx, |this, cx| {
+                    this.delegate.is_executing = false;
+                    this.delegate.execution_error = Some(SharedString::from(error));
+                    this.delegate
+                        .arguments_editor
+                        .update(cx, |editor, _| editor.set_read_only(false));
+                    cx.notify();
+                })
+                .log_err();
+            }
         })
         .detach();
-        self.dismissed(window, cx);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -315,7 +335,7 @@ impl PickerDelegate for LspCommandSelectorDelegate {
                 this.set_selected_index(0, None, false, window, cx);
                 cx.notify();
             })
-            .log_err();
+            .ok();
         })
     }
 
@@ -333,6 +353,7 @@ impl PickerDelegate for LspCommandSelectorDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
+                .disabled(self.is_executing)
                 .child(HighlightedLabel::new(
                     mat.string.clone(),
                     mat.positions.clone(),
@@ -366,81 +387,104 @@ impl PickerDelegate for LspCommandSelectorDelegate {
                                 .color(Color::Muted),
                         )
                         .child(
-                            Label::new("Tab to switch focus")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            h_flex()
+                                .gap_1()
+                                .child(ui::KeyBinding::for_action_in(
+                                    &ToggleArgumentsFocus,
+                                    &self.arguments_editor.focus_handle(cx),
+                                    cx,
+                                ))
+                                .child(
+                                    Label::new("to switch focus")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
                         ),
                 )
                 .child(self.arguments_editor.clone())
+                .when(self.is_executing, |this| {
+                    this.child(
+                        Label::new("Executing command…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    )
+                })
+                .when_some(self.execution_error.clone(), |this, error| {
+                    this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+                })
                 .into_any_element(),
         )
     }
+}
+
+fn active_buffer(editor: &Entity<Editor>, cx: &App) -> Option<Entity<language::Buffer>> {
+    let editor = editor.read(cx);
+    editor
+        .buffer()
+        .read(cx)
+        .as_singleton()
+        .or_else(|| editor.active_buffer(cx))
+}
+
+fn command_providers<'a>(
+    buffer: &Entity<language::Buffer>,
+    project: &Entity<Project>,
+    cx: &'a App,
+) -> impl Iterator<
+    Item = (
+        LanguageServerId,
+        LanguageServerName,
+        &'a lsp::ExecuteCommandOptions,
+    ),
+> {
+    let project = project.read(cx);
+    let lsp_store = project.lsp_store().read(cx);
+    let adapters = buffer
+        .read(cx)
+        .language()
+        .map(|language| project.languages().lsp_adapters(&language.name()))
+        .unwrap_or_default();
+    project
+        .language_server_statuses(cx)
+        .filter_map(move |(server_id, status)| {
+            let provider = lsp_store
+                .lsp_server_capabilities
+                .get(&server_id)?
+                .execute_command_provider
+                .as_ref()?;
+            if provider.commands.is_empty() {
+                return None;
+            }
+            Some((server_id, status, provider))
+        })
+        .filter(move |(_, status, _)| adapters.iter().any(|adapter| adapter.name() == status.name))
+        .map(|(server_id, status, provider)| (server_id, status.name.clone(), provider))
 }
 
 fn available_commands(
     buffer: &Entity<language::Buffer>,
     project: &Entity<Project>,
     cx: &App,
-) -> Vec<AvailableCommand> {
-    let Some(language) = buffer.read(cx).language() else {
-        return Vec::new();
-    };
-    let project = project.read(cx);
-    let adapters = project.languages().lsp_adapters(&language.name());
-    let lsp_store = project.lsp_store().read(cx);
-    project
-        .language_server_statuses(cx)
-        .filter(|(_, status)| adapters.iter().any(|adapter| adapter.name() == status.name))
-        .flat_map(|(server_id, status)| {
-            lsp_store
-                .lsp_server_capabilities
-                .get(&server_id)
-                .and_then(|capabilities| capabilities.execute_command_provider.as_ref())
-                .into_iter()
-                .flat_map(move |provider| {
-                    provider
-                        .commands
-                        .iter()
-                        .map(move |command| AvailableCommand {
-                            server_name: status.name.clone(),
-                            server_id,
-                            command: SharedString::from(command.clone()),
-                        })
+) -> BTreeSet<AvailableCommand> {
+    command_providers(buffer, project, cx)
+        .flat_map(|(server_id, server_name, provider)| {
+            provider
+                .commands
+                .iter()
+                .map(move |command| AvailableCommand {
+                    server_name: server_name.clone(),
+                    server_id,
+                    command: SharedString::from(command.clone()),
                 })
         })
-        .collect::<BTreeSet<_>>()
-        .into_iter()
         .collect()
-}
-
-fn has_available_commands(
-    buffer: &Entity<language::Buffer>,
-    project: &Entity<Project>,
-    cx: &App,
-) -> bool {
-    let Some(language) = buffer.read(cx).language() else {
-        return false;
-    };
-    let project = project.read(cx);
-    let adapters = project.languages().lsp_adapters(&language.name());
-    let lsp_store = project.lsp_store().read(cx);
-    project
-        .language_server_statuses(cx)
-        .filter(|(_, status)| adapters.iter().any(|adapter| adapter.name() == status.name))
-        .any(|(server_id, _)| {
-            lsp_store
-                .lsp_server_capabilities
-                .get(&server_id)
-                .and_then(|capabilities| capabilities.execute_command_provider.as_ref())
-                .is_some_and(|provider| !provider.commands.is_empty())
-        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::StreamExt as _;
-    use gpui::{TestAppContext, VisualTestContext};
+    use futures::{StreamExt as _, channel::oneshot};
+    use gpui::{KeyBinding, TestAppContext, VisualTestContext};
     use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
     use project::{Project, ProjectPath};
     use serde_json::json;
@@ -453,7 +497,30 @@ mod tests {
 
     #[gpui::test]
     async fn test_executing_commands_from_the_picker(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
         let (workspace, fake_server, executed_commands, mut cx) = init_selector_test(cx).await;
+        let (response_sender, response_receiver) = oneshot::channel();
+        let response_receiver = Arc::new(Mutex::new(Some(response_receiver)));
+        fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>({
+            let executed_commands = executed_commands.clone();
+            move |params, _| {
+                executed_commands
+                    .lock()
+                    .expect("executed commands lock should not be poisoned")
+                    .push((params.command, params.arguments));
+                let response_receiver = response_receiver
+                    .lock()
+                    .expect("response receiver lock should not be poisoned")
+                    .take()
+                    .expect("execute command should only be requested once");
+                async move {
+                    response_receiver
+                        .await
+                        .expect("response sender should remain alive");
+                    Ok(None)
+                }
+            }
+        });
 
         let picker = open_selector(&workspace, &mut cx);
         picker.read_with(&cx, |picker, _| {
@@ -480,6 +547,42 @@ mod tests {
             });
         });
         cx.dispatch_action(menu::Confirm);
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .active_modal::<LspCommandSelector>(cx)
+                    .map(|_| "a modal"),
+                Some("a modal"),
+                "the selector should remain open until the server responds"
+            );
+        });
+        picker.update_in(&mut cx, |picker, window, cx| {
+            let arguments_read_only = picker.delegate.arguments_editor.read(cx).read_only(cx);
+            let command_selectable = picker.delegate.can_select(0, window, cx);
+            assert_eq!(
+                (
+                    picker.delegate.is_executing,
+                    &picker.delegate.execution_error,
+                    arguments_read_only,
+                    command_selectable,
+                ),
+                (true, &None, true, false),
+            );
+        });
+
+        cx.dispatch_action(menu::Confirm);
+        assert_eq!(
+            executed_commands
+                .lock()
+                .expect("executed commands lock should not be poisoned")
+                .as_slice(),
+            &[("mdo.today".to_string(), vec![json!("foo"), json!(42)])],
+            "confirmation while executing should not send another command"
+        );
+
+        response_sender
+            .send(())
+            .expect("execute command response receiver should remain alive");
         cx.run_until_parked();
 
         workspace.read_with(&cx, |workspace, cx| {
@@ -491,20 +594,79 @@ mod tests {
                 "the selector should be dismissed after a successful command execution"
             );
         });
-        assert_eq!(
-            executed_commands
-                .lock()
-                .unwrap()
-                .drain(..)
-                .collect::<Vec<_>>(),
-            vec![("mdo.today".to_string(), vec![json!("foo"), json!(42)])],
+    }
+
+    #[gpui::test]
+    async fn test_command_error_is_shown_in_the_picker_footer(cx: &mut TestAppContext) {
+        let (workspace, fake_server, _executed_commands, mut cx) = init_selector_test(cx).await;
+        fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+            move |_, _| async move { Err(anyhow::anyhow!("server rejected command")) },
         );
-        drop(fake_server);
+
+        let picker = open_selector(&workspace, &mut cx);
+        picker.update_in(&mut cx, |picker, window, cx| {
+            picker.set_query("today", window, cx);
+        });
+        cx.run_until_parked();
+        cx.dispatch_action(menu::Confirm);
+        cx.run_until_parked();
+
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .active_modal::<LspCommandSelector>(cx)
+                    .map(|_| "a modal"),
+                Some("a modal"),
+                "the selector should remain open after a failed command execution"
+            );
+        });
+        picker.update_in(&mut cx, |picker, window, cx| {
+            let arguments_read_only = picker.delegate.arguments_editor.read(cx).read_only(cx);
+            let command_selectable = picker.delegate.can_select(0, window, cx);
+            assert_eq!(
+                (
+                    picker.delegate.is_executing,
+                    picker.delegate.execution_error.as_deref(),
+                    arguments_read_only,
+                    command_selectable,
+                ),
+                (
+                    false,
+                    Some("Failed to execute LSP command mdo.today: server rejected command"),
+                    false,
+                    true,
+                ),
+            );
+        });
+
+        fake_server.set_request_handler::<lsp::request::ExecuteCommand, _, _>(
+            move |_, _| async move { Ok(None) },
+        );
+        cx.dispatch_action(menu::Confirm);
+        picker.read_with(&cx, |picker, _| {
+            assert_eq!(
+                (
+                    picker.delegate.is_executing,
+                    &picker.delegate.execution_error
+                ),
+                (true, &None),
+            );
+        });
+        cx.run_until_parked();
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .active_modal::<LspCommandSelector>(cx)
+                    .map(|_| "a modal"),
+                None,
+                "the selector should be dismissed after a successful retry"
+            );
+        });
     }
 
     #[gpui::test]
     async fn test_action_is_not_registered_without_commands(cx: &mut TestAppContext) {
-        let (workspace, fake_server, _executed_commands, mut cx) =
+        let (workspace, _fake_server, _executed_commands, mut cx) =
             init_selector_test_with_capabilities(
                 cx,
                 lsp::ServerCapabilities {
@@ -528,12 +690,56 @@ mod tests {
                 "the selector should not open when no server advertises commands"
             );
         });
-        drop(fake_server);
+    }
+
+    #[gpui::test]
+    async fn test_action_is_not_registered_for_unrelated_buffers(cx: &mut TestAppContext) {
+        let (workspace, _fake_server, _executed_commands, mut cx) = init_selector_test(cx).await;
+
+        let worktree_id = workspace.read_with(&cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .expect("project should have a worktree")
+                .read(cx)
+                .id()
+        });
+        workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id,
+                        path: rel_path("notes.txt").into(),
+                    },
+                    None,
+                    true,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .expect("file should open");
+        cx.run_until_parked();
+
+        cx.dispatch_action(Toggle);
+        cx.run_until_parked();
+        workspace.read_with(&cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .active_modal::<LspCommandSelector>(cx)
+                    .map(|_| "a modal"),
+                None,
+                "the selector should not open for a buffer whose language has no matching server, \
+                 even while another server in the project advertises commands"
+            );
+        });
     }
 
     #[gpui::test]
     async fn test_toggling_arguments_focus(cx: &mut TestAppContext) {
-        let (workspace, fake_server, _executed_commands, mut cx) = init_selector_test(cx).await;
+        let (workspace, _fake_server, _executed_commands, mut cx) = init_selector_test(cx).await;
 
         let picker = open_selector(&workspace, &mut cx);
         let picker_focus_handle = picker.read_with(&cx, |picker, cx| picker.focus_handle(cx));
@@ -576,12 +782,58 @@ mod tests {
                 "the query editor should be focused after toggling again"
             );
         });
-        drop(fake_server);
+    }
+
+    #[gpui::test]
+    async fn test_tab_keystroke_toggles_arguments_focus(cx: &mut TestAppContext) {
+        let (workspace, _fake_server, _executed_commands, mut cx) = init_selector_test(cx).await;
+        cx.update(|_, cx| {
+            cx.bind_keys([
+                KeyBinding::new("tab", menu::SelectNext, None),
+                KeyBinding::new("tab", editor::actions::Tab, Some("Editor")),
+                KeyBinding::new("tab", picker::ConfirmCompletion, Some("Picker > Editor")),
+                KeyBinding::new(
+                    "tab",
+                    ToggleArgumentsFocus,
+                    Some("LspCommandSelector > Picker > Editor"),
+                ),
+            ]);
+        });
+
+        let picker = open_selector(&workspace, &mut cx);
+        let picker_focus_handle = picker.read_with(&cx, |picker, cx| picker.focus_handle(cx));
+        let arguments_focus_handle = picker.read_with(&cx, |picker, cx| {
+            picker.delegate.arguments_editor.focus_handle(cx)
+        });
+
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, _| {
+            assert_eq!(
+                (
+                    picker_focus_handle.is_focused(window),
+                    arguments_focus_handle.is_focused(window),
+                ),
+                (false, true),
+                "tab should win over the less specific tab bindings and focus the arguments editor"
+            );
+        });
+
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, _| {
+            assert_eq!(
+                (
+                    picker_focus_handle.is_focused(window),
+                    arguments_focus_handle.is_focused(window),
+                ),
+                (true, false),
+                "tab should focus the query editor back"
+            );
+        });
     }
 
     #[gpui::test]
     async fn test_plain_text_arguments_are_sent_as_a_single_string(cx: &mut TestAppContext) {
-        let (workspace, fake_server, executed_commands, mut cx) = init_selector_test(cx).await;
+        let (workspace, _fake_server, executed_commands, mut cx) = init_selector_test(cx).await;
 
         let picker = open_selector(&workspace, &mut cx);
         picker.update_in(&mut cx, |picker, window, cx| {
@@ -614,7 +866,6 @@ mod tests {
             vec![("mdo.today".to_string(), vec![json!("next friday")])],
             "plain text that is not a JSON stream should be sent as a single string argument"
         );
-        drop(fake_server);
     }
 
     async fn init_selector_test(
@@ -662,6 +913,7 @@ mod tests {
                 path!("/test"),
                 json!({
                     "main.md": "# hi\n",
+                    "notes.txt": "plain text\n",
                 }),
             )
             .await;

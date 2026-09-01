@@ -1187,11 +1187,11 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
-                let this = lsp_store.clone();
+                let lsp_store = lsp_store.clone();
                 let name = name.to_string();
                 let adapter = adapter.clone();
                 move |params, cx| {
-                    let this = this.clone();
+                    let lsp_store = lsp_store.clone();
                     let name = name.to_string();
                     let adapter = adapter.clone();
                     let mut cx = cx.clone();
@@ -1212,25 +1212,19 @@ impl LocalLspStore {
                             tx,
                         );
 
-                        let did_update = this
-                            .update(&mut cx, |_, cx| {
-                                cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                            })
-                            .is_ok();
-                        if did_update {
-                            let response = rx.recv().await.ok();
-                            if let Some(ref selected_action) = response {
-                                let context = language::PromptResponseContext {
-                                    message,
-                                    selected_action: selected_action.clone(),
-                                };
-                                adapter.process_prompt_response(&context, &mut cx)
-                            }
-
-                            Ok(response)
-                        } else {
-                            Ok(None)
+                        lsp_store.update(&mut cx, |_, cx| {
+                            cx.emit(LspStoreEvent::LanguageServerPrompt(request));
+                        })?;
+                        let response = rx.recv().await.ok();
+                        if let Some(ref selected_action) = response {
+                            let context = language::PromptResponseContext {
+                                message,
+                                selected_action: selected_action.clone(),
+                            };
+                            adapter.process_prompt_response(&context, &mut cx)
                         }
+
+                        Ok(response)
                     }
                 }
             })
@@ -1238,9 +1232,9 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::ShowDocument, _, _>({
-                let this = lsp_store.clone();
+                let lsp_store = lsp_store.clone();
                 move |params, cx| {
-                    let this = this.clone();
+                    let lsp_store = lsp_store.clone();
                     let mut cx = cx.clone();
                     async move {
                         let (tx, rx) = async_channel::bounded(1);
@@ -1251,12 +1245,10 @@ impl LocalLspStore {
                             selection: params.selection,
                             response_channel: tx,
                         };
-                        let did_update = this
-                            .update(&mut cx, |_, cx| {
-                                cx.emit(LspStoreEvent::LanguageServerShowDocument(request));
-                            })
-                            .is_ok();
-                        let success = did_update && rx.recv().await.unwrap_or(false);
+                        lsp_store.update(&mut cx, |_, cx| {
+                            cx.emit(LspStoreEvent::LanguageServerShowDocument(request));
+                        })?;
+                        let success = rx.recv().await.unwrap_or(false);
                         Ok(lsp::ShowDocumentResult { success })
                     }
                 }
@@ -15095,8 +15087,8 @@ pub struct LanguageServerShowDocumentRequest {
 }
 
 impl LanguageServerShowDocumentRequest {
-    pub async fn respond(self, success: bool) -> Option<()> {
-        self.response_channel.send(success).await.ok()
+    pub fn respond(self, success: bool) {
+        self.response_channel.try_send(success).ok();
     }
 }
 

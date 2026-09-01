@@ -5610,10 +5610,10 @@ impl Project {
     }
 
     async fn handle_language_server_show_document_request(
-        this: Entity<Self>,
+        project: Entity<Self>,
         envelope: TypedEnvelope<proto::LanguageServerShowDocumentRequest>,
         mut cx: AsyncApp,
-    ) -> Result<proto::LanguageServerShowDocumentResponse> {
+    ) -> Result<proto::Ack> {
         let payload = envelope.payload;
         let selection = payload.selection_start.zip(payload.selection_end).map(
             |(selection_start, selection_end)| lsp::Range {
@@ -5630,7 +5630,7 @@ impl Project {
         let uri = lsp::Uri::from_str(&payload.uri)
             .map_err(|error| anyhow!("invalid show document uri {}: {error:?}", payload.uri))?;
         let (tx, rx) = async_channel::bounded(1);
-        this.update(&mut cx, |_, cx| {
+        project.update(&mut cx, |_, cx| {
             cx.emit(Event::LanguageServerShowDocument(
                 LanguageServerShowDocumentRequest {
                     uri,
@@ -5641,10 +5641,15 @@ impl Project {
                 },
             ));
         });
-        drop(this);
+        drop(project);
 
         let success = rx.recv().await.unwrap_or(false);
-        Ok(proto::LanguageServerShowDocumentResponse { success })
+        anyhow::ensure!(
+            success,
+            "show document request for {} was not handled successfully",
+            payload.uri
+        );
+        Ok(proto::Ack {})
     }
 
     async fn handle_hide_toast(
