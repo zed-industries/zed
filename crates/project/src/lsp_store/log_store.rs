@@ -475,7 +475,8 @@ impl LogStore {
                             .retain(|key, _| key.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
-                        let server_kind = if project.read(cx).is_local() {
+                        let is_local = project.read(cx).is_local();
+                        let primary_server_kind = if is_local {
                             LanguageServerKind::Local {
                                 project: project.downgrade(),
                             }
@@ -484,13 +485,51 @@ impl LogStore {
                                 project: project.downgrade(),
                             }
                         };
+                        let server_kind_for_id = |log_store: &LogStore, server_id| {
+                            // Remote project events carry host-side server IDs, which may
+                            // collide numerically with locally allocated supplementary
+                            // server IDs, so only local projects may resolve an ID to a
+                            // supplementary server.
+                            if is_local {
+                                let supplementary_server_kind = LanguageServerKind::Supplementary {
+                                    project: project.downgrade(),
+                                };
+                                let supplementary_server_key = LanguageServerLogKey::new(
+                                    supplementary_server_kind.clone(),
+                                    server_id,
+                                );
+                                if log_store
+                                    .language_servers
+                                    .contains_key(&supplementary_server_key)
+                                {
+                                    return supplementary_server_kind;
+                                }
+                            }
+                            primary_server_kind.clone()
+                        };
                         match event {
                             crate::Event::LanguageServerAdded(id, name, worktree_id) => {
                                 log_store.add_language_server(
-                                    server_kind,
+                                    primary_server_kind,
                                     *id,
                                     Some(name.clone()),
                                     *worktree_id,
+                                    project
+                                        .read(cx)
+                                        .lsp_store()
+                                        .read(cx)
+                                        .language_server_for_id(*id),
+                                    cx,
+                                );
+                            }
+                            crate::Event::SupplementaryLanguageServerAdded(id, name) => {
+                                log_store.add_language_server(
+                                    LanguageServerKind::Supplementary {
+                                        project: project.downgrade(),
+                                    },
+                                    *id,
+                                    Some(name.clone()),
+                                    None,
                                     project
                                         .read(cx)
                                         .lsp_store()
@@ -521,7 +560,7 @@ impl LogStore {
                                         .map(|status| status.name.clone())
                                 });
                                 log_store.add_language_server(
-                                    server_kind,
+                                    server_kind_for_id(log_store, *server_id),
                                     *server_id,
                                     name,
                                     worktree_id,
@@ -530,10 +569,21 @@ impl LogStore {
                                 );
                             }
                             crate::Event::LanguageServerRemoved(id) => {
-                                let server_key = LanguageServerLogKey::new(server_kind, *id);
+                                let server_key =
+                                    LanguageServerLogKey::new(primary_server_kind, *id);
+                                log_store.remove_language_server(&server_key, cx);
+                            }
+                            crate::Event::SupplementaryLanguageServerRemoved(id) => {
+                                let server_key = LanguageServerLogKey::new(
+                                    LanguageServerKind::Supplementary {
+                                        project: project.downgrade(),
+                                    },
+                                    *id,
+                                );
                                 log_store.remove_language_server(&server_key, cx);
                             }
                             crate::Event::LanguageServerLog(id, typ, message) => {
+                                let server_kind = server_kind_for_id(log_store, *id);
                                 let server_key =
                                     LanguageServerLogKey::new(server_kind.clone(), *id);
                                 log_store.add_language_server(
@@ -582,7 +632,10 @@ impl LogStore {
                                 enabled,
                                 toggled_log_kind,
                             } => {
-                                let server_key = LanguageServerLogKey::new(server_kind, *server_id);
+                                let server_key = LanguageServerLogKey::new(
+                                    server_kind_for_id(log_store, *server_id),
+                                    *server_id,
+                                );
                                 log_store.toggle_lsp_logs(&server_key, *enabled, *toggled_log_kind);
                             }
                             _ => {}

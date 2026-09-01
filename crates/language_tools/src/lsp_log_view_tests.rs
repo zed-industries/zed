@@ -175,11 +175,18 @@ async fn test_lsp_log_view_labels_registered_supplementary_servers(cx: &mut Test
                 rpc_trace_enabled: false,
                 selected_entry: LogKind::Logs,
                 trace_level: lsp::TraceValue::Off,
-                server_kind: LanguageServerKind::Local {
+                server_kind: LanguageServerKind::Supplementary {
                     project: project.downgrade(),
                 },
             }]
         );
+    });
+
+    lsp_store.update(&mut cx, |lsp_store, cx| {
+        lsp_store.unregister_supplementary_language_server_for_test(server_id, cx);
+    });
+    log_view.update(&mut cx, |view, cx| {
+        assert!(view.menu_items(cx).unwrap().is_empty());
     });
 }
 

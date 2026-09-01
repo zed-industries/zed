@@ -4461,7 +4461,9 @@ impl BufferLspData {
 #[derive(Debug)]
 pub enum LspStoreEvent {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
+    SupplementaryLanguageServerAdded(LanguageServerId, LanguageServerName),
     LanguageServerRemoved(LanguageServerId),
+    SupplementaryLanguageServerRemoved(LanguageServerId),
     LanguageServerUpdate {
         language_server_id: LanguageServerId,
         name: Option<LanguageServerName>,
@@ -12988,7 +12990,7 @@ impl LspStore {
             local
                 .supplementary_language_servers
                 .insert(id, (name.clone(), server));
-            cx.emit(LspStoreEvent::LanguageServerAdded(id, name, None));
+            cx.emit(LspStoreEvent::SupplementaryLanguageServerAdded(id, name));
         }
     }
 
@@ -13010,19 +13012,17 @@ impl LspStore {
     ) {
         if let Some(local) = self.as_local_mut() {
             local.supplementary_language_servers.remove(&id);
-            cx.emit(LspStoreEvent::LanguageServerRemoved(id));
+            cx.emit(LspStoreEvent::SupplementaryLanguageServerRemoved(id));
         }
     }
 
-    pub(crate) fn supplementary_language_servers(
-        &self,
-    ) -> impl '_ + Iterator<Item = (LanguageServerId, LanguageServerName)> {
-        self.as_local().into_iter().flat_map(|local| {
-            local
-                .supplementary_language_servers
-                .iter()
-                .map(|(id, (name, _))| (*id, name.clone()))
-        })
+    #[cfg(feature = "test-support")]
+    pub fn unregister_supplementary_language_server_for_test(
+        &mut self,
+        id: LanguageServerId,
+        cx: &mut Context<Self>,
+    ) {
+        self.unregister_supplementary_language_server(id, cx);
     }
 
     pub fn language_server_adapter_for_id(
