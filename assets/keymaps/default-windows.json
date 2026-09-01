@@ -613,6 +613,14 @@
     },
   },
   {
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k v": "tabular_data::OpenPreviewToTheSide",
+      "ctrl-shift-v": "tabular_data::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {

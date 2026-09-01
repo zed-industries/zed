@@ -8215,9 +8215,13 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let mut highlighted_rows = self
-                        .editor
-                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
+                    let mut highlighted_rows =
+                        self.editor.read(cx).highlighted_display_rows_in_range(
+                            start_anchor..end_anchor,
+                            start_row..end_row,
+                            &snapshot.display_snapshot,
+                            cx,
+                        );
 
                     let mut highlighted_ranges = self
                         .editor_with_selections(cx)
@@ -9058,7 +9062,8 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let frozen_scroll_state = if self.editor.read(cx).scroll_range_hold.is_some() {
+                    let frozen_scroll_state = if self.editor.read(cx).search_results_hold.is_some()
+                    {
                         let is_rewrapping =
                             self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
                         self.editor.update(cx, |editor, _| {

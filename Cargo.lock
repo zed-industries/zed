@@ -298,7 +298,6 @@ dependencies = [
  "regex",
  "release_channel",
  "reqwest_client",
- "rust-embed",
  "sandbox",
  "schemars 1.0.4",
  "serde",
@@ -946,7 +945,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
- "rust-embed",
+ "util",
 ]
 
 [[package]]
@@ -2135,6 +2134,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "gpui_platform",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "language_model",
@@ -2144,6 +2144,7 @@ dependencies = [
  "project",
  "prompt_store",
  "rand 0.9.4",
+ "rpc",
  "serde_json",
  "settings",
  "text",
@@ -5471,7 +5472,6 @@ dependencies = [
  "rand 0.9.4",
  "release_channel",
  "reqwest_client",
- "rust-embed",
  "serde",
  "serde_json",
  "settings",
@@ -7571,6 +7571,7 @@ dependencies = [
  "uuid",
  "waker-fn",
  "wasm-bindgen",
+ "web-sys",
  "web-time",
  "windows 0.61.3",
  "zed-font-kit",
@@ -7845,6 +7846,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "tree-sitter-yaml",
+ "util",
 ]
 
 [[package]]
@@ -11788,6 +11790,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.1",
+ "block2 0.6.2",
  "objc2 0.6.3",
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
@@ -15933,8 +15936,6 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 [[package]]
 name = "scratch"
 version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d68f2ec51b097e4c1a75b681a8bec621909b5e91f15bb7b840c4f2f7b01148b2"
 
 [[package]]
 name = "screencapturekit"
@@ -16465,7 +16466,6 @@ dependencies = [
  "paths",
  "pretty_assertions",
  "release_channel",
- "rust-embed",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -18007,9 +18007,12 @@ dependencies = [
  "gpui",
  "log",
  "picker",
+ "project",
  "proptest",
+ "serde_json",
  "text",
  "ui",
+ "util",
  "workspace",
 ]
 

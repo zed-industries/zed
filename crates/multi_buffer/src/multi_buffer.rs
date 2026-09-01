@@ -119,6 +119,7 @@ pub enum Event {
     Reloaded,
     CapabilityChanged,
     LanguageChanged(BufferId, bool),
+    SettingsChanged,
     Reparsed(BufferId),
     Saved,
     FileHandleChanged,
@@ -2039,6 +2040,7 @@ impl MultiBuffer {
             BufferEvent::LanguageChanged(has_language) => {
                 Event::LanguageChanged(buffer_id, *has_language)
             }
+            BufferEvent::SettingsChanged => Event::SettingsChanged,
             BufferEvent::Reparsed => Event::Reparsed(buffer_id),
             BufferEvent::DiagnosticsUpdated => Event::DiagnosticsUpdated,
             BufferEvent::CapabilityChanged => {
@@ -2164,7 +2166,7 @@ impl MultiBuffer {
             .and_then(|(buffer, offset)| buffer.read(cx).language_at(offset))
     }
 
-    pub fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings(&self, cx: &App) -> Arc<LanguageSettings> {
         let snapshot = self.snapshot(cx);
         snapshot
             .excerpts
@@ -2174,15 +2176,11 @@ impl MultiBuffer {
             .unwrap_or_else(move || self.language_settings_at(MultiBufferOffset::default(), cx))
     }
 
-    pub fn language_settings_at<'a, T: ToOffset>(
-        &'a self,
-        point: T,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings_at<T: ToOffset>(&self, point: T, cx: &App) -> Arc<LanguageSettings> {
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point, cx) {
             LanguageSettings::for_buffer_at(buffer.read(cx), offset, cx)
         } else {
-            Cow::Borrowed(&AllLanguageSettings::get_global(cx).defaults)
+            AllLanguageSettings::get_global(cx).defaults.clone()
         }
     }
 
@@ -5419,6 +5417,97 @@ impl MultiBufferSnapshot {
         None
     }
 
+    /// Converts ranges from one buffer in start-anchor order without restarting the excerpt scan
+    /// for every range. Unordered or mixed-buffer input falls back to independent conversions.
+    pub fn ordered_buffer_anchor_ranges_to_anchor_ranges(
+        &self,
+        text_anchor_ranges: impl IntoIterator<Item = Range<text::Anchor>>,
+    ) -> Vec<Option<Range<Anchor>>> {
+        let text_anchor_ranges = text_anchor_ranges.into_iter().collect::<Vec<_>>();
+        let Some(first_range) = text_anchor_ranges.first() else {
+            return Vec::new();
+        };
+        let buffer_id = first_range.start.buffer_id;
+        let ranges_share_buffer = text_anchor_ranges
+            .iter()
+            .all(|range| range.start.buffer_id == buffer_id && range.end.buffer_id == buffer_id);
+        if !ranges_share_buffer {
+            return text_anchor_ranges
+                .into_iter()
+                .map(|range| self.buffer_anchor_range_to_anchor_range(range))
+                .collect();
+        }
+
+        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
+            return vec![None; text_anchor_ranges.len()];
+        };
+        let buffer_snapshot = &buffer_state.buffer_snapshot;
+        let ranges_are_ordered = text_anchor_ranges.windows(2).all(|ranges| {
+            ranges[0]
+                .start
+                .cmp(&ranges[1].start, buffer_snapshot)
+                .is_le()
+        });
+        if !ranges_are_ordered {
+            return text_anchor_ranges
+                .into_iter()
+                .map(|range| self.buffer_anchor_range_to_anchor_range(range))
+                .collect();
+        }
+
+        let path_key = buffer_state.path_key.clone();
+        let mut cursor = self.excerpts.cursor::<PathKey>(());
+        cursor.seek_forward(&path_key, Bias::Left);
+        let excerpts = iter::from_fn(move || {
+            let excerpt = cursor.item()?;
+            if excerpt.path_key != path_key {
+                return None;
+            }
+            cursor.next();
+            Some(excerpt)
+        })
+        .collect::<Vec<_>>();
+        let mut first_candidate_index = 0;
+        text_anchor_ranges
+            .into_iter()
+            .map(|range| {
+                while let Some(excerpt) = excerpts.get(first_candidate_index) {
+                    let buffer_snapshot = excerpt.buffer_snapshot(self);
+                    if excerpt
+                        .range
+                        .context
+                        .end
+                        .cmp(&range.start, buffer_snapshot)
+                        .is_lt()
+                    {
+                        first_candidate_index += 1;
+                        continue;
+                    }
+                    break;
+                }
+
+                for excerpt in &excerpts[first_candidate_index..] {
+                    let buffer_snapshot = excerpt.buffer_snapshot(self);
+                    if excerpt
+                        .range
+                        .context
+                        .start
+                        .cmp(&range.start, buffer_snapshot)
+                        .is_gt()
+                    {
+                        break;
+                    }
+                    if excerpt.range.contains(&range.start, buffer_snapshot)
+                        && excerpt.range.contains(&range.end, buffer_snapshot)
+                    {
+                        return Some(Anchor::range_in_buffer(excerpt.path_key_index, range));
+                    }
+                }
+                None
+            })
+            .collect()
+    }
+
     /// Returns a buffer anchor and its buffer snapshot for the given anchor, if it is in the multibuffer.
     pub fn anchor_to_buffer_anchor(
         &self,
@@ -6202,7 +6291,7 @@ impl MultiBufferSnapshot {
             .and_then(|(buffer, offset)| buffer.language_at(offset))
     }
 
-    fn language_settings<'a>(&'a self, cx: &'a App) -> Cow<'a, LanguageSettings> {
+    fn language_settings(&self, cx: &App) -> Arc<LanguageSettings> {
         self.excerpts
             .first()
             .map(|excerpt| excerpt.buffer_snapshot(self))
@@ -6210,15 +6299,11 @@ impl MultiBufferSnapshot {
             .unwrap_or_else(move || self.language_settings_at(MultiBufferOffset::ZERO, cx))
     }
 
-    pub fn language_settings_at<'a, T: ToOffset>(
-        &'a self,
-        point: T,
-        cx: &'a App,
-    ) -> Cow<'a, LanguageSettings> {
+    pub fn language_settings_at<T: ToOffset>(&self, point: T, cx: &App) -> Arc<LanguageSettings> {
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             buffer.settings_at(offset, cx)
         } else {
-            Cow::Borrowed(&AllLanguageSettings::get_global(cx).defaults)
+            AllLanguageSettings::get_global(cx).defaults.clone()
         }
     }
 
