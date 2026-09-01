@@ -27,6 +27,7 @@ use wayland_protocols::{
     wp::fractional_scale::v1::client::wp_fractional_scale_v1,
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
+use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
 use crate::linux::wayland::{display::WaylandDisplay, serial::SerialKind};
@@ -103,6 +104,7 @@ pub struct WaylandWindowState {
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
+    kde_blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
     background_effects: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
@@ -598,6 +600,7 @@ impl WaylandWindowState {
             children: FxHashMap::default(),
             surface,
             app_id: options.app_id,
+            kde_blur: None,
             background_effects: None,
             viewport,
             globals,
@@ -689,7 +692,12 @@ impl Drop for WaylandWindow {
 
         state.renderer.destroy();
 
-        // Destroy background effects first, this has no dependencies.
+        // Destroy blur first, this has no dependencies.
+        if let Some(blur) = &state.kde_blur {
+            blur.release();
+        }
+
+        // Destroy background effects, this has no dependencies.
         if let Some(background_effects) = &state.background_effects {
             background_effects.destroy();
         }
@@ -2025,9 +2033,13 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.surface.set_opaque_region(None);
     }
 
+    // Prefer the ext-background-effect protocol, as it is DE agnostic and
+    // replaces the deprecated kde-blur protocol, which is no longer supported
+    // since KDE Plasma 6.7.
     if let Some(ref background_effects_manager) = state.globals.background_effects_manager {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.background_effects.is_none() {
+                log::info!("Using ext-background-effect protocol");
                 let background_effects = background_effects_manager.get_background_effect(
                     &state.surface,
                     &state.globals.qh,
@@ -2057,6 +2069,21 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
             if let Some(b) = state.background_effects.take() {
                 b.set_blur_region(None);
                 b.destroy();
+            }
+        }
+    } else if let Some(ref blur_manager) = state.globals.kde_blur_manager {
+        if state.background_appearance == WindowBackgroundAppearance::Blurred {
+            if state.kde_blur.is_none() {
+                log::info!("Using kde-blur protocol");
+                let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
+                state.kde_blur = Some(blur);
+            }
+            state.kde_blur.as_ref().unwrap().commit();
+        } else {
+            // It probably doesn't hurt to clear the blur for opaque windows
+            blur_manager.unset(&state.surface);
+            if let Some(b) = state.kde_blur.take() {
+                b.release()
             }
         }
     }
