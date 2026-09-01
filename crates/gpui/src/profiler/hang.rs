@@ -99,9 +99,10 @@ pub struct SerializedHangIncident {
     /// [`HangDetector::first_present_at`]), otherwise `"steady"`.
     pub phase: &'static str,
     /// When the incident's active window started, in milliseconds since app
-    /// startup: the sealing frame's first invalidation, or the earliest
-    /// contributor's start when nothing was pending a repaint. Foreground
-    /// idle time between the previous frame and the cause is excluded.
+    /// startup: when the sealing frame became dirty while presentable, or the
+    /// earliest contributor's start when nothing was pending a repaint.
+    /// Foreground idle time between the previous frame and the cause is
+    /// excluded.
     pub start_ms: f64,
     /// Length of the active window in milliseconds: from the cause to the
     /// seal. Exceeds `stall_ms` when several stalls piled up on one frame.
@@ -112,8 +113,14 @@ pub struct SerializedHangIncident {
     /// incident.
     pub stall_ms: f64,
     /// For presentation-sealed incidents, how long the submitted frame had
-    /// been dirty, in milliseconds.
+    /// been dirty while the platform was presenting, in milliseconds: the
+    /// rerender latency a user could perceive.
     pub dirty_to_present_ms: Option<f64>,
+    /// For presentation-sealed incidents whose frame the platform withheld
+    /// (display asleep, window occluded or minimized), how long it was
+    /// withheld before this frame request, in milliseconds. Excluded from
+    /// `dirty_to_present_ms` and `active_ms`.
+    pub frame_withheld_ms: Option<f64>,
     /// What closed the incident: `"present"` or `"idle"`. This labels the
     /// boundary, not the hang's cause — the cause is the first contributor.
     pub sealed_by: &'static str,
@@ -263,6 +270,12 @@ impl SerializedHangIncident {
                 }
                 IntervalBoundary::Idle { .. } => None,
             },
+            frame_withheld_ms: match snapshot.boundary {
+                IntervalBoundary::Presented(presented) => {
+                    presented.frame.withheld_for.map(as_millis)
+                }
+                IntervalBoundary::Idle { .. } => None,
+            },
             sealed_by: match snapshot.boundary {
                 IntervalBoundary::Presented(_) => "present",
                 IntervalBoundary::Idle { .. } => "idle",
@@ -368,9 +381,9 @@ impl SerializedHangContributor {
 }
 
 impl HangIncident {
-    /// The incident's reporting window: from its earliest cause — the
-    /// sealing frame's first invalidation, or the earliest contributor's
-    /// start when no repaint was pending — to the seal. This trims
+    /// The incident's reporting window: from its earliest cause — when the
+    /// sealing frame became dirty while presentable, or the earliest
+    /// contributor's start when no repaint was pending — to the seal. This trims
     /// foreground-idle time between the previous frame and the cause, and
     /// may begin before the underlying snapshot when a contributor was
     /// already running at the previous seal.
@@ -449,7 +462,9 @@ mod tests {
         InputTiming, IntervalBoundary, PollSummary, PresentedFrame, SmallPollFlush,
         install_test_foreground_journal, record_present,
     };
-    use super::{HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident};
+    use super::{
+        HangDetector, HangIncident, SerializedHangContributor, SerializedHangIncident, as_millis,
+    };
 
     actions!(hang_test, [HangyAction]);
 
@@ -525,6 +540,7 @@ mod tests {
         let frame = FrameTiming {
             window_id,
             dirty_at: Some(at(100)),
+            withheld_for: None,
             invalidations: 3,
             draw_start: at(350),
             draw_end: at(380),
@@ -619,6 +635,49 @@ mod tests {
         assert_eq!(serialized.active_ms, 60.0);
         assert_eq!(serialized.stall_ms, 60.0);
         assert_eq!(serialized.busy_fraction, 1.0);
+        assert_eq!(serialized.frame_withheld_ms, None);
+    }
+
+    /// A frame the platform withheld (display asleep, window occluded) is
+    /// attributed from its draw: the hours it sat dirty appear only as
+    /// `frame_withheld_ms`, never in the active window or dirty-to-present.
+    #[test]
+    fn serialized_incident_excludes_a_withheld_frame_from_latency_fields() {
+        let startup = scheduler::Instant::now();
+        let at = |ms: u64| startup + Duration::from_millis(ms);
+        let window_id = WindowId::from(0x717D);
+        let withheld_for = Duration::from_secs(2 * 60 * 60);
+        let draw_start = at(10_000);
+        let snapshot = FrameSnapshot {
+            interval_start: at(9_990),
+            boundary: IntervalBoundary::Presented(PresentedFrame {
+                frame: FrameTiming {
+                    window_id,
+                    dirty_at: Some(draw_start),
+                    withheld_for: Some(withheld_for),
+                    invalidations: 4,
+                    draw_start,
+                    draw_end: at(10_030),
+                },
+                presentation: PresentTiming {
+                    window_id,
+                    present_start: at(10_030),
+                    present_end: at(10_035),
+                    animation_interval: None,
+                },
+            }),
+            events: vec![task_poll_event(at(9_990), at(10_005))],
+            small_polls: Vec::new(),
+            dropped_events: 0,
+            journal_discontinuous: false,
+        };
+        let incident = HangIncident::detect(snapshot, HANG_THRESHOLD, FRAME_BUDGET)
+            .expect("the poll crosses the threshold");
+        let serialized = SerializedHangIncident::convert(startup, &incident, 8, Some(startup));
+        assert_eq!(serialized.start_ms, 9_990.0);
+        assert_eq!(serialized.active_ms, 45.0);
+        assert_eq!(serialized.dirty_to_present_ms, Some(35.0));
+        assert_eq!(serialized.frame_withheld_ms, Some(as_millis(withheld_for)));
     }
 
     #[test]
@@ -732,6 +791,7 @@ mod tests {
                 frame: FrameTiming {
                     window_id,
                     dirty_at: Some(at(0)),
+                    withheld_for: None,
                     invalidations: 1,
                     draw_start: at(140),
                     draw_end: at(145),
@@ -816,6 +876,7 @@ mod tests {
                 frame: FrameTiming {
                     window_id,
                     dirty_at: Some(at(0)),
+                    withheld_for: None,
                     invalidations: 1,
                     draw_start: at(145),
                     draw_end: at(147),
@@ -887,6 +948,7 @@ mod tests {
                 ForegroundEvent::Draw(FrameTiming {
                     window_id,
                     dirty_at: Some(at(0)),
+                    withheld_for: None,
                     invalidations: 1,
                     draw_start: at(1),
                     draw_end: at(39),
@@ -930,6 +992,7 @@ mod tests {
                 frame: FrameTiming {
                     window_id,
                     dirty_at: Some(at(0)),
+                    withheld_for: None,
                     invalidations: 1,
                     draw_start: at(148),
                     draw_end: at(149),
@@ -1260,6 +1323,7 @@ mod tests {
         FrameTiming {
             window_id,
             dirty_at: Some(draw_end - Duration::from_millis(2)),
+            withheld_for: None,
             invalidations: 1,
             draw_start: draw_end - Duration::from_millis(1),
             draw_end,

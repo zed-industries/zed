@@ -788,9 +788,16 @@ fn clear_trace_buffers() {
 pub struct FrameTiming {
     /// The window that was drawn.
     pub window_id: WindowId,
-    /// When the frame first became dirty (its first invalidation). `None` if
-    /// profiler tracing was not yet enabled when the invalidation occurred.
+    /// When the frame became dirty while the platform was presenting: its
+    /// first invalidation, or the draw start when the platform withheld
+    /// presentation of that invalidation (display asleep, window occluded or
+    /// minimized) — see `withheld_for`. `None` if the invalidation was not
+    /// observed.
     pub dirty_at: Option<Instant>,
+    /// How long the platform withheld presentation between the frame's first
+    /// invalidation and this draw, when it did. Time in here is not foreground
+    /// latency; `dirty_at` already excludes it.
+    pub withheld_for: Option<Duration>,
     /// Number of invalidations coalesced into this frame.
     pub invalidations: u64,
     /// When `Window::draw` started.
@@ -806,8 +813,8 @@ impl FrameTiming {
         self.draw_end.duration_since(self.draw_start)
     }
 
-    /// Time from the frame's first invalidation to the end of its draw, if the
-    /// first invalidation was observed.
+    /// Time from the frame becoming dirty while presentable (see `dirty_at`)
+    /// to the end of its draw, if the invalidation was observed.
     pub fn dirty_to_draw_duration(&self) -> Option<Duration> {
         self.dirty_at
             .map(|dirty_at| self.draw_end.duration_since(dirty_at))
@@ -883,6 +890,7 @@ enum WindowActivity {
     },
     Draw {
         started_at: Instant,
+        dirty: journal::ResolvedFrameDirty,
     },
 }
 
@@ -1011,19 +1019,22 @@ impl WindowProfiler {
         journal::end_foreground_turn();
     }
 
-    /// Records the beginning of a window draw.
-    pub fn begin_draw(&mut self) {
+    /// Records the beginning of a window draw. `dirty_at` is the frame's
+    /// first invalidation; the journal decides whether it counts as
+    /// foreground latency or was withheld by the platform.
+    pub fn begin_draw(&mut self, dirty_at: Option<Instant>) {
         journal::begin_foreground_turn();
         let started_at = Instant::now();
-        journal::record_frame_pending(self.window_id, started_at);
+        let dirty = journal::begin_draw(self.window_id, dirty_at, started_at);
         self.active_activities
-            .push(WindowActivity::Draw { started_at });
+            .push(WindowActivity::Draw { started_at, dirty });
     }
 
     /// Records the end of a window draw and returns the draw duration.
-    pub fn end_draw(&mut self, dirty_at: Option<Instant>, invalidations: u64) -> Duration {
+    pub fn end_draw(&mut self, invalidations: u64) -> Duration {
         let Some(WindowActivity::Draw {
             started_at: draw_start,
+            dirty,
         }) = self.active_activities.pop()
         else {
             debug_assert!(false, "draw activity must be the current window activity");
@@ -1034,7 +1045,8 @@ impl WindowProfiler {
         let draw_end = Instant::now();
         let frame_timing = FrameTiming {
             window_id: self.window_id,
-            dirty_at,
+            dirty_at: dirty.dirty_at,
+            withheld_for: dirty.withheld_for,
             invalidations,
             draw_start,
             draw_end,
@@ -1250,8 +1262,8 @@ mod tests {
         let dirty_at = Instant::now();
         let mut collector = FrameTimingCollector::new();
 
-        window_profiler.begin_draw();
-        window_profiler.end_draw(Some(dirty_at), 3);
+        window_profiler.begin_draw(Some(dirty_at));
+        window_profiler.end_draw(3);
         assert!(
             collector
                 .collect_unseen()
@@ -1261,8 +1273,8 @@ mod tests {
 
         set_trace_enabled(true);
         let mut collector = FrameTimingCollector::new();
-        window_profiler.begin_draw();
-        window_profiler.end_draw(Some(dirty_at), 3);
+        window_profiler.begin_draw(Some(dirty_at));
+        window_profiler.end_draw(3);
 
         let timing = collector
             .collect_unseen()
@@ -1334,8 +1346,8 @@ mod tests {
             WindowProfiler::new(window_id).expect("window profiler should initialize");
         let mut collector = FrameTimingCollector::new();
 
-        window_profiler.begin_draw();
-        window_profiler.end_draw(None, 0);
+        window_profiler.begin_draw(None);
+        window_profiler.end_draw(0);
         assert!(
             FRAME_TIMINGS
                 .lock()
@@ -1483,10 +1495,10 @@ mod tests {
         let mut window_profiler =
             WindowProfiler::new(WindowId::from(7)).expect("window profiler should initialize");
 
-        window_profiler.begin_draw();
+        window_profiler.begin_draw(None);
         begin_input_at(&mut window_profiler, Instant::now());
         window_profiler.end_input(true);
-        window_profiler.end_draw(None, 0);
+        window_profiler.end_draw(0);
 
         let snapshot = window_profiler.input_latency_snapshot();
         assert!(snapshot.latency_histogram.is_empty());
@@ -1574,6 +1586,7 @@ mod tests {
         window_profiler.record_draw_timing(FrameTiming {
             window_id: window_profiler.window_id,
             dirty_at: Some(draw_end - Duration::from_millis(4)),
+            withheld_for: None,
             invalidations: 1,
             draw_start: draw_end - Duration::from_millis(2),
             draw_end,
