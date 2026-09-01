@@ -148,7 +148,7 @@ impl PtyProcessInfo {
 
     #[cfg(unix)]
     pub(crate) fn kill_current_process(&self) -> bool {
-        let Some(pid) = self.pid_getter.pid() else {
+        let Some(pid) = self.pid_getter.pid().filter(|pid| pid.as_u32() != 0) else {
             return false;
         };
         unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGKILL) == 0 }
@@ -166,6 +166,12 @@ impl PtyProcessInfo {
     #[cfg(unix)]
     pub(crate) fn terminate_child_process(&self) -> bool {
         let pid = self.pid_getter.fallback_pid();
+        // `killpg(0, ...)` signals the caller's own process group, so a PTY
+        // without a local child process (a remote PTY, say) would terminate
+        // the application itself.
+        if pid.as_u32() == 0 {
+            return false;
+        }
         unsafe { libc::killpg(pid.as_u32() as i32, libc::SIGTERM) == 0 }
     }
 
