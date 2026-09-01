@@ -105,6 +105,35 @@ pub(crate) enum ViewedTransition {
     NoChange,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReviewHunkVisualState {
+    Hollow,
+    Filled,
+    Mixed,
+}
+
+impl ReviewHunkVisualState {
+    fn classify(viewed_delta: bool, viewed: bool, change_reasons: &[&str]) -> Self {
+        if viewed_delta {
+            Self::Filled
+        } else if viewed {
+            Self::Hollow
+        } else if change_reasons == ["Content changed"] {
+            Self::Mixed
+        } else {
+            Self::Filled
+        }
+    }
+
+    pub(crate) fn hollow(self, status: &buffer_diff::DiffHunkStatus) -> bool {
+        match self {
+            Self::Hollow => true,
+            Self::Filled => false,
+            Self::Mixed => !status.has_secondary_hunk(),
+        }
+    }
+}
+
 impl gpui::EventEmitter<ReviewEvent> for BranchReview {}
 
 pub(crate) struct BranchReview {
@@ -1005,6 +1034,14 @@ impl BranchReview {
             .is_some_and(|(fingerprint, state)| {
                 state.read(cx).is_viewed(&path.to_string(), fingerprint)
             })
+    }
+
+    pub(crate) fn hunk_visual_state(&self, path: &RepoPath, cx: &App) -> ReviewHunkVisualState {
+        ReviewHunkVisualState::classify(
+            self.is_viewed_delta(cx),
+            self.is_viewed(path, cx),
+            &self.change_reasons(path, cx),
+        )
     }
 
     pub(crate) fn viewed_control_state(
@@ -1958,6 +1995,60 @@ mod tests {
         assert_eq!(REVIEW_AUXILIARY_LABEL_SIZE, LabelSize::Small);
     }
 
+    #[test]
+    fn review_hunk_visual_states_cover_every_secondary_status() {
+        use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus};
+
+        assert_eq!(
+            ReviewHunkVisualState::classify(false, true, &[]),
+            ReviewHunkVisualState::Hollow
+        );
+        assert_eq!(
+            ReviewHunkVisualState::classify(false, false, &["Content changed"]),
+            ReviewHunkVisualState::Mixed
+        );
+        for reasons in [
+            vec![],
+            vec!["Base changed"],
+            vec!["File added/deleted"],
+            vec!["Mode changed"],
+            vec!["Rename changed"],
+            vec!["Base changed", "Content changed"],
+            vec!["Comparison changed"],
+        ] {
+            assert_eq!(
+                ReviewHunkVisualState::classify(false, false, &reasons),
+                ReviewHunkVisualState::Filled
+            );
+        }
+        assert_eq!(
+            ReviewHunkVisualState::classify(true, true, &[]),
+            ReviewHunkVisualState::Filled
+        );
+
+        let statuses = [
+            DiffHunkSecondaryStatus::NoSecondaryHunk,
+            DiffHunkSecondaryStatus::HasSecondaryHunk,
+            DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk,
+            DiffHunkSecondaryStatus::SecondaryHunkAdditionPending,
+            DiffHunkSecondaryStatus::SecondaryHunkRemovalPending,
+        ];
+        for status in statuses {
+            for hunk in [
+                DiffHunkStatus::added(status),
+                DiffHunkStatus::modified(status),
+                DiffHunkStatus::deleted(status),
+            ] {
+                assert!(ReviewHunkVisualState::Hollow.hollow(&hunk));
+                assert!(!ReviewHunkVisualState::Filled.hollow(&hunk));
+                assert_eq!(
+                    ReviewHunkVisualState::Mixed.hollow(&hunk),
+                    !hunk.has_secondary_hunk()
+                );
+            }
+        }
+    }
+
     #[gpui::test]
     async fn review_rows_expose_native_git_statuses_and_diff_stats(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2185,6 +2276,20 @@ mod tests {
         review.read_with(cx, |review, cx| {
             assert!(!review.is_viewed(&a, cx));
             assert!(review.is_viewed(&b, cx));
+            assert_eq!(
+                review.hunk_visual_state(&a, cx),
+                ReviewHunkVisualState::Mixed
+            );
+            assert!(
+                review
+                    .hunk_visual_state(&a, cx)
+                    .hollow(&buffer_diff::DiffHunkStatus::modified_none())
+            );
+            assert!(!review.hunk_visual_state(&a, cx).hollow(
+                &buffer_diff::DiffHunkStatus::modified(
+                    buffer_diff::DiffHunkSecondaryStatus::HasSecondaryHunk,
+                ),
+            ));
         });
         let expected_buffer_id = review.read_with(cx, |review, cx| {
             assert!(matches!(
@@ -2252,6 +2357,12 @@ mod tests {
         });
         cx.executor().advance_clock(Duration::from_millis(250));
         cx.run_until_parked();
+        review.read_with(cx, |review, cx| {
+            assert_eq!(
+                review.hunk_visual_state(&a, cx),
+                ReviewHunkVisualState::Filled
+            );
+        });
         delta_editor.read_with(cx, |editor, cx| {
             let buffer_ids = editor
                 .buffer()

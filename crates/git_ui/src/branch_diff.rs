@@ -171,13 +171,13 @@ impl DiffHunkDelegate for BranchReviewDiffHunkDelegate {
 
     fn render_hunk_hollow(
         &self,
-        _: &DiffHunkStatus,
+        status: &DiffHunkStatus,
         buffer_id: Option<BufferId>,
         cx: &App,
     ) -> Option<bool> {
         let review = self.review.upgrade()?;
         let path = review.read(cx).path_for_buffer(buffer_id?, cx)?;
-        Some(review.read(cx).is_viewed(&path, cx))
+        Some(review.read(cx).hunk_visual_state(&path, cx).hollow(status))
     }
 }
 
