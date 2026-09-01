@@ -475,7 +475,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "dock": "right",                // Position of the dock (left, right)
     "entry_spacing": "comfortable", // Vertical spacing (comfortable, standard)
     "file_icons": true,             // Show/hide file icons
-    "folder_icons": true,           // Show/hide folder icons
+    "folder_indicator": "icon",     // Dir glyph: icon, chevron, both
     "git_status": true,             // Indicate new/updated files
     "indent_size": 20,              // Pixels for each successive indent
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
@@ -598,7 +598,7 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "default_width": 300,         // Default width of the git panel
     "dock": "left",               // Where to dock: left, right
     "file_icons": true,           // Show/hide file_icons
-    "folder_icons": true,         // Show file_icons (true), chevrons (false) for dirs
+    "folder_indicator": "icon",   // Dir glyph: icon, chevron, both
     "git_status": true,           // Show git status
     "indent_size": 20,            // Indentation for nested items (pixels)
     "indent_guides": {
@@ -608,7 +608,8 @@ See [Terminal settings](./reference/all-settings.md#terminal) for additional non
     "auto_fold_dirs": true,       // Fold dirs with single subdir
     "scrollbar": {                // Project panel scrollbar settings
       "show": null                // Show/hide: (auto, system, always, never)
-    }
+    },
+    "multi_buffer_hide_symbols": false  // Hide symbols in multi-buffer views (show only files)
   }
 ```
 
