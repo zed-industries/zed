@@ -1240,21 +1240,25 @@ mod tests {
 
     #[test]
     fn reports_graphemes_that_exhaust_font_fallback() -> Result<()> {
-        let platform_text_system = Arc::new(text_system()?);
-        let text_system = Arc::new(gpui::TextSystem::new(platform_text_system));
-        let missing_glyph_receiver = text_system
-            .take_missing_glyph_receiver()
-            .context("missing glyph receiver was already taken")?;
-        let window_text_system = gpui::WindowTextSystem::new(text_system);
-        let text: SharedString = "界".into();
-        let runs = [gpui::TextRun {
+        let text_system = text_system()?;
+        let text = "界";
+        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
+        let runs = [FontRun {
             len: text.len(),
-            font: gpui::font("IBM Plex Sans"),
-            ..Default::default()
+            font_id,
         }];
 
-        window_text_system.shape_line(text, gpui::px(14.0), &runs, None);
-        let missing_glyphs = gpui::block_on(missing_glyph_receiver.recv())?;
+        let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
+        let missing_glyphs = text_system.0.read().missing_glyphs(
+            text,
+            &runs,
+            layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+                .filter(|glyph| glyph.id == GlyphId(0))
+                .map(|glyph| glyph.index),
+        );
 
         assert_eq!(missing_glyphs.len(), 1);
         assert_eq!(missing_glyphs[0].grapheme(), "界");
