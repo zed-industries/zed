@@ -478,6 +478,257 @@ async fn test_fetch_variables_for_multiple_scopes(
     });
 }
 
+/// A scope marked `expensive: true` by the DAP adapter (e.g. a JavaScript "Global"
+/// scope) must not have its variables fetched automatically, since resolving it can
+/// hang indefinitely. It should render collapsed, and only be resolved once the user
+/// explicitly expands it.
+#[gpui::test]
+async fn test_expensive_scope_is_not_eagerly_fetched(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    let test_file_content = r#"
+        const local = 1;
+    "#
+    .unindent();
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+           "src": {
+               "test.js": test_file_content,
+           }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.focus_panel::<DebugPanel>(window, cx);
+        })
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<dap::requests::Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![dap::Thread {
+                id: 1,
+                name: "Thread 1".into(),
+            }],
+        })
+    });
+
+    client.on_request::<Initialize, _>(move |_, _| {
+        Ok(dap::Capabilities {
+            supports_step_back: Some(false),
+            ..Default::default()
+        })
+    });
+
+    client.on_request::<Launch, _>(move |_, _| Ok(()));
+
+    let stack_frames = vec![StackFrame {
+        id: 1,
+        name: "Stack Frame 1".into(),
+        source: Some(dap::Source {
+            name: Some("test.js".into()),
+            path: Some(path!("/project/src/test.js").into()),
+            source_reference: None,
+            presentation_hint: None,
+            origin: None,
+            sources: None,
+            adapter_data: None,
+            checksums: None,
+        }),
+        line: 1,
+        column: 1,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
+    }];
+
+    client.on_request::<StackTrace, _>({
+        let stack_frames = Arc::new(stack_frames.clone());
+        move |_, args| {
+            assert_eq!(1, args.thread_id);
+
+            Ok(dap::StackTraceResponse {
+                stack_frames: (*stack_frames).clone(),
+                total_frames: None,
+            })
+        }
+    });
+
+    let scopes = vec![
+        Scope {
+            name: "Local".into(),
+            presentation_hint: Some(dap::ScopePresentationHint::Locals),
+            variables_reference: 2,
+            named_variables: None,
+            indexed_variables: None,
+            expensive: false,
+            source: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+        },
+        Scope {
+            name: "Global".into(),
+            presentation_hint: None,
+            variables_reference: 3,
+            named_variables: None,
+            indexed_variables: None,
+            expensive: true,
+            source: None,
+            line: None,
+            column: None,
+            end_line: None,
+            end_column: None,
+        },
+    ];
+
+    client.on_request::<Scopes, _>({
+        let scopes = Arc::new(scopes.clone());
+        move |_, args| {
+            assert_eq!(1, args.frame_id);
+
+            Ok(dap::ScopesResponse {
+                scopes: (*scopes).clone(),
+            })
+        }
+    });
+
+    let fetched_expensive_scope = Arc::new(AtomicBool::new(false));
+
+    client.on_request::<Variables, _>({
+        let fetched_expensive_scope = fetched_expensive_scope.clone();
+        move |_, args| match args.variables_reference {
+            2 => Ok(dap::VariablesResponse {
+                variables: vec![Variable {
+                    name: "localVar".into(),
+                    value: "1".into(),
+                    type_: None,
+                    presentation_hint: None,
+                    evaluate_name: None,
+                    variables_reference: 0,
+                    named_variables: None,
+                    indexed_variables: None,
+                    memory_reference: None,
+                    declaration_location_reference: None,
+                    value_location_reference: None,
+                }],
+            }),
+            3 => {
+                fetched_expensive_scope.store(true, Ordering::SeqCst);
+                Ok(dap::VariablesResponse {
+                    variables: vec![Variable {
+                        name: "globalVar".into(),
+                        value: "expensive".into(),
+                        type_: None,
+                        presentation_hint: None,
+                        evaluate_name: None,
+                        variables_reference: 0,
+                        named_variables: None,
+                        indexed_variables: None,
+                        memory_reference: None,
+                        declaration_location_reference: None,
+                        value_location_reference: None,
+                    }],
+                })
+            }
+            id => unreachable!("unexpected variables reference {id}"),
+        }
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    let running_state =
+        active_debug_session_panel(workspace, cx).update_in(cx, |item, window, cx| {
+            cx.focus_self(window);
+            let running = item.running_state().clone();
+
+            let variable_list = running.update(cx, |state, cx| {
+                // have to do this because the variable list pane should be shown/active
+                // for testing keyboard navigation
+                state.activate_item(DebuggerPaneItem::Variables, window, cx);
+
+                state.variable_list().clone()
+            });
+            variable_list.update(cx, |_, cx| cx.focus_self(window));
+            running
+        });
+    cx.run_until_parked();
+
+    running_state.update(cx, |running_state, cx| {
+        running_state
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                // The expensive "Global" scope is visible but collapsed; its variables
+                // must not have been fetched yet.
+                variable_list.assert_visual_entries(vec!["v Local", "    > localVar", "> Global"]);
+            });
+    });
+
+    assert!(
+        !fetched_expensive_scope.load(Ordering::SeqCst),
+        "Zed must not eagerly fetch variables for a scope marked `expensive: true`"
+    );
+
+    // Select and expand the Global scope: only now should its variables be resolved.
+    cx.dispatch_action(SelectFirst);
+    cx.dispatch_action(SelectFirst);
+    cx.run_until_parked();
+    cx.dispatch_action(SelectNext);
+    cx.run_until_parked();
+    cx.dispatch_action(SelectNext);
+    cx.run_until_parked();
+    cx.dispatch_action(ExpandSelectedEntry);
+    cx.run_until_parked();
+
+    running_state.update(cx, |running_state, cx| {
+        running_state
+            .variable_list()
+            .update(cx, |variable_list, _| {
+                variable_list.assert_visual_entries(vec![
+                    "v Local",
+                    "    > localVar",
+                    "v Global <=== selected",
+                    "    > globalVar",
+                ]);
+            });
+    });
+
+    assert!(
+        fetched_expensive_scope.load(Ordering::SeqCst),
+        "Expanding the Global scope should fetch its variables"
+    );
+}
+
 // tests that toggling a variable will fetch its children and shows it
 #[gpui::test]
 async fn test_keyboard_navigation(executor: BackgroundExecutor, cx: &mut TestAppContext) {

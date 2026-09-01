@@ -5,10 +5,10 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
     CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DelayMs,
-    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer,
+    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer, GitGutterWidth,
     GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder,
-    MultiCursorModifier, ScrollBeyondLastLine, ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap,
-    SnippetSortOrder,
+    MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine, ScrollbarDiagnostics,
+    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -51,9 +51,11 @@ pub struct EditorSettings {
     pub search_wrap: bool,
     pub search: SearchSettings,
     pub auto_signature_help: bool,
+    pub language_detection: bool,
     pub show_signature_help_after_edits: bool,
     pub go_to_definition_fallback: GoToDefinitionFallback,
     pub go_to_definition_scroll_strategy: GoToDefinitionScrollStrategy,
+    pub lsp_results_location: OpenResultsIn,
     pub jupyter: Jupyter,
     pub snippet_sort_order: SnippetSortOrder,
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
@@ -68,6 +70,15 @@ pub struct EditorSettings {
     pub completion_menu_item_kind: CompletionMenuItemKind,
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
+    pub file_diff: FileDiffSettings,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct FileDiffSettings {
+    /// Whether newly opened file diffs show the full file instead of changes only.
+    ///
+    /// Default: true
+    pub show_full_file: bool,
 }
 #[derive(Debug, Clone)]
 pub struct Jupyter {
@@ -131,7 +142,7 @@ impl Minimap {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Gutter {
     pub min_line_number_digits: usize,
     pub line_numbers: bool,
@@ -139,6 +150,7 @@ pub struct Gutter {
     pub breakpoints: bool,
     pub bookmarks: bool,
     pub folds: bool,
+    pub git_gutter_width: settings::GitGutterWidth,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -184,6 +196,8 @@ pub struct SearchSettings {
     pub regex: bool,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: bool,
+    /// Start searching as you type in project search, without pressing Enter.
+    pub search_on_type: bool,
 }
 
 impl EditorSettings {
@@ -203,6 +217,7 @@ impl Settings for EditorSettings {
         let search = editor.search.unwrap();
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
+        let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -256,6 +271,7 @@ impl Settings for EditorSettings {
                 bookmarks: gutter.bookmarks.unwrap(),
                 breakpoints: gutter.breakpoints.unwrap(),
                 folds: gutter.folds.unwrap(),
+                git_gutter_width: gutter.git_gutter_width.unwrap(),
             },
             scroll_beyond_last_line: editor.scroll_beyond_last_line.unwrap(),
             vertical_scroll_margin: editor.vertical_scroll_margin.unwrap() as f64,
@@ -284,11 +300,14 @@ impl Settings for EditorSettings {
                 include_ignored: search.include_ignored.unwrap(),
                 regex: search.regex.unwrap(),
                 center_on_match: search.center_on_match.unwrap(),
+                search_on_type: search.search_on_type.unwrap(),
             },
             auto_signature_help: editor.auto_signature_help.unwrap(),
+            language_detection: editor.language_detection.unwrap(),
             show_signature_help_after_edits: editor.show_signature_help_after_edits.unwrap(),
             go_to_definition_fallback: editor.go_to_definition_fallback.unwrap(),
             go_to_definition_scroll_strategy: editor.go_to_definition_scroll_strategy.unwrap(),
+            lsp_results_location: editor.lsp_results_location.unwrap(),
             jupyter: Jupyter {
                 enabled: editor.jupyter.unwrap().enabled.unwrap(),
             },
@@ -311,6 +330,9 @@ impl Settings for EditorSettings {
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
+            file_diff: FileDiffSettings {
+                show_full_file: file_diff.show_full_file.unwrap(),
+            },
         }
     }
 }

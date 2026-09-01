@@ -201,6 +201,7 @@ hr {
 
 .page {
   outline: 0;
+  order: 1;
   flex: 1;
   display: flex;
   flex-direction: column;

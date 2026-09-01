@@ -46,7 +46,7 @@ pub struct BedrockModelCacheConfiguration {
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
+pub enum ConverseModel {
     // Anthropic Claude 4+ models
     #[serde(
         rename = "claude-fable-5",
@@ -55,6 +55,13 @@ pub enum Model {
         alias = "claude-fable-5-thinking-latest"
     )]
     ClaudeFable5,
+    #[serde(
+        rename = "claude-opus-5",
+        alias = "claude-opus-5-latest",
+        alias = "claude-opus-5-thinking",
+        alias = "claude-opus-5-thinking-latest"
+    )]
+    ClaudeOpus5,
     #[serde(
         rename = "claude-opus-4-8",
         alias = "claude-opus-4-8-latest",
@@ -227,7 +234,7 @@ pub enum Model {
     },
 }
 
-impl Model {
+impl ConverseModel {
     pub fn default_fast(_region: &str) -> Self {
         Self::ClaudeHaiku4_5
     }
@@ -235,6 +242,8 @@ impl Model {
     pub fn from_id(id: &str) -> anyhow::Result<Self> {
         if id.starts_with("claude-fable-5") {
             Ok(Self::ClaudeFable5)
+        } else if id.starts_with("claude-opus-5") {
+            Ok(Self::ClaudeOpus5)
         } else if id.starts_with("claude-opus-4-8") {
             Ok(Self::ClaudeOpus4_8)
         } else if id.starts_with("claude-opus-4-7") {
@@ -263,6 +272,7 @@ impl Model {
     pub fn id(&self) -> &str {
         match self {
             Self::ClaudeFable5 => "claude-fable-5",
+            Self::ClaudeOpus5 => "claude-opus-5",
             Self::ClaudeOpus4_8 => "claude-opus-4-8",
             Self::ClaudeOpus4_7 => "claude-opus-4-7",
             Self::ClaudeOpus4_6 => "claude-opus-4-6",
@@ -316,6 +326,7 @@ impl Model {
     pub fn request_id(&self) -> &str {
         match self {
             Self::ClaudeFable5 => "anthropic.claude-fable-5",
+            Self::ClaudeOpus5 => "anthropic.claude-opus-5",
             Self::ClaudeOpus4_8 => "anthropic.claude-opus-4-8",
             Self::ClaudeOpus4_7 => "anthropic.claude-opus-4-7",
             Self::ClaudeOpus4_6 => "anthropic.claude-opus-4-6-v1",
@@ -369,6 +380,7 @@ impl Model {
     pub fn display_name(&self) -> &str {
         match self {
             Self::ClaudeFable5 => "Claude Fable 5",
+            Self::ClaudeOpus5 => "Claude Opus 5",
             Self::ClaudeOpus4_8 => "Claude Opus 4.8",
             Self::ClaudeOpus4_7 => "Claude Opus 4.7",
             Self::ClaudeOpus4_6 => "Claude Opus 4.6",
@@ -424,6 +436,7 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -461,6 +474,7 @@ impl Model {
     pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -503,6 +517,7 @@ impl Model {
     pub fn default_temperature(&self) -> f32 {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -524,6 +539,7 @@ impl Model {
     pub fn supports_tool_use(&self) -> bool {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -558,6 +574,7 @@ impl Model {
     pub fn supports_images(&self) -> bool {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -579,6 +596,7 @@ impl Model {
     pub fn supports_caching(&self) -> bool {
         match self {
             Self::ClaudeFable5
+            | Self::ClaudeOpus5
             | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
@@ -601,6 +619,7 @@ impl Model {
         matches!(
             self,
             Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -618,6 +637,7 @@ impl Model {
         matches!(
             self,
             Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -629,7 +649,7 @@ impl Model {
     pub fn supports_xhigh_adaptive_thinking(&self) -> bool {
         matches!(
             self,
-            Self::ClaudeFable5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5
+            Self::ClaudeFable5 | Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeSonnet5
         )
     }
 
@@ -657,6 +677,7 @@ impl Model {
         let supports_global = matches!(
             self,
             Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -720,6 +741,7 @@ impl Model {
             // Global inference profiles
             (
                 Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -739,6 +761,7 @@ impl Model {
             // US region inference profiles
             (
                 Self::ClaudeFable5
+                | Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
@@ -763,13 +786,23 @@ impl Model {
             // Canada region inference profiles
             (Self::NovaLite, "ca") => Ok(format!("{}.{}", region_group, model_id)),
 
+            // Canada has no Claude-specific `ca.` profiles. AWS instead lists
+            // ca-central-1 and ca-west-1 as source regions of the US geo
+            // profiles for these models, which keep data within US and Canada
+            // regions:
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-8.html>
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-4-7.html>
+            (Self::ClaudeOpus5 | Self::ClaudeOpus4_8 | Self::ClaudeOpus4_7, "ca") => {
+                Ok(format!("us.{}", model_id))
+            }
+
             // EU region inference profiles
             (
-                Self::ClaudeFable5
+                Self::ClaudeOpus5
                 | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet5
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
@@ -782,7 +815,8 @@ impl Model {
 
             // Australia region inference profiles
             (
-                Self::ClaudeOpus4_8
+                Self::ClaudeOpus5
+                | Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
                 | Self::ClaudeSonnet4_6
@@ -791,9 +825,14 @@ impl Model {
                 "au",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Japan region inference profiles
+            // Japan region inference profiles. Claude Opus 5 is deliberately
+            // absent: its model card lists only `us.`/`eu.`/`au.` geo profiles
+            // (plus `global.`):
+            // <https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-anthropic-claude-opus-5.html>
             (
-                Self::ClaudeSonnet4_6
+                Self::ClaudeOpus4_8
+                | Self::ClaudeOpus4_7
+                | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeHaiku4_5
                 | Self::Nova2Lite,
@@ -811,8 +850,171 @@ impl Model {
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
+            (Self::ClaudeFable5 | Self::ClaudeSonnet5, _) => Ok(format!("global.{}", model_id)),
+
             // Default: use model ID directly
             _ => Ok(model_id.into()),
+        }
+    }
+}
+
+/// The wire protocol used to talk to a [`MantleModel`] on the `bedrock-mantle` endpoint.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
+pub enum MantleProtocol {
+    /// The OpenAI Chat Completions API (`/chat/completions`).
+    #[default]
+    ChatCompletions,
+    /// The OpenAI Responses API (`/responses`).
+    Responses,
+}
+
+/// Models only reachable through the `bedrock-mantle` endpoint's
+/// OpenAI-compatible APIs, i.e. with no `Converse`/`Invoke` support on
+/// `bedrock-runtime`.
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, EnumIter)]
+pub enum MantleModel {
+    #[serde(rename = "gpt-5.6-sol")]
+    Gpt5_6Sol,
+    #[serde(rename = "gpt-5.6-terra")]
+    Gpt5_6Terra,
+    #[serde(rename = "gpt-5.6-luna")]
+    Gpt5_6Luna,
+    #[serde(rename = "gpt-5.5")]
+    Gpt5_5,
+    #[serde(rename = "gpt-5.4")]
+    Gpt5_4,
+    #[serde(rename = "grok-4.3")]
+    Grok4_3,
+    #[serde(rename = "custom")]
+    Custom {
+        name: String,
+        display_name: Option<String>,
+        max_tokens: u64,
+        max_output_tokens: Option<u64>,
+        protocol: MantleProtocol,
+        supports_tools: bool,
+        supports_images: bool,
+        supports_thinking: bool,
+    },
+}
+
+impl MantleModel {
+    /// The model id Zed uses internally (also used as the `name` in settings).
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Gpt5_6Sol => "gpt-5.6-sol",
+            Self::Gpt5_6Terra => "gpt-5.6-terra",
+            Self::Gpt5_6Luna => "gpt-5.6-luna",
+            Self::Gpt5_5 => "gpt-5.5",
+            Self::Gpt5_4 => "gpt-5.4",
+            Self::Grok4_3 => "grok-4.3",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    /// The model id as expected in Bedrock Mantle request bodies, e.g. `openai.gpt-5.5`.
+    pub fn request_id(&self) -> &str {
+        match self {
+            Self::Gpt5_6Sol => "openai.gpt-5.6-sol",
+            Self::Gpt5_6Terra => "openai.gpt-5.6-terra",
+            Self::Gpt5_6Luna => "openai.gpt-5.6-luna",
+            Self::Gpt5_5 => "openai.gpt-5.5",
+            Self::Gpt5_4 => "openai.gpt-5.4",
+            Self::Grok4_3 => "xai.grok-4.3",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Gpt5_6Sol => "GPT-5.6 Sol",
+            Self::Gpt5_6Terra => "GPT-5.6 Terra",
+            Self::Gpt5_6Luna => "GPT-5.6 Luna",
+            Self::Gpt5_5 => "GPT-5.5",
+            Self::Gpt5_4 => "GPT-5.4",
+            Self::Grok4_3 => "Grok 4.3",
+            Self::Custom {
+                display_name, name, ..
+            } => display_name.as_deref().unwrap_or(name.as_str()),
+        }
+    }
+
+    /// Which OpenAI-compatible API this model must be called through.
+    pub fn protocol(&self) -> MantleProtocol {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => MantleProtocol::Responses,
+            Self::Custom { protocol, .. } => *protocol,
+        }
+    }
+
+    pub fn max_token_count(&self) -> u64 {
+        match self {
+            Self::Gpt5_6Sol | Self::Gpt5_6Terra | Self::Gpt5_6Luna => 1_000_000,
+            Self::Gpt5_5 | Self::Gpt5_4 => 272_000,
+            Self::Grok4_3 => 1_000_000,
+            Self::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn max_output_tokens(&self) -> u64 {
+        match self {
+            // AWS doesn't document a hard cap for the GPT-5.x models on Mantle.
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4 => 128_000,
+            Self::Grok4_3 => 131_072,
+            Self::Custom {
+                max_output_tokens, ..
+            } => max_output_tokens.unwrap_or(4_096),
+        }
+    }
+
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
+            Self::Custom { supports_tools, .. } => *supports_tools,
+        }
+    }
+
+    pub fn supports_images(&self) -> bool {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
+            Self::Custom {
+                supports_images, ..
+            } => *supports_images,
+        }
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        match self {
+            Self::Gpt5_6Sol
+            | Self::Gpt5_6Terra
+            | Self::Gpt5_6Luna
+            | Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Grok4_3 => true,
+            Self::Custom {
+                supports_thinking, ..
+            } => *supports_thinking,
         }
     }
 }
@@ -822,29 +1024,113 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_builtin_mantle_models_use_responses_protocol() {
+        assert_eq!(MantleModel::Gpt5_6Sol.protocol(), MantleProtocol::Responses);
+        assert_eq!(
+            MantleModel::Gpt5_6Terra.protocol(),
+            MantleProtocol::Responses
+        );
+        assert_eq!(
+            MantleModel::Gpt5_6Luna.protocol(),
+            MantleProtocol::Responses
+        );
+        assert_eq!(MantleModel::Gpt5_5.protocol(), MantleProtocol::Responses);
+        assert_eq!(MantleModel::Gpt5_4.protocol(), MantleProtocol::Responses);
+        assert_eq!(MantleModel::Grok4_3.protocol(), MantleProtocol::Responses);
+    }
+
+    #[test]
+    fn test_gpt_5_6_mantle_model_metadata() {
+        // Values mirror the AWS Bedrock model cards for GPT-5.6 Sol/Terra/Luna,
+        // which are served only through the `bedrock-mantle` Responses API.
+        for (model, id, request_id, display_name) in [
+            (
+                MantleModel::Gpt5_6Sol,
+                "gpt-5.6-sol",
+                "openai.gpt-5.6-sol",
+                "GPT-5.6 Sol",
+            ),
+            (
+                MantleModel::Gpt5_6Terra,
+                "gpt-5.6-terra",
+                "openai.gpt-5.6-terra",
+                "GPT-5.6 Terra",
+            ),
+            (
+                MantleModel::Gpt5_6Luna,
+                "gpt-5.6-luna",
+                "openai.gpt-5.6-luna",
+                "GPT-5.6 Luna",
+            ),
+        ] {
+            assert_eq!(model.id(), id);
+            assert_eq!(model.request_id(), request_id);
+            assert_eq!(model.display_name(), display_name);
+            assert_eq!(model.max_token_count(), 1_000_000);
+            assert!(model.supports_tools());
+            assert!(model.supports_images());
+            assert!(model.supports_thinking());
+        }
+    }
+
+    #[test]
+    fn test_builtin_mantle_models_have_unique_ids_and_sane_token_limits() {
+        use std::collections::HashSet;
+        use strum::IntoEnumIterator;
+
+        let mut ids = HashSet::new();
+        let mut request_ids = HashSet::new();
+        for model in
+            MantleModel::iter().filter(|model| !matches!(model, MantleModel::Custom { .. }))
+        {
+            assert!(
+                ids.insert(model.id().to_string()),
+                "duplicate MantleModel id: {}",
+                model.id()
+            );
+            assert!(
+                request_ids.insert(model.request_id().to_string()),
+                "duplicate MantleModel request_id: {}",
+                model.request_id()
+            );
+            assert!(
+                model.max_output_tokens() <= model.max_token_count(),
+                "{} has max_output_tokens ({}) greater than max_token_count ({})",
+                model.id(),
+                model.max_output_tokens(),
+                model.max_token_count()
+            );
+        }
+    }
+
+    #[test]
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("us-west-2", false)?,
+            ConverseModel::ClaudeSonnet4.cross_region_inference_id("us-west-2", false)?,
             "us.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeFable5.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::ClaudeFable5.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-fable-5"
         );
         assert_eq!(
-            Model::ClaudeSonnet5.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("us-east-1", false)?,
             "us.anthropic.claude-sonnet-5"
         );
         assert_eq!(
-            Model::NovaPro.cross_region_inference_id("us-east-2", false)?,
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("us-east-1", false)?,
+            "us.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::NovaPro.cross_region_inference_id("us-east-2", false)?,
             "us.amazon.nova-pro-v1:0"
         );
         assert_eq!(
-            Model::DeepSeekR1.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::DeepSeekR1.cross_region_inference_id("us-east-1", false)?,
             "us.deepseek.r1-v1:0"
         );
         Ok(())
@@ -853,36 +1139,53 @@ mod tests {
     #[test]
     fn test_eu_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeSonnet4.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::NovaLite.cross_region_inference_id("eu-north-1", false)?,
+            ConverseModel::NovaLite.cross_region_inference_id("eu-north-1", false)?,
             "eu.amazon.nova-lite-v1:0"
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeOpus4_6.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-4-6-v1"
         );
         assert_eq!(
-            Model::ClaudeOpus4_7.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-4-7"
         );
         assert_eq!(
-            Model::ClaudeOpus4_8.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-4-8"
         );
         assert_eq!(
-            Model::ClaudeFable5.cross_region_inference_id("eu-west-1", false)?,
-            "eu.anthropic.claude-fable-5"
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("eu-west-1", false)?,
+            "eu.anthropic.claude-opus-5"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_inference_profile_only_models_fall_back_to_global() -> anyhow::Result<()> {
+        assert_eq!(
+            ConverseModel::ClaudeFable5.cross_region_inference_id("eu-west-1", false)?,
+            "global.anthropic.claude-fable-5"
         );
         assert_eq!(
-            Model::ClaudeSonnet5.cross_region_inference_id("eu-west-1", false)?,
-            "eu.anthropic.claude-sonnet-5"
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("eu-west-1", false)?,
+            "global.anthropic.claude-sonnet-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeFable5.cross_region_inference_id("ap-southeast-2", false)?,
+            "global.anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("ap-northeast-1", false)?,
+            "global.anthropic.claude-sonnet-5"
         );
         Ok(())
     }
@@ -890,11 +1193,11 @@ mod tests {
     #[test]
     fn test_apac_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("ap-south-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-south-1", false)?,
             "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::NovaLite.cross_region_inference_id("ap-south-1", false)?,
+            ConverseModel::NovaLite.cross_region_inference_id("ap-south-1", false)?,
             "apac.amazon.nova-lite-v1:0"
         );
         Ok(())
@@ -903,24 +1206,28 @@ mod tests {
     #[test]
     fn test_au_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeHaiku4_5.cross_region_inference_id("ap-southeast-2", false)?,
+            ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-haiku-4-5-20251001-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("ap-southeast-4", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-southeast-4", false)?,
             "au.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.cross_region_inference_id("ap-southeast-2", false)?,
+            ConverseModel::ClaudeOpus4_6.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-4-6-v1"
         );
         assert_eq!(
-            Model::ClaudeOpus4_7.cross_region_inference_id("ap-southeast-2", false)?,
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-4-7"
         );
         assert_eq!(
-            Model::ClaudeOpus4_8.cross_region_inference_id("ap-southeast-2", false)?,
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-southeast-2", false)?,
             "au.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ap-southeast-2", false)?,
+            "au.anthropic.claude-opus-5"
         );
         Ok(())
     }
@@ -928,15 +1235,30 @@ mod tests {
     #[test]
     fn test_jp_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeHaiku4_5.cross_region_inference_id("ap-northeast-1", false)?,
+            ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-northeast-1", false)?,
             "jp.anthropic.claude-haiku-4-5-20251001-v1:0"
         );
+        // Claude Opus 5 has no `jp.` geo profile, so it falls through to the
+        // bare model id (which fails at request time with a region hint)
+        // rather than fabricating an undocumented profile.
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("ap-northeast-3", false)?,
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ap-northeast-1", false)?,
+            "anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ap-northeast-1", false)?,
+            "jp.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ap-northeast-3", false)?,
+            "jp.anthropic.claude-opus-4-7"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("ap-northeast-3", false)?,
             "jp.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::Nova2Lite.cross_region_inference_id("ap-northeast-1", false)?,
+            ConverseModel::Nova2Lite.cross_region_inference_id("ap-northeast-1", false)?,
             "jp.amazon.nova-2-lite-v1:0"
         );
         Ok(())
@@ -945,8 +1267,22 @@ mod tests {
     #[test]
     fn test_ca_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::NovaLite.cross_region_inference_id("ca-central-1", false)?,
+            ConverseModel::NovaLite.cross_region_inference_id("ca-central-1", false)?,
             "ca.amazon.nova-lite-v1:0"
+        );
+        // Canadian regions are source regions of the US geo profile for
+        // recent Opus models; there are no `ca.` Claude profiles.
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("ca-west-1", false)?,
+            "us.anthropic.claude-opus-4-8"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("ca-central-1", false)?,
+            "us.anthropic.claude-opus-4-7"
         );
         Ok(())
     }
@@ -954,11 +1290,11 @@ mod tests {
     #[test]
     fn test_gov_region_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("us-gov-east-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-gov-east-1", false)?,
             "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("us-gov-west-1", false)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("us-gov-west-1", false)?,
             "us-gov.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         Ok(())
@@ -967,45 +1303,49 @@ mod tests {
     #[test]
     fn test_global_inference_ids() -> anyhow::Result<()> {
         assert_eq!(
-            Model::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeSonnet4.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-sonnet-4-20250514-v1:0"
         );
         assert_eq!(
-            Model::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", true)?,
+            ConverseModel::ClaudeSonnet4_5.cross_region_inference_id("eu-west-1", true)?,
             "global.anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
         assert_eq!(
-            Model::ClaudeHaiku4_5.cross_region_inference_id("ap-south-1", true)?,
+            ConverseModel::ClaudeHaiku4_5.cross_region_inference_id("ap-south-1", true)?,
             "global.anthropic.claude-haiku-4-5-20251001-v1:0"
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeOpus4_6.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-opus-4-6-v1"
         );
         assert_eq!(
-            Model::ClaudeOpus4_7.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeOpus4_7.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-opus-4-7"
         );
         assert_eq!(
-            Model::ClaudeOpus4_8.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeOpus4_8.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-opus-4-8"
         );
         assert_eq!(
-            Model::ClaudeFable5.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeOpus5.cross_region_inference_id("us-east-1", true)?,
+            "global.anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeFable5.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-fable-5"
         );
         assert_eq!(
-            Model::ClaudeSonnet5.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::ClaudeSonnet5.cross_region_inference_id("us-east-1", true)?,
             "global.anthropic.claude-sonnet-5"
         );
         assert_eq!(
-            Model::Nova2Lite.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::Nova2Lite.cross_region_inference_id("us-east-1", true)?,
             "global.amazon.nova-2-lite-v1:0"
         );
 
         // Models without global support fall back to regional
         assert_eq!(
-            Model::NovaPro.cross_region_inference_id("us-east-1", true)?,
+            ConverseModel::NovaPro.cross_region_inference_id("us-east-1", true)?,
             "us.amazon.nova-pro-v1:0"
         );
         Ok(())
@@ -1015,27 +1355,27 @@ mod tests {
     fn test_models_without_cross_region() -> anyhow::Result<()> {
         // Models without cross-region support return their request_id directly
         assert_eq!(
-            Model::Gemma3_4B.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::Gemma3_4B.cross_region_inference_id("us-east-1", false)?,
             "google.gemma-3-4b-it"
         );
         assert_eq!(
-            Model::MistralLarge3.cross_region_inference_id("eu-west-1", false)?,
+            ConverseModel::MistralLarge3.cross_region_inference_id("eu-west-1", false)?,
             "mistral.mistral-large-3-675b-instruct"
         );
         assert_eq!(
-            Model::Qwen3VL235B.cross_region_inference_id("ap-south-1", false)?,
+            ConverseModel::Qwen3VL235B.cross_region_inference_id("ap-south-1", false)?,
             "qwen.qwen3-vl-235b-a22b"
         );
         assert_eq!(
-            Model::GptOss120B.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::GptOss120B.cross_region_inference_id("us-east-1", false)?,
             "openai.gpt-oss-120b-1:0"
         );
         assert_eq!(
-            Model::MiniMaxM2.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::MiniMaxM2.cross_region_inference_id("us-east-1", false)?,
             "minimax.minimax-m2"
         );
         assert_eq!(
-            Model::KimiK2Thinking.cross_region_inference_id("us-east-1", false)?,
+            ConverseModel::KimiK2Thinking.cross_region_inference_id("us-east-1", false)?,
             "moonshot.kimi-k2-thinking"
         );
         Ok(())
@@ -1043,7 +1383,7 @@ mod tests {
 
     #[test]
     fn test_custom_model_inference_ids() -> anyhow::Result<()> {
-        let custom_model = Model::Custom {
+        let custom_model = ConverseModel::Custom {
             name: "custom.my-model-v1:0".to_string(),
             max_tokens: 100000,
             display_name: Some("My Custom Model".to_string()),
@@ -1065,78 +1405,104 @@ mod tests {
 
     #[test]
     fn test_friendly_id_vs_request_id() {
-        assert_eq!(Model::ClaudeSonnet4_5.id(), "claude-sonnet-4-5");
-        assert_eq!(Model::NovaLite.id(), "nova-lite");
-        assert_eq!(Model::DeepSeekR1.id(), "deepseek-r1");
-        assert_eq!(Model::Llama4Scout17B.id(), "llama-4-scout-17b");
-        assert_eq!(Model::ClaudeFable5.id(), "claude-fable-5");
-        assert_eq!(Model::ClaudeSonnet5.id(), "claude-sonnet-5");
+        assert_eq!(ConverseModel::ClaudeSonnet4_5.id(), "claude-sonnet-4-5");
+        assert_eq!(ConverseModel::NovaLite.id(), "nova-lite");
+        assert_eq!(ConverseModel::DeepSeekR1.id(), "deepseek-r1");
+        assert_eq!(ConverseModel::Llama4Scout17B.id(), "llama-4-scout-17b");
+        assert_eq!(ConverseModel::ClaudeFable5.id(), "claude-fable-5");
+        assert_eq!(ConverseModel::ClaudeOpus5.id(), "claude-opus-5");
+        assert_eq!(ConverseModel::ClaudeSonnet5.id(), "claude-sonnet-5");
 
         assert_eq!(
-            Model::ClaudeSonnet4_5.request_id(),
+            ConverseModel::ClaudeSonnet4_5.request_id(),
             "anthropic.claude-sonnet-4-5-20250929-v1:0"
         );
-        assert_eq!(Model::NovaLite.request_id(), "amazon.nova-lite-v1:0");
-        assert_eq!(Model::DeepSeekR1.request_id(), "deepseek.r1-v1:0");
         assert_eq!(
-            Model::Llama4Scout17B.request_id(),
+            ConverseModel::NovaLite.request_id(),
+            "amazon.nova-lite-v1:0"
+        );
+        assert_eq!(ConverseModel::DeepSeekR1.request_id(), "deepseek.r1-v1:0");
+        assert_eq!(
+            ConverseModel::Llama4Scout17B.request_id(),
             "meta.llama4-scout-17b-instruct-v1:0"
         );
-        assert_eq!(Model::ClaudeFable5.request_id(), "anthropic.claude-fable-5");
         assert_eq!(
-            Model::ClaudeSonnet5.request_id(),
+            ConverseModel::ClaudeFable5.request_id(),
+            "anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeOpus5.request_id(),
+            "anthropic.claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::ClaudeSonnet5.request_id(),
             "anthropic.claude-sonnet-5"
         );
 
         // Thinking aliases deserialize to the same model
-        assert_eq!(Model::ClaudeSonnet4.id(), "claude-sonnet-4");
+        assert_eq!(ConverseModel::ClaudeSonnet4.id(), "claude-sonnet-4");
         assert_eq!(
-            Model::from_id("claude-sonnet-4-thinking").unwrap().id(),
+            ConverseModel::from_id("claude-sonnet-4-thinking")
+                .unwrap()
+                .id(),
             "claude-sonnet-4"
         );
         assert_eq!(
-            Model::from_id("claude-fable-5-thinking").unwrap().id(),
+            ConverseModel::from_id("claude-fable-5-thinking")
+                .unwrap()
+                .id(),
             "claude-fable-5"
         );
         assert_eq!(
-            Model::from_id("claude-sonnet-5-thinking").unwrap().id(),
+            ConverseModel::from_id("claude-opus-5-thinking")
+                .unwrap()
+                .id(),
+            "claude-opus-5"
+        );
+        assert_eq!(
+            ConverseModel::from_id("claude-sonnet-5-thinking")
+                .unwrap()
+                .id(),
             "claude-sonnet-5"
         );
     }
 
     #[test]
     fn test_thinking_modes() {
-        assert!(Model::ClaudeHaiku4_5.supports_thinking());
-        assert!(Model::ClaudeSonnet4.supports_thinking());
-        assert!(Model::ClaudeSonnet4_5.supports_thinking());
-        assert!(Model::ClaudeOpus4_6.supports_thinking());
-        assert!(Model::ClaudeFable5.supports_thinking());
+        assert!(ConverseModel::ClaudeHaiku4_5.supports_thinking());
+        assert!(ConverseModel::ClaudeSonnet4.supports_thinking());
+        assert!(ConverseModel::ClaudeSonnet4_5.supports_thinking());
+        assert!(ConverseModel::ClaudeOpus4_6.supports_thinking());
+        assert!(ConverseModel::ClaudeFable5.supports_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_thinking());
 
-        assert!(!Model::ClaudeSonnet4.supports_adaptive_thinking());
-        assert!(Model::ClaudeOpus4_6.supports_adaptive_thinking());
-        assert!(Model::ClaudeSonnet4_6.supports_adaptive_thinking());
-        assert!(Model::ClaudeFable5.supports_adaptive_thinking());
-        assert!(Model::ClaudeSonnet5.supports_adaptive_thinking());
-        assert!(!Model::ClaudeOpus4_7.supports_xhigh_adaptive_thinking());
-        assert!(Model::ClaudeFable5.supports_xhigh_adaptive_thinking());
-        assert!(Model::ClaudeSonnet5.supports_xhigh_adaptive_thinking());
-        assert!(Model::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
+        assert!(!ConverseModel::ClaudeSonnet4.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus4_6.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet4_6.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeFable5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet5.supports_adaptive_thinking());
+        assert!(!ConverseModel::ClaudeOpus4_7.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeFable5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeSonnet5.supports_xhigh_adaptive_thinking());
+        assert!(ConverseModel::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
         assert_eq!(BedrockAdaptiveThinkingEffort::XHigh.as_str(), "xhigh");
 
         assert_eq!(
-            Model::ClaudeSonnet4.thinking_mode(),
+            ConverseModel::ClaudeSonnet4.thinking_mode(),
             BedrockModelMode::Thinking {
                 budget_tokens: Some(4096)
             }
         );
         assert_eq!(
-            Model::ClaudeOpus4_6.thinking_mode(),
+            ConverseModel::ClaudeOpus4_6.thinking_mode(),
             BedrockModelMode::AdaptiveThinking {
                 effort: BedrockAdaptiveThinkingEffort::High
             }
         );
         assert_eq!(
-            Model::ClaudeHaiku4_5.thinking_mode(),
+            ConverseModel::ClaudeHaiku4_5.thinking_mode(),
             BedrockModelMode::Thinking {
                 budget_tokens: Some(4096)
             }
@@ -1145,44 +1511,46 @@ mod tests {
 
     #[test]
     fn test_max_token_count() {
-        assert_eq!(Model::ClaudeSonnet4_5.max_token_count(), 1_000_000);
-        assert_eq!(Model::ClaudeOpus4_6.max_token_count(), 1_000_000);
-        assert_eq!(Model::ClaudeFable5.max_token_count(), 1_000_000);
-        assert_eq!(Model::ClaudeSonnet5.max_token_count(), 1_000_000);
-        assert_eq!(Model::Llama4Scout17B.max_token_count(), 128_000);
-        assert_eq!(Model::NovaPremier.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeSonnet4_5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeOpus4_6.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeFable5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeOpus5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::ClaudeSonnet5.max_token_count(), 1_000_000);
+        assert_eq!(ConverseModel::Llama4Scout17B.max_token_count(), 128_000);
+        assert_eq!(ConverseModel::NovaPremier.max_token_count(), 1_000_000);
     }
 
     #[test]
     fn test_max_output_tokens() {
-        assert_eq!(Model::ClaudeSonnet4_5.max_output_tokens(), 64_000);
-        assert_eq!(Model::ClaudeOpus4_6.max_output_tokens(), 128_000);
-        assert_eq!(Model::ClaudeFable5.max_output_tokens(), 128_000);
-        assert_eq!(Model::ClaudeSonnet5.max_output_tokens(), 128_000);
-        assert_eq!(Model::ClaudeOpus4_1.max_output_tokens(), 32_000);
-        assert_eq!(Model::Gemma3_4B.max_output_tokens(), 8_192);
+        assert_eq!(ConverseModel::ClaudeSonnet4_5.max_output_tokens(), 64_000);
+        assert_eq!(ConverseModel::ClaudeOpus4_6.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeFable5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeOpus5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeSonnet5.max_output_tokens(), 128_000);
+        assert_eq!(ConverseModel::ClaudeOpus4_1.max_output_tokens(), 32_000);
+        assert_eq!(ConverseModel::Gemma3_4B.max_output_tokens(), 8_192);
     }
 
     #[test]
     fn test_supports_tool_use() {
-        assert!(Model::ClaudeSonnet4_5.supports_tool_use());
-        assert!(Model::ClaudeFable5.supports_tool_use());
-        assert!(Model::NovaPro.supports_tool_use());
-        assert!(Model::MistralLarge3.supports_tool_use());
-        assert!(!Model::Gemma3_4B.supports_tool_use());
-        assert!(Model::Qwen3_32B.supports_tool_use());
-        assert!(Model::MiniMaxM2.supports_tool_use());
-        assert!(Model::KimiK2_5.supports_tool_use());
-        assert!(Model::DeepSeekR1.supports_tool_use());
-        assert!(!Model::Llama4Scout17B.supports_tool_use());
+        assert!(ConverseModel::ClaudeSonnet4_5.supports_tool_use());
+        assert!(ConverseModel::ClaudeFable5.supports_tool_use());
+        assert!(ConverseModel::NovaPro.supports_tool_use());
+        assert!(ConverseModel::MistralLarge3.supports_tool_use());
+        assert!(!ConverseModel::Gemma3_4B.supports_tool_use());
+        assert!(ConverseModel::Qwen3_32B.supports_tool_use());
+        assert!(ConverseModel::MiniMaxM2.supports_tool_use());
+        assert!(ConverseModel::KimiK2_5.supports_tool_use());
+        assert!(ConverseModel::DeepSeekR1.supports_tool_use());
+        assert!(!ConverseModel::Llama4Scout17B.supports_tool_use());
     }
 
     #[test]
     fn test_supports_caching() {
-        assert!(Model::ClaudeSonnet4_5.supports_caching());
-        assert!(Model::ClaudeOpus4_6.supports_caching());
-        assert!(Model::ClaudeFable5.supports_caching());
-        assert!(!Model::Llama4Scout17B.supports_caching());
-        assert!(!Model::NovaPro.supports_caching());
+        assert!(ConverseModel::ClaudeSonnet4_5.supports_caching());
+        assert!(ConverseModel::ClaudeOpus4_6.supports_caching());
+        assert!(ConverseModel::ClaudeFable5.supports_caching());
+        assert!(!ConverseModel::Llama4Scout17B.supports_caching());
+        assert!(!ConverseModel::NovaPro.supports_caching());
     }
 }

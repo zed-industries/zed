@@ -18,7 +18,6 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{MultiWorkspace, Workspace, create_and_open_local_file};
-use zed_actions::OpenBrowser;
 
 use crate::SettingsWindow;
 
@@ -63,10 +62,7 @@ fn get_agent_server_store(
     settings_window: &SettingsWindow,
     cx: &App,
 ) -> Option<Entity<AgentServerStore>> {
-    let original_window = settings_window.original_window.as_ref()?;
-    let multi_workspace = original_window.read(cx).ok()?;
-    let workspace = multi_workspace.workspaces().next()?;
-    let project = workspace.read(cx).project().clone();
+    let project = settings_window.active_project(cx)?;
     Some(project.read(cx).agent_server_store().clone())
 }
 
@@ -310,14 +306,7 @@ pub(crate) fn render_add_agent_popover(
                         .icon(IconName::ArrowUpRight)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::End)
-                        .handler(move |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenBrowser {
-                                    url: "https://agentclientprotocol.com/".into(),
-                                }),
-                                cx,
-                            );
-                        }),
+                        .handler(|_window, cx| cx.open_url("https://agentclientprotocol.com/")),
                 )
             }))
         });
@@ -894,13 +883,7 @@ fn open_new_custom_agent_in_settings(original_window: WindowHandle<MultiWorkspac
     cx.activate(true);
     original_window
         .update(cx, |multi_workspace, window, cx| {
-            // Use the workspace handed to us by the update closure rather than
-            // `Workspace::for_window`, which would read the `MultiWorkspace`
-            // entity that this closure is already updating (a double borrow).
-            let Some(workspace) = multi_workspace.workspaces().next() else {
-                return;
-            };
-            let workspace = workspace.downgrade();
+            let workspace = multi_workspace.workspace().downgrade();
             window.activate_window();
             window
                 .spawn(cx, async move |cx| {

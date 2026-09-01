@@ -28,7 +28,6 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 git.workspace = true
-git_ui.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language_model.workspace = true
@@ -50,6 +49,7 @@ ui.workspace = true
 unicode-segmentation.workspace = true
 util.workspace = true
 workspace.workspace = true
+git_ui_core.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]

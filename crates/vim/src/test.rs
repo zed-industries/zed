@@ -14,6 +14,8 @@ use editor::{
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
+#[cfg(target_os = "windows")]
+use gpui::AppContext as _;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use itertools::Itertools;
 use language::{CursorShape, Language, LanguageConfig, Point};
@@ -29,9 +31,14 @@ use project::FakeFs;
 use search::BufferSearchBar;
 use search::{ProjectSearchView, project_search};
 use serde_json::json;
+#[cfg(target_os = "windows")]
+use workspace::notifications::{NotificationId, simple_message_notification::MessageNotification};
 use workspace::{DeploySearch, MultiWorkspace};
 
-use crate::{PushSneak, PushSneakBackward, VimAddon, insert::NormalBefore, motion, state::Mode};
+use crate::{
+    PushSneak, PushSneakBackward, SwitchToNormalMode, VimAddon, insert::NormalBefore, motion,
+    state::Mode,
+};
 
 use util_macros::perf;
 
@@ -72,7 +79,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     // Selections aren't changed if editor is blurred but vim-mode is still disabled.
     cx.cx.set_state("«hjklˇ»");
     cx.assert_editor_state("«hjklˇ»");
-    cx.update_editor(|_, window, _cx| window.blur());
+    cx.update_editor(|_, window, cx| window.blur(cx));
     cx.assert_editor_state("«hjklˇ»");
     cx.update_editor(|_, window, cx| cx.focus_self(window));
     cx.assert_editor_state("«hjklˇ»");
@@ -381,6 +388,65 @@ async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("escape");
 
     cx.assert_state("aˇbc", Mode::Normal);
+}
+
+#[gpui::test]
+async fn test_insert_line_with_multi_keybinding_to_normal(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|_, cx| {
+        cx.bind_keys([KeyBinding::new(
+            "j j",
+            SwitchToNormalMode,
+            Some("vim_mode == insert"),
+        )]);
+    });
+
+    cx.set_state("hello worldˇ\n", Mode::Insert);
+    cx.simulate_keystrokes("j j");
+    cx.assert_state("hello worldˇ\n", Mode::Normal);
+    cx.simulate_keystrokes("o");
+    cx.assert_state("hello world\nˇ\n", Mode::Insert);
+}
+
+#[cfg(target_os = "windows")]
+#[gpui::test]
+async fn test_escape_dismisses_workspace_notification_in_normal_modes(
+    cx: &mut gpui::TestAppContext,
+) {
+    struct VimEscapeNotification;
+    struct HelixEscapeNotification;
+
+    let mut cx = VimTestContext::new(cx, true).await;
+    let notification_ids =
+        |cx: &mut VimTestContext| cx.workspace(|workspace, _, _| workspace.notification_ids());
+
+    for (mode, notification_id) in [
+        (
+            Mode::Normal,
+            NotificationId::unique::<VimEscapeNotification>(),
+        ),
+        (
+            Mode::HelixNormal,
+            NotificationId::unique::<HelixEscapeNotification>(),
+        ),
+    ] {
+        if mode == Mode::HelixNormal {
+            cx.enable_helix();
+        }
+        cx.set_state("aˇbˇc", mode);
+        cx.workspace(|workspace, _, cx| {
+            workspace.show_notification(notification_id.clone(), cx, |cx| {
+                cx.new(|cx| MessageNotification::new("Test notification", cx))
+            });
+        });
+
+        assert_eq!(notification_ids(&mut cx), vec![notification_id]);
+        cx.simulate_keystrokes("escape");
+
+        assert!(notification_ids(&mut cx).is_empty());
+        cx.assert_state("aˇbˇc", mode);
+    }
 }
 
 #[perf]
@@ -1272,7 +1338,7 @@ async fn test_visual_rename_uses_visible_cursor_position(cx: &mut gpui::TestAppC
     let mut prepare_request = cx.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
         move |_, params, _| async move {
             assert_eq!(params.position, expected_position);
-            Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
+            Ok(Some(lsp::PrepareRenameResponse::Range(tgt_range)))
         },
     );
     let mut rename_request =

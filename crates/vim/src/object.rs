@@ -4,7 +4,7 @@ use crate::{
     Vim,
     motion::{is_subword_end, is_subword_start, right},
     state::{Mode, Operator},
-    surrounds::{BRACKET_PAIRS, QUOTE_PAIRS, SurroundPair},
+    surrounds::{BRACKET_PAIRS, QUOTE_PAIRS, SURROUND_PAIRS, SurroundPair},
 };
 use editor::{
     Bias, BufferOffset, DisplayPoint, Editor, MultiBufferOffset, ToOffset,
@@ -34,6 +34,7 @@ pub enum Object {
     VerticalBars,
     AnyBrackets,
     MiniBrackets,
+    AnyPair,
     Parentheses,
     SquareBrackets,
     CurlyBrackets,
@@ -182,18 +183,113 @@ fn cover_or_next<I: Iterator<Item = (Range<MultiBufferOffset>, Range<MultiBuffer
 
 type DelimiterPredicate = dyn Fn(&BufferSnapshot, usize, usize) -> bool;
 
-struct DelimiterRange {
-    open: Range<MultiBufferOffset>,
-    close: Range<MultiBufferOffset>,
+pub(crate) struct DelimiterRange {
+    pub(crate) open: Range<MultiBufferOffset>,
+    pub(crate) close: Range<MultiBufferOffset>,
 }
 
 impl DelimiterRange {
-    fn to_display_range(&self, map: &DisplaySnapshot, around: bool) -> Range<DisplayPoint> {
+    pub(crate) fn to_display_range(
+        &self,
+        map: &DisplaySnapshot,
+        around: bool,
+    ) -> Range<DisplayPoint> {
         if around {
             self.open.start.to_display_point(map)..self.close.end.to_display_point(map)
         } else {
             self.open.end.to_display_point(map)..self.close.start.to_display_point(map)
         }
+    }
+}
+
+/// The innermost pair from the language's bracket queries that surrounds
+/// `relative_to` and whose delimiters form a known single-character surround
+/// pair, like Helix's tree-sitter based closest-pair matching. Returns None
+/// in buffers without bracket queries.
+pub(crate) fn innermost_surrounding_pair(
+    map: &DisplaySnapshot,
+    relative_to: Range<DisplayPoint>,
+) -> Option<DelimiterRange> {
+    innermost_surrounding_pair_impl(map, relative_to, PairMatchMode::Any)
+}
+
+pub(crate) fn innermost_surrounding_pair_for_text_object(
+    map: &DisplaySnapshot,
+    relative_to: Range<DisplayPoint>,
+    around: bool,
+) -> Option<DelimiterRange> {
+    innermost_surrounding_pair_impl(map, relative_to, PairMatchMode::ExpandSelection { around })
+}
+
+#[derive(Clone, Copy)]
+enum PairMatchMode {
+    Any,
+    ExpandSelection { around: bool },
+}
+
+fn innermost_surrounding_pair_impl(
+    map: &DisplaySnapshot,
+    relative_to: Range<DisplayPoint>,
+    match_mode: PairMatchMode,
+) -> Option<DelimiterRange> {
+    let snapshot = map.buffer_snapshot();
+    let offset_range =
+        relative_to.start.to_offset(map, Bias::Left)..relative_to.end.to_offset(map, Bias::Left);
+
+    let results = snapshot.map_excerpt_ranges(offset_range, |buffer, _, input_range| {
+        let filter = |open: Range<usize>, close: Range<usize>| {
+            if let PairMatchMode::ExpandSelection { around } = match_mode {
+                let input_range = input_range.start.0..input_range.end.0;
+                let selects_around = input_range == (open.start..close.end);
+                let selects_inside = input_range == (open.end..close.start);
+                // `mam` after `mim` changes the form of the current pair;
+                // every other exact match expands to the enclosing pair.
+                if selects_around || (selects_inside && !around) {
+                    return false;
+                }
+            }
+            is_surround_pair_delimiter(buffer, open, close)
+        };
+        let Some((open, close)) = buffer.innermost_enclosing_bracket_ranges(
+            input_range.start.0..input_range.end.0,
+            Some(&filter),
+        ) else {
+            return vec![];
+        };
+        vec![
+            (BufferOffset(open.start)..BufferOffset(open.end), ()),
+            (BufferOffset(close.start)..BufferOffset(close.end), ()),
+        ]
+    })?;
+
+    if results.len() < 2 {
+        return None;
+    }
+
+    Some(DelimiterRange {
+        open: results[0].0.clone(),
+        close: results[1].0.clone(),
+    })
+}
+
+/// Bracket queries can also match multi-character delimiters (e.g. HTML
+/// element tags), which Helix's pair matching rejects.
+fn is_surround_pair_delimiter(
+    buffer: &BufferSnapshot,
+    open: Range<usize>,
+    close: Range<usize>,
+) -> bool {
+    if open.len() != 1 || close.len() != 1 {
+        return false;
+    }
+    match (
+        buffer.chars_at(open.start).next(),
+        buffer.chars_at(close.start).next(),
+    ) {
+        (Some(open_char), Some(close_char)) => SURROUND_PAIRS
+            .iter()
+            .any(|pair| pair.open == open_char && pair.close == close_char),
+        _ => false,
     }
 }
 
@@ -337,6 +433,10 @@ actions!(
         MiniBrackets,
         /// Selects text within any type of brackets.
         AnyBrackets,
+        /// Selects text within the closest surrounding pair of any type
+        /// (brackets, quotes, backticks, or vertical bars), based on the
+        /// language's bracket queries, like Helix's `m` text object.
+        AnyPair,
         /// Selects a function argument.
         Argument,
         /// Selects an HTML/XML tag.
@@ -393,6 +493,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &AnyBrackets, window, cx| {
         vim.object(Object::AnyBrackets, window, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &AnyPair, window, cx| {
+        vim.object(Object::AnyPair, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
         vim.object(Object::BackQuotes, window, cx)
@@ -485,6 +588,7 @@ impl Object {
             | Object::Paragraph
             | Object::AnyBrackets
             | Object::MiniBrackets
+            | Object::AnyPair
             | Object::Parentheses
             | Object::Tag
             | Object::AngleBrackets
@@ -515,6 +619,7 @@ impl Object {
             | Object::VerticalBars
             | Object::AnyBrackets
             | Object::MiniBrackets
+            | Object::AnyPair
             | Object::Parentheses
             | Object::SquareBrackets
             | Object::Tag
@@ -546,6 +651,7 @@ impl Object {
             Object::Parentheses
             | Object::AnyBrackets
             | Object::MiniBrackets
+            | Object::AnyPair
             | Object::SquareBrackets
             | Object::CurlyBrackets
             | Object::AngleBrackets
@@ -739,6 +845,11 @@ impl Object {
                     })
             }
             Object::MiniBrackets => find_mini_brackets(map, relative_to, around),
+            Object::AnyPair => {
+                let cursor = relative_to..movement::right(map, relative_to);
+                innermost_surrounding_pair(map, cursor)
+                    .map(|pair| pair.to_display_range(map, around))
+            }
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -788,7 +899,7 @@ impl Object {
         around: bool,
         times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around, times) {
+        if let Some(range) = self.range(map, *selection, around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -965,7 +1076,7 @@ pub fn surrounding_html_tag(
             while let Some(cur_node) = last_child_node {
                 if cur_node.child_count() >= 2 {
                     let first_child = cur_node.child(0);
-                    let last_child = cur_node.child(cur_node.child_count() as u32 - 1);
+                    let last_child = cur_node.child(cur_node.child_count() - 1);
                     if let (Some(first_child), Some(last_child)) = (first_child, last_child) {
                         let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                         let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));

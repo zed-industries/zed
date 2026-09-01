@@ -54,7 +54,7 @@ You can also configure this from the Settings UI under **AI**, via the "Terminal
 
 ## Terminal Thread Titles {#terminal-thread-titles}
 
-The terminal title in the toolbar updates automatically to reflect the running shell or process. You can also set a custom name by clicking the title or the pencil icon that appears on hover.
+The terminal title in the toolbar updates automatically to reflect the running shell or process. You can set a custom name by clicking the title or the pencil icon that appears on hover. In the Threads Sidebar, right-click a Terminal Thread and select **Rename Title**, or select it and press {#kb agent::RenameSelectedThread}.
 
 ## Notifications {#terminal-thread-notifications}
 
@@ -116,6 +116,8 @@ Create `.opencode/plugins/zed-bell.js` in your project, or `~/.config/opencode/p
 export const ZedBell = async () => {
   return {
     event: async ({ event }) => {
+      if (process.env.OPENCODE_CLIENT === "acp") return;
+
       if (event.type === "session.idle" || event.type === "permission.asked") {
         process.stdout.write("\x07");
       }

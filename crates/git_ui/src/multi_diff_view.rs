@@ -1,10 +1,13 @@
-use crate::file_diff_view::build_buffer_diff;
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    multibuffer_context_lines,
+};
+use git_ui_core::file_diff_view::build_buffer_diff;
 use gpui::{
-    AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, Font, IntoElement, Render, SharedString, Task, Window,
+    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle, Focusable, Font,
+    IntoElement, Render, SharedString, Task, Window,
 };
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
@@ -14,12 +17,12 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::{Color, Icon, IconName, Label, LabelCommon as _};
+use ui::{Color, Icon, IconName};
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
-    item::{ItemEvent, SaveOptions, TabContentParams},
+    item::{ItemEvent, SaveOptions},
     searchable::SearchableItemHandle,
 };
 
@@ -91,7 +94,7 @@ fn register_entry(
             RelPath::new(rel, PathStyle::local())
                 .map(|r| r.into_owned().into())
                 .unwrap_or_else(|_| {
-                    RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                    RelPath::new(Path::new(MultiBuffer::DEFAULT_TITLE), PathStyle::Unix)
                         .unwrap()
                         .into_owned()
                         .into()
@@ -102,10 +105,10 @@ fn register_entry(
                 .new_path
                 .file_name()
                 .and_then(|n| n.to_str())
-                .and_then(|s| RelPath::new(Path::new(s), PathStyle::Posix).ok())
+                .and_then(|s| RelPath::new(Path::new(s), PathStyle::Unix).ok())
                 .map(|r| r.into_owned().into())
                 .unwrap_or_else(|| {
-                    RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                    RelPath::new(Path::new(MultiBuffer::DEFAULT_TITLE), PathStyle::Unix)
                         .unwrap()
                         .into_owned()
                         .into()
@@ -196,14 +199,9 @@ impl MultiDiffView {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
-            editor.start_temporary_diff_override();
+            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunks_as_unstaged(true, cx);
-            editor.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
             editor
         });
 
@@ -233,16 +231,6 @@ impl Item for MultiDiffView {
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
         Some(Icon::new(IconName::Diff).color(Color::Muted))
-    }
-
-    fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
-        Label::new(self.title())
-            .color(if params.selected {
-                Color::Default
-            } else {
-                Color::Muted
-            })
-            .into_any_element()
     }
 
     fn tab_tooltip_text(&self, _cx: &App) -> Option<ui::SharedString> {

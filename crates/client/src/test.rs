@@ -240,7 +240,8 @@ pub fn make_get_authenticated_user_response(
 ) -> GetAuthenticatedUserResponse {
     GetAuthenticatedUserResponse {
         user: AuthenticatedUser {
-            id: user_id,
+            id_v2: format!("user_{user_id}"),
+            legacy_user_id: user_id,
             metrics_id: format!("metrics-id-{user_id}"),
             username: username.clone(),
             avatar_url: "".to_string(),

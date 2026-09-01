@@ -295,6 +295,11 @@ impl LanguageModel for DeepSeekLanguageModel {
 
         vec![
             LanguageModelEffortLevel {
+                name: "Low".into(),
+                value: "low".into(),
+                is_default: false,
+            },
+            LanguageModelEffortLevel {
                 name: "High".into(),
                 value: "high".into(),
                 is_default: true,
@@ -338,12 +343,19 @@ impl LanguageModel for DeepSeekLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_deepseek(request, &self.model, self.max_output_tokens());
+        let request = match into_deepseek(request, &self.model, self.max_output_tokens()) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         let stream = self.stream_completion(request, cx);
+        let executor = cx.background_executor().clone();
 
         async move {
             let mapper = DeepSeekEventMapper::new();
-            Ok(mapper.map_stream(stream.await?).boxed())
+            Ok(language_model::stream_in_background(
+                mapper.map_stream(stream.await?).boxed(),
+                executor,
+            ))
         }
         .boxed()
     }
@@ -353,7 +365,11 @@ pub fn into_deepseek(
     request: LanguageModelRequest,
     model: &deepseek::Model,
     max_output_tokens: Option<u64>,
-) -> deepseek::Request {
+) -> Result<deepseek::Request> {
+    if request.contains_custom_tool_input() {
+        anyhow::bail!("DeepSeek does not support custom tools");
+    }
+
     let thinking = deepseek_thinking(model, request.thinking_allowed);
     let thinking_enabled = thinking
         .as_ref()
@@ -392,13 +408,16 @@ pub fn into_deepseek(
                 MessageContent::Image(_) => {}
                 MessageContent::Compaction(_) => {}
                 MessageContent::ToolUse(tool_use) => {
+                    let input = tool_use
+                        .input
+                        .as_json()
+                        .ok_or_else(|| anyhow!("DeepSeek does not support custom tool calls"))?;
                     let tool_call = deepseek::ToolCall {
                         id: tool_use.id.to_string(),
                         content: deepseek::ToolCallContent::Function {
                             function: deepseek::FunctionContent {
                                 name: tool_use.name.to_string(),
-                                arguments: serde_json::to_string(&tool_use.input)
-                                    .unwrap_or_default(),
+                                arguments: serde_json::to_string(input).unwrap_or_default(),
                             },
                         },
                     };
@@ -441,7 +460,7 @@ pub fn into_deepseek(
         }
     }
 
-    deepseek::Request {
+    Ok(deepseek::Request {
         model: model.id().to_string(),
         messages,
         stream: true,
@@ -466,15 +485,26 @@ pub fn into_deepseek(
         tools: request
             .tools
             .into_iter()
-            .map(|tool| deepseek::ToolDefinition::Function {
-                function: deepseek::FunctionDefinition {
-                    name: tool.name,
-                    description: Some(tool.description),
-                    parameters: Some(tool.input_schema),
-                },
+            .map(|tool| {
+                let input_schema = match tool.input {
+                    language_model::LanguageModelRequestToolInput::Function {
+                        input_schema,
+                        ..
+                    } => input_schema,
+                    language_model::LanguageModelRequestToolInput::Custom { .. } => {
+                        return Err(anyhow::anyhow!("DeepSeek does not support custom tools"));
+                    }
+                };
+                Ok(deepseek::ToolDefinition::Function {
+                    function: deepseek::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(input_schema),
+                    },
+                })
             })
-            .collect(),
-    }
+            .collect::<Result<_>>()?,
+    })
 }
 
 fn deepseek_thinking(
@@ -497,6 +527,7 @@ fn deepseek_thinking(
 
 fn into_deepseek_reasoning_effort(effort: Option<&str>) -> Option<deepseek::ReasoningEffort> {
     match effort {
+        Some("low") => Some(deepseek::ReasoningEffort::Low),
         Some("high") => Some(deepseek::ReasoningEffort::High),
         Some("max") => Some(deepseek::ReasoningEffort::Max),
         _ => None,
@@ -578,7 +609,7 @@ impl DeepSeekEventMapper {
                                 id: entry.id.clone().into(),
                                 name: entry.name.as_str().into(),
                                 is_input_complete: false,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: entry.arguments.clone(),
                                 thought_signature: None,
                             },
@@ -609,7 +640,7 @@ impl DeepSeekEventMapper {
                                 id: tool_call.id.clone().into(),
                                 name: tool_call.name.as_str().into(),
                                 is_input_complete: true,
-                                input,
+                                input: language_model::LanguageModelToolUseInput::Json(input),
                                 raw_input: tool_call.arguments.clone(),
                                 thought_signature: None,
                             },

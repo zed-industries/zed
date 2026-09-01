@@ -11,9 +11,49 @@ pub struct WgpuContext {
     pub adapter: wgpu::Adapter,
     pub device: Arc<wgpu::Device>,
     pub queue: Arc<wgpu::Queue>,
+    backend: WgpuBackend,
     dual_source_blending: bool,
     color_texture_format: wgpu::TextureFormat,
     device_lost: Arc<AtomicBool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WgpuBackend {
+    BrowserWebGpu,
+    Gl,
+    Native(wgpu::Backend),
+}
+
+#[cfg(target_family = "wasm")]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum WebBackendPreference {
+    #[default]
+    Auto,
+    WebGpu,
+    WebGl,
+}
+
+#[cfg(target_family = "wasm")]
+pub struct PreparedWebGraphics {
+    pub context: WgpuContext,
+    pub surface: wgpu::Surface<'static>,
+}
+
+/// wgpu-core refuses to create a surface when neither the instance nor the surface
+/// target carries a display handle, and `SurfaceTarget::Canvas` always passes `None`.
+/// The WebGL2 backend never reads the handle (WebGPU bypasses wgpu-core entirely), so
+/// a unit web display handle on the instance satisfies the check.
+#[cfg(target_family = "wasm")]
+#[derive(Debug)]
+struct WebDisplaySource;
+
+#[cfg(target_family = "wasm")]
+impl raw_window_handle::HasDisplayHandle for WebDisplaySource {
+    fn display_handle(
+        &self,
+    ) -> Result<raw_window_handle::DisplayHandle<'_>, raw_window_handle::HandleError> {
+        Ok(raw_window_handle::DisplayHandle::web())
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -88,11 +128,13 @@ impl WgpuContext {
             adapter.get_info().backend
         );
 
+        let backend = WgpuBackend::Native(adapter.get_info().backend);
         Ok(Self {
             instance,
             adapter,
             device: Arc::new(device),
             queue: Arc::new(queue),
+            backend,
             dual_source_blending,
             color_texture_format,
             device_lost,
@@ -100,43 +142,95 @@ impl WgpuContext {
     }
 
     #[cfg(target_family = "wasm")]
-    pub async fn new_web() -> anyhow::Result<Self> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+    pub async fn new_web(
+        canvas: &web_sys::HtmlCanvasElement,
+        preference: WebBackendPreference,
+    ) -> anyhow::Result<PreparedWebGraphics> {
+        Self::new_web_with_backend(canvas, preference).await
+    }
+
+    #[cfg(target_family = "wasm")]
+    #[allow(clippy::arc_with_non_send_sync)]
+    async fn new_web_with_backend(
+        canvas: &web_sys::HtmlCanvasElement,
+        preference: WebBackendPreference,
+    ) -> anyhow::Result<PreparedWebGraphics> {
+        let backends = match preference {
+            WebBackendPreference::Auto => wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+            WebBackendPreference::WebGpu => wgpu::Backends::BROWSER_WEBGPU,
+            WebBackendPreference::WebGl => wgpu::Backends::GL,
+        };
+        let descriptor = wgpu::InstanceDescriptor {
+            backends,
             flags: wgpu::InstanceFlags::default(),
             backend_options: wgpu::BackendOptions::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-            display: None,
-        });
+            display: Some(Box::new(WebDisplaySource)),
+        };
+        let instance = if preference == WebBackendPreference::Auto {
+            wgpu::util::new_instance_with_webgpu_detection(descriptor).await
+        } else {
+            wgpu::Instance::new(descriptor)
+        };
+        let surface = instance
+            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+            .map_err(|error| {
+                anyhow::anyhow!("Failed to create browser graphics surface: {error}")
+            })?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: None,
+                compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to request GPU adapter: {e}"))?;
-
-        log::info!(
-            "Selected GPU adapter: {:?} ({:?})",
-            adapter.get_info().name,
-            adapter.get_info().backend
-        );
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "Failed to request a {preference:?} adapter compatible with the canvas: {error}"
+                )
+            })?;
+        let adapter_info = adapter.get_info();
+        let backend = match adapter_info.backend {
+            wgpu::Backend::BrowserWebGpu => WgpuBackend::BrowserWebGpu,
+            wgpu::Backend::Gl => WgpuBackend::Gl,
+            backend => {
+                anyhow::bail!(
+                    "Browser graphics initialization selected unexpected backend {backend:?}"
+                )
+            }
+        };
 
         let device_lost = Arc::new(AtomicBool::new(false));
         let (device, queue, dual_source_blending, color_texture_format) =
             Self::create_device(&adapter).await?;
+        device.set_device_lost_callback({
+            let device_lost = Arc::clone(&device_lost);
+            move |reason, message| {
+                log::error!("wgpu device lost: reason={reason:?}, message={message}");
+                if reason != wgpu::DeviceLostReason::Destroyed {
+                    device_lost.store(true, Ordering::Relaxed);
+                }
+            }
+        });
+        log::info!(
+            "Browser graphics initialized: requested={preference:?}, selected={backend:?}, \
+             adapter={:?}, limits={:?}, dual_source_blending={dual_source_blending}",
+            adapter_info.name,
+            device.limits(),
+        );
 
-        Ok(Self {
+        let context = Self {
             instance,
             adapter,
             device: Arc::new(device),
             queue: Arc::new(queue),
+            backend,
             dual_source_blending,
             color_texture_format,
             device_lost,
-        })
+        };
+        Ok(PreparedWebGraphics { context, surface })
     }
 
     async fn create_device(
@@ -157,14 +251,26 @@ impl WgpuContext {
         }
 
         let color_atlas_texture_format = Self::select_color_texture_format(adapter)?;
+        #[cfg(target_family = "wasm")]
+        let required_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+            wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter.limits())
+                .using_alignment(adapter.limits())
+        } else {
+            wgpu::Limits::downlevel_defaults()
+                .using_resolution(adapter.limits())
+                .using_alignment(adapter.limits())
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let required_limits = wgpu::Limits::downlevel_defaults()
+            .using_resolution(adapter.limits())
+            .using_alignment(adapter.limits());
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("gpui_device"),
                 required_features,
-                required_limits: wgpu::Limits::downlevel_defaults()
-                    .using_resolution(adapter.limits())
-                    .using_alignment(adapter.limits()),
+                required_limits,
                 memory_hints: wgpu::MemoryHints::MemoryUsage,
                 trace: wgpu::Trace::Off,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
@@ -396,11 +502,16 @@ impl WgpuContext {
     fn select_color_texture_format(adapter: &wgpu::Adapter) -> anyhow::Result<wgpu::TextureFormat> {
         let required_usages = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let bgra_features = adapter.get_texture_format_features(wgpu::TextureFormat::Bgra8Unorm);
+        let rgba_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
+        #[cfg(target_family = "wasm")]
+        if adapter.get_info().backend == wgpu::Backend::Gl
+            && rgba_features.allowed_usages.contains(required_usages)
+        {
+            return Ok(wgpu::TextureFormat::Rgba8Unorm);
+        }
         if bgra_features.allowed_usages.contains(required_usages) {
             return Ok(wgpu::TextureFormat::Bgra8Unorm);
         }
-
-        let rgba_features = adapter.get_texture_format_features(wgpu::TextureFormat::Rgba8Unorm);
         if rgba_features.allowed_usages.contains(required_usages) {
             let info = adapter.get_info();
             log::warn!(
@@ -426,6 +537,14 @@ impl WgpuContext {
             rgba_features.allowed_usages,
         ))
     }
+    pub fn backend(&self) -> WgpuBackend {
+        self.backend
+    }
+
+    pub fn uses_webgl_instance_data(&self) -> bool {
+        matches!(self.backend, WgpuBackend::Gl) && cfg!(target_family = "wasm")
+    }
+
     pub fn supports_dual_source_blending(&self) -> bool {
         self.dual_source_blending
     }

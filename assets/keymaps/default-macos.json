@@ -4,12 +4,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "f4": "debugger::Start",
-      "shift-f5": "debugger::Stop",
-      "shift-cmd-f5": "debugger::RerunSession",
-      "f6": "debugger::Pause",
-      "f7": "debugger::StepOver",
-      "ctrl-f11": "debugger::StepInto",
-      "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
       "pageup": "menu::SelectFirst",
@@ -44,8 +38,6 @@
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
-      "fn-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RatePredictions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu",
       "ctrl-cmd-l": "lsp_tool::ToggleMenu",
@@ -169,12 +161,12 @@
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-k z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
-      "cmd-alt-f": "buffer_search::DeployReplace",
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
       "cmd-e": "buffer_search::UseSelectionForFind",
       "cmd->": "agent::AddSelectionToThread",
       "cmd-alt-e": "editor::SelectEnclosingSymbol",
       "alt-enter": "editor::OpenSelectionsInMultibuffer",
+      "alt-cmd-f": "text_finder::Toggle",
     },
   },
   {
@@ -337,13 +329,6 @@
     },
   },
   {
-    "context": "AgentTerminalThread",
-    "use_key_equivalents": true,
-    "bindings": {
-      "cmd-f": "agent::ToggleSearch",
-    },
-  },
-  {
     "context": "AcpThreadSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -364,6 +349,7 @@
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-f": "agent::ToggleSearch",
       "ctrl-pageup": "agent::ScrollOutputPageUp",
       "ctrl-pagedown": "agent::ScrollOutputPageDown",
       "ctrl-home": "agent::ScrollOutputToTop",
@@ -464,9 +450,9 @@
       "cmd-shift-enter": "editor::ToggleFoldAll",
       "alt-enter": "search::SelectAllMatches",
       "cmd-f": "search::FocusSearch",
-      "cmd-alt-f": "search::ToggleReplace",
       "cmd-alt-l": "search::ToggleSelection",
       "cmd-shift-o": "outline::Toggle",
+      "alt-cmd-f": "text_finder::Toggle",
     },
   },
   {
@@ -573,7 +559,6 @@
       "alt-enter": "search::SelectAllMatches",
       "alt-cmd-c": "search::ToggleCaseSensitive",
       "alt-cmd-w": "search::ToggleWholeWord",
-      "alt-cmd-f": "project_search::ToggleFilters",
       "alt-cmd-x": "search::ToggleRegex",
       "cmd-k shift-enter": "pane::TogglePinTab",
     },
@@ -623,6 +608,7 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
+      "cmd-k cmd-h": "call_hierarchy::ShowIncomingCalls",
       "cmd-|": "editor::MoveToEnclosingBracket",
       "ctrl-m": "editor::MoveToEnclosingBracket", // From Jetbrains
       "alt-cmd-[": "editor::Fold",
@@ -668,6 +654,14 @@
     },
   },
   {
+    "context": "Editor && (extension == csv || extension == tsv || extension == ssv || extension == psv)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "tabular_data::OpenPreviewToTheSide",
+      "cmd-shift-v": "tabular_data::OpenPreview",
+    },
+  },
+  {
     "context": "Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
@@ -700,6 +694,15 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
+      // Move focus between the major regions of the window (editor, open
+      // panels, status bar). Accessibility navigation; mirrors VS Code's
+      // "Focus Next/Previous Part". `cmd-f6` mirrors `f6` so region navigation
+      // stays available even while a debug session rebinds plain `f6` to Pause.
+      "f6": "workspace::FocusNextPart",
+      "shift-f6": "workspace::FocusPreviousPart",
+      "cmd-f6": "workspace::FocusNextPart",
+      "fn-f": "zed::ToggleFullScreen",
+      "ctrl-cmd-f": "zed::ToggleFullScreen",
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
@@ -829,7 +832,6 @@
       // Unbind `f5` to avoid dispatching the `debugger::Rerun` as that is what `f5` is bound to in the `Workspace`
       // context.
       "f5": null,
-      "f11": "debugger::StepInto",
     },
   },
   {
@@ -837,6 +839,11 @@
     "use_key_equivalents": true,
     "bindings": {
       "f5": "debugger::Continue",
+      "f7": "debugger::StepOver",
+      "f10": "debugger::StepOver",
+      "f11": "debugger::StepInto",
+      "ctrl-f11": "debugger::StepInto",
+      "shift-f11": "debugger::StepOut",
     },
   },
   // Bindings from Sublime Text
@@ -952,6 +959,10 @@
       "cmd-shift-c": "collab_panel::ToggleFocus",
       // Only available in debug builds: opens an element inspector for development.
       "cmd-alt-i": "dev::ToggleInspector",
+      // Cycles the frame-time debug overlay between hidden, frame-time-only, and detailed modes.
+      "ctrl-alt-shift-p": "dev::ToggleFpsOverlay",
+      // Clears the frame-time overlay's statistics, except the total frame count.
+      "ctrl-alt-shift-o": "dev::ResetFrameOverlayStats",
     },
   },
   {
@@ -1077,7 +1088,7 @@
     },
   },
   {
-    "context": "GitPanel && ChangesList && !GitBranchSelector",
+    "context": "GitPanel && ChangesList && !GitBranchSelector && !GitRepositorySelector",
     "use_key_equivalents": true,
     "bindings": {
       "up": "git_panel::PreviousEntry",
@@ -1094,6 +1105,8 @@
       "shift-space": "git::StageRange",
       "cmd-y": "git::StageFile",
       "cmd-shift-y": "git::UnstageFile",
+      "cmd-alt-c": "workspace::CopyPath",
+      "alt-cmd-shift-c": "workspace::CopyRelativePath",
       "alt-down": "git_panel::FocusEditor",
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
@@ -1167,6 +1180,20 @@
     },
   },
   {
+    // While a debug session is live, `Pause`/`Stop`/`RerunSession` take over their F-keys
+    // (region navigation stays on `cmd-f6` / `shift-f6`), so they're inert when not debugging.
+    // Step commands and `Continue` are scoped to `debugger_stopped` instead, since they only
+    // make sense while execution is actually paused.
+    // `debugger::Start` stays global so a session can be started from anywhere.
+    "context": "Workspace && debugger_session",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f6": "debugger::Pause",
+      "shift-f5": "debugger::Stop",
+      "shift-cmd-f5": "debugger::RerunSession",
+    },
+  },
+  {
     "context": "DebugPanel",
     "bindings": {
       "cmd-t": "debugger::ToggleThreadPicker",
@@ -1213,6 +1240,15 @@
     "use_key_equivalents": true,
     "bindings": {
       "tab": "channel_modal::ToggleMode",
+    },
+  },
+  {
+    "context": "CallHierarchyPicker > Picker > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k cmd-h": "call_hierarchy::ToggleDirection",
+      "cmd-k right": "menu::SelectChild",
+      "cmd-k left": "menu::SelectParent",
     },
   },
   {
@@ -1343,6 +1379,7 @@
     "context": "AgentPanel > Terminal",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-f": "agent::ToggleSearch",
       "cmd-n": "agent::NewThread",
     },
   },
@@ -1423,6 +1460,7 @@
       "alt-down": "markdown::ScrollDownByItem",
       "cmd-up": "markdown::ScrollToTop",
       "cmd-down": "markdown::ScrollToBottom",
+      "cmd-shift-v": "markdown::CloseAndReturnToEditor",
       "cmd-f": "buffer_search::Deploy",
     },
   },
@@ -1576,7 +1614,8 @@
     "bindings": {
       "cmd-shift-backspace": "branch_picker::DeleteBranch",
       "cmd-alt-shift-backspace": "branch_picker::ForceDeleteBranch",
-      "cmd-shift-i": "branch_picker::FilterRemotes",
+      "cmd-shift-i": "branch_picker::CycleBranchFilter",
+      "cmd-k": "branch_picker::ToggleFilterMenu",
     },
   },
   {
@@ -1614,6 +1653,7 @@
     "bindings": {
       "cmd-shift-backspace": "worktree_picker::DeleteWorktree",
       "cmd-alt-shift-backspace": "worktree_picker::ForceDeleteWorktree",
+      "cmd-shift-c": "zed::OpenWorktreeSetupTasks",
     },
   },
   {
@@ -1634,6 +1674,8 @@
     "context": "NotebookEditor && notebook_mode == command",
     "bindings": {
       "enter": "notebook::EnterEditMode",
+      "d d": "notebook::DeleteCell",
+      "backspace": "notebook::DeleteCell",
       "down": "menu::SelectNext",
       "up": "menu::SelectPrevious",
     },

@@ -16,6 +16,7 @@ use context_server::ContextServerId;
 pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
+use parking_lot::Mutex;
 pub use pattern_extraction::*;
 pub use sandboxing::{
     ThreadSandbox, sandbox_worktree_writable_paths, settings_sandbox_policy,
@@ -60,15 +61,30 @@ use project::{
     trusted_worktrees::TrustedWorktrees,
 };
 use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
+use rand::Rng as _;
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, update_settings_file};
 use std::any::Any;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 use util::ResultExt;
 use util::path_list::PathList;
 use util::rel_path::RelPath;
+
+const MAXIMUM_RETRY_JITTER_FRACTION: f64 = 0.1;
+
+pub(crate) fn jitter_retry_delay(delay: Duration) -> Duration {
+    let jitter = delay.mul_f64(rand::rng().random_range(0.0..MAXIMUM_RETRY_JITTER_FRACTION));
+    delay.checked_add(jitter).unwrap_or(Duration::MAX)
+}
+
+#[cfg(test)]
+pub(crate) fn maximum_retry_delay_with_jitter(delay: Duration) -> Duration {
+    let maximum_jitter = delay.mul_f64(MAXIMUM_RETRY_JITTER_FRACTION);
+    delay.checked_add(maximum_jitter).unwrap_or(Duration::MAX)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
@@ -199,6 +215,14 @@ struct ProjectState {
     _subscriptions: Vec<Subscription>,
 }
 
+/// A thread snapshot captured for persistence. Building it clones the thread's
+/// messages (cheap `Arc` clones) so the background save can serialize without
+/// racing the foreground mutation of the live thread.
+struct PendingThreadSave {
+    folder_paths: PathList,
+    db_thread: Task<DbThread>,
+}
+
 /// Holds both the internal Thread and the AcpThread for a session
 struct Session {
     /// The internal thread that processes messages
@@ -206,7 +230,11 @@ struct Session {
     /// The ACP thread that handles protocol communication
     acp_thread: Entity<acp_thread::AcpThread>,
     project_id: EntityId,
-    pending_save: Task<Result<()>>,
+    /// Latest snapshot to persist. Overwritten in place on every save request;
+    /// the single save worker drains it, coalescing bursts into one write.
+    pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
+    save_wake: watch::Sender<()>,
+    save_worker: Task<Result<()>>,
     _subscriptions: Vec<Subscription>,
     ref_count: usize,
 }
@@ -374,7 +402,10 @@ impl LanguageModels {
                 }
             }
 
-            cx.update(language_models::update_environment_fallback_model);
+            cx.update(|cx| {
+                LanguageModelRegistry::global(cx)
+                    .update(cx, |registry, cx| registry.refresh_fallback_model(cx))
+            });
         })
     }
 }
@@ -443,18 +474,22 @@ impl gpui::EventEmitter<SkillLoadingIssuesUpdated> for NativeAgent {}
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
     RULES_FILE_NAMES
         .iter()
-        .filter_map(|name| RelPath::unix(name).ok().map(|path| path.into_arc()))
+        .filter_map(|name| {
+            RelPath::from_unix_str(name)
+                .ok()
+                .map(|path| path.into_arc())
+        })
         .collect()
 });
 
 static AGENTS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
-    RelPath::unix(AGENTS_DIR_NAME)
+    RelPath::from_unix_str(AGENTS_DIR_NAME)
         .ok()
         .map(|path| path.into_arc())
 });
 
 static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
-    RelPath::unix(project_skills_relative_path())
+    RelPath::from_unix_str(project_skills_relative_path())
         .ok()
         .map(|path| path.into_arc())
 });
@@ -489,7 +524,7 @@ async fn expand_project_skills_directories(
     worktree: &Entity<Worktree>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    let agents_dir = RelPath::unix(AGENTS_DIR_NAME)?;
+    let agents_dir = RelPath::from_unix_str(AGENTS_DIR_NAME)?;
     let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
         return Ok(());
     };
@@ -515,7 +550,7 @@ fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFil
     let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
         return Vec::new();
     };
-    let Ok(skill_file_name) = RelPath::unix(SKILL_FILE_NAME) else {
+    let Ok(skill_file_name) = RelPath::from_unix_str(SKILL_FILE_NAME) else {
         return Vec::new();
     };
 
@@ -535,7 +570,7 @@ fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFil
 
         skill_files.push(ProjectSkillFile {
             display_path: worktree.absolutize(&relative_path),
-            relative_path,
+            relative_path: relative_path.into(),
             size: skill_file.size,
         });
     }
@@ -815,14 +850,36 @@ impl NativeAgent {
             }),
         ];
 
+        let (save_wake, save_wake_rx) = watch::channel(());
+        let pending_save: Arc<Mutex<Option<PendingThreadSave>>> = Arc::new(Mutex::new(None));
+        let database_future = ThreadsDatabase::connect(cx);
+        let thread_store = self.thread_store.clone();
+        let save_worker = cx.spawn({
+            let pending_save = pending_save.clone();
+            let session_id = session_id.clone();
+            async move |_this, cx| {
+                Self::run_save_worker(
+                    session_id,
+                    save_wake_rx,
+                    pending_save,
+                    database_future,
+                    thread_store,
+                    cx,
+                )
+                .await
+            }
+        });
+
         self.sessions.insert(
             session_id,
             Session {
                 thread: thread_handle,
                 acp_thread: acp_thread.clone(),
                 project_id,
+                pending_save,
+                save_wake,
+                save_worker,
                 _subscriptions: subscriptions,
-                pending_save: Task::ready(Ok(())),
                 ref_count,
             },
         );
@@ -1723,7 +1780,7 @@ impl NativeAgent {
             self.publish_skill_index(cx);
         }
 
-        session.pending_save
+        session.save_worker
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
@@ -1735,23 +1792,49 @@ impl NativeAgent {
             return;
         };
 
-        let database_future = ThreadsDatabase::connect(cx);
-        let thread_store = self.thread_store.clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-        session.pending_save = cx.spawn(async move |_, cx| {
-            let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
-                return Ok(());
-            };
-            let db_thread = db_thread.await;
-            database
-                .save_thread(id, db_thread, folder_paths)
-                .await
-                .log_err();
-            thread_store.update(cx, |store, cx| store.reload(cx));
-            Ok(())
+        *session.pending_save.lock() = Some(PendingThreadSave {
+            folder_paths,
+            db_thread,
         });
+        session.save_wake.send(()).log_err();
+    }
+
+    async fn run_save_worker(
+        id: acp::SessionId,
+        mut wake: watch::Receiver<()>,
+        pending_save: Arc<Mutex<Option<PendingThreadSave>>>,
+        database_future: Shared<Task<Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
+        thread_store: Entity<ThreadStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        loop {
+            let closed = wake.changed().await.is_err();
+            let payload = pending_save.lock().take();
+            if let Some(PendingThreadSave {
+                folder_paths,
+                db_thread,
+            }) = payload
+                && let Some(database) = database_future
+                    .clone()
+                    .await
+                    .map_err(|err| anyhow!(err))
+                    .log_err()
+            {
+                let db_thread = db_thread.await;
+                database
+                    .save_thread(id.clone(), db_thread, folder_paths)
+                    .await
+                    .log_err();
+                thread_store.update(cx, |store, cx| store.reload(cx));
+            }
+            if closed {
+                break;
+            }
+        }
+        Ok(())
     }
 
     /// Builds everything needed to persist a session's thread content,
@@ -2201,16 +2284,22 @@ impl NativeAgentConnection {
                                     )
                                 })??;
                                 cx.background_spawn(async move {
-                                    if let acp_thread::RequestPermissionOutcome::Selected(outcome) =
-                                        outcome_task.await
-                                    {
-                                        response
-                                            .send(outcome)
-                                            .map_err(|_| {
-                                                anyhow!("authorization receiver was dropped")
-                                            })
-                                            .log_err();
-                                    }
+                                    let outcome = match outcome_task.await {
+                                        acp_thread::RequestPermissionOutcome::Selected(outcome) => outcome,
+                                        acp_thread::RequestPermissionOutcome::InterruptedByFollowUp => {
+                                            acp_thread::SelectedPermissionOutcome::new(
+                                                acp::PermissionOptionId::new(
+                                                    FOLLOW_UP_PERMISSION_DENIED_OPTION_ID,
+                                                ),
+                                                acp::PermissionOptionKind::RejectOnce,
+                                            )
+                                        }
+                                        acp_thread::RequestPermissionOutcome::Cancelled => return,
+                                    };
+                                    response
+                                        .send(outcome)
+                                        .map_err(|_| anyhow!("authorization receiver was dropped"))
+                                        .log_err();
                                 })
                                 .detach();
                             }
@@ -2221,6 +2310,49 @@ impl NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.authorize_tool_call(tool_call_id, outcome, cx);
                                 })?;
+                            }
+                            ThreadEvent::Elicitation(ElicitationRequest {
+                                tool_call_id,
+                                message,
+                                schema,
+                                response,
+                            }) => {
+                                let request_result = acp_thread.update(cx, |thread, cx| {
+                                    let scope = acp::ElicitationSessionScope::new(
+                                        thread.session_id().clone(),
+                                    )
+                                    .tool_call_id(tool_call_id);
+                                    let request = acp::CreateElicitationRequest::new(
+                                        acp::ElicitationFormMode::new(scope, schema),
+                                        message,
+                                    );
+                                    thread.request_elicitation(request, cx)
+                                })?;
+                                match request_result {
+                                    Ok(response_task) => {
+                                        cx.background_spawn(async move {
+                                            let elicitation_response = response_task.await;
+                                            response
+                                                .send(elicitation_response)
+                                                .map_err(|_| {
+                                                    anyhow!("elicitation receiver was dropped")
+                                                })
+                                                .log_err();
+                                        })
+                                        .detach();
+                                    }
+                                    Err(error) => {
+                                        log::error!("Failed to request elicitation: {error:?}");
+                                        // Resolve the tool's pending request so it
+                                        // doesn't hang waiting on a form that will
+                                        // never render.
+                                        response
+                                            .send(acp::CreateElicitationResponse::new(
+                                                acp::ElicitationAction::Cancel,
+                                            ))
+                                            .ok();
+                                    }
+                                }
                             }
                             ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
@@ -3713,6 +3845,112 @@ mod internal_tests {
     use serde_json::json;
     use settings::SettingsStore;
     use util::{path, rel_path::rel_path};
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    async fn test_native_terminal_tool_releases_pty_resources(cx: &mut TestAppContext) {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        init_test(cx);
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            cx.update_flags(true, vec!["sandboxing".to_string()]);
+            let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+            settings.tool_permissions.default = settings::ToolPermissionMode::Confirm;
+            settings.tool_permissions.tools.remove(TerminalTool::NAME);
+            settings.sandbox_permissions = agent_settings::SandboxPermissions::default();
+            agent_settings::AgentSettings::override_global(settings, cx);
+        });
+
+        let temp_dir = tempfile::tempdir().expect("create terminal working directory");
+        let fs = Arc::new(fs::RealFs::new(None, cx.executor()));
+        let project = Project::test(fs.clone(), [temp_dir.path()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.new_session(project.clone(), PathList::new(&[temp_dir.path()]), cx)
+            })
+            .await
+            .expect("create native agent session");
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let environment = Rc::new(NativeThreadEnvironment {
+            agent: agent.downgrade(),
+            thread: thread.downgrade(),
+            acp_thread: acp_thread.downgrade(),
+        });
+
+        #[allow(clippy::arc_with_non_send_sync)]
+        let tool = Arc::new(SandboxedTerminalTool::new(project, environment));
+        let (event_stream, mut receiver) = ToolCallEventStream::test();
+        let task = cx.update(|cx| {
+            tool.run(
+                ToolInput::resolved(SandboxedTerminalToolInput {
+                    command: "true".to_string(),
+                    cd: temp_dir.path().to_string_lossy().into_owned(),
+                    ..Default::default()
+                }),
+                event_stream,
+                cx,
+            )
+        });
+
+        let authorization = receiver.expect_authorization().await;
+        authorization
+            .response
+            .send(acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("allow"),
+                acp::PermissionOptionKind::AllowOnce,
+            ))
+            .expect("authorization response should send");
+
+        let update = receiver.expect_update_fields().await;
+        let terminal_id = update
+            .content
+            .iter()
+            .flatten()
+            .find_map(|content| match content {
+                acp::ToolCallContent::Terminal(terminal) => Some(terminal.terminal_id.clone()),
+                _ => None,
+            })
+            .expect("terminal tool should announce its real terminal");
+        let historical_terminal = acp_thread
+            .read_with(cx, |thread, _cx| thread.terminal(terminal_id.clone()))
+            .expect("terminal should remain available while the tool call is running")
+            .read_with(cx, |terminal, _cx| terminal.inner().clone());
+        assert!(
+            historical_terminal.read_with(cx, |terminal, _cx| terminal.has_active_pty_resources()),
+            "the full terminal tool path should create a real PTY"
+        );
+
+        let result = task.await.expect("native terminal tool call succeeds");
+        assert!(
+            result.contains("Command executed successfully."),
+            "unexpected terminal tool result: {result}"
+        );
+        assert!(
+            historical_terminal.read_with(cx, |terminal, _cx| {
+                terminal.is_pty() && terminal.pid_getter().is_some()
+            }),
+            "completed terminal history should retain PTY process metadata"
+        );
+        assert!(
+            !historical_terminal.read_with(cx, |terminal, _cx| terminal.has_active_pty_resources()),
+            "completed terminal history should not retain active PTY resources"
+        );
+
+        cx.run_until_parked();
+        assert!(
+            acp_thread.read_with(cx, |thread, _cx| thread.terminal(terminal_id).is_err()),
+            "the full terminal tool call should release its terminal from the ACP thread"
+        );
+        assert!(
+            !historical_terminal.read_with(cx, |terminal, _cx| terminal.has_active_pty_resources()),
+            "releasing the ACP terminal should keep PTY resources released"
+        );
+    }
 
     fn make_global_skill(name: &str, description: &str) -> Skill {
         Skill {
@@ -6530,6 +6768,97 @@ mod internal_tests {
     }
 
     #[gpui::test]
+    async fn test_save_burst_preserves_in_flight_write(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {
+                    "file.txt": "hello"
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection
+                    .clone()
+                    .new_session(project.clone(), PathList::new(&[Path::new("")]), cx)
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+
+        let model = Arc::new(FakeLanguageModel::default());
+        thread.update(cx, |thread, cx| {
+            thread.set_model(model.clone(), cx);
+        });
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+
+        model.send_last_completion_stream_text_chunk("world");
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+
+        let [first_draft, second_draft, third_draft] = ["draft one", "draft two", "draft three"]
+            .map(|text| vec![acp::ContentBlock::Text(acp::TextContent::new(text))]);
+
+        let (first_gate_tx, first_gate_rx) = oneshot::channel();
+        database.set_write_gate(first_gate_rx);
+        set_draft_and_save(&agent, &acp_thread, &thread, first_draft.clone(), cx);
+        cx.run_until_parked();
+
+        set_draft_and_save(&agent, &acp_thread, &thread, second_draft, cx);
+        set_draft_and_save(&agent, &acp_thread, &thread, third_draft.clone(), cx);
+        cx.run_until_parked();
+
+        let (second_gate_tx, second_gate_rx) = oneshot::channel();
+        database.set_write_gate(second_gate_rx);
+        first_gate_tx.send(()).ok();
+        cx.run_until_parked();
+
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db_thread.draft_prompt,
+            Some(first_draft),
+            "save requests arriving during an in-flight write must not cancel it"
+        );
+
+        second_gate_tx.send(()).ok();
+        cx.run_until_parked();
+
+        let db_thread = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            db_thread.draft_prompt,
+            Some(third_draft),
+            "the save worker must persist the latest snapshot of a burst"
+        );
+    }
+
+    #[gpui::test]
     async fn test_thread_summary_releases_loaded_session(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -6886,6 +7215,21 @@ mod internal_tests {
         // block, the safe behavior is to return it unchanged rather than
         // silently mangling unrelated user text.
         assert_eq!(strip_slash_command_prefix("hello world"), "hello world",);
+    }
+
+    fn set_draft_and_save(
+        agent: &Entity<NativeAgent>,
+        acp_thread: &Entity<AcpThread>,
+        thread: &Entity<Thread>,
+        draft: Vec<acp::ContentBlock>,
+        cx: &mut TestAppContext,
+    ) {
+        acp_thread.update(cx, |acp_thread, cx| {
+            acp_thread.set_draft_prompt(Some(draft), cx);
+        });
+        agent.update(cx, |agent, cx| {
+            agent.save_thread(thread.clone(), cx);
+        });
     }
 }
 

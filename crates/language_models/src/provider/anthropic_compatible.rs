@@ -54,8 +54,13 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         settings::ModelMode::Thinking { budget_tokens } => {
             AnthropicModelMode::Thinking { budget_tokens }
         }
+        settings::ModelMode::Adaptive => AnthropicModelMode::AdaptiveThinking,
     };
-    let supports_thinking = matches!(mode, AnthropicModelMode::Thinking { .. });
+    let supports_thinking = matches!(
+        mode,
+        AnthropicModelMode::Thinking { .. } | AnthropicModelMode::AdaptiveThinking
+    );
+    let supports_adaptive_thinking = matches!(mode, AnthropicModelMode::AdaptiveThinking { .. });
 
     anthropic::Model {
         display_name: available
@@ -68,13 +73,92 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         default_temperature: available.default_temperature.unwrap_or(1.0),
         mode,
         supports_thinking,
-        supports_adaptive_thinking: false,
+        supports_adaptive_thinking,
         supports_images: available.capabilities.images,
         supports_speed: false,
         supports_compaction: false,
-        supported_effort_levels: Vec::new(),
+        supported_effort_levels: if supports_adaptive_thinking {
+            vec![
+                anthropic::Effort::Low,
+                anthropic::Effort::Medium,
+                anthropic::Effort::High,
+                anthropic::Effort::XHigh,
+                anthropic::Effort::Max,
+            ]
+        } else {
+            Vec::new()
+        },
         tool_override: available.tool_override.clone(),
         extra_beta_headers: available.extra_beta_headers.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_available_model(json: &str) -> AvailableModel {
+        serde_json::from_str(json).expect("test fixture should parse")
+    }
+
+    #[test]
+    fn adaptive_mode_maps_to_adaptive_thinking_with_all_effort_levels() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-opus-4-7",
+                "max_tokens": 1000000,
+                "max_output_tokens": 128000,
+                "mode": { "type": "adaptive" }
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert_eq!(model.mode, AnthropicModelMode::AdaptiveThinking);
+        assert!(model.supports_thinking);
+        assert!(model.supports_adaptive_thinking);
+        assert_eq!(
+            model.supported_effort_levels,
+            vec![
+                anthropic::Effort::Low,
+                anthropic::Effort::Medium,
+                anthropic::Effort::High,
+                anthropic::Effort::XHigh,
+                anthropic::Effort::Max,
+            ]
+        );
+    }
+
+    #[test]
+    fn thinking_mode_does_not_enable_adaptive() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-sonnet-4-5",
+                "max_tokens": 200000,
+                "mode": { "type": "thinking", "budget_tokens": 4096 }
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert!(matches!(model.mode, AnthropicModelMode::Thinking { .. }));
+        assert!(model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(model.supported_effort_levels.is_empty());
+    }
+
+    #[test]
+    fn default_mode_disables_thinking() {
+        let available = parse_available_model(
+            r#"{
+                "name": "claude-3-5-haiku",
+                "max_tokens": 200000
+            }"#,
+        );
+        let model = available_model_to_anthropic_model(&available);
+
+        assert_eq!(model.mode, AnthropicModelMode::Default);
+        assert!(!model.supports_thinking);
+        assert!(!model.supports_adaptive_thinking);
+        assert!(model.supported_effort_levels.is_empty());
     }
 }
 
@@ -308,6 +392,28 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
         self.model.supports_thinking
     }
 
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        self.model
+            .supported_effort_levels
+            .iter()
+            .map(|effort| {
+                let is_default = matches!(effort, anthropic::Effort::High);
+                let (name, value) = match effort {
+                    anthropic::Effort::Low => ("Low".into(), "low".into()),
+                    anthropic::Effort::Medium => ("Medium".into(), "medium".into()),
+                    anthropic::Effort::High => ("High".into(), "high".into()),
+                    anthropic::Effort::XHigh => ("XHigh".into(), "xhigh".into()),
+                    anthropic::Effort::Max => ("Max".into(), "max".into()),
+                };
+                language_model::LanguageModelEffortLevel {
+                    name,
+                    value,
+                    is_default,
+                }
+            })
+            .collect()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id)
     }
@@ -333,22 +439,32 @@ impl LanguageModel for AnthropicCompatibleLanguageModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
-        let mut request = into_anthropic(
+        let mut request = match into_anthropic(
             request,
             request_id,
             self.model.default_temperature,
             self.model.max_output_tokens,
             self.model.mode.clone(),
             self.cache_mode,
-        );
+            &self.provider_id,
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         if !self.model.supports_speed {
             request.speed = None;
         }
         let completion_request = self.stream_completion(request, cx);
         let provider_name = self.provider_name.clone();
+        let provider_id = self.provider_id.clone();
+        let executor = cx.background_executor().clone();
         let future = self.request_limiter.stream(async move {
             let response = completion_request.await?;
-            Ok(AnthropicEventMapper::new(provider_name).map_stream(response))
+            let events = AnthropicEventMapper::new(provider_name, provider_id).map_stream(response);
+            Ok(language_model::stream_in_background(
+                events.boxed(),
+                executor,
+            ))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }

@@ -21,7 +21,7 @@ fn load_linux_repo_snapshot() -> Vec<GitEntry> {
 
             let entry = Entry {
                 kind,
-                path: Arc::from(RelPath::unix(&(line.trim_end()[2..])).unwrap()),
+                path: Arc::from(RelPath::from_unix_str(&(line.trim_end()[2..])).unwrap()),
                 id: ProjectEntryId::default(),
                 size: 0,
                 inode: 0,

@@ -75,7 +75,7 @@ where
     pub fn reset(&mut self) {
         self.did_seek = false;
         self.at_end = self.tree.is_empty();
-        self.stack.truncate(0);
+        self.stack.clear();
         self.position = D::zero(self.cx);
     }
 

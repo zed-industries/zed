@@ -36,25 +36,30 @@ proto.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+slotmap.workspace = true
 smol.workspace = true
 telemetry.workspace = true
 tempfile.workspace = true
 text.workspace = true
-time.workspace = true
 util.workspace = true
+path.workspace = true
 is_executable = "1.0.5"
 notify = "9.0.0-rc.4"
-trash = { git = "https://github.com/zed-industries/trash-rs", rev = "3bf27effd4eb8699f2e484d3326b852fe3e53af7" }
+trash = { git = "https://github.com/zed-industries/trash-rs", rev = "41c6c800d884a89351f3b8856d12894cccee261d" }
+
+[target.'cfg(unix)'.dependencies]
+rustix.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 dunce.workspace = true
-
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-ashpd.workspace = true
+async-std.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 unicode-normalization = "0.1"
+
+[package.metadata.cargo-shear]
+ignored = ["async-std"]
 
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }

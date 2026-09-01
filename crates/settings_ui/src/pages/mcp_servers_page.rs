@@ -95,10 +95,7 @@ fn get_context_server_store(
     settings_window: &SettingsWindow,
     cx: &App,
 ) -> Option<Entity<ContextServerStore>> {
-    let original_window = settings_window.original_window.as_ref()?;
-    let multi_workspace = original_window.read(cx).ok()?;
-    let workspace = multi_workspace.workspaces().next()?;
-    let project = workspace.read(cx).project().clone();
+    let project = settings_window.active_project(cx)?;
     Some(project.read(cx).context_server_store())
 }
 
@@ -163,6 +160,11 @@ fn render_context_server(
     let server_configuration = store.read(cx).configuration_for_server(context_server_id);
 
     let is_running = matches!(server_status, ContextServerStatus::Running);
+    let is_enabled = store.read(cx).is_server_enabled(context_server_id, cx);
+    let is_transitioning = matches!(
+        server_status,
+        ContextServerStatus::Starting | ContextServerStatus::Authenticating
+    );
     let item_id = SharedString::from(context_server_id.0.to_string());
 
     // Determine the source from the configured settings rather than the runtime
@@ -170,7 +172,6 @@ fn render_context_server(
     // started has no runtime configuration, and must not be mistaken for an
     // extension-provided server.
     let provided_by_extension = store.read(cx).is_extension_provided(context_server_id, cx);
-
     let display_name = if provided_by_extension {
         resolve_extension_display_name(context_server_id, cx).unwrap_or_else(|| item_id.clone())
     } else {
@@ -218,7 +219,8 @@ fn render_context_server(
     let uninstall_button = render_uninstall_button(context_server_id, provided_by_extension);
 
     // Build toggle switch
-    let toggle_switch = render_toggle_switch(context_server_id, store, is_running);
+    let toggle_switch =
+        render_toggle_switch(context_server_id, store, is_enabled, is_transitioning);
 
     // Surface invalid settings (which prevent the server from starting at all)
     // ahead of runtime status feedback, so the misconfiguration is visible.
@@ -317,19 +319,21 @@ fn render_uninstall_button(
 fn render_toggle_switch(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
-    is_running: bool,
+    is_enabled: bool,
+    is_transitioning: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
     let store = store.clone();
 
     Switch::new(
         SharedString::from(format!("mcp-toggle-{}", context_server_id.0)),
-        if is_running {
+        if is_enabled {
             ToggleState::Selected
         } else {
             ToggleState::Unselected
         },
     )
+    .disabled(is_transitioning)
     .tab_index(0isize)
     .on_click({
         move |state, _window, cx| {
