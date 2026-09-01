@@ -415,9 +415,11 @@ gpui::actions!(
     ]
 );
 
-/// Path of the SSH key this app uses for remote connections.
+/// Path of the SSH key this app uses for remote connections. It lives in the
+/// app's data directory because the container root (`$HOME` on iOS) is not
+/// writable on device.
 fn ssh_key_path() -> std::path::PathBuf {
-    util::paths::home_dir().join(".ssh").join("id_ed25519")
+    paths::data_dir().join("ssh").join("id_ed25519")
 }
 
 /// Returns the public key in OpenSSH format, generating the key pair on first
@@ -443,7 +445,8 @@ fn ensure_ssh_public_key() -> anyhow::Result<String> {
             russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
         );
         if let Some(parent) = private_path.parent() {
-            std::fs::create_dir_all(parent).context("creating ~/.ssh")?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
         }
         key.write_openssh_file(&private_path, russh::keys::ssh_key::LineEnding::LF)
             .context("writing the SSH key")?;

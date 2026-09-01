@@ -142,12 +142,15 @@ impl InProcessSshConnection {
         // Try the default client keys first, then fall back to a password
         // prompt.
         let mut private_keys = Vec::new();
+        let mut key_paths = vec![paths::data_dir().join("ssh").join("id_ed25519")];
         if let Some(home) = std::env::var_os("HOME") {
             for name in ["id_ed25519", "id_rsa"] {
-                let path = std::path::Path::new(&home).join(".ssh").join(name);
-                if let Ok(key) = russh::keys::load_secret_key(&path, None) {
-                    private_keys.push(key);
-                }
+                key_paths.push(std::path::Path::new(&home).join(".ssh").join(name));
+            }
+        }
+        for path in key_paths {
+            if let Ok(key) = russh::keys::load_secret_key(&path, None) {
+                private_keys.push(key);
             }
         }
 
