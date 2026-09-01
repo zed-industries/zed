@@ -236,6 +236,15 @@ impl WebWindow {
         })
     }
 
+    fn calculate_fallback_dimensions(entry: &web_sys::ResizeObserverEntry, dpr: f64) -> (u32, u32, f32, f32) {
+        let rect = entry.content_rect();
+        let lw = rect.width() as f32;
+        let lh = rect.height() as f32;
+        let pw = (lw as f64 * dpr).round() as u32;
+        let ph = (lh as f64 * dpr).round() as u32;
+        (pw, ph, lw, lh)
+    }
+    
     fn create_resize_observer_closure(
         inner: Rc<WebWindowInner>,
     ) -> Closure<dyn FnMut(js_sys::Array)> {
@@ -250,23 +259,34 @@ impl WebWindow {
 
             let (physical_width, physical_height, logical_width, logical_height) =
                 if inner.has_device_pixel_support {
-                    let size: web_sys::ResizeObserverSize = entry
-                        .device_pixel_content_box_size()
-                        .get(0)
-                        .unchecked_into();
-                    let pw = size.inline_size() as u32;
-                    let ph = size.block_size() as u32;
-                    let lw = pw as f64 / dpr;
-                    let lh = ph as f64 / dpr;
-                    (pw, ph, lw as f32, lh as f32)
+                    let device_box = entry.device_pixel_content_box_size();
+                    if device_box.length() > 0 {
+                        let dev_size: web_sys::ResizeObserverSize =
+                            device_box.get(0).unchecked_into();
+                        
+                        // 1. Explicitly round sub-pixel physical dimensions to avoid downward truncation jitter
+                        let pw = dev_size.inline_size().round() as u32;
+                        let ph = dev_size.block_size().round() as u32;
+    
+                        // 2. Read true CSS layout coordinates rather than back-calculating pw / dpr
+                        let content_box = entry.content_box_size();
+                        let (lw, lh) = if content_box.length() > 0 {
+                            let c_size: web_sys::ResizeObserverSize =
+                                content_box.get(0).unchecked_into();
+                            (c_size.inline_size() as f32, c_size.block_size() as f32)
+                        } else {
+                            let rect = entry.content_rect();
+                            (rect.width() as f32, rect.height() as f32)
+                        };
+    
+                        (pw, ph, lw, lh)
+                    } else {
+                        // Fallback if the device_box array was empty
+                        calculate_fallback_dimensions(&entry, dpr)
+                    }
                 } else {
                     // Safari fallback: use contentRect (always CSS px).
-                    let rect = entry.content_rect();
-                    let lw = rect.width() as f32;
-                    let lh = rect.height() as f32;
-                    let pw = (lw as f64 * dpr).round() as u32;
-                    let ph = (lh as f64 * dpr).round() as u32;
-                    (pw, ph, lw, lh)
+                    calculate_fallback_dimensions(&entry, dpr)
                 };
 
             let scale_changed = inner.notify_scale.replace(false);
