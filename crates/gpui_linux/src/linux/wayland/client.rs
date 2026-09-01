@@ -338,7 +338,7 @@ pub(crate) struct WaylandClientState {
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
-    ignored_keyboard_event_warning: KeyboardEventWarningLatch,
+    reported_ignored_keyboard_event: bool,
     drag: DragState,
     external_drag: Option<ExternalDrag>,
     click: ClickState,
@@ -418,26 +418,6 @@ pub(crate) struct KeyRepeat {
 struct KeyboardMappingReplacement {
     deleted_pre_edit: bool,
     modifiers_changed: bool,
-}
-
-#[derive(Default)]
-struct KeyboardEventWarningLatch {
-    reported: bool,
-}
-
-impl KeyboardEventWarningLatch {
-    fn should_report(&mut self) -> bool {
-        if self.reported {
-            false
-        } else {
-            self.reported = true;
-            true
-        }
-    }
-
-    fn reset(&mut self) {
-        self.reported = false;
-    }
 }
 
 fn load_xkb_keyboard_states(
@@ -1038,7 +1018,7 @@ impl WaylandClient {
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
-            ignored_keyboard_event_warning: KeyboardEventWarningLatch::default(),
+            reported_ignored_keyboard_event: false,
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -1882,7 +1862,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) => {
                         match load_xkb_keyboard_states(fd, size) {
                             Ok(keyboard_states) => {
-                                state.ignored_keyboard_event_warning.reset();
+                                state.reported_ignored_keyboard_event = false;
                                 Some(keyboard_states)
                             }
                             Err(error) => {
@@ -1977,7 +1957,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     mods_locked,
                     group,
                 ) else {
-                    if state.ignored_keyboard_event_warning.should_report() {
+                    if !std::mem::replace(&mut state.reported_ignored_keyboard_event, true) {
                         log::warn!(
                             "Ignoring Wayland modifiers because no usable XKB keymap is available"
                         );
@@ -2019,7 +1999,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let Some((keymap_state, keycode, keysym)) =
                     resolve_xkb_key_event(state.keymap_state.as_ref(), key)
                 else {
-                    if state.ignored_keyboard_event_warning.should_report() {
+                    if !std::mem::replace(&mut state.reported_ignored_keyboard_event, true) {
                         log::warn!(
                             "Ignoring Wayland key event because no usable XKB keymap is available"
                         );
@@ -3072,18 +3052,6 @@ mod tests {
     #[test]
     fn ignores_keys_without_keymap() {
         assert!(resolve_xkb_key_event(None, 30).is_none());
-    }
-
-    #[test]
-    fn reports_ignored_keyboard_events_once_until_keymap_recovers() {
-        let mut warning = KeyboardEventWarningLatch::default();
-
-        assert!(warning.should_report());
-        assert!(!warning.should_report());
-
-        warning.reset();
-
-        assert!(warning.should_report());
     }
 
     #[test]
