@@ -107,7 +107,7 @@ pub fn format_terminal_selection_reference(
     line_range: &RangeInclusive<u32>,
     working_directory: Option<&Path>,
     cx: &App,
-) -> String {
+) -> Option<String> {
     let path_style = project.path_style(cx);
     let absolute_path = project.absolute_path(project_path, cx);
     let path = match (absolute_path, working_directory) {
@@ -120,11 +120,14 @@ pub fn format_terminal_selection_reference(
     };
     let start_line = line_range.start() + 1;
     let end_line = line_range.end() + 1;
-    if start_line == end_line {
+    let reference = if start_line == end_line {
         format!("{path}:{start_line}")
     } else {
         format!("{path}:{start_line}-{end_line}")
-    }
+    };
+    shlex::try_quote(&reference)
+        .ok()
+        .map(|reference| reference.into_owned())
 }
 
 /// Event to transmit the scroll from the element to the view
@@ -1203,16 +1206,8 @@ fn format_clipboard_selection_for_terminal_agent(
         return None;
     }
     let project_path = project.project_path_for_absolute_path(file_path, cx)?;
-    Some(format!(
-        "{} ",
-        format_terminal_selection_reference(
-            project,
-            &project_path,
-            line_range,
-            working_directory,
-            cx,
-        )
-    ))
+    format_terminal_selection_reference(project, &project_path, line_range, working_directory, cx)
+        .map(|reference| format!("{reference} "))
 }
 
 fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
@@ -2313,6 +2308,11 @@ mod tests {
         let (project, _workspace) = init_test(cx).await;
         let (worktree, _) = create_folder_wt(project.clone(), "/project", cx).await;
         let file_entry = create_file_in_worktree(worktree.clone(), "main.rs", cx).await;
+        let spaced_file_entry = create_file_in_worktree(worktree.clone(), "my file.rs", cx).await;
+        let quoted_file_entry =
+            create_file_in_worktree(worktree.clone(), "reader's notes.rs", cx).await;
+        let shell_file_entry = create_file_in_worktree(worktree.clone(), "$(notes).rs", cx).await;
+        let unicode_file_entry = create_file_in_worktree(worktree.clone(), "日本.rs", cx).await;
 
         let selection = editor::ClipboardSelection {
             len: 12,
@@ -2340,7 +2340,7 @@ mod tests {
                     Some(Path::new("/project")),
                     cx,
                 ),
-                "main.rs:5"
+                Some("main.rs:5".to_string())
             );
             assert_eq!(
                 format_clipboard_selection_for_terminal_agent(
@@ -2352,6 +2352,47 @@ mod tests {
                 ),
                 Some("main.rs:10-42 ".to_string())
             );
+
+            let spaced_path_clipboard = ClipboardItem::new_string_with_json_metadata(
+                "selected text".to_string(),
+                vec![editor::ClipboardSelection {
+                    file_path: Some(PathBuf::from("/project/my file.rs")),
+                    ..selection.clone()
+                }],
+            );
+            assert_eq!(
+                format_clipboard_selection_for_terminal_agent(
+                    &spaced_path_clipboard,
+                    Some("codex"),
+                    project,
+                    Some(Path::new("/project")),
+                    cx,
+                ),
+                Some("'my file.rs:10-42' ".to_string())
+            );
+
+            for (file_entry, expected_reference) in [
+                (&spaced_file_entry, "my file.rs:10-42"),
+                (&quoted_file_entry, "reader's notes.rs:10-42"),
+                (&shell_file_entry, "$(notes).rs:10-42"),
+                (&unicode_file_entry, "日本.rs:10-42"),
+            ] {
+                let project_path = ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path: file_entry.path.clone(),
+                };
+                let reference = format_terminal_selection_reference(
+                    project,
+                    &project_path,
+                    &(9..=41),
+                    Some(Path::new("/project")),
+                    cx,
+                );
+                assert_eq!(
+                    reference.as_deref().and_then(shlex::split),
+                    Some(vec![expected_reference.to_string()])
+                );
+            }
             assert_eq!(
                 format_clipboard_selection_for_terminal_agent(
                     &clipboard,

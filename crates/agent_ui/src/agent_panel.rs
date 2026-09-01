@@ -759,13 +759,16 @@ fn format_selection_for_terminal(
                 let snapshot = buffer.snapshot();
                 let point_range = range.to_point(&snapshot);
                 let line_range = line_range_for_selection(point_range);
-                parts.push(format_terminal_selection_reference(
+                let Some(reference) = format_terminal_selection_reference(
                     project,
                     &project_path,
                     &line_range,
                     working_directory,
                     cx,
-                ));
+                ) else {
+                    continue;
+                };
+                parts.push(reference);
             }
             if parts.is_empty() {
                 String::new()
