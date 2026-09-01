@@ -56,6 +56,8 @@ You can also configure this from the Settings UI under **AI**, via the "Terminal
 
 The terminal title in the toolbar updates automatically to reflect the running shell or process. You can set a custom name by clicking the title or the pencil icon that appears on hover. In the Threads Sidebar, right-click a Terminal Thread and select **Rename Title**, or select it and press {#kb agent::RenameSelectedThread}.
 
+You can also edit the toolbar title with {#action agent::EditTerminalThreadTitle}. Map this action to a shortcut in your `keymap.json` if needed.
+
 ## Notifications {#terminal-thread-notifications}
 
 When a terminal produces a bell character while not in focus, Zed notifies you the same way it does when an agent finishes: with a visual pop-up and an optional sound. Clicking the notification brings the terminal into focus and clears the indicator.

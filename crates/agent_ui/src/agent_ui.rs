@@ -326,6 +326,8 @@ actions!(
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
         NewTerminalThread,
+        /// Edits the title of the active terminal thread.
+        EditTerminalThreadTitle,
     ]
 );
 
