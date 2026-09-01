@@ -772,7 +772,11 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.dispatch_action(Box::new(markdown::SelectAll), cx);
+        self.markdown.update(cx, |markdown, cx| {
+            markdown.focus_handle(cx).focus(window, cx);
+            window.dispatch_action(Box::new(markdown::SelectAll), cx);
+            cx.notify();
+        });
     }
 
     fn reset_font_size(
@@ -3669,6 +3673,55 @@ mod tests {
             crate::init(cx);
             state
         })
+    }
+
+    async fn open_preview_and_dispatch_select_all_with_container_focus(
+        cx: &mut TestAppContext,
+        source: &str,
+    ) -> Entity<MarkdownPreviewView> {
+        let (multi_workspace, _editor) = open_markdown_file(cx, "test.md", source).await;
+        let preview = open_preview_for_active_editor(cx, &multi_workspace);
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                let handle = preview.read(cx).focus_handle.clone();
+                window.focus(&handle, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                assert!(
+                    preview.read(cx).focus_handle.contains_focused(window, cx),
+                    "outer preview should be focused, not the content"
+                );
+                window.dispatch_action(Box::new(editor::actions::SelectAll), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        preview
+    }
+
+    #[gpui::test]
+    async fn test_select_all_when_container_focused(cx: &mut TestAppContext) {
+        let source = "Hello\n\nworld\n\n\n";
+        let preview = open_preview_and_dispatch_select_all_with_container_focus(cx, source).await;
+        preview.read_with(cx, |preview, cx| {
+            assert_eq!(
+                preview.markdown.read(cx).selected_source(),
+                Some("Hello\n\nworld")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_select_all_empty_document_when_container_focused(cx: &mut TestAppContext) {
+        let preview = open_preview_and_dispatch_select_all_with_container_focus(cx, "").await;
+        preview.read_with(cx, |preview, cx| {
+            assert_eq!(preview.markdown.read(cx).selected_source(), None);
+        });
     }
 
     fn register_markdown_language(project: &Entity<Project>, cx: &mut TestAppContext) {
