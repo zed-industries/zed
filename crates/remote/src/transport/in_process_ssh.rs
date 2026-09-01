@@ -63,8 +63,17 @@ impl russh::client::Handler for ClientHandler {
 
 type SshHandle = russh::client::Handle<ClientHandler>;
 
+/// The credential that authenticated this connection, so further connections
+/// (one per terminal) can be made without prompting again.
+#[derive(Clone)]
+enum Credential {
+    Key(Arc<russh::keys::PrivateKey>),
+    Password(String),
+}
+
 pub(crate) struct InProcessSshConnection {
     handle: Arc<SshHandle>,
+    credential: Credential,
     connection_options: SshConnectionOptions,
     platform: RemotePlatform,
     os_version: Option<String>,
@@ -127,31 +136,32 @@ impl InProcessSshConnection {
             }
         }
 
-        let (mut success, mut handle) = {
+        let (mut credential, mut handle) = {
             let username = username.clone();
             Tokio::spawn_result(cx, async move {
                 let mut handle = handle;
-                let mut success = false;
+                let mut credential = None;
                 for key in private_keys {
-                    let key = russh::keys::PrivateKeyWithHashAlg::new(
-                        Arc::new(key),
+                    let key = Arc::new(key);
+                    let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
+                        key.clone(),
                         handle.best_supported_rsa_hash().await?.flatten(),
                     );
                     let result = handle
-                        .authenticate_publickey(username.clone(), key)
+                        .authenticate_publickey(username.clone(), key_with_hash)
                         .await
                         .context("SSH public key authentication failed")?;
                     if matches!(result, AuthResult::Success) {
-                        success = true;
+                        credential = Some(Credential::Key(key));
                         break;
                     }
                 }
-                anyhow::Ok((success, handle))
+                anyhow::Ok((credential, handle))
             })
             .await?
         };
 
-        if !success {
+        if credential.is_none() {
             let password = match options.password.clone() {
                 Some(password) => password,
                 None => {
@@ -168,20 +178,23 @@ impl InProcessSshConnection {
                         .decrypt(IKnowWhatIAmDoingAndIHaveReadTheDocs)?
                 }
             };
-            (success, handle) = {
+            (credential, handle) = {
                 let username = username.clone();
+                let password_for_auth = password.clone();
                 Tokio::spawn_result(cx, async move {
                     let mut handle = handle;
                     let result = handle
-                        .authenticate_password(username, password)
+                        .authenticate_password(username, password_for_auth)
                         .await
                         .context("SSH password authentication failed")?;
-                    anyhow::Ok((matches!(result, AuthResult::Success), handle))
+                    let credential = matches!(result, AuthResult::Success)
+                        .then(|| Credential::Password(password));
+                    anyhow::Ok((credential, handle))
                 })
                 .await?
             };
         }
-        anyhow::ensure!(success, "the SSH server rejected the credentials");
+        let credential = credential.context("the SSH server rejected the credentials")?;
         let handle = Arc::new(handle);
 
         delegate.set_status(Some("Detecting remote platform"), cx);
@@ -206,6 +219,7 @@ impl InProcessSshConnection {
 
         Ok(Self {
             handle,
+            credential,
             connection_options: options,
             platform,
             os_version,
@@ -349,6 +363,9 @@ impl RemoteConnection for InProcessSshConnection {
             tokio::spawn(async move {
                 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+                // Owned here so the connection lives exactly as long as the
+                // terminal that uses it.
+                let _handle = handle;
                 let mut bridge_exit = bridge_exit;
                 let mut read_buffer = [0u8; 8192];
                 loop {
@@ -458,6 +475,42 @@ async fn run_command(handle: &Arc<SshHandle>, command: &str, cx: &AsyncApp) -> R
         }
     });
     task.await
+}
+
+/// Opens and authenticates an additional SSH connection with the credential
+/// that already worked for the control connection.
+async fn connect_authenticated(
+    host: &str,
+    port: u16,
+    username: Option<String>,
+    credential: Credential,
+) -> Result<SshHandle> {
+    let username = username.context("An explicit user is required (use user@host)")?;
+    let config = Arc::new(russh::client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(std::time::Duration::from_secs(30)),
+        ..Default::default()
+    });
+
+    let mut handle = russh::client::connect(config, (host, port), ClientHandler)
+        .await
+        .map_err(|error| anyhow!("failed to connect to {host}:{port}: {error}"))?;
+
+    let result = match credential {
+        Credential::Key(key) => {
+            let key = russh::keys::PrivateKeyWithHashAlg::new(
+                key,
+                handle.best_supported_rsa_hash().await?.flatten(),
+            );
+            handle.authenticate_publickey(username, key).await?
+        }
+        Credential::Password(password) => handle.authenticate_password(username, password).await?,
+    };
+    anyhow::ensure!(
+        matches!(result, AuthResult::Success),
+        "the SSH server rejected the credentials for an additional connection"
+    );
+    Ok(handle)
 }
 
 /// Uploads bytes to `remote_path` by streaming them into `cat` over an exec

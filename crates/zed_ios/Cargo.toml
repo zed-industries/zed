@@ -41,8 +41,10 @@ outline_panel.workspace = true
 paths.workspace = true
 project.workspace = true
 project_panel.workspace = true
+rand.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
+russh.workspace = true
 search.workspace = true
 # Embed assets and grammar queries even in debug builds; the app sandbox
 # cannot read the repository's source tree at runtime.

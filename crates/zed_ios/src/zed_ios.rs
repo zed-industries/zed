@@ -190,6 +190,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
         |workspace: &mut Workspace, mut window, cx: &mut gpui::Context<Workspace>| {
             workspace.register_action(open_settings_file);
             workspace.register_action(show_welcome_item);
+            workspace.register_action(copy_ssh_public_key);
             // cmd-= / cmd-- are bound in the default keymap, but the actions
             // are handled by the zed crate, which this shell does not use.
             workspace.register_action(
@@ -404,9 +405,92 @@ gpui::actions!(
     zed_ios,
     [
         /// Opens the welcome page in the current window.
-        ShowWelcomeItem
+        ShowWelcomeItem,
+        /// Creates an SSH key pair if none exists and copies the public key.
+        CopySshPublicKey
     ]
 );
+
+/// Path of the SSH key this app uses for remote connections.
+fn ssh_key_path() -> std::path::PathBuf {
+    util::paths::home_dir().join(".ssh").join("id_ed25519")
+}
+
+/// Returns the public key in OpenSSH format, generating the key pair on first
+/// use so it can be added to a server's authorized_keys.
+fn ensure_ssh_public_key() -> anyhow::Result<String> {
+    use anyhow::Context as _;
+
+    let private_path = ssh_key_path();
+    let public_path = private_path.with_extension("pub");
+
+    if let Ok(public_key) = std::fs::read_to_string(&public_path) {
+        return Ok(public_key);
+    }
+
+    let key = if private_path.exists() {
+        russh::keys::PrivateKey::read_openssh_file(&private_path)
+            .context("reading the existing SSH key")?
+    } else {
+        // Built from a random seed rather than PrivateKey::random, which wants
+        // an RNG from a different rand_core version than the workspace uses.
+        let seed: [u8; 32] = rand::random();
+        let key = russh::keys::PrivateKey::from(
+            russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&seed),
+        );
+        if let Some(parent) = private_path.parent() {
+            std::fs::create_dir_all(parent).context("creating ~/.ssh")?;
+        }
+        key.write_openssh_file(&private_path, russh::keys::ssh_key::LineEnding::LF)
+            .context("writing the SSH key")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&private_path, std::fs::Permissions::from_mode(0o600))
+                .context("restricting SSH key permissions")?;
+        }
+        key
+    };
+
+    let public_key = key
+        .public_key()
+        .to_openssh()
+        .context("encoding the public key")?;
+    std::fs::write(&public_path, format!("{public_key}\n")).context("writing the public key")?;
+    Ok(public_key)
+}
+
+fn copy_ssh_public_key(
+    workspace: &mut Workspace,
+    _: &CopySshPublicKey,
+    _window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    match ensure_ssh_public_key() {
+        Ok(public_key) => {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(public_key));
+            struct SshKeyCopied;
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<SshKeyCopied>(),
+                    "SSH public key copied. Add it to the server's authorized_keys.",
+                ),
+                cx,
+            );
+        }
+        Err(error) => {
+            log::error!("failed to prepare the SSH key: {error:#}");
+            struct SshKeyFailed;
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<SshKeyFailed>(),
+                    format!("Could not prepare the SSH key: {error}"),
+                ),
+                cx,
+            );
+        }
+    }
+}
 
 /// Zed's own ShowWelcome opens a local workspace, which means an extra window
 /// on top of a remote project. Add the page to the current workspace instead.
