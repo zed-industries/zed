@@ -235,7 +235,7 @@ impl RenderOnce for ToolCall {
             .w_full()
             .justify_between()
             .when(is_card, |this| {
-                this.p_0p5().rounded_t(rems_from_px(5.)).bg(header_bg)
+                this.p_0p5().rounded_t(rems_from_px(5_f32)).bg(header_bg)
             })
             .child(
                 h_flex()
