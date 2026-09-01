@@ -28119,7 +28119,7 @@ async fn test_merge_base_diff_hunks_are_read_only(cx: &mut TestAppContext) {
             .read(cx)
             .diff_for(buffer_id)
             .expect("buffer should have a display diff");
-        assert!(!diff.read(cx).is_stageable());
+        assert!(diff.read(cx).operations().is_none());
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.select_all(&SelectAll, window, cx);
