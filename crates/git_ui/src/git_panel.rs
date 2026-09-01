@@ -8010,6 +8010,18 @@ impl GitPanel {
         })
     }
 
+    fn format_display_path(&self, repo: &Repository, path: &RepoPath) -> String {
+        let abs_path = repo.work_directory_abs_path.join(path.as_std_path());
+        if let Ok(relative_to_home) = abs_path.strip_prefix(util::paths::home_dir()) {
+            Path::new("~")
+                .join(relative_to_home)
+                .to_string_lossy()
+                .to_string()
+        } else {
+            abs_path.to_string_lossy().into_owned()
+        }
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -8327,6 +8339,8 @@ impl GitPanel {
 
         let id_for_diff_stat = id.clone();
 
+        let path = self.format_display_path(repo, &entry.repo_path);
+
         h_flex()
             .id(id)
             .h(self.list_item_height())
@@ -8342,6 +8356,8 @@ impl GitPanel {
             .bg(base_bg)
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
+            .tooltip_show_delay(Duration::from_millis(1500))
+            .tooltip(Tooltip::text(path))
             .child(name_row)
             .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
                 el.when_some(entry.diff_stat, move |this, stat| {
@@ -8505,13 +8521,16 @@ impl GitPanel {
             IconName::Folder
         };
 
-        let stage_status = if let Some(repo) = &self.active_repository {
-            self.stage_status_for_directory(entry, repo.read(cx))
+        let (stage_status, path) = if let Some(repo) = &self.active_repository {
+            (
+                self.stage_status_for_directory(entry, repo.read(cx)),
+                self.format_display_path(repo.read(cx), &entry.key.path),
+            )
         } else {
             util::debug_panic!(
                 "Won't have entries to render without an active repository in Git Panel"
             );
-            StageStatus::PartiallyStaged
+            (StageStatus::PartiallyStaged, String::new())
         };
 
         let stage_intent = StageIntent::for_section(entry.key.section);
@@ -8566,6 +8585,8 @@ impl GitPanel {
             .when(selected && self.focus_handle.is_focused(window), |el| {
                 el.border_color(cx.theme().colors().panel_focused_border)
             })
+            .tooltip_show_delay(Duration::from_millis(1500))
+            .tooltip(Tooltip::text(path))
             .bg(base_bg)
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
