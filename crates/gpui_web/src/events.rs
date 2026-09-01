@@ -264,6 +264,11 @@ impl WebWindowInner {
         .unwrap_or(false)
     }
 
+    fn focused_input_accepts_text(&self) -> bool {
+        self.with_input_handler(|handler| handler.query_accepts_text_input())
+            .unwrap_or(false)
+    }
+
     fn register_pointer_up(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerup", move |event: JsValue| {
@@ -281,10 +286,11 @@ impl WebWindowInner {
                     }
                     _ => false,
                 };
+                let focused_input_accepted_text = this.focused_input_accepts_text();
                 // A recognized tap is dispatched synchronously inside this
                 // call, so the text-input check below sees the state the tap
                 // produced.
-                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                let dispatch_result = this.dispatch_input(PlatformInput::Touch(TouchEvent {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Ended,
                     position,
@@ -302,7 +308,14 @@ impl WebWindowInner {
                 let viewport_stable = this.gesture_start_visual_viewport_height.get()
                     == this.visual_viewport_height();
                 if completes_tap && viewport_stable {
-                    this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                    let preserve_focused_input = should_preserve_focused_input(
+                        focused_input_accepted_text,
+                        this.focused_input_accepts_text(),
+                        dispatch_result,
+                    );
+                    if !preserve_focused_input {
+                        this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                    }
                 }
                 this.schedule_ime_mirror_sync();
                 return;
@@ -1231,6 +1244,16 @@ fn capslock_from_keyboard_event(event: &web_sys::KeyboardEvent) -> Capslock {
     }
 }
 
+fn should_preserve_focused_input(
+    accepted_text_before_tap: bool,
+    accepts_text_after_tap: bool,
+    dispatch_result: Option<DispatchEventResult>,
+) -> bool {
+    accepted_text_before_tap
+        && accepts_text_after_tap
+        && dispatch_result.is_some_and(|result| result.default_prevented)
+}
+
 pub(crate) fn is_mac_platform(browser_window: &web_sys::Window) -> bool {
     let navigator = browser_window.navigator();
 
@@ -1363,4 +1386,35 @@ fn predicted_pointer_position(
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     // offset_x/offset_y give position relative to the target element's padding edge
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handled_tap_preserves_unchanged_text_input() {
+        assert!(should_preserve_focused_input(
+            true,
+            true,
+            Some(DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            }),
+        ));
+    }
+
+    #[test]
+    fn tap_does_not_preserve_unhandled_or_unfocused_input() {
+        let result = |default_prevented| {
+            Some(DispatchEventResult {
+                propagate: false,
+                default_prevented,
+            })
+        };
+
+        assert!(!should_preserve_focused_input(true, true, result(false),));
+        assert!(!should_preserve_focused_input(false, true, result(true),));
+        assert!(!should_preserve_focused_input(true, false, result(true),));
+    }
 }
