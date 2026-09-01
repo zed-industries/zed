@@ -1340,10 +1340,7 @@ fn register_actions(
                     cx,
                     |workspace, window, cx| {
                         cx.activate(true);
-                        if matches!(
-                            WorkspaceSettings::get_global(cx).on_new_window,
-                            settings::OnNewWindow::Launchpad
-                        ) {
+                        if WorkspaceSettings::get_global(cx).on_new_window == settings::OnNewWindow::Launchpad {
                             return;
                         }
                         // Create buffer synchronously to avoid flicker

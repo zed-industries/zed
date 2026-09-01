@@ -691,6 +691,7 @@ pub struct CenteredLayoutSettings {
     JsonSchema,
     MergeFrom,
     PartialEq,
+    Eq,
     Debug,
     strum::VariantArray,
     strum::VariantNames,
