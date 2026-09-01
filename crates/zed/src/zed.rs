@@ -1340,24 +1340,7 @@ fn register_actions(
                     cx,
                     |workspace, window, cx| {
                         cx.activate(true);
-                        if WorkspaceSettings::get_global(cx).on_new_window == settings::OnNewWindow::Launchpad {
-                            return;
-                        }
-                        // Create buffer synchronously to avoid flicker
-                        let project = workspace.project().clone();
-                        let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer("", None, true, cx)
-                        });
-                        let editor = cx.new(|cx| {
-                            Editor::for_buffer(buffer, Some(project), window, cx)
-                        });
-                        workspace.add_item_to_active_pane(
-                            Box::new(editor),
-                            None,
-                            true,
-                            window,
-                            cx,
-                        );
+                        initialize_new_window(workspace, window, cx);
                     },
                 )
                 .detach();
@@ -2416,6 +2399,27 @@ fn filter_disabled_ai_bindings(bindings: Vec<KeyBinding>, cx: &App) -> Vec<KeyBi
         .into_iter()
         .filter(|binding| !is_ai_keybinding(binding))
         .collect()
+}
+
+/// Populates a freshly opened window according to the `on_new_window` setting.
+///
+/// For `EmptyTab` this opens an empty buffer. For `Launchpad` the window is left
+/// without any items so the pane falls back to displaying the Launchpad.
+fn initialize_new_window(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    if WorkspaceSettings::get_global(cx).on_new_window == settings::OnNewWindow::Launchpad {
+        return;
+    }
+    // Create buffer synchronously to avoid flicker
+    let project = workspace.project().clone();
+    let buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("", None, true, cx)
+    });
+    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+    workspace.add_item_to_active_pane(Box::new(editor), None, true, window, cx);
 }
 
 pub fn open_new_ssh_project_from_project(
@@ -3774,6 +3778,50 @@ mod tests {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name");
+                });
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_new_window_launchpad_opens_without_items(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.on_new_window = Some(settings::OnNewWindow::Launchpad);
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            open_new(
+                Default::default(),
+                app_state.clone(),
+                cx,
+                |workspace, window, cx| initialize_new_window(workspace, window, cx),
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx
+            .update(|cx| cx.windows().first().unwrap().downcast::<MultiWorkspace>())
+            .unwrap();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.workspace().update(cx, |workspace, cx| {
+                    assert!(
+                        workspace.active_item(cx).is_none(),
+                        "launchpad window should not open any items"
+                    );
+                    assert_eq!(
+                        workspace.active_pane().read(cx).items_len(),
+                        0,
+                        "launchpad window should have an empty pane so the launchpad is shown"
+                    );
                 });
             })
             .unwrap();
