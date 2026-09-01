@@ -524,6 +524,28 @@ impl<'a, T: 'static> Context<'a, T> {
         )
     }
 
+    /// Register a callback to be invoked before keybindings are resolved for a keystroke.
+    /// Calling `cx.stop_propagation()` prevents action dispatch and later key event handlers.
+    pub fn intercept_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&mut T, &KeystrokeEvent, &mut Window, &mut Context<T>) + 'static,
+    ) -> Subscription {
+        let view = self.weak_entity();
+        let (subscription, activate) = self.keystroke_interceptors.insert(
+            (),
+            Box::new(move |event, window, cx| {
+                if let Some(view) = view.upgrade() {
+                    view.update(cx, |view, cx| f(view, event, window, cx));
+                    true
+                } else {
+                    false
+                }
+            }),
+        );
+        activate();
+        subscription
+    }
+
     /// Register a callback to be invoked when the window's pending input changes.
     pub fn observe_pending_input(
         &self,

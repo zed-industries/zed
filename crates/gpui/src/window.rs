@@ -6029,6 +6029,17 @@ impl Window {
             .possible_next_bindings_for_input(input, &self.context_stack())
     }
 
+    /// Returns the bindings that match the input and whether a longer binding is pending.
+    pub fn bindings_for_input(&self, input: &[Keystroke]) -> (Vec<KeyBinding>, bool) {
+        let node_id = self.focus_node_id_in_rendered_frame(self.focus);
+        let dispatch_path = self.rendered_frame.dispatch_tree.dispatch_path(node_id);
+        let (bindings, pending, _) = self
+            .rendered_frame
+            .dispatch_tree
+            .bindings_for_input(input, &dispatch_path);
+        (bindings.into_vec(), pending)
+    }
+
     fn context_stack_for_focus_handle(
         &self,
         focus_handle: &FocusHandle,
