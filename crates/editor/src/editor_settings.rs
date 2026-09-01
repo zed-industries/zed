@@ -4,11 +4,11 @@ use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 pub use settings::{
-    CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CompletionMenuItemKindSymbols,
-    CurrentLineHighlight, DelayMs, DiffViewStyle, DisplayIn, DocumentColorsRenderMode,
-    DoubleClickInMultibuffer, GitGutterWidth, GoToDefinitionFallback, GoToDefinitionScrollStrategy,
-    MinimapThumb, MinimapThumbBorder, MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine,
-    ScrollbarDiagnostics, SeedQuerySetting, ShowMinimap, SnippetSortOrder,
+    CodeLens, CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DelayMs,
+    DiffViewStyle, DisplayIn, DocumentColorsRenderMode, DoubleClickInMultibuffer, GitGutterWidth,
+    GoToDefinitionFallback, GoToDefinitionScrollStrategy, MinimapThumb, MinimapThumbBorder,
+    MultiCursorModifier, OpenResultsIn, ScrollBeyondLastLine, ScrollbarDiagnostics,
+    SeedQuerySetting, ShowMinimap, SnippetSortOrder,
 };
 use settings::{RegisterSetting, RelativeLineNumbers, Settings};
 use ui::scrollbars::ShowScrollbar;
@@ -72,6 +72,35 @@ pub struct EditorSettings {
     pub diff_view_style: DiffViewStyle,
     pub minimum_split_diff_width: f32,
     pub file_diff: FileDiffSettings,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct CompletionMenuItemKindSymbols {
+    pub text: char,
+    pub method: char,
+    pub function: char,
+    pub constructor: char,
+    pub field: char,
+    pub variable: char,
+    pub class: char,
+    pub interface: char,
+    pub module: char,
+    pub property: char,
+    pub unit: char,
+    pub value: char,
+    pub r#enum: char,
+    pub keyword: char,
+    pub snippet: char,
+    pub color: char,
+    pub file: char,
+    pub reference: char,
+    pub folder: char,
+    pub enum_member: char,
+    pub constant: char,
+    pub r#struct: char,
+    pub event: char,
+    pub operator: char,
+    pub type_parameter: char,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -219,6 +248,7 @@ impl Settings for EditorSettings {
         let drag_and_drop_selection = editor.drag_and_drop_selection.unwrap();
         let sticky_scroll = editor.sticky_scroll.unwrap();
         let file_diff = content.git.as_ref().unwrap().file_diff.unwrap();
+        let completion_menu_item_kind_symbols = editor.completion_menu_item_kind_symbols.unwrap();
         Self {
             cursor_blink: editor.cursor_blink.unwrap(),
             cursor_shape: editor.cursor_shape.map(Into::into),
@@ -329,7 +359,33 @@ impl Settings for EditorSettings {
                 .unwrap(),
             completion_detail_alignment: editor.completion_detail_alignment.unwrap(),
             completion_menu_item_kind: editor.completion_menu_item_kind.unwrap(),
-            completion_menu_item_kind_symbols: editor.completion_menu_item_kind_symbols.unwrap(),
+            completion_menu_item_kind_symbols: CompletionMenuItemKindSymbols {
+                text: completion_menu_item_kind_symbols.text.unwrap(),
+                method: completion_menu_item_kind_symbols.method.unwrap(),
+                function: completion_menu_item_kind_symbols.function.unwrap(),
+                constructor: completion_menu_item_kind_symbols.constructor.unwrap(),
+                field: completion_menu_item_kind_symbols.field.unwrap(),
+                variable: completion_menu_item_kind_symbols.variable.unwrap(),
+                class: completion_menu_item_kind_symbols.class.unwrap(),
+                interface: completion_menu_item_kind_symbols.interface.unwrap(),
+                module: completion_menu_item_kind_symbols.module.unwrap(),
+                property: completion_menu_item_kind_symbols.property.unwrap(),
+                unit: completion_menu_item_kind_symbols.unit.unwrap(),
+                value: completion_menu_item_kind_symbols.value.unwrap(),
+                r#enum: completion_menu_item_kind_symbols.r#enum.unwrap(),
+                keyword: completion_menu_item_kind_symbols.keyword.unwrap(),
+                snippet: completion_menu_item_kind_symbols.snippet.unwrap(),
+                color: completion_menu_item_kind_symbols.color.unwrap(),
+                file: completion_menu_item_kind_symbols.file.unwrap(),
+                reference: completion_menu_item_kind_symbols.reference.unwrap(),
+                folder: completion_menu_item_kind_symbols.folder.unwrap(),
+                enum_member: completion_menu_item_kind_symbols.enum_member.unwrap(),
+                constant: completion_menu_item_kind_symbols.constant.unwrap(),
+                r#struct: completion_menu_item_kind_symbols.r#struct.unwrap(),
+                event: completion_menu_item_kind_symbols.event.unwrap(),
+                operator: completion_menu_item_kind_symbols.operator.unwrap(),
+                type_parameter: completion_menu_item_kind_symbols.type_parameter.unwrap(),
+            },
             diff_view_style: editor.diff_view_style.unwrap(),
             minimum_split_diff_width: editor.minimum_split_diff_width.unwrap(),
             file_diff: FileDiffSettings {

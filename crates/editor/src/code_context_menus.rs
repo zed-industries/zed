@@ -41,12 +41,9 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
-use crate::{CodeActionSource, EditorSettings};
+use crate::{CodeActionSource, CompletionMenuItemKindSymbols, EditorSettings};
 use collections::{HashSet, VecDeque};
-use settings::{
-    CompletionDetailAlignment, CompletionMenuItemKind, CompletionMenuItemKindSymbols, Settings,
-    SnippetSortOrder,
-};
+use settings::{CompletionDetailAlignment, CompletionMenuItemKind, Settings, SnippetSortOrder};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -1732,31 +1729,31 @@ fn completion_kind_symbol(
     symbols: &CompletionMenuItemKindSymbols,
 ) -> Option<char> {
     match kind {
-        CompletionItemKind::TEXT => symbols.text,
-        CompletionItemKind::METHOD => symbols.method,
-        CompletionItemKind::FUNCTION => symbols.function,
-        CompletionItemKind::CONSTRUCTOR => symbols.constructor,
-        CompletionItemKind::FIELD => symbols.field,
-        CompletionItemKind::VARIABLE => symbols.variable,
-        CompletionItemKind::CLASS => symbols.class,
-        CompletionItemKind::INTERFACE => symbols.interface,
-        CompletionItemKind::MODULE => symbols.module,
-        CompletionItemKind::PROPERTY => symbols.property,
-        CompletionItemKind::UNIT => symbols.unit,
-        CompletionItemKind::VALUE => symbols.value,
-        CompletionItemKind::ENUM => symbols.r#enum,
-        CompletionItemKind::KEYWORD => symbols.keyword,
-        CompletionItemKind::SNIPPET => symbols.snippet,
-        CompletionItemKind::COLOR => symbols.color,
-        CompletionItemKind::FILE => symbols.file,
-        CompletionItemKind::REFERENCE => symbols.reference,
-        CompletionItemKind::FOLDER => symbols.folder,
-        CompletionItemKind::ENUM_MEMBER => symbols.enum_member,
-        CompletionItemKind::CONSTANT => symbols.constant,
-        CompletionItemKind::STRUCT => symbols.r#struct,
-        CompletionItemKind::EVENT => symbols.event,
-        CompletionItemKind::OPERATOR => symbols.operator,
-        CompletionItemKind::TYPE_PARAMETER => symbols.type_parameter,
+        CompletionItemKind::TEXT => Some(symbols.text),
+        CompletionItemKind::METHOD => Some(symbols.method),
+        CompletionItemKind::FUNCTION => Some(symbols.function),
+        CompletionItemKind::CONSTRUCTOR => Some(symbols.constructor),
+        CompletionItemKind::FIELD => Some(symbols.field),
+        CompletionItemKind::VARIABLE => Some(symbols.variable),
+        CompletionItemKind::CLASS => Some(symbols.class),
+        CompletionItemKind::INTERFACE => Some(symbols.interface),
+        CompletionItemKind::MODULE => Some(symbols.module),
+        CompletionItemKind::PROPERTY => Some(symbols.property),
+        CompletionItemKind::UNIT => Some(symbols.unit),
+        CompletionItemKind::VALUE => Some(symbols.value),
+        CompletionItemKind::ENUM => Some(symbols.r#enum),
+        CompletionItemKind::KEYWORD => Some(symbols.keyword),
+        CompletionItemKind::SNIPPET => Some(symbols.snippet),
+        CompletionItemKind::COLOR => Some(symbols.color),
+        CompletionItemKind::FILE => Some(symbols.file),
+        CompletionItemKind::REFERENCE => Some(symbols.reference),
+        CompletionItemKind::FOLDER => Some(symbols.folder),
+        CompletionItemKind::ENUM_MEMBER => Some(symbols.enum_member),
+        CompletionItemKind::CONSTANT => Some(symbols.constant),
+        CompletionItemKind::STRUCT => Some(symbols.r#struct),
+        CompletionItemKind::EVENT => Some(symbols.event),
+        CompletionItemKind::OPERATOR => Some(symbols.operator),
+        CompletionItemKind::TYPE_PARAMETER => Some(symbols.type_parameter),
         _ => None,
     }
 }
@@ -2181,33 +2178,6 @@ mod tests {
             fade_out: Some(0.5),
             ..Default::default()
         }
-    }
-
-    #[test]
-    fn test_completion_kind_symbol_uses_configured_symbols() {
-        let symbols = CompletionMenuItemKindSymbols {
-            function: Some('λ'),
-            r#enum: Some('ε'),
-            type_parameter: Some('τ'),
-            ..Default::default()
-        };
-
-        assert_eq!(
-            completion_kind_symbol(CompletionItemKind::FUNCTION, &symbols),
-            Some('λ')
-        );
-        assert_eq!(
-            completion_kind_symbol(CompletionItemKind::ENUM, &symbols),
-            Some('ε')
-        );
-        assert_eq!(
-            completion_kind_symbol(CompletionItemKind::TYPE_PARAMETER, &symbols),
-            Some('τ')
-        );
-        assert_eq!(
-            completion_kind_symbol(CompletionItemKind::METHOD, &symbols),
-            None
-        );
     }
 
     #[test]
