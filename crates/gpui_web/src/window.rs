@@ -335,6 +335,20 @@ impl WebWindow {
                 |callbacks| &mut callbacks.resize,
                 |callback| callback(new_size, dpr_f32),
             );
+
+            // ResizeObserver runs after layout but before the browser paints.
+            // Render synchronously here so the newly resized CSS canvas is
+            // never presented with its previous backing image stretched into
+            // the new viewport dimensions.
+            inner.with_callback(
+                |callbacks| &mut callbacks.request_frame,
+                |callback| {
+                    callback(RequestFrameOptions {
+                        require_presentation: true,
+                        force_render: true,
+                    })
+                },
+            );
         })
     }
 }

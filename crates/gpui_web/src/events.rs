@@ -218,6 +218,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Started,
                     position,
+                    predicted_position: None,
                     force: None,
                 }));
                 // Keyboard and IME focus intentionally do not change here:
@@ -263,6 +264,11 @@ impl WebWindowInner {
         .unwrap_or(false)
     }
 
+    fn focused_input_accepts_text(&self) -> bool {
+        self.with_input_handler(|handler| handler.query_accepts_text_input())
+            .unwrap_or(false)
+    }
+
     fn register_pointer_up(self: &Rc<Self>) -> EventListenerHandle {
         let this = Rc::clone(self);
         self.listen("pointerup", move |event: JsValue| {
@@ -280,13 +286,15 @@ impl WebWindowInner {
                     }
                     _ => false,
                 };
+                let focused_input_accepted_text_before_tap = this.focused_input_accepts_text();
                 // A recognized tap is dispatched synchronously inside this
                 // call, so the text-input check below sees the state the tap
                 // produced.
-                this.dispatch_input(PlatformInput::Touch(TouchEvent {
+                let dispatch_result = this.dispatch_input(PlatformInput::Touch(TouchEvent {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Ended,
                     position,
+                    predicted_position: None,
                     force: None,
                 }));
 
@@ -300,7 +308,14 @@ impl WebWindowInner {
                 let viewport_stable = this.gesture_start_visual_viewport_height.get()
                     == this.visual_viewport_height();
                 if completes_tap && viewport_stable {
-                    this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                    let preserve_focused_input = should_preserve_focused_input(
+                        focused_input_accepted_text_before_tap,
+                        this.focused_input_accepts_text(),
+                        dispatch_result,
+                    );
+                    if !preserve_focused_input {
+                        this.sync_virtual_keyboard(this.pointer_targets_text_input(position));
+                    }
                 }
                 this.schedule_ime_mirror_sync();
                 return;
@@ -394,6 +409,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Cancelled,
                     position: pointer_position_in_element(&event),
+                    predicted_position: None,
                     force: None,
                 }));
             } else {
@@ -523,6 +539,7 @@ impl WebWindowInner {
                     id: TouchId(event.pointer_id() as u64),
                     phase: TouchPhase::Moved,
                     position,
+                    predicted_position: predicted_pointer_position(&event, position),
                     force: None,
                 }));
                 return;
@@ -1227,6 +1244,16 @@ fn capslock_from_keyboard_event(event: &web_sys::KeyboardEvent) -> Capslock {
     }
 }
 
+fn should_preserve_focused_input(
+    accepted_text_before_tap: bool,
+    accepts_text_after_tap: bool,
+    dispatch_result: Option<DispatchEventResult>,
+) -> bool {
+    accepted_text_before_tap
+        && accepts_text_after_tap
+        && dispatch_result.is_some_and(|result| result.default_prevented)
+}
+
 pub(crate) fn is_mac_platform(browser_window: &web_sys::Window) -> bool {
     let navigator = browser_window.navigator();
 
@@ -1299,7 +1326,95 @@ fn pointer_position_in_element(event: &web_sys::PointerEvent) -> Point<Pixels> {
     mouse_position_in_element(mouse_event)
 }
 
+/// How far ahead of the raw pointer position predictions may reach.
+///
+/// Browsers predict much further (Chrome offers samples out to 25ms), but
+/// prediction error grows with the horizon and surfaces as jitter: the
+/// emitted pan deltas gain a term proportional to lead x change in velocity,
+/// which at long leads visibly reverses direction mid-drag. Measurements
+/// show leads up to ~10ms track at or below the raw stream's frame-to-frame
+/// variation; AOSP similarly caps touch resampling extrapolation at 8ms
+/// (`RESAMPLE_MAX_PREDICTION` in `InputTransport.cpp`).
+const MAX_PREDICTION_LEAD_MS: f64 = 10.;
+
+/// The predicted pointer position closest to [`MAX_PREDICTION_LEAD_MS`]
+/// ahead of `event`, from `getPredictedEvents()`, or `None` when the browser
+/// offers no prediction (Safari lacks the method, Firefox returns an empty
+/// array). A prediction further out than the cap is linearly scaled back to
+/// it.
+///
+/// Accessed through `Reflect` because calling a missing method through the
+/// web-sys binding would throw, and predicted events' `offsetX`/`offsetY`
+/// are unreliable across browsers (their target may be detached), so the
+/// position is derived from the client-coordinate delta against the parent
+/// event, anchored to the parent's element-relative `position`.
+fn predicted_pointer_position(
+    event: &web_sys::PointerEvent,
+    position: Point<Pixels>,
+) -> Option<Point<Pixels>> {
+    let method = js_sys::Reflect::get(event, &JsValue::from_str("getPredictedEvents")).ok()?;
+    let method = method.dyn_ref::<js_sys::Function>()?;
+    let predicted_events: js_sys::Array = method.call0(event).ok()?.dyn_into().ok()?;
+    let mut best: Option<(f64, web_sys::PointerEvent)> = None;
+    for predicted in predicted_events.iter() {
+        let Ok(predicted) = predicted.dyn_into::<web_sys::PointerEvent>() else {
+            continue;
+        };
+        let lead = predicted.time_stamp() - event.time_stamp();
+        if lead <= 0. {
+            continue;
+        }
+        let distance_to_cap = (lead - MAX_PREDICTION_LEAD_MS).abs();
+        if best
+            .as_ref()
+            .is_none_or(|(best_distance, _)| distance_to_cap < *best_distance)
+        {
+            best = Some((distance_to_cap, predicted));
+        }
+    }
+    let (_, predicted) = best?;
+    let lead = predicted.time_stamp() - event.time_stamp();
+    let scale = (MAX_PREDICTION_LEAD_MS / lead).min(1.) as f32;
+    let event: &web_sys::MouseEvent = event.as_ref();
+    let predicted: &web_sys::MouseEvent = predicted.as_ref();
+    Some(point(
+        position.x + px((predicted.client_x() - event.client_x()) as f32 * scale),
+        position.y + px((predicted.client_y() - event.client_y()) as f32 * scale),
+    ))
+}
+
 fn mouse_position_in_element(event: &web_sys::MouseEvent) -> Point<Pixels> {
     // offset_x/offset_y give position relative to the target element's padding edge
     point(px(event.offset_x() as f32), px(event.offset_y() as f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn handled_tap_preserves_unchanged_text_input() {
+        assert!(should_preserve_focused_input(
+            true,
+            true,
+            Some(DispatchEventResult {
+                propagate: false,
+                default_prevented: true,
+            }),
+        ));
+    }
+
+    #[test]
+    fn tap_does_not_preserve_unhandled_or_unfocused_input() {
+        let result = |default_prevented| {
+            Some(DispatchEventResult {
+                propagate: false,
+                default_prevented,
+            })
+        };
+
+        assert!(!should_preserve_focused_input(true, true, result(false),));
+        assert!(!should_preserve_focused_input(false, true, result(true),));
+        assert!(!should_preserve_focused_input(true, false, result(true),));
+    }
 }
