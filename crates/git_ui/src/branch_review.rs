@@ -1,6 +1,6 @@
 use crate::{
-    diff_multibuffer::{DiffMultibuffer, project_diff_path_key},
-    review_state::{Fingerprint, ReviewScope, ReviewState, digest},
+    diff_multibuffer::{DiffMultibuffer, ViewedDeltaSide, project_diff_path_key},
+    review_state::{Fingerprint, ReviewScope, ReviewState, SnapshotAvailability, digest},
 };
 use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::BufferDiff;
@@ -36,6 +36,7 @@ struct ReviewEntry {
     fingerprint: Option<Fingerprint>,
     validated_snapshot: Option<language::BufferSnapshot>,
     validated_base: Option<language::BufferSnapshot>,
+    validated_comparison: Option<(Option<String>, Option<String>)>,
     error: Option<String>,
     hash_generation: u64,
     changed: bool,
@@ -540,6 +541,7 @@ impl BranchReview {
                     fingerprint: None,
                     validated_snapshot: None,
                     validated_base: None,
+                    validated_comparison: None,
                     error: None,
                     hash_generation: 0,
                     changed: true,
@@ -745,7 +747,12 @@ impl BranchReview {
                         current_mode,
                     )
                     .with_rename(renamed_from.as_deref());
-                    Ok((fingerprint, changed))
+                    Ok((
+                        fingerprint,
+                        changed,
+                        base_exists.then_some(base),
+                        current_exists.then_some(current),
+                    ))
                 })
                 .await
             }
@@ -768,20 +775,28 @@ impl BranchReview {
                         return;
                     }
                     match result {
-                        Ok((fingerprint, changed)) => {
+                        Ok((fingerprint, changed, base, current)) => {
                             if let Some(state) = &this.state {
                                 state.update(cx, |state, cx| {
-                                    state.enrich_approval(&path.to_string(), &fingerprint, cx)
+                                    state.enrich_approval(
+                                        &path.to_string(),
+                                        &fingerprint,
+                                        base.as_deref(),
+                                        current.as_deref(),
+                                        cx,
+                                    )
                                 });
                             }
                             entry.fingerprint = Some(fingerprint);
                             entry.validated_snapshot = Some(expected_snapshot);
                             entry.validated_base = Some(expected_base);
+                            entry.validated_comparison = Some((base, current));
                             entry.changed = changed;
                             entry.error = None;
                         }
                         Err(error) => {
                             entry.fingerprint = None;
+                            entry.validated_comparison = None;
                             entry.error = Some(format!("{error:#}"));
                         }
                     }
@@ -878,6 +893,20 @@ impl BranchReview {
     fn open_path(&mut self, path: RepoPath, window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(ReviewEvent::OpenDiff);
         self.selected = Some(path.clone());
+        let viewed_delta_side = self
+            .diff
+            .read_with(cx, |diff, _| diff.viewed_delta_side())
+            .ok()
+            .flatten();
+        if let Some(side) = viewed_delta_side {
+            if self.activate_viewed_delta(path.clone(), side, window, cx) {
+                cx.notify();
+                return;
+            }
+            self.diff
+                .update(cx, |diff, cx| diff.clear_viewed_delta(window, cx))
+                .log_err();
+        }
         if let Some(entry) = self.entries.get(&path)
             && let Some(repository) = self.list.read(cx).repo()
         {
@@ -887,6 +916,75 @@ impl BranchReview {
                 .log_err();
         }
         cx.notify();
+    }
+
+    pub(crate) fn is_viewed_delta(&self, cx: &App) -> bool {
+        self.diff
+            .read_with(cx, |diff, _| diff.viewed_delta_side().is_some())
+            .unwrap_or(false)
+    }
+
+    fn approved_snapshot(&self, path: &RepoPath, cx: &App) -> Option<SnapshotAvailability> {
+        self.state
+            .as_ref()?
+            .read(cx)
+            .approved_snapshot(&path.to_string())
+            .ok()
+            .flatten()
+    }
+
+    fn activate_viewed_delta(
+        &mut self,
+        path: RepoPath,
+        side: ViewedDeltaSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(SnapshotAvailability::Available { base, current }) =
+            self.approved_snapshot(&path, cx)
+        else {
+            return false;
+        };
+        let Some((current_base, current_working)) = self
+            .entries
+            .get(&path)
+            .and_then(|entry| entry.validated_comparison.clone())
+        else {
+            return false;
+        };
+        let (approved_text, current_exists) = match side {
+            ViewedDeltaSide::WorkingFile => (current, current_working.is_some()),
+            ViewedDeltaSide::Base => (base, current_base.is_some()),
+        };
+        self.diff
+            .update(cx, |diff, cx| {
+                diff.show_viewed_delta(path, side, approved_text, current_exists, window, cx)
+            })
+            .is_ok()
+    }
+
+    fn show_branch_comparison(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.diff
+            .update(cx, |diff, cx| diff.clear_viewed_delta(window, cx))
+            .log_err();
+    }
+
+    fn show_selected_viewed_delta(
+        &mut self,
+        side: ViewedDeltaSide,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.selected.clone() else {
+            return;
+        };
+        if !self.activate_viewed_delta(path, side, window, cx) {
+            self.error = Some(
+                "A durable Viewed snapshot is unavailable for this file. Mark it Viewed again to create one."
+                    .into(),
+            );
+            cx.notify();
+        }
     }
 
     pub fn navigate_unviewed(
@@ -989,12 +1087,46 @@ impl BranchReview {
             return;
         }
         let viewed = self.is_viewed(path, cx);
+        let comparison = entry
+            .validated_comparison
+            .as_ref()
+            .map(|(base, current)| (base.as_deref(), current.as_deref()));
         if let Some(state) = self.state.as_ref() {
             state.update(cx, |state, cx| {
-                state.set_viewed(path.to_string(), (!viewed).then_some(fingerprint), cx)
+                state.set_viewed(
+                    path.to_string(),
+                    (!viewed).then_some(fingerprint),
+                    (!viewed).then_some(comparison).flatten(),
+                    cx,
+                )
             });
         }
         self.rebuild_rows(cx);
+    }
+
+    fn toggle_viewed_from_ui(
+        &mut self,
+        path: &RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let delta_side = self
+            .diff
+            .read_with(cx, |diff, _| diff.viewed_delta_side())
+            .ok()
+            .flatten();
+        self.toggle_viewed(path, cx);
+        let Some(delta_side) = delta_side else {
+            return;
+        };
+        if matches!(
+            self.approved_snapshot(path, cx),
+            Some(SnapshotAvailability::Available { .. })
+        ) {
+            self.activate_viewed_delta(path.clone(), delta_side, window, cx);
+        } else {
+            self.show_branch_comparison(window, cx);
+        }
     }
 
     fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
@@ -1167,9 +1299,9 @@ impl BranchReview {
                                 Checkbox::new(("review-viewed", index), viewed.into())
                                     .disabled(disabled)
                                     .tooltip(Tooltip::text(tooltip))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
-                                        this.toggle_viewed(&checkbox_path, cx)
+                                        this.toggle_viewed_from_ui(&checkbox_path, window, cx)
                                     })),
                             )
                             .child(icon.size(IconSize::Small).color(Color::Muted)),
@@ -1255,6 +1387,20 @@ impl Render for BranchReview {
                 .entries
                 .values()
                 .any(|entry| entry.fingerprint.is_none() && entry.error.is_none());
+        let selected_snapshot = self
+            .selected
+            .as_ref()
+            .and_then(|path| self.approved_snapshot(path, cx));
+        let selected_change_reasons = self
+            .selected
+            .as_ref()
+            .map(|path| self.change_reasons(path, cx))
+            .unwrap_or_default();
+        let delta_side = self
+            .diff
+            .read_with(cx, |diff, _| diff.viewed_delta_side())
+            .ok()
+            .flatten();
         v_flex()
             .size_full()
             .min_h_0()
@@ -1342,11 +1488,107 @@ impl Render for BranchReview {
             )
             .child(
                 div().px_2().pb_1().child(
-                    Label::new("Merge base + working files")
+                    Label::new(if delta_side.is_some() {
+                        "Approved snapshot + current comparison"
+                    } else {
+                        "Merge base + working files"
+                    })
                         .size(LabelSize::XSmall)
                         .color(Color::Muted),
                 ),
             )
+            .when_some(selected_snapshot, |view, snapshot| {
+                let available = matches!(snapshot, SnapshotAvailability::Available { .. });
+                view.child(
+                    v_flex()
+                        .px_2()
+                        .pb_1()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("branch-comparison", "Branch")
+                                        .toggle_state(delta_side.is_none())
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.show_branch_comparison(window, cx)
+                                        })),
+                                )
+                                .child(
+                                    Button::new("since-viewed-comparison", "Since Viewed")
+                                        .toggle_state(delta_side.is_some())
+                                        .disabled(!available)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.show_selected_viewed_delta(
+                                                ViewedDeltaSide::WorkingFile,
+                                                window,
+                                                cx,
+                                            )
+                                        })),
+                                ),
+                        )
+                        .when(delta_side.is_some() && available, |section| {
+                            section.child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("working-file-viewed-delta", "Working file")
+                                            .toggle_state(
+                                                delta_side == Some(ViewedDeltaSide::WorkingFile),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.show_selected_viewed_delta(
+                                                    ViewedDeltaSide::WorkingFile,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("base-viewed-delta", "Base")
+                                            .toggle_state(
+                                                delta_side == Some(ViewedDeltaSide::Base),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.show_selected_viewed_delta(
+                                                    ViewedDeltaSide::Base,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })),
+                                    ),
+                            )
+                        })
+                        .when(
+                            delta_side.is_some() && !selected_change_reasons.is_empty(),
+                            |section| {
+                                section.child(
+                                    Label::new(format!(
+                                        "Comparison changes: {}",
+                                        selected_change_reasons.join(", ")
+                                    ))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                                )
+                            },
+                        )
+                        .when(!available, |section| {
+                            section.child(
+                                Label::new(match snapshot {
+                                    SnapshotAvailability::TooLarge => {
+                                        "Since Viewed is unavailable because this file exceeds 2 MiB"
+                                    }
+                                    SnapshotAvailability::Legacy => {
+                                        "Mark Viewed again to create a durable comparison snapshot"
+                                    }
+                                    SnapshotAvailability::Available { .. } => "",
+                                })
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                            )
+                        }),
+                )
+            })
             .when(
                 self.filter != ReviewFilter::All || !self.query.is_empty(),
                 |view| {
@@ -1514,6 +1756,55 @@ mod tests {
             assert!(!review.is_viewed(&a, cx));
             assert!(review.is_viewed(&b, cx));
         });
+        let expected_buffer_id = review.read_with(cx, |review, cx| {
+            assert!(matches!(
+                review.approved_snapshot(&a, cx),
+                Some(SnapshotAvailability::Available {
+                    base: Some(_),
+                    current: Some(_),
+                })
+            ));
+            review.entries[&a]
+                .buffer
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .remote_id()
+        });
+        review.update_in(cx, |review, window, cx| {
+            review.open_path(a.clone(), window, cx);
+            review.show_selected_viewed_delta(ViewedDeltaSide::WorkingFile, window, cx);
+        });
+        cx.run_until_parked();
+        let delta_editor =
+            diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
+        delta_editor.read_with(cx, |editor, cx| {
+            assert!(
+                editor
+                    .buffer()
+                    .read(cx)
+                    .snapshot(cx)
+                    .all_buffer_ids()
+                    .any(|buffer_id| buffer_id == expected_buffer_id),
+                "Since Viewed must retain the live project buffer"
+            );
+        });
+        delta_editor.update_in(cx, |editor, window, cx| {
+            cx.focus_self(window);
+            editor.insert("delta ", window, cx);
+        });
+        cx.executor().advance_clock(Duration::from_millis(500));
+        cx.run_until_parked();
+        assert!(
+            String::from_utf8(fs.read_file_sync(path!("/project/src/a.txt")).unwrap())
+                .unwrap()
+                .contains("delta ")
+        );
+        review.update_in(cx, |review, window, cx| {
+            review.show_selected_viewed_delta(ViewedDeltaSide::Base, window, cx);
+            assert!(review.is_viewed_delta(cx));
+            review.show_branch_comparison(window, cx);
+        });
         cx.executor().advance_clock(Duration::from_millis(250));
         cx.run_until_parked();
         diff.read_with(cx, |diff, cx| assert!(!workspace::Item::is_dirty(diff, cx)));
@@ -1627,6 +1918,13 @@ mod tests {
             assert!(!review.is_viewed(&b, cx));
             assert!(!review.is_viewed(&c, cx));
             assert_eq!((review.viewed, review.total), (1, 3));
+            assert_eq!(
+                review.approved_snapshot(&b, cx),
+                Some(SnapshotAvailability::Available {
+                    base: Some("base b".into()),
+                    current: Some("reviewed b".into()),
+                })
+            );
         });
         recreated_review.update_in(cx, |review, window, cx| {
             assert_eq!(review.change_reasons(&b, cx), ["Content changed"]);

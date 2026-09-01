@@ -472,6 +472,10 @@ impl BranchReviewPanel {
                 .checkout
                 .as_ref()
                 .context("This is a local branch comparison")?;
+            ensure!(
+                !session.item.read(cx).review.read(cx).is_viewed_delta(cx),
+                "Switch to the Branch comparison before selecting lines for a GitHub comment"
+            );
             let split = session.item.read(cx).editor(cx);
             let split = split.read(cx);
             let editor_handle = split.focused_editor();

@@ -4,7 +4,7 @@ use crate::{
     git_panel_settings::GitPanelSettings,
 };
 use anyhow::Result;
-use buffer_diff::BufferDiff;
+use buffer_diff::{BufferDiff, DiffBaseKind};
 use collections::{HashMap, HashSet};
 use editor::{
     EditorEvent, EditorSettings, SelectionEffects, SplittableEditor, actions::GoToHunk,
@@ -16,7 +16,7 @@ use gpui::{
     App, AppContext as _, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferEvent, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::{
     ConflictSet, Project, ProjectPath,
@@ -42,6 +42,21 @@ struct BufferSubscriptions {
     _diff_subscription: Subscription,
     _conflict_set: Option<Entity<ConflictSet>>,
     _conflict_set_subscription: Option<Subscription>,
+    _custom_buffer_subscription: Option<Subscription>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ViewedDeltaSide {
+    WorkingFile,
+    Base,
+}
+
+#[derive(Clone)]
+struct ViewedDelta {
+    path: RepoPath,
+    side: ViewedDeltaSide,
+    approved_text: Option<Arc<str>>,
+    current_exists: bool,
 }
 
 pub struct DiffMultibuffer {
@@ -52,6 +67,8 @@ pub struct DiffMultibuffer {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
+    viewed_delta: Option<ViewedDelta>,
+    custom_diff_task: Option<Task<()>>,
     review_comment_count: usize,
     empty_label: SharedString,
     _task: Task<Result<()>>,
@@ -164,6 +181,8 @@ impl DiffMultibuffer {
             multibuffer,
             buffer_subscriptions: Default::default(),
             pending_scroll: None,
+            viewed_delta: None,
+            custom_diff_task: None,
             review_comment_count: 0,
             empty_label: empty_label.into(),
             _task: task,
@@ -180,6 +199,51 @@ impl DiffMultibuffer {
 
     pub(crate) fn branch_diff(&self) -> &Entity<diff_buffer_list::DiffBufferList> {
         &self.branch_diff
+    }
+
+    pub(crate) fn viewed_delta_side(&self) -> Option<ViewedDeltaSide> {
+        self.viewed_delta.as_ref().map(|delta| delta.side)
+    }
+
+    pub(crate) fn show_viewed_delta(
+        &mut self,
+        path: RepoPath,
+        side: ViewedDeltaSide,
+        approved_text: Option<String>,
+        current_exists: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_scroll = self.branch_diff.read(cx).repo().and_then(|repository| {
+            let repository = repository.read(cx);
+            self.branch_diff
+                .read(cx)
+                .status_for_path(&path, cx)
+                .map(|status| project_diff_path_key(repository, &path, status, cx))
+        });
+        self.viewed_delta = Some(ViewedDelta {
+            path,
+            side,
+            approved_text: approved_text.map(Arc::from),
+            current_exists,
+        });
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
+        });
+        cx.notify();
+    }
+
+    pub(crate) fn clear_viewed_delta(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.viewed_delta.take().is_none() {
+            return;
+        }
+        self.pending_scroll.take();
+        self._task = window.spawn(cx, {
+            let this = cx.weak_entity();
+            async |cx| Self::refresh(this, cx).await
+        });
+        cx.notify();
     }
 
     pub(crate) fn repo(&self, cx: &App) -> Option<Entity<Repository>> {
@@ -492,6 +556,24 @@ impl DiffMultibuffer {
                 }
             })
         });
+        let custom_buffer_subscription = self.viewed_delta.as_ref().map(|delta| {
+            let approved_text = delta.approved_text.clone();
+            let display_buffer = display_buffer.clone();
+            let diff = diff.clone();
+            cx.subscribe(&display_buffer.clone(), move |this, _, event, cx| {
+                if matches!(
+                    event,
+                    BufferEvent::Edited { .. }
+                        | BufferEvent::Reloaded
+                        | BufferEvent::FileHandleChanged
+                ) {
+                    let snapshot = display_buffer.read(cx).text_snapshot();
+                    this.custom_diff_task = Some(diff.update(cx, |diff, cx| {
+                        diff.set_base_text(approved_text.clone(), snapshot, cx)
+                    }));
+                }
+            })
+        });
         self.buffer_subscriptions.insert(
             repo_path,
             BufferSubscriptions {
@@ -500,6 +582,7 @@ impl DiffMultibuffer {
                 _diff_subscription: diff_subscription,
                 _conflict_set: conflict_set.clone(),
                 _conflict_set_subscription: conflict_set_subscription,
+                _custom_buffer_subscription: custom_buffer_subscription,
             },
         );
 
@@ -621,7 +704,7 @@ impl DiffMultibuffer {
 
     #[instrument(skip(this, cx))]
     pub(crate) async fn refresh(this: WeakEntity<Self>, cx: &mut AsyncWindowContext) -> Result<()> {
-        let entries = this.update(cx, |this, cx| {
+        let (entries, viewed_delta) = this.update(cx, |this, cx| {
             let (repo, buffers_to_load) = this.branch_diff.update(cx, |branch_diff, cx| {
                 let load_buffers = branch_diff.load_buffers(cx);
                 (branch_diff.repo().cloned(), load_buffers)
@@ -676,7 +759,11 @@ impl DiffMultibuffer {
             this.buffer_subscriptions
                 .retain(|repo_path, _| live_repo_paths.contains(repo_path));
 
-            entries
+            if let Some(viewed_delta) = &this.viewed_delta {
+                entries.retain(|_, entry| entry.repo_path == viewed_delta.path);
+            }
+
+            (entries, this.viewed_delta.clone())
         })?;
 
         let mut buffers_to_fold = Vec::new();
@@ -686,6 +773,60 @@ impl DiffMultibuffer {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
                 yield_now().await;
+                let loaded_buffer = if let Some(viewed_delta) = viewed_delta
+                    .as_ref()
+                    .filter(|viewed_delta| viewed_delta.path == entry.repo_path)
+                {
+                    let display_buffer = match viewed_delta.side {
+                        ViewedDeltaSide::WorkingFile if viewed_delta.current_exists => {
+                            loaded_buffer.main_buffer
+                        }
+                        ViewedDeltaSide::Base if viewed_delta.current_exists => loaded_buffer
+                            .diff
+                            .read_with(cx, |diff, _| diff.base_text_buffer().clone()),
+                        ViewedDeltaSide::WorkingFile | ViewedDeltaSide::Base => {
+                            cx.update(|_window, cx| {
+                                cx.new(|cx| {
+                                    let mut buffer = Buffer::local("", cx);
+                                    buffer.set_capability(Capability::ReadOnly, cx);
+                                    buffer
+                                })
+                            })?
+                        }
+                    };
+                    let snapshot = display_buffer.read_with(cx, |buffer, _| buffer.snapshot());
+                    let language = snapshot.language().cloned();
+                    let language_registry =
+                        display_buffer.read_with(cx, |buffer, _| buffer.language_registry());
+                    let custom_diff = cx.update(|_window, cx| {
+                        cx.new(|cx| {
+                            BufferDiff::new(
+                                &snapshot,
+                                language,
+                                language_registry,
+                                DiffBaseKind::Custom,
+                                cx,
+                            )
+                        })
+                    })?;
+                    custom_diff
+                        .update(cx, |diff, cx| {
+                            diff.set_base_text(
+                                viewed_delta.approved_text.clone(),
+                                snapshot.text,
+                                cx,
+                            )
+                        })
+                        .await;
+                    diff_buffer_list::LoadedDiffBuffer {
+                        display_buffer: display_buffer.clone(),
+                        main_buffer: display_buffer,
+                        diff: custom_diff,
+                        conflict_set: None,
+                    }
+                } else {
+                    loaded_buffer
+                };
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         if let Some(buffer_id) = this.register_buffer(

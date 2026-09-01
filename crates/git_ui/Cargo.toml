@@ -21,6 +21,7 @@ agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 async-channel.workspace = true
+base64.workspace = true
 buffer_diff.workspace = true
 call = { workspace = true, optional = true }
 client.workspace = true
@@ -76,6 +77,7 @@ watch.workspace = true
 workspace.workspace = true
 git_ui_core.workspace = true
 zed_actions.workspace = true
+zstd.workspace = true
 ztracing.workspace = true
 
 [dev-dependencies]

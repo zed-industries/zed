@@ -7194,6 +7194,7 @@ dependencies = [
  "anyhow",
  "askpass",
  "async-channel 2.5.0",
+ "base64 0.22.1",
  "buffer_diff",
  "call",
  "client",
@@ -7257,6 +7258,7 @@ dependencies = [
  "workspace",
  "zed_actions",
  "zlog",
+ "zstd",
  "ztracing",
 ]
 

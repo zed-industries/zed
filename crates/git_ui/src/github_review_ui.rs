@@ -5,7 +5,7 @@ use crate::github_review::{
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorEvent};
-use gpui::{Entity, EventEmitter, Subscription, Task};
+use gpui::{ClipboardItem, Entity, EventEmitter, Subscription, Task};
 use project::{Project, git_store::Repository};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -76,6 +76,8 @@ pub(crate) struct GitHubReview {
     task: Option<Task<()>>,
     remotes_task: Option<Task<()>>,
     write_task: Option<Task<()>>,
+    copied_prompt: bool,
+    copied_prompt_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -144,6 +146,8 @@ impl GitHubReview {
             task: None,
             remotes_task: None,
             write_task: None,
+            copied_prompt: false,
+            copied_prompt_task: None,
             _subscriptions: subscriptions,
         }
     }
@@ -363,6 +367,25 @@ impl GitHubReview {
 
     pub fn is_posting(&self) -> bool {
         self.posting
+    }
+
+    fn copy_agent_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(checkout) = self.checkout.as_ref() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(agent_prompt(checkout)));
+        self.copied_prompt = true;
+        self.copied_prompt_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_secs(2))
+                .await;
+            this.update(cx, |this, cx| {
+                this.copied_prompt = false;
+                cx.notify();
+            })
+            .log_err();
+        }));
+        cx.notify();
     }
 
     fn draft_key(&self) -> Option<String> {
@@ -1323,7 +1346,8 @@ impl Render for GitHubReview {
                 view.when_some(self.checkout.clone(), |view, checkout| {
                     let update = self.preview.clone().filter(|pr| pr.head.sha != checkout.pull_request.head.sha || pr.base.sha != checkout.pull_request.base.sha);
                     view.child(Label::new(format!("#{} {}", checkout.pull_request.number, checkout.pull_request.title)).size(LabelSize::Small))
-                        .child(h_flex().gap_1().child(Button::new("refresh-github-discussion", "Refresh").disabled(pending).on_click(cx.listener(|this, _, _, cx| this.refresh_discussion(cx))))
+                        .child(h_flex().gap_1().flex_wrap().child(Button::new("refresh-github-discussion", "Refresh").disabled(pending).on_click(cx.listener(|this, _, _, cx| this.refresh_discussion(cx))))
+                            .child(Button::new("copy-agent-prompt", if self.copied_prompt { "Copied" } else { "Copy Agent Prompt" }).on_click(cx.listener(|this, _, _, cx| this.copy_agent_prompt(cx))))
                             .child(Button::new("open-pr-in-browser", "GitHub ↗").on_click(move |_, _, cx| cx.open_url(&checkout.pull_request.url(&checkout.repository)))))
                         .when_some(update, |view, pr| { let repo = self.checkout.as_ref().map(|checkout| checkout.repository.clone());
                             view.child(Label::new("A newer PR revision is available. Your checkout has not changed.").size(LabelSize::Small))
@@ -1371,6 +1395,26 @@ impl Render for GitHubReview {
                     .child(Button::new("post-github-comment", if matches!(self.target, CommentTarget::Edit { .. }) { "Save changes" } else { "Post to GitHub" }).disabled(pending || self.detached || unknown || unknown_action || self.load_failed).on_click(cx.listener(|this, _, window, cx| this.post(window, cx))))))
             })
     }
+}
+
+fn agent_prompt(checkout: &Checkout) -> String {
+    let pull_request = &checkout.pull_request;
+    format!(
+        "Address my outstanding review feedback on {url} in the current checkout.\n\n\
+Repository: {repository}\n\
+PR: #{number}\n\
+Checkout branch: {branch}\n\
+Reviewed base revision: {base_sha}\n\
+Reviewed head revision: {head_sha}\n\n\
+Read and follow every applicable repository instruction file before editing. Use the authenticated `gh` CLI to verify the repository and PR, identify the current GitHub login, and query GitHub directly for review threads, inline review comments, submitted review feedback, and PR conversation comments authored by that login. Address every unresolved thread and every still-applicable code-change request from that feedback. Re-query GitHub if the PR revision or thread state may have changed.\n\n\
+Work only in the current checkout. Preserve unrelated changes. Do not switch branches, reset, clean, discard work, post or edit GitHub comments, resolve or reopen threads, commit, or push. Make the requested code changes, run the relevant tests and checks, and finish with a concise summary of changes, validation, and any feedback that remains blocked or ambiguous. Do not create a feedback packet or verification-receipt file.",
+        url = pull_request.url(&checkout.repository),
+        repository = checkout.repository.full_name,
+        number = pull_request.number,
+        branch = checkout.branch,
+        base_sha = pull_request.base.sha,
+        head_sha = pull_request.head.sha,
+    )
 }
 
 fn comment_key(entry: &DiscussionComment) -> String {
@@ -1433,6 +1477,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn copied_agent_prompt_uses_trusted_pr_metadata_and_safe_scope() {
+        let mut checkout = checkout(17);
+        checkout.pull_request.user.login = "untrusted-login-42".into();
+        let prompt = agent_prompt(&checkout);
+        for expected in [
+            "https://github.com/owner/project/pull/17",
+            "Repository: owner/project",
+            "Checkout branch: feature",
+            &format!("Reviewed head revision: {}", "a".repeat(40)),
+            "identify the current GitHub login",
+            "authored by that login",
+            "Do not switch branches",
+            "Do not create a feedback packet",
+        ] {
+            assert!(prompt.contains(expected), "missing {expected:?}");
+        }
+        assert!(!prompt.contains("Fixture"));
+        assert!(!prompt.contains("untrusted-login-42"));
+    }
+
     #[gpui::test]
     async fn editing_and_thread_actions_keep_durable_pr_scoped_state(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1450,6 +1515,12 @@ mod tests {
         view.update_in(cx, |view, window, cx| {
             view.storage_key = Some("test-review-edit-drafts".into());
             view.attach(checkout(1), window, cx);
+            view.copy_agent_prompt(cx);
+            assert!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .is_some_and(|prompt| prompt.contains("owner/project/pull/1"))
+            );
             let entry = DiscussionComment {
                 kind: CommentKind::Inline,
                 comment: serde_json::from_value(json!({"id":7,"body":"**Original**","user":{"login":"author"},"thread":{"id":"t1","isResolved":true,"isOutdated":true,"viewerCanResolve":false,"viewerCanUnresolve":true,"viewerCanReply":true,"comments":[]}})).unwrap(),

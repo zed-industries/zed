@@ -1,10 +1,11 @@
 use anyhow::{Context as _, Result, ensure};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use collections::HashMap;
 use db::kvp::KeyValueStore;
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, io::Read as _, path::PathBuf};
 use util::ResultExt as _;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -32,6 +33,116 @@ pub(crate) fn digest(parts: &[&[u8]]) -> String {
         hash.update(part);
     }
     format!("{:x}", hash.finalize())
+}
+
+const MAX_SNAPSHOT_BYTES: usize = 2 * 1024 * 1024;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct StoredText {
+    uncompressed_bytes: usize,
+    zstd_base64: String,
+}
+
+impl StoredText {
+    fn encode(text: &str) -> Result<Self> {
+        ensure!(
+            text.len() <= MAX_SNAPSHOT_BYTES,
+            "Reviewed text exceeds the 2 MiB delta limit"
+        );
+        let compressed = zstd::encode_all(text.as_bytes(), 3)
+            .context("Unable to compress the Viewed snapshot")?;
+        Ok(Self {
+            uncompressed_bytes: text.len(),
+            zstd_base64: BASE64.encode(compressed),
+        })
+    }
+
+    fn decode(&self) -> Result<String> {
+        ensure!(
+            self.uncompressed_bytes <= MAX_SNAPSHOT_BYTES,
+            "Viewed snapshot exceeds the 2 MiB delta limit"
+        );
+        ensure!(
+            self.zstd_base64.len() <= 4 * 1024 * 1024,
+            "Viewed snapshot payload is too large"
+        );
+        let compressed = BASE64
+            .decode(&self.zstd_base64)
+            .context("Viewed snapshot is not valid base64")?;
+        let decoder = zstd::Decoder::new(compressed.as_slice())
+            .context("Unable to decompress the Viewed snapshot")?;
+        let mut decoded = Vec::with_capacity(self.uncompressed_bytes);
+        decoder
+            .take((MAX_SNAPSHOT_BYTES + 1) as u64)
+            .read_to_end(&mut decoded)
+            .context("Unable to decompress the Viewed snapshot")?;
+        ensure!(
+            decoded.len() == self.uncompressed_bytes,
+            "Viewed snapshot length does not match its metadata"
+        );
+        ensure!(
+            decoded.len() <= MAX_SNAPSHOT_BYTES,
+            "Viewed snapshot exceeds the 2 MiB delta limit"
+        );
+        String::from_utf8(decoded).context("Viewed snapshot is not valid UTF-8")
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ApprovedComparison {
+    base: Option<StoredText>,
+    current: Option<StoredText>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum ApprovedSnapshot {
+    Captured { comparison: ApprovedComparison },
+    TooLarge,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SnapshotAvailability {
+    Available {
+        base: Option<String>,
+        current: Option<String>,
+    },
+    TooLarge,
+    Legacy,
+}
+
+impl ApprovedSnapshot {
+    fn capture(base: Option<&str>, current: Option<&str>) -> Result<Self> {
+        if base.is_some_and(|text| text.len() > MAX_SNAPSHOT_BYTES)
+            || current.is_some_and(|text| text.len() > MAX_SNAPSHOT_BYTES)
+        {
+            return Ok(Self::TooLarge);
+        }
+        Ok(Self::Captured {
+            comparison: ApprovedComparison {
+                base: base.map(StoredText::encode).transpose()?,
+                current: current.map(StoredText::encode).transpose()?,
+            },
+        })
+    }
+
+    fn decode(&self) -> Result<SnapshotAvailability> {
+        match self {
+            Self::Captured { comparison } => Ok(SnapshotAvailability::Available {
+                base: comparison
+                    .base
+                    .as_ref()
+                    .map(StoredText::decode)
+                    .transpose()?,
+                current: comparison
+                    .current
+                    .as_ref()
+                    .map(StoredText::decode)
+                    .transpose()?,
+            }),
+            Self::TooLarge => Ok(SnapshotAvailability::TooLarge),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -156,13 +267,48 @@ impl Fingerprint {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct ReviewRecords {
     schema_version: u32,
-    viewed: BTreeMap<String, Fingerprint>,
+    viewed: BTreeMap<String, Approval>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(from = "SavedApproval")]
+struct Approval {
+    fingerprint: Fingerprint,
+    snapshot: Option<ApprovedSnapshot>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum SavedApproval {
+    Current {
+        fingerprint: Fingerprint,
+        snapshot: Option<ApprovedSnapshot>,
+    },
+    Fingerprint(Fingerprint),
+}
+
+impl From<SavedApproval> for Approval {
+    fn from(saved: SavedApproval) -> Self {
+        match saved {
+            SavedApproval::Current {
+                fingerprint,
+                snapshot,
+            } => Self {
+                fingerprint,
+                snapshot,
+            },
+            SavedApproval::Fingerprint(fingerprint) => Self {
+                fingerprint,
+                snapshot: None,
+            },
+        }
+    }
 }
 
 impl Default for ReviewRecords {
     fn default() -> Self {
         Self {
-            schema_version: 2,
+            schema_version: 3,
             viewed: BTreeMap::new(),
         }
     }
@@ -176,15 +322,24 @@ impl ReviewRecords {
             .context("Unable to read saved Branch Review progress")?
             .unwrap_or_default();
         ensure!(
-            matches!(records.schema_version, 1 | 2),
+            matches!(records.schema_version, 1..=3),
             "Unsupported Branch Review state version"
         );
-        records.schema_version = 2;
+        records.schema_version = 3;
+        for approval in records.viewed.values() {
+            if let Some(snapshot) = &approval.snapshot {
+                snapshot
+                    .decode()
+                    .context("Unable to read a saved Viewed snapshot")?;
+            }
+        }
         Ok(records)
     }
 
     fn is_viewed(&self, path: &str, fingerprint: &Fingerprint) -> bool {
-        self.viewed.get(path) == Some(fingerprint)
+        self.viewed
+            .get(path)
+            .is_some_and(|approval| approval.fingerprint == *fingerprint)
     }
 }
 
@@ -294,27 +449,54 @@ impl ReviewState {
         self.records
             .viewed
             .get(path)
-            .map(|approved| fingerprint.changes_from(approved))
+            .map(|approved| fingerprint.changes_from(&approved.fingerprint))
             .unwrap_or_default()
+    }
+
+    pub fn approved_snapshot(&self, path: &str) -> Result<Option<SnapshotAvailability>> {
+        if self.error.is_some() {
+            return Ok(None);
+        }
+        self.records
+            .viewed
+            .get(path)
+            .map(|approval| match &approval.snapshot {
+                Some(snapshot) => snapshot.decode(),
+                None => Ok(SnapshotAvailability::Legacy),
+            })
+            .transpose()
     }
 
     pub fn enrich_approval(
         &mut self,
         path: &str,
         fingerprint: &Fingerprint,
+        base: Option<&str>,
+        current: Option<&str>,
         cx: &mut Context<Self>,
     ) {
         if self.error.is_none()
-            && self
-                .records
-                .viewed
-                .get(path)
-                .is_some_and(|saved| saved == fingerprint && saved.details.is_none())
+            && self.records.viewed.get(path).is_some_and(|saved| {
+                saved.fingerprint == *fingerprint
+                    && (saved.fingerprint.details.is_none() || saved.snapshot.is_none())
+            })
         {
-            self.records
-                .viewed
-                .insert(path.to_owned(), fingerprint.clone());
-            self.persist(cx);
+            match ApprovedSnapshot::capture(base, current) {
+                Ok(snapshot) => {
+                    self.records.viewed.insert(
+                        path.to_owned(),
+                        Approval {
+                            fingerprint: fingerprint.clone(),
+                            snapshot: Some(snapshot),
+                        },
+                    );
+                    self.persist(cx);
+                }
+                Err(error) => {
+                    self.error = Some(format!("Progress was not saved: {error:#}"));
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -322,6 +504,7 @@ impl ReviewState {
         &mut self,
         path: String,
         fingerprint: Option<Fingerprint>,
+        comparison: Option<(Option<&str>, Option<&str>)>,
         cx: &mut Context<Self>,
     ) {
         if self.error.is_some() {
@@ -329,7 +512,24 @@ impl ReviewState {
         }
         match fingerprint {
             Some(fingerprint) => {
-                self.records.viewed.insert(path, fingerprint);
+                let snapshot = match comparison
+                    .map(|(base, current)| ApprovedSnapshot::capture(base, current))
+                    .transpose()
+                {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        self.error = Some(format!("Progress was not saved: {error:#}"));
+                        cx.notify();
+                        return;
+                    }
+                };
+                self.records.viewed.insert(
+                    path,
+                    Approval {
+                        fingerprint,
+                        snapshot,
+                    },
+                );
             }
             None => {
                 self.records.viewed.remove(&path);
@@ -386,10 +586,10 @@ mod tests {
             serde_json::json!({"schema_version":1,"viewed":{"a":approved.value}}).to_string();
         let records = ReviewRecords::restore(Some(&legacy)).unwrap();
         assert!(records.is_viewed("a", &approved));
-        assert_eq!(records.schema_version, 2);
+        assert_eq!(records.schema_version, 3);
         let revised = fingerprint("a", Some("base"), Some("revised"));
         assert_eq!(
-            revised.changes_from(&records.viewed["a"]),
+            revised.changes_from(&records.viewed["a"].fingerprint),
             ["Comparison changed"]
         );
         let round_trip =
@@ -427,6 +627,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn approved_comparison_round_trips_absent_sides_and_rejects_corruption() {
+        let snapshot = ApprovedSnapshot::capture(Some("base\r\n"), None).unwrap();
+        assert_eq!(
+            snapshot.decode().unwrap(),
+            SnapshotAvailability::Available {
+                base: Some("base\r\n".into()),
+                current: None,
+            }
+        );
+        let value = serde_json::to_string(&snapshot).unwrap();
+        let restored: ApprovedSnapshot = serde_json::from_str(&value).unwrap();
+        assert_eq!(restored.decode().unwrap(), snapshot.decode().unwrap());
+
+        let mut corrupt: serde_json::Value = serde_json::from_str(&value).unwrap();
+        corrupt["comparison"]["base"]["zstd_base64"] = "not base64".into();
+        let corrupt: ApprovedSnapshot = serde_json::from_value(corrupt).unwrap();
+        assert!(corrupt.decode().is_err());
+
+        let mut records = ReviewRecords::default();
+        records.viewed.insert(
+            "a".into(),
+            Approval {
+                fingerprint: fingerprint("a", Some("base"), None),
+                snapshot: Some(corrupt),
+            },
+        );
+        assert!(ReviewRecords::restore(Some(&serde_json::to_string(&records).unwrap())).is_err());
+    }
+
+    #[test]
+    fn oversized_approved_comparison_keeps_viewed_without_storing_source() {
+        let text = "x".repeat(MAX_SNAPSHOT_BYTES + 1);
+        assert!(matches!(
+            ApprovedSnapshot::capture(Some(&text), None).unwrap(),
+            ApprovedSnapshot::TooLarge
+        ));
+    }
+
     #[gpui::test]
     async fn matching_legacy_approval_is_enriched_and_manual_uncheck_remains_explicit(
         cx: &mut gpui::TestAppContext,
@@ -441,7 +680,9 @@ mod tests {
             .await
             .unwrap();
         let state = cx.new(|_| ReviewState::load("review".into(), database.clone()));
-        state.update(cx, |state, cx| state.enrich_approval("a", &approved, cx));
+        state.update(cx, |state, cx| {
+            state.enrich_approval("a", &approved, Some("base"), Some("approved"), cx)
+        });
         cx.run_until_parked();
         let restored = ReviewState::load("review".into(), database.clone());
         assert!(restored.is_viewed("a", &approved));
@@ -449,7 +690,14 @@ mod tests {
             restored.change_reasons("a", &fingerprint("a", Some("base"), Some("revised"))),
             ["Content changed"]
         );
-        state.update(cx, |state, cx| state.set_viewed("a".into(), None, cx));
+        assert_eq!(
+            restored.approved_snapshot("a").unwrap(),
+            Some(SnapshotAvailability::Available {
+                base: Some("base".into()),
+                current: Some("approved".into()),
+            })
+        );
+        state.update(cx, |state, cx| state.set_viewed("a".into(), None, None, cx));
         cx.run_until_parked();
         let restored = ReviewState::load("review".into(), database);
         assert!(!restored.is_viewed("a", &approved));
@@ -466,13 +714,20 @@ mod tests {
         )
     }
 
+    fn approval(fingerprint: Fingerprint) -> Approval {
+        Approval {
+            fingerprint,
+            snapshot: None,
+        }
+    }
+
     #[test]
     fn selective_invalidation_and_undo() {
         let mut records = ReviewRecords::default();
         let a = fingerprint("a", Some("base a"), Some("reviewed a"));
         let b = fingerprint("b", Some("base b"), Some("reviewed b"));
-        records.viewed.insert("a".into(), a.clone());
-        records.viewed.insert("b".into(), b.clone());
+        records.viewed.insert("a".into(), approval(a.clone()));
+        records.viewed.insert("b".into(), approval(b.clone()));
         assert!(records.is_viewed("a", &a));
         assert!(!records.is_viewed("b", &fingerprint("b", Some("base b"), Some("revised b"))));
         assert!(!records.is_viewed("c", &fingerprint("c", None, Some("new"))));
@@ -538,7 +793,7 @@ mod tests {
         let database = KeyValueStore::open_test_db("branch_review_persistence").await;
         let mut records = ReviewRecords::default();
         let a = fingerprint("a", Some("old"), Some("new"));
-        records.viewed.insert("a".into(), a.clone());
+        records.viewed.insert("a".into(), approval(a.clone()));
         database
             .write_kvp("review".into(), serde_json::to_string(&records).unwrap())
             .await
@@ -566,9 +821,9 @@ mod tests {
         let state = cx.new(|_| ReviewState::load("review".into(), database.clone()));
         let a = fingerprint("a", Some("old"), Some("new"));
         state.update(cx, |state, cx| {
-            state.set_viewed("a".into(), Some(a.clone()), cx);
-            state.set_viewed("b".into(), Some(a.clone()), cx);
-            state.set_viewed("b".into(), None, cx);
+            state.set_viewed("a".into(), Some(a.clone()), None, cx);
+            state.set_viewed("b".into(), Some(a.clone()), None, cx);
+            state.set_viewed("b".into(), None, None, cx);
         });
         cx.run_until_parked();
         let restored = ReviewState::load("review".into(), database.clone());
@@ -578,7 +833,7 @@ mod tests {
             "CREATE TRIGGER fail_review_write BEFORE INSERT ON kv_store BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END"
         )?()).await.unwrap();
         state.update(cx, |state, cx| {
-            state.set_viewed("b".into(), Some(a.clone()), cx)
+            state.set_viewed("b".into(), Some(a.clone()), None, cx)
         });
         cx.run_until_parked();
         state.read_with(cx, |state, _| {
