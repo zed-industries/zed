@@ -18,6 +18,7 @@ mod manifest;
 pub mod modeline;
 mod outline;
 pub mod proto;
+mod color;
 mod runnable;
 mod syntax_map;
 mod task_context;
@@ -69,6 +70,9 @@ pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQue
 pub use modeline::{ModelineSettings, parse_modeline};
 use parking_lot::Mutex;
 use regex::Regex;
+pub use color::{
+    ColorChannel, ColorMatch, ColorNotation, ColorReplacement, parse_color_literal,
+};
 pub use runnable::{ResolvedRunnable, RunnableMatchCapture, RunnableRange, RunnableResolver};
 use semver::Version;
 use serde_json::Value;
@@ -1001,6 +1005,10 @@ impl Language {
 
     pub fn with_runnable_query(self, source: &str) -> Result<Self> {
         self.with_grammar_query(|grammar| grammar.with_runnable_query(source))
+    }
+
+    pub fn with_colors_query(self, source: &str) -> Result<Self> {
+        self.with_grammar_query_and_name(|grammar, name| grammar.with_colors_query(source, name))
     }
 
     pub fn with_outline_query(self, source: &str) -> Result<Self> {

@@ -97,6 +97,7 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
+    pub colors_config: Option<ColorsConfig>,
     pub highlight_map: Mutex<HighlightMap>,
 }
 
@@ -251,6 +252,106 @@ pub struct DebugVariablesConfig {
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
 }
 
+/// Which numeric channel of a color a `@color.*` capture holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorComponent {
+    Red,
+    Green,
+    Blue,
+    Alpha,
+    Hue,
+    Saturation,
+    Lightness,
+}
+
+impl ColorComponent {
+    pub const COUNT: usize = 7;
+
+    pub fn index(self) -> usize {
+        match self {
+            Self::Red => 0,
+            Self::Green => 1,
+            Self::Blue => 2,
+            Self::Alpha => 3,
+            Self::Hue => 4,
+            Self::Saturation => 5,
+            Self::Lightness => 6,
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "red" => Some(Self::Red),
+            "green" => Some(Self::Green),
+            "blue" => Some(Self::Blue),
+            "alpha" => Some(Self::Alpha),
+            "hue" => Some(Self::Hue),
+            "saturation" => Some(Self::Saturation),
+            "lightness" => Some(Self::Lightness),
+            _ => None,
+        }
+    }
+}
+
+/// The role a capture in a `colors.scm` query plays when reading a color out of
+/// the source and when writing an edited one back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorCapture {
+    /// `@color` — the whole construct the swatch attaches to. Replacing this
+    /// node's text is the fallback edit when a pattern names no components.
+    Whole,
+    /// `@color.text` — a node whose text is itself a color literal, parsed by
+    /// the built-in textual parser (`#rrggbb`, `rgb(..)`, `hsl(..)`, CSS names).
+    Text,
+    /// `@color.red` and friends — a node holding a single numeric channel.
+    Component(ColorComponent),
+}
+
+/// How the numbers in a `ColorCapture::Component` node are scaled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorScale {
+    /// Channels run 0.0 to 1.0, as in `Color::srgb(0.2, 0.9, 0.4)`.
+    Unit,
+    /// Channels run 0 to 255, as in `Color::srgb_u8(51, 230, 102)`.
+    U8,
+    /// Hue in degrees (0-360), saturation and lightness in percent (0-100).
+    Degrees,
+}
+
+impl ColorScale {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "unit" | "float" => Some(Self::Unit),
+            "u8" | "byte" => Some(Self::U8),
+            "degrees" | "hsl" => Some(Self::Degrees),
+            _ => None,
+        }
+    }
+}
+
+/// The units a pattern declares for its channels, from `(#set! color.scale
+/// "...")` and per-component overrides such as `(#set! color.hue.scale
+/// "degrees")`. Anything left unset is inferred from the matched text.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ColorPatternScales {
+    pub default: Option<ColorScale>,
+    per_component: [Option<ColorScale>; ColorComponent::COUNT],
+}
+
+impl ColorPatternScales {
+    pub fn for_component(&self, component: ColorComponent) -> Option<ColorScale> {
+        self.per_component[component.index()].or(self.default)
+    }
+}
+
+pub struct ColorsConfig {
+    pub query: Query,
+    /// A mapping from capture index to the role that capture plays, with
+    /// `None` for captures that are only used for predicates (`@_name`).
+    pub captures: Vec<Option<ColorCapture>>,
+    pub scales: Vec<ColorPatternScales>,
+}
+
 enum Capture<'a> {
     Required(&'static str, &'a mut u32),
     Optional(&'static str, &'a mut Option<u32>),
@@ -333,6 +434,7 @@ impl Grammar {
             runnable_config: None,
             error_query,
             debug_variables_config: None,
+            colors_config: None,
             #[cfg(not(target_family = "wasm"))]
             ts_language: parseable_language
                 .resolve()
@@ -443,6 +545,86 @@ impl Grammar {
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
         }
+        if let Some(query) = queries.colors {
+            self = self
+                .with_colors_query(query.as_ref(), name)
+                .context("Error loading colors query")?;
+        }
+        Ok(self)
+    }
+
+    pub fn with_colors_query(mut self, source: &str, language_name: &LanguageName) -> Result<Self> {
+        let query = Query::new(&self.parseable_language()?, source)?;
+
+        let captures = query
+            .capture_names()
+            .iter()
+            .map(|&name| match name {
+                "color" => Some(ColorCapture::Whole),
+                "color.text" => Some(ColorCapture::Text),
+                "color.red" => Some(ColorCapture::Component(ColorComponent::Red)),
+                "color.green" => Some(ColorCapture::Component(ColorComponent::Green)),
+                "color.blue" => Some(ColorCapture::Component(ColorComponent::Blue)),
+                "color.alpha" => Some(ColorCapture::Component(ColorComponent::Alpha)),
+                "color.hue" => Some(ColorCapture::Component(ColorComponent::Hue)),
+                "color.saturation" => Some(ColorCapture::Component(ColorComponent::Saturation)),
+                "color.lightness" => Some(ColorCapture::Component(ColorComponent::Lightness)),
+                name => {
+                    if !name.starts_with('_') {
+                        log::warn!(
+                            "unrecognized capture name '{name}' in {language_name} colors \
+                            TreeSitter query (suppress this warning by prefixing with '_')"
+                        );
+                    }
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        anyhow::ensure!(
+            captures.contains(&Some(ColorCapture::Whole)),
+            "colors query for {language_name} is missing the required @color capture"
+        );
+
+        let scales = (0..query.pattern_count())
+            .map(|pattern_ix| {
+                let mut scales = ColorPatternScales::default();
+                for setting in query.property_settings(pattern_ix) {
+                    let Some(key) = setting.key.strip_prefix("color.") else {
+                        continue;
+                    };
+                    let Some(value) = setting.value.as_deref() else {
+                        continue;
+                    };
+                    let Some(scale) = ColorScale::from_name(value) else {
+                        log::warn!(
+                            "unrecognized color scale '{value}' in {language_name} colors \
+                            TreeSitter query"
+                        );
+                        continue;
+                    };
+                    if key == "scale" {
+                        scales.default = Some(scale);
+                    } else if let Some(component) =
+                        key.strip_suffix(".scale").and_then(ColorComponent::from_name)
+                    {
+                        scales.per_component[component.index()] = Some(scale);
+                    } else {
+                        log::warn!(
+                            "unrecognized color setting 'color.{key}' in {language_name} colors \
+                            TreeSitter query"
+                        );
+                    }
+                }
+                scales
+            })
+            .collect();
+
+        self.colors_config = Some(ColorsConfig {
+            query,
+            captures,
+            scales,
+        });
         Ok(self)
     }
 

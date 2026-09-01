@@ -39,8 +39,9 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
     LineLayout, Pixels, PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString,
-    Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    RenderImage, RenderImageParams, RenderSvgParams, Rgba, Scene, ShapedGlyph, ShapedRun,
+    SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point,
+    px, size,
 };
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use anyhow::bail;
@@ -157,6 +158,24 @@ pub trait Platform: 'static {
             )))
             .ok();
         sources_rx
+    }
+
+    /// Whether the platform can hand the user an eyedropper for picking a color
+    /// from anywhere on screen, including outside this application's windows.
+    fn is_screen_color_picking_supported(&self) -> bool {
+        false
+    }
+
+    /// Show the platform's eyedropper and resolve with the color the user
+    /// picked, or `None` if they dismissed it.
+    fn pick_screen_color(&self) -> oneshot::Receiver<anyhow::Result<Option<Rgba>>> {
+        let (color_tx, color_rx) = oneshot::channel();
+        color_tx
+            .send(Err(anyhow::anyhow!(
+                "picking a color from the screen is not supported on this platform"
+            )))
+            .ok();
+        color_rx
     }
 
     fn open_window(

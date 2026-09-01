@@ -230,7 +230,13 @@ pub struct EditorSettingsContent {
     /// Default: "off"
     pub code_lens: Option<CodeLens>,
 
-    /// How to render LSP `textDocument/documentColor` colors in the editor.
+    /// How to render document colors in the editor.
+    ///
+    /// Colors come from language servers that implement
+    /// `textDocument/documentColor`, and from the language's own `colors.scm`
+    /// tree-sitter query, which recognizes constructs such as
+    /// `Color::srgb(0.2, 0.9, 0.4)` that no language server reports. Clicking a
+    /// color swatch opens a color picker.
     ///
     /// Default: [`DocumentColorsRenderMode::Inlay`]
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
@@ -596,9 +602,9 @@ impl CodeLens {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
-    /// Do not query and render document colors.
+    /// Do not detect or render document colors.
     None,
-    /// Render document colors as inlay hints near the color text.
+    /// Render document colors as a clickable swatch near the color text.
     #[default]
     Inlay,
     /// Draw a border around the color text.

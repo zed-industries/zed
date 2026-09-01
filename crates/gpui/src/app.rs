@@ -51,7 +51,7 @@ use crate::{
     Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
-    ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
+    Rgba, ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
     SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
     ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
     WindowInvalidator,
@@ -1331,6 +1331,18 @@ impl App {
         &self,
     ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         self.platform.screen_capture_sources()
+    }
+
+    /// Whether the platform can hand the user an eyedropper for picking a color
+    /// from anywhere on screen, including outside this application's windows.
+    pub fn is_screen_color_picking_supported(&self) -> bool {
+        self.platform.is_screen_color_picking_supported()
+    }
+
+    /// Show the platform's eyedropper and resolve with the color the user
+    /// picked, or `None` if they dismissed it.
+    pub fn pick_screen_color(&self) -> oneshot::Receiver<Result<Option<Rgba>>> {
+        self.platform.pick_screen_color()
     }
 
     /// Returns the display with the given ID, if one exists.

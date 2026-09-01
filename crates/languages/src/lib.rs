@@ -395,3 +395,98 @@ fn load_config(name: &str) -> LanguageConfig {
     let grammars_loaded = cfg!(any(feature = "load-grammars", test));
     grammars::load_config_for_feature(name, grammars_loaded)
 }
+
+#[cfg(test)]
+mod colors_query_tests {
+    use gpui::{AppContext as _, TestAppContext};
+
+    use super::*;
+
+    /// A `colors.scm` that fails to compile takes every other query for that
+    /// language down with it, so each bundled one is loaded here.
+    #[test]
+    fn bundled_colors_queries_compile() {
+        for (name, grammar) in [
+            ("css", tree_sitter_css::LANGUAGE.into()),
+            ("rust", tree_sitter_rust::LANGUAGE.into()),
+            ("typescript", tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+            ("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let queries = grammars::load_queries(name);
+            assert!(
+                queries.colors.is_some(),
+                "{name}/colors.scm exists but was not loaded"
+            );
+            Language::new(grammars::load_config(name), Some(grammar))
+                .with_queries(queries)
+                .unwrap_or_else(|error| panic!("colors query for {name} failed to load: {error}"));
+        }
+    }
+
+    #[track_caller]
+    fn colors_in(
+        name: &str,
+        grammar: tree_sitter::Language,
+        source: &str,
+        cx: &mut TestAppContext,
+    ) -> Vec<(String, u32)> {
+        let language = language(name, grammar);
+        let buffer = cx.new(|cx| {
+            let mut buffer = language::Buffer::local(source, cx);
+            buffer.set_language(Some(language), cx);
+            buffer
+        });
+        cx.executor().run_until_parked();
+        buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .color_matches(0..source.len())
+                .map(|color_match| {
+                    let text = source[color_match.range.clone()].to_string();
+                    let byte = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+                    let packed = (byte(color_match.color.red) << 24)
+                        | (byte(color_match.color.green) << 16)
+                        | (byte(color_match.color.blue) << 8)
+                        | byte(color_match.color.alpha);
+                    (text, packed)
+                })
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_css_colors(cx: &mut TestAppContext) {
+        let colors = colors_in(
+            "css",
+            tree_sitter_css::LANGUAGE.into(),
+            "a { color: #ff00aa; background: rgba(0, 128, 255, 0.5); border-color: rebeccapurple; font-weight: bold; }",
+            cx,
+        );
+        assert_eq!(
+            colors,
+            vec![
+                ("#ff00aa".to_string(), 0xff00aaff),
+                ("rgba(0, 128, 255, 0.5)".to_string(), 0x0080ff80),
+                ("rebeccapurple".to_string(), 0x663399ff),
+            ],
+            "`bold` is not a color and should not get a swatch"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_typescript_colors(cx: &mut TestAppContext) {
+        let colors = colors_in(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            "const theme = { accent: \"#0af\", muted: \"rgb(20, 20, 20)\", label: \"hello\" };",
+            cx,
+        );
+        assert_eq!(
+            colors,
+            vec![
+                ("\"#0af\"".to_string(), 0x00aaffff),
+                ("\"rgb(20, 20, 20)\"".to_string(), 0x141414ff),
+            ]
+        );
+    }
+}

@@ -526,6 +526,7 @@ ashpd = { version = "0.13", default-features = false, features = [
     "notification",
     "open_uri",
     "file_chooser",
+    "screenshot",
     "settings",
     "trash"
 ] }

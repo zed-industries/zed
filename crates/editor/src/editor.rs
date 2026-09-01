@@ -18,6 +18,7 @@ mod clangd_ext;
 pub mod code_context_menus;
 mod code_lens;
 pub mod display_map;
+mod color_picker;
 mod document_colors;
 mod document_links;
 mod document_symbols;
@@ -145,7 +146,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-use document_colors::LspColorData;
+use document_colors::DocumentColorsData;
 use document_links::LspDocumentLinks;
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
@@ -1168,7 +1169,8 @@ pub struct Editor {
     number_deleted_lines: bool,
 
     selection_drag_state: SelectionDragState,
-    colors: Option<LspColorData>,
+    colors: Option<DocumentColorsData>,
+    color_picker: Option<color_picker::ColorPickerState>,
     code_lens: Option<CodeLensState>,
     post_scroll_update: Task<()>,
     refresh_colors_task: Task<()>,
@@ -2482,6 +2484,7 @@ impl Editor {
             runnables: RunnableData::new(),
             pull_diagnostics_task: Task::ready(()),
             colors: None,
+            color_picker: None,
             code_lens: None,
             refresh_colors_task: Task::ready(()),
             refresh_code_lens_task: Task::ready(()),
@@ -2662,7 +2665,7 @@ impl Editor {
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
-            editor.colors = Some(LspColorData::new(cx));
+            editor.colors = Some(DocumentColorsData::new(cx));
             editor.use_document_folding_ranges = true;
             editor.inlay_hints = Some(LspInlayHintData::new(inlay_hint_settings));
             if editor.enable_code_lens && EditorSettings::get_global(cx).code_lens.inline() {
@@ -9956,6 +9959,11 @@ impl Editor {
                 self.refresh_selected_text_highlights(&self.display_snapshot(cx), true, window, cx);
                 self.colorize_brackets(true, cx);
                 jsx_tag_auto_close::refresh_enabled_in_any_buffer(self, multibuffer, cx);
+                // Document colors are partly read from the syntax tree, so they
+                // have to be refreshed whenever it changes - including the first
+                // parse after a language is assigned, which can land after the
+                // initial refresh.
+                self.refresh_document_colors(Some(*buffer_id), window, cx);
 
                 cx.emit(EditorEvent::Reparsed(*buffer_id));
             }

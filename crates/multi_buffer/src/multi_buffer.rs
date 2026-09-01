@@ -5818,6 +5818,31 @@ impl MultiBufferSnapshot {
         })
     }
 
+    /// The color literals found by each excerpt's language `colors.scm` query,
+    /// as multi-buffer anchor ranges.
+    pub fn color_matches(
+        &self,
+        range: Range<Anchor>,
+    ) -> impl Iterator<Item = (Range<Anchor>, language::ColorMatch)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.lift_buffer_metadata(range, move |buffer, range| {
+            Some(
+                buffer
+                    .color_matches(range.clone())
+                    .filter(move |color| {
+                        color.range.start >= range.start && color.range.end <= range.end
+                    })
+                    .map(|color| (color.range.clone(), color)),
+            )
+        })
+        .map(|(color_range, color, _)| {
+            (
+                self.anchor_after(color_range.start)..self.anchor_before(color_range.end),
+                color,
+            )
+        })
+    }
+
     pub fn line_indents(
         &self,
         start_row: MultiBufferRow,

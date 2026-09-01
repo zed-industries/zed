@@ -3266,16 +3266,16 @@ Configuration for various AI model providers including API URLs and authenticati
 
 ## LSP Document Colors
 
-- Description: How to render LSP `textDocument/documentColor` colors in the editor
+- Description: How to render document colors in the editor. Colors come from language servers that implement `textDocument/documentColor`, and from the language's own `colors.scm` tree-sitter query, which recognizes constructs such as `Color::srgb(0.2, 0.9, 0.4)` that no language server reports. Clicking a color swatch opens a color picker.
 - Setting: `lsp_document_colors`
 - Default: `inlay`
 
 **Options**
 
-1. `inlay`: Render document colors as inlay hints near the color text.
+1. `inlay`: Render document colors as a clickable swatch near the color text.
 2. `background`: Draw a background behind the color text.
 3. `border`: Draw a border around the color text.
-4. `none`: Do not query and render document colors.
+4. `none`: Do not detect or render document colors.
 
 ## LSP Document Links
 

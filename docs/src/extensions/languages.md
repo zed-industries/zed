@@ -75,6 +75,7 @@ several features:
 - Text redactions
 - Runnable code detection
 - Selecting classes, functions, etc.
+- Color literal detection
 
 The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers/queries/index.html) enable these
 features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
@@ -468,6 +469,68 @@ The `@run` capture specifies where the run button should appear in the editor. O
 <!--
 TBD: `#set! tag`
 -->
+
+### Color literal detection
+
+The `colors.scm` file tells Zed where colors appear in the source, so that it can
+draw a swatch beside them and open a color picker when one is clicked. This
+covers syntax that no language server reports, such as Bevy's `Color::srgb`.
+
+Every pattern must capture the whole construct as `@color` — that is where the
+swatch is drawn and what the picker rewrites. The color's value comes from one of
+two things:
+
+`@color.text` marks a node whose text is itself a color literal. Zed parses
+`#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`, `rgb()`, `rgba()`, `hsl()`, `hsla()` and
+the CSS color names, and it looks for them anywhere inside the node, so a node
+that includes surrounding quotes still works:
+
+```scheme
+((string) @color.text @color
+ (#match? @color.text "^\"#[0-9a-fA-F]{3,8}\"$"))
+```
+
+Alternatively, `@color.red`, `@color.green`, `@color.blue` and `@color.alpha`
+(or `@color.hue`, `@color.saturation` and `@color.lightness`) mark the individual
+numeric channels of a constructor call. Anchors (`.`) are worth using here so
+that a call with an alpha argument does not also match the three-channel pattern:
+
+```scheme
+((call_expression
+   function: (scoped_identifier
+     path: (identifier) @_type
+     name: (identifier) @_constructor)
+   arguments: (arguments
+     . (float_literal) @color.red
+     . (float_literal) @color.green
+     . (float_literal) @color.blue
+     .)) @color
+ (#eq? @_type "Color")
+ (#eq? @_constructor "srgb"))
+```
+
+| Capture                                                | Description                                                             |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| @color                                                  | The whole construct; required, and where the swatch is drawn             |
+| @color.text                                             | A node whose text is a color literal                                     |
+| @color.red, @color.green, @color.blue, @color.alpha     | Individual RGB channels                                                  |
+| @color.hue, @color.saturation, @color.lightness         | Individual HSL channels                                                  |
+
+Channel units are inferred from the source: a channel written with a decimal
+point is read as a 0.0-1.0 fraction, and a whole number as 0-255 (or as degrees
+and percent for HSL). Where that guess is wrong, state the units explicitly with
+`(#set! color.scale "unit" | "u8" | "degrees")`, and override a single channel
+with `(#set! color.hue.scale "degrees")` and friends. Bevy needs both, because
+`Color::hsl` takes a hue in degrees but a saturation and lightness in 0.0-1.0:
+
+```scheme
+ (#set! color.scale "unit")
+ (#set! color.hue.scale "degrees")
+```
+
+When the user picks a new color, Zed rewrites only the captured channels (or the
+literal), so the surrounding syntax, the author's choice of integer or float, and
+a hex literal's digit count and casing are all preserved.
 
 ## Language Servers
 

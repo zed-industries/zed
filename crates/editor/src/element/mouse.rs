@@ -342,6 +342,46 @@ impl EditorElement {
         Some(element)
     }
 
+    /// Lay out the color picker, anchored just under the color it is editing.
+    pub(super) fn layout_color_picker(
+        &self,
+        editor_snapshot: &EditorSnapshot,
+        visible_range: Range<DisplayRow>,
+        content_origin: gpui::Point<Pixels>,
+        line_height: Pixels,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        let (position, picker) = self.editor.update(cx, |editor, cx| {
+            let color_picker = editor.color_picker.as_ref()?;
+            let source = color_picker.position;
+            let picker = color_picker.picker.clone();
+            if !visible_range
+                .to_inclusive()
+                .contains(&source.to_display_point(editor_snapshot).row())
+            {
+                return None;
+            }
+            let source_point = editor.to_pixel_point(source, editor_snapshot, window, cx)?;
+            Some((
+                content_origin + source_point + point(px(0.), line_height),
+                picker,
+            ))
+        })?;
+
+        let mut element = deferred(
+            anchored()
+                .position(position)
+                .child(picker)
+                .anchor(gpui::Anchor::TopLeft)
+                .snap_to_window_with_margin(px(8.)),
+        )
+        .with_priority(1)
+        .into_any();
+        element.prepaint_as_root(position, AvailableSpace::min_size(), window, cx);
+        Some(element)
+    }
+
     pub(super) fn paint_mouse_listeners(
         &mut self,
         layout: &EditorLayout,
@@ -589,6 +629,19 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
+
+        // Swatches only sit in the text area, and `is_hovered` is false when
+        // something painted above it - an open color picker, say - covers the
+        // click, so this cannot fire for a click inside the picker itself.
+        if text_hitbox.is_hovered(window)
+            && let Some((inlay_id, _)) = position_map
+                .color_swatch_bounds
+                .iter()
+                .find(|(_, bounds)| bounds.contains(&event.position))
+        {
+            editor.open_color_picker(*inlay_id, window, cx);
+            return;
+        }
 
         if let Some(hovered_hunk) =
             position_map

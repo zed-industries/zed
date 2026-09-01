@@ -398,6 +398,47 @@ impl<P: LinuxClient + 'static> Platform for LinuxPlatform<P> {
             .with_common(|common| common.callbacks.open_urls = Some(callback));
     }
 
+    fn is_screen_color_picking_supported(&self) -> bool {
+        // The eyedropper comes from the desktop portal, which is only reachable
+        // on the Wayland and X11 builds.
+        cfg!(any(feature = "wayland", feature = "x11"))
+    }
+
+    fn pick_screen_color(&self) -> oneshot::Receiver<Result<Option<gpui::Rgba>>> {
+        let (done_tx, done_rx) = oneshot::channel();
+
+        #[cfg(not(any(feature = "wayland", feature = "x11")))]
+        let _ = done_tx.send(Err(anyhow!(
+            "picking a color from the screen needs the desktop portal"
+        )));
+
+        #[cfg(any(feature = "wayland", feature = "x11"))]
+        self.foreground_executor()
+            .spawn(async move {
+                let result = match ashpd::desktop::Color::pick().send().await {
+                    Ok(request) => match request.response() {
+                        Ok(color) => Ok(Some(gpui::Rgba {
+                            r: color.red() as f32,
+                            g: color.green() as f32,
+                            b: color.blue() as f32,
+                            a: 1.0,
+                        })),
+                        // The user dismissed the eyedropper.
+                        Err(ashpd::Error::Response(_)) => Ok(None),
+                        Err(e) => Err(e.into()),
+                    },
+                    Err(ashpd::Error::PortalNotFound(_)) => Err(anyhow!(
+                        "no desktop portal is available to pick a color from the screen"
+                    )),
+                    Err(e) => Err(e.into()),
+                };
+                let _ = done_tx.send(result);
+            })
+            .detach();
+
+        done_rx
+    }
+
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,

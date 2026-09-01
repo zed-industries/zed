@@ -63,6 +63,7 @@ use multi_buffer::{
 };
 
 use project::{
+    InlayId,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
     project_settings::{InlineBlameLocation, ProjectSettings},
 };
@@ -3155,8 +3156,9 @@ impl EditorElement {
         content_origin: gpui::Point<Pixels>,
         window: &mut Window,
         cx: &mut App,
-    ) -> SmallVec<[AnyElement; 1]> {
+    ) -> (SmallVec<[AnyElement; 1]>, Vec<(InlayId, Bounds<Pixels>)>) {
         let mut line_elements = SmallVec::new();
+        let mut color_swatch_bounds = Vec::new();
         for (ix, line) in line_layouts.iter_mut().enumerate() {
             let row = start_row + DisplayRow(ix as u32);
             line.prepaint(
@@ -3166,11 +3168,12 @@ impl EditorElement {
                 row,
                 content_origin,
                 &mut line_elements,
+                &mut color_swatch_bounds,
                 window,
                 cx,
             );
         }
-        line_elements
+        (line_elements, color_swatch_bounds)
     }
 
     fn render_block(
@@ -7410,6 +7413,7 @@ impl LineWithInvisibles {
         row: DisplayRow,
         content_origin: gpui::Point<Pixels>,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
+        color_swatch_bounds: &mut Vec<(InlayId, Bounds<Pixels>)>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -7420,6 +7424,7 @@ impl LineWithInvisibles {
             content_origin,
             line_y,
             line_elements,
+            color_swatch_bounds,
             window,
             cx,
         );
@@ -7432,6 +7437,7 @@ impl LineWithInvisibles {
         content_origin: gpui::Point<Pixels>,
         line_y: Pixels,
         line_elements: &mut SmallVec<[AnyElement; 1]>,
+        color_swatch_bounds: &mut Vec<(InlayId, Bounds<Pixels>)>,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -7442,7 +7448,9 @@ impl LineWithInvisibles {
                 LineFragment::Text(line) => {
                     fragment_origin.x += line.width;
                 }
-                LineFragment::Element { element, size, .. } => {
+                LineFragment::Element {
+                    id, element, size, ..
+                } => {
                     let mut element = element
                         .take()
                         .expect("you can't prepaint LineWithInvisibles twice");
@@ -7450,6 +7458,12 @@ impl LineWithInvisibles {
                     // Center the element vertically within the line.
                     let mut element_origin = fragment_origin;
                     element_origin.y += (line_height - size.height) / 2.;
+                    // Remember where color swatches landed so that clicking one
+                    // can open the color picker.
+                    if let ChunkRendererId::Inlay(inlay_id @ InlayId::Color(_)) = id {
+                        color_swatch_bounds
+                            .push((*inlay_id, Bounds::new(element_origin, *size)));
+                    }
                     element.prepaint_at(element_origin, window, cx);
                     line_elements.push(element);
 
@@ -8985,7 +8999,7 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let line_elements = self.prepaint_lines(
+                    let (line_elements, color_swatch_bounds) = self.prepaint_lines(
                         start_row,
                         &mut line_layouts,
                         line_height,
@@ -9279,6 +9293,15 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let color_picker = self.layout_color_picker(
+                        &snapshot,
+                        start_row..end_row,
+                        content_origin,
+                        line_height,
+                        window,
+                        cx,
+                    );
+
                     window.with_element_namespace("crease_toggles", |window| {
                         self.prepaint_crease_toggles(
                             &mut crease_toggles,
@@ -9433,6 +9456,7 @@ impl Element for EditorElement {
                             .map(|layout| (layout.bounds, layout.buffer_id, layout.entry.clone())),
                         display_hunks: display_hunks.clone(),
                         diff_hunk_control_bounds,
+                        color_swatch_bounds,
                     });
 
                     let visible_horizontal_scrollbar =
@@ -9479,6 +9503,7 @@ impl Element for EditorElement {
                         edit_prediction_popover,
                         diff_hunk_controls,
                         mouse_context_menu,
+                        color_picker,
                         test_indicators,
                         bookmarks,
                         breakpoints,
@@ -9598,6 +9623,9 @@ impl Element for EditorElement {
                     self.paint_scrollbars(layout, window, cx);
                     self.paint_edit_prediction_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
+                    if let Some(color_picker) = layout.color_picker.as_mut() {
+                        color_picker.paint(window, cx);
+                    }
                 });
             })
         })
@@ -9705,6 +9733,7 @@ pub struct EditorLayout {
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     edit_prediction_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
+    color_picker: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
     sticky_buffer_header: Option<AnyElement>,
@@ -10161,6 +10190,9 @@ pub(crate) struct PositionMap {
     pub inline_blame_bounds: Option<(Bounds<Pixels>, BufferId, BlameEntry)>,
     pub display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     pub diff_hunk_control_bounds: Vec<(DisplayRow, Bounds<Pixels>)>,
+    /// Where each document color swatch was painted, so that clicking one can
+    /// open the color picker.
+    pub color_swatch_bounds: Vec<(InlayId, Bounds<Pixels>)>,
 }
 
 #[derive(Debug, Copy, Clone)]

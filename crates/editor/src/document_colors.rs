@@ -1,12 +1,21 @@
+//! Colors shown inline in the editor, from two sources: `textDocument/documentColor`
+//! for language servers that implement it, and each language's `colors.scm`
+//! tree-sitter query for everything else (Bevy's `Color::srgb(..)`, hex literals,
+//! and so on).
+//!
+//! Both sources feed the same inlay pipeline, so a swatch looks and behaves the
+//! same however the color was found. Clicking one opens the color picker; see
+//! [`crate::color_picker`].
+
 use std::{cmp, ops::Range};
 
 use collections::HashMap;
 use futures::future::join_all;
-use gpui::{Hsla, Rgba};
+use gpui::{AppContext as _, Hsla, Rgba};
 use itertools::Itertools;
 use language::point_from_lsp;
 use multi_buffer::Anchor;
-use project::{DocumentColor, InlayId};
+use project::InlayId;
 use settings::Settings as _;
 use text::{Bias, BufferId};
 use ui::{App, Context, Window};
@@ -18,19 +27,31 @@ use crate::{
     inlays::Inlay,
 };
 
+/// A color found in a buffer, in the same shape a language server reports.
+/// Where it came from does not matter once it is on screen: the picker works
+/// out how to rewrite it from the text at its range.
+fn rgba(color: lsp::Color) -> Rgba {
+    Rgba {
+        r: color.red,
+        g: color.green,
+        b: color.blue,
+        a: color.alpha,
+    }
+}
+
 #[derive(Debug)]
-pub(super) struct LspColorData {
+pub(super) struct DocumentColorsData {
     buffer_colors: HashMap<BufferId, BufferColors>,
-    render_mode: DocumentColorsRenderMode,
+    pub(super) render_mode: DocumentColorsRenderMode,
 }
 
 #[derive(Debug, Default)]
 struct BufferColors {
-    colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
+    colors: Vec<(Range<Anchor>, lsp::Color, InlayId)>,
     inlay_colors: HashMap<InlayId, usize>,
 }
 
-impl LspColorData {
+impl DocumentColorsData {
     pub fn new(cx: &App) -> Self {
         Self {
             buffer_colors: HashMap::default(),
@@ -54,16 +75,7 @@ impl LspColorData {
                     .values()
                     .flat_map(|buffer_colors| buffer_colors.colors.iter())
                     .map(|(range, color, id)| {
-                        Inlay::color(
-                            id.id(),
-                            range.start,
-                            Rgba {
-                                r: color.color.red,
-                                g: color.color.green,
-                                b: color.color.blue,
-                                a: color.color.alpha,
-                            },
-                        )
+                        Inlay::color(id.id(), range.start, rgba(*color))
                     })
                     .collect(),
             }),
@@ -93,7 +105,7 @@ impl LspColorData {
     fn set_colors(
         &mut self,
         buffer_id: BufferId,
-        colors: Vec<(Range<Anchor>, DocumentColor, InlayId)>,
+        colors: Vec<(Range<Anchor>, lsp::Color, InlayId)>,
     ) -> bool {
         let buffer_colors = self.buffer_colors.entry(buffer_id).or_default();
         if buffer_colors.colors == colors {
@@ -107,6 +119,15 @@ impl LspColorData {
             .collect();
         buffer_colors.colors = colors;
         true
+    }
+
+    /// The color whose swatch owns `inlay_id`, if any.
+    pub fn color_for_inlay(&self, inlay_id: InlayId) -> Option<(Range<Anchor>, lsp::Color)> {
+        self.buffer_colors.values().find_map(|buffer_colors| {
+            let index = *buffer_colors.inlay_colors.get(&inlay_id)?;
+            let (range, color, _) = buffer_colors.colors.get(index)?;
+            Some((range.clone(), *color))
+        })
     }
 
     pub fn editor_display_highlights(
@@ -124,18 +145,40 @@ impl LspColorData {
                 .flat_map(|buffer_colors| &buffer_colors.colors)
                 .map(|(range, color, _)| {
                     let display_range = range.clone().to_display_points(snapshot);
-                    let color = Hsla::from(Rgba {
-                        r: color.color.red,
-                        g: color.color.green,
-                        b: color.color.blue,
-                        a: color.color.alpha,
-                    });
-                    (display_range, color)
+                    (display_range, Hsla::from(rgba(*color)))
                 })
                 .collect()
         };
         (render_mode, highlights)
     }
+}
+
+/// Insert a color into the per-buffer list, keeping it sorted by range.
+///
+/// A language server and the syntax query can report the same color; whichever
+/// is inserted first wins, and language server colors are inserted first
+/// because `textDocument/colorPresentation` also knows how to rewrite them.
+fn insert_color(
+    editor_colors: &mut HashMap<BufferId, Vec<(Range<Anchor>, lsp::Color)>>,
+    multi_buffer_snapshot: &multi_buffer::MultiBufferSnapshot,
+    buffer_id: BufferId,
+    range: Range<Anchor>,
+    color: lsp::Color,
+) {
+    let buffer_colors = editor_colors.entry(buffer_id).or_default();
+    let (Ok(i) | Err(i)) = buffer_colors.binary_search_by(|(probe, _)| {
+        probe
+            .start
+            .cmp(&range.start, multi_buffer_snapshot)
+            .then_with(|| probe.end.cmp(&range.end, multi_buffer_snapshot))
+    });
+    if buffer_colors
+        .get(i)
+        .is_some_and(|(existing, _)| *existing == range)
+    {
+        return;
+    }
+    buffer_colors.insert(i, (range, color));
 }
 
 impl Editor {
@@ -148,9 +191,6 @@ impl Editor {
         if !self.lsp_data_enabled() {
             return;
         }
-        let Some(project) = self.project.as_ref() else {
-            return;
-        };
         if self
             .colors
             .as_ref()
@@ -159,47 +199,88 @@ impl Editor {
             return;
         }
 
-        let buffers_to_query = self
+        let buffers = self
             .visible_buffers(cx)
             .into_iter()
-            .filter(|buffer| self.is_lsp_relevant(buffer.read(cx).file(), cx))
             .chain(buffer_id.and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id)))
             .filter(|editor_buffer| {
-                let editor_buffer_id = editor_buffer.read(cx).remote_id();
-                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer_id)
-                    && self.registered_buffers.contains_key(&editor_buffer_id)
+                buffer_id.is_none_or(|buffer_id| buffer_id == editor_buffer.read(cx).remote_id())
             })
             .unique_by(|buffer| buffer.read(cx).remote_id())
             .collect::<Vec<_>>();
 
-        let project = project.downgrade();
+        // Only buffers that a language server has been told about can answer a
+        // document color request; the syntax query works on any of them.
+        let lsp_buffers = self
+            .project
+            .as_ref()
+            .map(|_| {
+                buffers
+                    .iter()
+                    .filter(|buffer| {
+                        let buffer = buffer.read(cx);
+                        self.is_lsp_relevant(buffer.file(), cx)
+                            && self.registered_buffers.contains_key(&buffer.remote_id())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let project = self.project.as_ref().map(|project| project.downgrade());
+
         self.refresh_colors_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
                 .timer(LSP_REQUEST_DEBOUNCE_TIMEOUT)
                 .await;
 
-            let Some(all_colors_task) = project
-                .update(cx, |project, cx| {
-                    project.lsp_store().update(cx, |lsp_store, cx| {
-                        buffers_to_query
-                            .into_iter()
-                            .filter_map(|buffer| {
-                                let buffer_snapshot = buffer.read(cx).snapshot();
-                                let colors_task = lsp_store.document_colors(buffer, cx)?;
-                                Some(async move { (buffer_snapshot, colors_task.await) })
-                            })
-                            .collect::<Vec<_>>()
-                    })
+            // Snapshot after the debounce, so that the buffers have been parsed
+            // and reflect the edit that triggered this refresh.
+            let syntax_snapshots = cx.update(|cx| {
+                buffers
+                    .iter()
+                    .map(|buffer| buffer.read(cx).snapshot())
+                    .collect::<Vec<_>>()
+            });
+            let syntax_colors = cx
+                .background_spawn(async move {
+                    syntax_snapshots
+                        .into_iter()
+                        .map(|snapshot| {
+                            let colors = snapshot
+                                .color_matches(0..snapshot.len())
+                                .map(|color| (color.range, color.color))
+                                .collect::<Vec<_>>();
+                            (snapshot, colors)
+                        })
+                        .collect::<Vec<_>>()
                 })
-                .ok()
-            else {
-                return;
+                .await;
+
+            let lsp_colors = match project {
+                Some(project) => {
+                    let Some(all_colors_task) = project
+                        .update(cx, |project, cx| {
+                            project.lsp_store().update(cx, |lsp_store, cx| {
+                                lsp_buffers
+                                    .into_iter()
+                                    .filter_map(|buffer| {
+                                        let buffer_snapshot = buffer.read(cx).snapshot();
+                                        let colors_task = lsp_store.document_colors(buffer, cx)?;
+                                        Some(async move { (buffer_snapshot, colors_task.await) })
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                        })
+                        .ok()
+                    else {
+                        return;
+                    };
+                    join_all(all_colors_task).await
+                }
+                None => Vec::new(),
             };
 
-            let all_colors = join_all(all_colors_task).await;
-            if all_colors.is_empty() {
-                return;
-            }
             let Some(multi_buffer_snapshot) = editor
                 .update(cx, |editor, cx| editor.buffer.read(cx).snapshot(cx))
                 .ok()
@@ -207,15 +288,15 @@ impl Editor {
                 return;
             };
 
-            let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, DocumentColor)>> =
+            let mut new_editor_colors: HashMap<BufferId, Vec<(Range<Anchor>, lsp::Color)>> =
                 HashMap::default();
-            for (buffer_snapshot, colors) in all_colors {
+            for (buffer_snapshot, colors) in lsp_colors {
                 match colors {
                     Ok(colors) => {
                         if colors.colors.is_empty() {
                             new_editor_colors
                                 .entry(buffer_snapshot.remote_id())
-                                .or_insert_with(Vec::new)
+                                .or_default()
                                 .clear();
                         } else {
                             for color in colors.colors {
@@ -235,24 +316,34 @@ impl Editor {
                                     continue;
                                 };
 
-                                let new_buffer_colors = new_editor_colors
-                                    .entry(buffer_snapshot.remote_id())
-                                    .or_insert_with(Vec::new);
-
-                                let (Ok(i) | Err(i)) =
-                                    new_buffer_colors.binary_search_by(|(probe, _)| {
-                                        probe
-                                            .start
-                                            .cmp(&range.start, &multi_buffer_snapshot)
-                                            .then_with(|| {
-                                                probe.end.cmp(&range.end, &multi_buffer_snapshot)
-                                            })
-                                    });
-                                new_buffer_colors.insert(i, (range, color));
+                                insert_color(
+                                    &mut new_editor_colors,
+                                    &multi_buffer_snapshot,
+                                    buffer_snapshot.remote_id(),
+                                    range,
+                                    color.color,
+                                );
                             }
                         }
                     }
                     Err(e) => log::error!("Failed to retrieve document colors: {e}"),
+                }
+            }
+
+            for (buffer_snapshot, colors) in syntax_colors {
+                for (color_range, color) in colors {
+                    let Some(range) = multi_buffer_snapshot.buffer_anchor_range_to_anchor_range(
+                        buffer_snapshot.anchor_range_outside(color_range),
+                    ) else {
+                        continue;
+                    };
+                    insert_color(
+                        &mut new_editor_colors,
+                        &multi_buffer_snapshot,
+                        buffer_snapshot.remote_id(),
+                        range,
+                        color,
+                    );
                 }
             }
 
@@ -274,12 +365,7 @@ impl Editor {
                             .iter()
                             .peekable();
                         for (new_range, new_color) in new_buffer_colors {
-                            let rgba_color = Rgba {
-                                r: new_color.color.red,
-                                g: new_color.color.green,
-                                b: new_color.color.blue,
-                                a: new_color.color.alpha,
-                            };
+                            let rgba_color = rgba(new_color);
 
                             loop {
                                 match existing_buffer_colors.peek() {
@@ -410,6 +496,100 @@ mod tests {
             .filter_map(|inlay| inlay.get_color())
             .map(Rgba::from)
             .collect()
+    }
+
+    #[gpui::test]
+    async fn test_syntax_colors_without_a_language_server(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/a"),
+            json!({
+                "first.rs": "fn draw() { gizmos.line(a, b, Color::srgb(0.2, 0.9, 0.4)); }",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_lang());
+
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_abs_path(
+                    PathBuf::from(path!("/a/first.rs")),
+                    OpenOptions::default(),
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Parsing the buffer schedules a colors refresh, and each refresh
+        // replaces the one before it, so the clock has to be advanced until no
+        // further refresh is queued.
+        for _ in 0..3 {
+            cx.executor().advance_clock(LSP_REQUEST_DEBOUNCE_TIMEOUT);
+            cx.run_until_parked();
+        }
+
+        editor.update(cx, |editor, cx| {
+            let inlays = extract_color_inlays(editor, cx);
+            assert_eq!(
+                inlays.len(),
+                1,
+                "The colors query should produce a swatch with no language server involved, got {inlays:?}"
+            );
+            // The swatch round-trips through HSLA, so compare the 8-bit values.
+            let byte = |value: f32| (value * 255.0).round() as u8;
+            assert_eq!(
+                [
+                    byte(inlays[0].r),
+                    byte(inlays[0].g),
+                    byte(inlays[0].b),
+                    byte(inlays[0].a)
+                ],
+                [51, 230, 102, 255]
+            );
+        });
+
+        // Picking a new color rewrites the constructor's arguments in place.
+        let range = editor.update(cx, |editor, _| {
+            editor
+                .colors
+                .as_ref()
+                .expect("colors are enabled")
+                .buffer_colors
+                .values()
+                .flat_map(|buffer_colors| buffer_colors.colors.iter())
+                .map(|(range, _, _)| range.clone())
+                .next()
+                .expect("a color was found")
+        });
+        editor.update(cx, |editor, cx| {
+            editor.rewrite_color(
+                &range,
+                lsp::Color {
+                    red: 1.0,
+                    green: 0.5,
+                    blue: 0.0,
+                    alpha: 1.0,
+                },
+                cx,
+            );
+            assert_eq!(
+                editor.text(cx),
+                "fn draw() { gizmos.line(a, b, Color::srgb(1.0, 0.5, 0.0)); }"
+            );
+        });
     }
 
     #[gpui::test(iterations = 10)]

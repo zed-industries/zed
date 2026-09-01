@@ -379,6 +379,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                                     div()
                                         .relative()
                                         .size_3p5()
+                                        // Clicking the swatch opens the color
+                                        // picker, so it reads as a control.
+                                        .cursor_pointer()
                                         .child(
                                             div()
                                                 .absolute()

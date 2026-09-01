@@ -27,6 +27,8 @@ pub enum QueryFile {
     Debugger,
     #[strum(serialize = "textobjects.scm")]
     TextObjects,
+    #[strum(serialize = "colors.scm")]
+    Colors,
 }
 
 impl QueryFile {
@@ -48,6 +50,7 @@ bitflags::bitflags! {
         const RUNNABLES = 1 << 7;
         const DEBUGGER = 1 << 8;
         const TEXT_OBJECTS = 1 << 9;
+        const COLORS = 1 << 10;
     }
 }
 
@@ -70,6 +73,7 @@ impl From<QueryFile> for QueryFiles {
             QueryFile::Runnables => Self::RUNNABLES,
             QueryFile::Debugger => Self::DEBUGGER,
             QueryFile::TextObjects => Self::TEXT_OBJECTS,
+            QueryFile::Colors => Self::COLORS,
         }
     }
 }
@@ -128,6 +132,7 @@ pub struct LanguageQueries {
     pub runnables: Option<Cow<'static, str>>,
     pub text_objects: Option<Cow<'static, str>>,
     pub debugger: Option<Cow<'static, str>>,
+    pub colors: Option<Cow<'static, str>>,
 }
 
 impl LanguageQueries {
@@ -149,6 +154,7 @@ impl LanguageQueries {
                 QueryFile::Runnables => &mut queries.runnables,
                 QueryFile::Debugger => &mut queries.debugger,
                 QueryFile::TextObjects => &mut queries.text_objects,
+                QueryFile::Colors => &mut queries.colors,
             };
             *field = Some(contents);
         }
@@ -176,6 +182,7 @@ mod tests {
         assert_eq!(queries.runnables.as_deref(), Some("runnables.scm"));
         assert_eq!(queries.debugger.as_deref(), Some("debugger.scm"));
         assert_eq!(queries.text_objects.as_deref(), Some("textobjects.scm"));
+        assert_eq!(queries.colors.as_deref(), Some("colors.scm"));
 
         for query_file in QueryFile::iter() {
             let file_name: &'static str = query_file.into();

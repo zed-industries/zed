@@ -481,12 +481,16 @@ impl StickyHeaderLine {
         cx: &mut App,
     ) -> Self {
         let mut elements = SmallVec::<[AnyElement; 1]>::new();
+        // A sticky header is a copy of a line that is also painted in place, so
+        // its swatch bounds are discarded to keep one set of click targets.
+        let mut color_swatch_bounds = Vec::new();
         line.prepaint_with_custom_offset(
             line_height,
             scroll_pixel_position,
             content_origin,
             offset,
             &mut elements,
+            &mut color_swatch_bounds,
             window,
             cx,
         );

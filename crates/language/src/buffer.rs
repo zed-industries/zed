@@ -5117,6 +5117,15 @@ impl BufferSnapshot {
         runnable::runnable_ranges(self, offset_range)
     }
 
+    /// The color literals this buffer's language knows how to recognize within
+    /// `offset_range`, found with its `colors.scm` query.
+    pub fn color_matches(
+        &self,
+        offset_range: Range<usize>,
+    ) -> impl Iterator<Item = crate::ColorMatch> + '_ {
+        crate::color::color_matches(self, offset_range)
+    }
+
     /// Returns selections for remote peers intersecting the given range.
     #[allow(clippy::type_complexity)]
     pub fn selections_in_range(
