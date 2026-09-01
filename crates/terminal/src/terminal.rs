@@ -1065,6 +1065,8 @@ impl TerminalBuilder {
             pending_cwd_boundary: None,
             #[cfg(any(test, feature = "test-support"))]
             input_log: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            foreground_process_command_for_test: None,
             #[cfg(test)]
             suppress_hyperlink_throttle_once: false,
             #[cfg(any(test, feature = "test-support"))]
@@ -1364,6 +1366,8 @@ impl TerminalBuilder {
                 pending_cwd_boundary: None,
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
+                #[cfg(any(test, feature = "test-support"))]
+                foreground_process_command_for_test: None,
                 #[cfg(test)]
                 suppress_hyperlink_throttle_once: false,
                 #[cfg(any(test, feature = "test-support"))]
@@ -1544,6 +1548,8 @@ pub struct Terminal {
     pending_cwd_boundary: Option<i32>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+    #[cfg(any(test, feature = "test-support"))]
+    foreground_process_command_for_test: Option<String>,
     #[cfg(test)]
     suppress_hyperlink_throttle_once: bool,
     #[cfg(any(test, feature = "test-support"))]
@@ -2888,6 +2894,11 @@ impl Terminal {
 
     /// Normalizes the command name of the foreground process, if one is known.
     pub fn foreground_process_command_name(&self) -> Option<String> {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(command) = &self.foreground_process_command_for_test {
+            return Some(command.clone());
+        }
+
         match &self.terminal_type {
             TerminalType::Pty { info, .. } => info
                 .current
@@ -2896,6 +2907,11 @@ impl Terminal {
                 .and_then(|process| foreground_process_command_from_argv(&process.argv)),
             TerminalType::DisplayOnly => None,
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_foreground_process_command_for_test(&mut self, command: impl Into<String>) {
+        self.foreground_process_command_for_test = Some(command.into());
     }
 
     /// Returns the working directory of the process that's connected to the PTY.

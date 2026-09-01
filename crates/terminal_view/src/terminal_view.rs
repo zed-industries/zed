@@ -2528,6 +2528,65 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_paste_selection_reference_wiring(cx: &mut TestAppContext) {
+        let (project, _workspace, window_handle) = init_test_with_window(cx).await;
+        let (worktree, _) = create_folder_wt(project.clone(), "/project", cx).await;
+        create_file_in_worktree(worktree, "main.rs", cx).await;
+        let (_pane, terminal, terminal_view) =
+            add_display_only_terminal(&project, window_handle, true, cx);
+
+        let clipboard = ClipboardItem::new_string_with_json_metadata(
+            "selected text".to_string(),
+            vec![editor::ClipboardSelection {
+                len: 12,
+                is_entire_line: false,
+                first_line_indent: 0,
+                file_path: Some(PathBuf::from("/project/main.rs")),
+                line_range: Some(9..=41),
+            }],
+        );
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|window, cx| {
+            let _ = window.draw(cx);
+            cx.write_to_clipboard(clipboard.clone());
+            terminal.update(cx, |terminal, _| {
+                terminal.set_foreground_process_command_for_test("codex");
+                terminal.take_input_log();
+            });
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.paste(&Paste, window, cx);
+            });
+            assert_eq!(
+                terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                vec![b"/project/main.rs:10-42 ".to_vec()]
+            );
+
+            terminal.update(cx, |terminal, _| {
+                terminal.set_foreground_process_command_for_test("zsh");
+            });
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.paste(&Paste, window, cx);
+            });
+            assert_eq!(
+                terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                vec![b"selected text".to_vec()]
+            );
+
+            terminal.update(cx, |terminal, _| {
+                terminal.set_foreground_process_command_for_test("codex");
+            });
+            terminal_view.update(cx, |terminal_view, cx| {
+                terminal_view.paste_text(&PasteText, window, cx);
+            });
+            assert_eq!(
+                terminal.update(cx, |terminal, _| terminal.take_input_log()),
+                vec![b"selected text".to_vec()]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn shift_up_scrolls_history_in_normal_screen(cx: &mut TestAppContext) {
         let (project, _workspace, window_handle) = init_test_with_window(cx).await;
         cx.update(load_default_keymap);
