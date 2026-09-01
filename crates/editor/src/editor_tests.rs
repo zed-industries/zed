@@ -7407,6 +7407,127 @@ async fn test_manipulate_immutable_lines_with_single_selection(cx: &mut TestAppC
 }
 
 #[gpui::test]
+async fn test_sort_lines_descending(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «a
+        c
+        b
+        dˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.sort_lines_case_sensitive_descending(&SortLinesCaseSensitiveDescending, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «d
+        c
+        b
+        aˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_sort_lines_by_length_descending(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «a
+        ccc
+        bb
+        ddddˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.sort_lines_by_length_descending(&SortLinesByLengthDescending, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «dddd
+        ccc
+        bb
+        aˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_sort_lines_case_sensitive_unique(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «c
+        a
+        b
+        a
+        c
+        bˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.sort_lines_case_sensitive_unique(&SortLinesCaseSensitiveUnique, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «a
+        b
+        cˇ»
+    "});
+}
+
+#[gpui::test]
+async fn test_sort_lines_natural(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «file10
+        file2
+        file1
+        file20ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.sort_lines_natural(&SortLinesNatural, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «file1
+        file2
+        file10
+        file20ˇ»
+    "});
+
+    // Mixed numeric and non-numeric
+    cx.set_state(indoc! {"
+        «z2
+        a10
+        a2
+        a1ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.sort_lines_natural(&SortLinesNatural, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «a1
+        a2
+        a10
+        z2ˇ»
+    "});
+
+    // Leading zeros
+    cx.set_state(indoc! {"
+        «file01
+        file2
+        file001
+        file10ˇ»
+    "});
+    cx.update_editor(|e, window, cx| e.sort_lines_natural(&SortLinesNatural, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «file001
+        file01
+        file2
+        file10ˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_unique_lines_multi_selection(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
