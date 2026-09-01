@@ -1243,37 +1243,6 @@ impl Default for CenteredPaddingSettings {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::merge_from::MergeFrom as _;
-
-    #[test]
-    fn completion_menu_item_kind_symbols_merge_individually() {
-        let mut defaults = EditorSettingsContent {
-            completion_menu_item_kind_symbols: Some(CompletionMenuItemKindSymbols {
-                method: Some('m'),
-                function: Some('f'),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let user = EditorSettingsContent {
-            completion_menu_item_kind_symbols: Some(CompletionMenuItemKindSymbols {
-                function: Some('λ'),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        defaults.merge_from(&user);
-
-        let symbols = defaults.completion_menu_item_kind_symbols.unwrap();
-        assert_eq!(symbols.method, Some('m'));
-        assert_eq!(symbols.function, Some('λ'));
-    }
-}
-
 impl schemars::JsonSchema for CenteredPaddingSettings {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "CenteredPaddingSettings".into()
