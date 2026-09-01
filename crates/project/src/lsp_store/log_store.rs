@@ -52,6 +52,7 @@ pub struct LogStore {
 
 struct ProjectState {
     _subscriptions: [Subscription; 2],
+    copilot_server_id: Option<LanguageServerId>,
     copilot_log_subscription: Option<lsp::Subscription>,
 }
 
@@ -588,6 +589,7 @@ impl LogStore {
                         }
                     }),
                 ],
+                copilot_server_id: None,
                 copilot_log_subscription: None,
             },
         );
@@ -975,12 +977,69 @@ impl LogStore {
             }
         }
     }
-    pub fn copilot_state_for_project(
+    pub fn sync_copilot_for_project(
         &mut self,
         project: &WeakEntity<Project>,
-    ) -> Option<&mut Option<lsp::Subscription>> {
-        self.projects
-            .get_mut(project)
-            .map(|project| &mut project.copilot_log_subscription)
+        server: Option<Arc<LanguageServer>>,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let server_kind = LanguageServerKind::Supplementary {
+            project: project.clone(),
+        };
+        let current_server_id = server.as_ref().map(|server| server.server_id());
+        let current_server_matches = server.as_ref().is_some_and(|server| {
+            let server_key = LanguageServerLogKey::new(server_kind.clone(), server.server_id());
+            self.language_servers
+                .get(&server_key)
+                .and_then(|state| state.server())
+                .is_some_and(|current_server| Arc::ptr_eq(&current_server, server))
+        });
+        let project_state = self.projects.get_mut(project)?;
+        if project_state.copilot_server_id == current_server_id && current_server_matches {
+            return Some(());
+        }
+
+        project_state.copilot_log_subscription = None;
+        let previous_server_id = project_state.copilot_server_id.take();
+        if previous_server_id != current_server_id
+            && let Some(previous_server_id) = previous_server_id
+        {
+            let previous_server_key =
+                LanguageServerLogKey::new(server_kind.clone(), previous_server_id);
+            self.remove_language_server(&previous_server_key, cx);
+        }
+
+        let Some(server) = server else {
+            return Some(());
+        };
+        let server_id = server.server_id();
+        let server_key = LanguageServerLogKey::new(server_kind.clone(), server_id);
+        let weak_log_store = cx.weak_entity();
+        let log_subscription =
+            server.on_notification::<lsp::notification::LogMessage, _>(move |params, cx| {
+                weak_log_store
+                    .update(cx, |log_store, cx| {
+                        log_store.add_language_server_log(
+                            &server_key,
+                            MessageType::LOG,
+                            &params.message,
+                            cx,
+                        );
+                    })
+                    .ok();
+            });
+        self.add_language_server(
+            server_kind,
+            server_id,
+            Some(LanguageServerName::new_static("copilot")),
+            None,
+            Some(server),
+            cx,
+        );
+
+        let project_state = self.projects.get_mut(project)?;
+        project_state.copilot_server_id = Some(server_id);
+        project_state.copilot_log_subscription = Some(log_subscription);
+        Some(())
     }
 }

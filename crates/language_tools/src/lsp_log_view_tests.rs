@@ -274,6 +274,48 @@ async fn test_log_store_does_not_retain_language_servers(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_log_store_removes_unavailable_copilot_server(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/the-root"), json!({ "test.rs": "" }))
+        .await;
+    let project = Project::test(fs, [path!("/the-root").as_ref()], cx).await;
+    let server_id = LanguageServerId(100);
+    let server_kind = LanguageServerKind::Supplementary {
+        project: project.downgrade(),
+    };
+    let server_key = LanguageServerLogKey::new(server_kind, server_id);
+    let log_store = cx.new(|cx| LogStore::new(false, cx));
+    log_store.update(cx, |log_store, cx| log_store.add_project(&project, cx));
+
+    let (server, _fake_server) = lsp::FakeLanguageServer::new(
+        server_id,
+        lsp::LanguageServerBinary {
+            path: "path/to/copilot-language-server".into(),
+            arguments: Vec::new(),
+            env: None,
+        },
+        "copilot".to_string(),
+        Default::default(),
+        &mut cx.to_async(),
+    );
+    log_store.update(cx, |log_store, cx| {
+        log_store.sync_copilot_for_project(&project.downgrade(), Some(Arc::new(server)), cx);
+    });
+    assert!(log_store.read_with(cx, |log_store, _| {
+        log_store.language_servers.contains_key(&server_key)
+    }));
+
+    log_store.update(cx, |log_store, cx| {
+        log_store.sync_copilot_for_project(&project.downgrade(), None, cx);
+    });
+    assert!(!log_store.read_with(cx, |log_store, _| {
+        log_store.language_servers.contains_key(&server_key)
+    }));
+}
+
+#[gpui::test]
 async fn test_lsp_log_view(cx: &mut TestAppContext) {
     zlog::init_test();
 

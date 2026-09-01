@@ -372,60 +372,17 @@ impl LspLogView {
         );
         (editor, vec![editor_subscription, search_subscription])
     }
-    pub(crate) fn try_ensure_copilot_for_project(&self, cx: &mut App) {
-        self.log_store.update(cx, |this, cx| {
-            let copilot = EditPredictionStore::try_global(cx)
-                .and_then(|store| store.read(cx).copilot_for_project(&self.project))?;
-            let server = copilot.read(cx).language_server()?.clone();
-            let server_id = server.server_id();
-            let server_kind = LanguageServerKind::Supplementary {
-                project: self.project.downgrade(),
-            };
-            let server_key = LanguageServerLogKey::new(server_kind.clone(), server_id);
-            let is_new_server = this
-                .language_servers
-                .get(&server_key)
-                .and_then(|state| state.server())
-                .is_none_or(|current_server| !Arc::ptr_eq(&current_server, &server));
-
-            let log_subscription = this.copilot_state_for_project(&self.project.downgrade());
-            if let Some(subscription_slot) = log_subscription {
-                if is_new_server {
-                    *subscription_slot = None;
-                }
-                if subscription_slot.is_none() {
-                    let weak_lsp_store = cx.weak_entity();
-                    *subscription_slot =
-                        Some(server.on_notification::<lsp::notification::LogMessage, _>(
-                            move |params, cx| {
-                                weak_lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.add_language_server_log(
-                                            &server_key,
-                                            MessageType::LOG,
-                                            &params.message,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            },
-                        ));
-                    this.add_language_server(
-                        server_kind,
-                        server_id,
-                        Some(LanguageServerName::new_static("copilot")),
-                        None,
-                        Some(server),
-                        cx,
-                    );
-                }
-            }
-
-            Some(())
+    pub(crate) fn sync_copilot_for_project(&self, cx: &mut App) {
+        let server = EditPredictionStore::try_global(cx)
+            .and_then(|store| store.read(cx).copilot_for_project(&self.project))
+            .and_then(|copilot| copilot.read(cx).language_server().cloned());
+        self.log_store.update(cx, |log_store, cx| {
+            log_store.sync_copilot_for_project(&self.project.downgrade(), server, cx);
         });
     }
+
     pub(crate) fn menu_items(&self, cx: &mut App) -> Option<Vec<LogMenuItem>> {
-        self.try_ensure_copilot_for_project(cx);
+        self.sync_copilot_for_project(cx);
         let supplementary_language_server_ids = self
             .project
             .read(cx)
