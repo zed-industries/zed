@@ -397,7 +397,7 @@
     "struct": "S",
     "event": "E",
     "operator": "o",
-    "type_parameter": "T"
+    "type_parameter": "T",
   },
   // How to display diffs in the editor.
   //
