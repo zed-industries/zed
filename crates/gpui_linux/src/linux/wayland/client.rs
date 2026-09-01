@@ -448,41 +448,6 @@ fn load_xkb_keyboard_states(
     Ok((keymap_state, compose_state))
 }
 
-fn update_xkb_modifiers(
-    keymap_state: Option<&mut xkb::State>,
-    modifiers_depressed: u32,
-    modifiers_latched: u32,
-    modifiers_locked: u32,
-    group: u32,
-) -> Option<(u32, Modifiers, Capslock)> {
-    let keymap_state = keymap_state?;
-    let old_layout = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
-    keymap_state.update_mask(
-        modifiers_depressed,
-        modifiers_latched,
-        modifiers_locked,
-        0,
-        0,
-        group,
-    );
-
-    Some((
-        old_layout,
-        modifiers_from_xkb(keymap_state),
-        capslock_from_xkb(keymap_state),
-    ))
-}
-
-fn resolve_xkb_key_event(
-    keymap_state: Option<&xkb::State>,
-    key: u32,
-) -> Option<(&xkb::State, Keycode, xkb::Keysym)> {
-    let keymap_state = keymap_state?;
-    let keycode = Keycode::from(key + MIN_KEYCODE);
-    let keysym = keymap_state.key_get_one_sym(keycode);
-    Some((keymap_state, keycode, keysym))
-}
-
 fn replace_xkb_keyboard_states(
     keymap_state: &mut Option<xkb::State>,
     compose_state: &mut Option<xkb::compose::State>,
@@ -1950,13 +1915,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             } => {
                 let focused_window = state.keyboard_focused_window.clone();
 
-                let Some((old_layout, modifiers, capslock)) = update_xkb_modifiers(
-                    state.keymap_state.as_mut(),
-                    mods_depressed,
-                    mods_latched,
-                    mods_locked,
-                    group,
-                ) else {
+                let Some(keymap_state) = state.keymap_state.as_mut() else {
                     if !std::mem::replace(&mut state.reported_ignored_keyboard_event, true) {
                         log::warn!(
                             "Ignoring Wayland modifiers because no usable XKB keymap is available"
@@ -1964,6 +1923,11 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     return;
                 };
+                let old_layout =
+                    keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
+                keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
+                let modifiers = modifiers_from_xkb(keymap_state);
+                let capslock = capslock_from_xkb(keymap_state);
                 state.modifiers = modifiers;
                 state.capslock = capslock;
 
@@ -1996,9 +1960,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     return;
                 };
 
-                let Some((keymap_state, keycode, keysym)) =
-                    resolve_xkb_key_event(state.keymap_state.as_ref(), key)
-                else {
+                let Some(keymap_state) = state.keymap_state.as_ref() else {
                     if !std::mem::replace(&mut state.reported_ignored_keyboard_event, true) {
                         log::warn!(
                             "Ignoring Wayland key event because no usable XKB keymap is available"
@@ -2006,6 +1968,8 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     }
                     return;
                 };
+                let keycode = Keycode::from(key + MIN_KEYCODE);
+                let keysym = keymap_state.key_get_one_sym(keycode);
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
@@ -3045,16 +3009,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ignores_modifiers_without_keymap() {
-        assert!(update_xkb_modifiers(None, 0, 0, 0, 0).is_none());
-    }
-
-    #[test]
-    fn ignores_keys_without_keymap() {
-        assert!(resolve_xkb_key_event(None, 30).is_none());
-    }
-
-    #[test]
     fn rejects_empty_keymap() {
         let file_descriptor = std::fs::File::open("/dev/null")
             .expect("null device should be available")
@@ -3107,26 +3061,6 @@ mod tests {
         assert!(repeat.current_keycode.is_none());
         assert_eq!(modifiers, Modifiers::default());
         assert_eq!(capslock, Capslock::default());
-    }
-
-    #[test]
-    fn processes_keyboard_events_with_keymap() {
-        let mut keymap_state = test_xkb_state();
-
-        let Some((old_layout, modifiers, capslock)) =
-            update_xkb_modifiers(Some(&mut keymap_state), 0, 0, 0, 0)
-        else {
-            panic!("modifier update should use the available keymap");
-        };
-        assert_eq!(old_layout, 0);
-        assert_eq!(modifiers, Modifiers::default());
-        assert_eq!(capslock, Capslock::default());
-
-        let Some((_, keycode, keysym)) = resolve_xkb_key_event(Some(&keymap_state), 30) else {
-            panic!("key event should use the available keymap");
-        };
-        assert_eq!(keycode, Keycode::from(30 + MIN_KEYCODE));
-        assert_eq!(keysym, xkb::Keysym::a);
     }
 
     fn test_xkb_state() -> xkb::State {
