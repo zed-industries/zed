@@ -1133,9 +1133,9 @@ impl CompletionsMenu {
                                 })
                             });
 
-                        let kind_letter_slot = match completion_menu_item_kind {
+                        let kind_symbol_slot = match completion_menu_item_kind {
                             CompletionMenuItemKind::Off => None,
-                            CompletionMenuItemKind::Symbol => Some(render_completion_kind_letter(
+                            CompletionMenuItemKind::Symbol => Some(render_completion_kind_symbol(
                                 completion.kind(),
                                 item_ix,
                                 &style,
@@ -1143,15 +1143,15 @@ impl CompletionsMenu {
                             )),
                         };
 
-                        let start_slot = match (kind_letter_slot, icon_or_color_slot) {
-                            (Some(letter), Some(icon_or_color)) => Some(
+                        let start_slot = match (kind_symbol_slot, icon_or_color_slot) {
+                            (Some(kind_symbol), Some(icon_or_color)) => Some(
                                 h_flex()
                                     .gap_0p5()
-                                    .child(letter)
+                                    .child(kind_symbol)
                                     .child(icon_or_color)
                                     .into_any_element(),
                             ),
-                            (Some(letter), None) => Some(letter),
+                            (Some(kind_symbol), None) => Some(kind_symbol),
                             (None, slot) => slot,
                         };
 
@@ -1659,11 +1659,11 @@ impl CompletionsMenu {
     }
 }
 
-fn render_completion_kind_letter(
+fn render_completion_kind_symbol(
     kind: Option<CompletionItemKind>,
     item_ix: usize,
     style: &EditorStyle,
-    symbols: &CompletionMenuItemKindSymbols,
+    render_completion_kind_symbols: &CompletionMenuItemKindSymbols,
 ) -> AnyElement {
     let badge = div()
         .flex_none()
@@ -1675,7 +1675,7 @@ fn render_completion_kind_letter(
     let Some(kind) = kind else {
         return badge.into_any_element();
     };
-    let Some(letter) = completion_kind_symbol(kind, symbols) else {
+    let Some(symbol) = completion_kind_symbol(kind, render_completion_kind_symbols) else {
         return badge.into_any_element();
     };
 
@@ -1691,7 +1691,7 @@ fn render_completion_kind_letter(
     badge
         .id(("completion-kind", item_ix))
         .tooltip(Tooltip::text(completion_kind_name(kind)))
-        .child(SharedString::from(letter))
+        .child(SharedString::from(symbol))
         .when_some(color, |element, color| element.text_color(color))
         .into_any_element()
 }
