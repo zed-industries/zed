@@ -775,7 +775,6 @@ impl MarkdownPreviewView {
         self.markdown.update(cx, |markdown, cx| {
             markdown.focus_handle(cx).focus(window, cx);
             window.dispatch_action(Box::new(markdown::SelectAll), cx);
-            cx.notify();
         });
     }
 
