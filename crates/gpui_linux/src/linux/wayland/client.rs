@@ -414,12 +414,6 @@ pub(crate) struct KeyRepeat {
     current_keycode: Option<xkb::Keycode>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct KeyboardMappingReplacement {
-    deleted_pre_edit: bool,
-    modifiers_changed: bool,
-}
-
 fn load_xkb_keyboard_states(
     file_descriptor: OwnedFd,
     size: u32,
@@ -446,34 +440,6 @@ fn load_xkb_keyboard_states(
     let compose_state = get_xkb_compose_state(&context);
 
     Ok((keymap_state, compose_state))
-}
-
-fn replace_xkb_keyboard_states(
-    keymap_state: &mut Option<xkb::State>,
-    compose_state: &mut Option<xkb::compose::State>,
-    pre_edit_text: &mut Option<String>,
-    repeat: &mut KeyRepeat,
-    modifiers: &mut Modifiers,
-    capslock: &mut Capslock,
-    keyboard_states: Option<(xkb::State, Option<xkb::compose::State>)>,
-) -> KeyboardMappingReplacement {
-    let replacement = KeyboardMappingReplacement {
-        deleted_pre_edit: pre_edit_text.take().is_some(),
-        modifiers_changed: *modifiers != Modifiers::default() || *capslock != Capslock::default(),
-    };
-
-    *keymap_state = None;
-    *compose_state = None;
-    repeat.current_id += 1;
-    repeat.current_keycode = None;
-    *modifiers = Modifiers::default();
-    *capslock = Capslock::default();
-    if let Some((new_keymap_state, new_compose_state)) = keyboard_states {
-        *keymap_state = Some(new_keymap_state);
-        *compose_state = new_compose_state;
-    }
-
-    replacement
 }
 
 pub(crate) enum PendingActivation {
@@ -1843,31 +1809,26 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
 
                 let focused_window = state.keyboard_focused_window.clone();
-                let WaylandClientState {
-                    keymap_state,
-                    compose_state,
-                    pre_edit_text,
-                    repeat,
-                    modifiers,
-                    capslock,
-                    ..
-                } = &mut *state;
-                let replacement = replace_xkb_keyboard_states(
-                    keymap_state,
-                    compose_state,
-                    pre_edit_text,
-                    repeat,
-                    modifiers,
-                    capslock,
-                    keyboard_states,
-                );
+                let deleted_pre_edit = state.pre_edit_text.take().is_some();
+                let modifiers_changed = state.modifiers != Modifiers::default()
+                    || state.capslock != Capslock::default();
+                state.keymap_state = None;
+                state.compose_state = None;
+                state.repeat.current_id += 1;
+                state.repeat.current_keycode = None;
+                state.modifiers = Modifiers::default();
+                state.capslock = Capslock::default();
+                if let Some((keymap_state, compose_state)) = keyboard_states {
+                    state.keymap_state = Some(keymap_state);
+                    state.compose_state = compose_state;
+                }
                 drop(state);
 
                 if let Some(focused_window) = focused_window {
-                    if replacement.deleted_pre_edit {
+                    if deleted_pre_edit {
                         focused_window.handle_ime(ImeInput::DeleteText);
                     }
-                    if replacement.modifiers_changed {
+                    if modifiers_changed {
                         focused_window.handle_input(PlatformInput::ModifiersChanged(
                             ModifiersChangedEvent {
                                 modifiers: Modifiers::default(),
@@ -3018,64 +2979,6 @@ mod tests {
         };
 
         assert_eq!(error.to_string(), "Wayland keymap is empty");
-    }
-
-    #[test]
-    fn clears_state_when_keymap_becomes_unavailable() {
-        let mut keymap_state = Some(test_xkb_state());
-        let mut compose_state = None;
-        let mut pre_edit_text = Some("composing".to_owned());
-        let mut repeat = KeyRepeat {
-            characters_per_second: 16,
-            delay: Duration::from_millis(500),
-            current_id: 7,
-            current_keycode: Some(Keycode::from(30_u32)),
-        };
-        let mut modifiers = Modifiers {
-            shift: true,
-            ..Modifiers::default()
-        };
-        let mut capslock = Capslock { on: true };
-
-        let replacement = replace_xkb_keyboard_states(
-            &mut keymap_state,
-            &mut compose_state,
-            &mut pre_edit_text,
-            &mut repeat,
-            &mut modifiers,
-            &mut capslock,
-            None,
-        );
-
-        assert_eq!(
-            replacement,
-            KeyboardMappingReplacement {
-                deleted_pre_edit: true,
-                modifiers_changed: true,
-            }
-        );
-        assert!(keymap_state.is_none());
-        assert!(compose_state.is_none());
-        assert!(pre_edit_text.is_none());
-        assert_eq!(repeat.current_id, 8);
-        assert!(repeat.current_keycode.is_none());
-        assert_eq!(modifiers, Modifiers::default());
-        assert_eq!(capslock, Capslock::default());
-    }
-
-    fn test_xkb_state() -> xkb::State {
-        let context = new_xkb_context().expect("test XKB context should initialize");
-        let keymap = xkb::Keymap::new_from_names(
-            &context,
-            "",
-            "pc105",
-            "us",
-            "",
-            None,
-            xkb::COMPILE_NO_FLAGS,
-        )
-        .expect("test keymap should compile");
-        xkb::State::new(&keymap)
     }
 
     #[derive(Default)]
