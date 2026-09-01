@@ -286,7 +286,7 @@ impl WebWindowInner {
                     }
                     _ => false,
                 };
-                let focused_input_accepted_text = this.focused_input_accepts_text();
+                let focused_input_accepted_text_before_tap = this.focused_input_accepts_text();
                 // A recognized tap is dispatched synchronously inside this
                 // call, so the text-input check below sees the state the tap
                 // produced.
@@ -309,7 +309,7 @@ impl WebWindowInner {
                     == this.visual_viewport_height();
                 if completes_tap && viewport_stable {
                     let preserve_focused_input = should_preserve_focused_input(
-                        focused_input_accepted_text,
+                        focused_input_accepted_text_before_tap,
                         this.focused_input_accepts_text(),
                         dispatch_result,
                     );
