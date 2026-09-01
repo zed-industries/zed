@@ -156,6 +156,14 @@ impl From<ThemeColor> for String {
     }
 }
 
+/// A single color or a list of colors cycled per indent depth.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum IndentColors {
+    Single(ThemeColor),
+    Vec(Vec<ThemeColor>),
+}
+
 impl Display for ThemeColor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -897,29 +905,35 @@ pub struct ThemeColorsContent {
     #[serde(rename = "editor.active_wrap_guide")]
     pub editor_active_wrap_guide: Option<ThemeColor>,
 
-    /// Guide line color.
-    #[serde(rename = "editor.indent_guide")]
-    pub editor_indent_guide: Option<ThemeColor>,
+    /// The deprecated version of `indent.line`.
+    ///
+    /// Don't use this field.
+    #[serde(rename = "editor.indent_guide", skip_serializing)]
+    #[schemars(skip)]
+    pub deprecated_editor_indent_guide: Option<ThemeColor>,
 
-    /// Guide line color.
-    #[serde(rename = "editor.indent_guide_active")]
-    pub editor_indent_guide_active: Option<ThemeColor>,
+    /// The deprecated version of `indent.line_active`.
+    ///
+    /// Don't use this field.
+    #[serde(rename = "editor.indent_guide_active", skip_serializing)]
+    #[schemars(skip)]
+    pub deprecated_editor_indent_guide_active: Option<ThemeColor>,
 
-    /// Guide line color cycle in IndentAware mode.
-    #[serde(rename = "editor.indent_guide_cycle")]
-    pub editor_indent_guide_cycle: Option<Vec<Option<String>>>,
+    /// Line color of editor indent guides, or a list of colors cycled per indent depth in IndentAware mode.
+    #[serde(rename = "indent.line")]
+    pub indent_line: Option<IndentColors>,
 
-    /// Guide line color cycle in IndentAware mode.
-    #[serde(rename = "editor.indent_guide_cycle_active")]
-    pub editor_indent_guide_cycle_active: Option<Vec<Option<String>>>,
+    /// Line color of the active editor indent guide, or a list of colors cycled per indent depth in IndentAware mode.
+    #[serde(rename = "indent.line_active")]
+    pub indent_line_active: Option<IndentColors>,
 
-    /// Guide background color cycle in IndentAware mode.
-    #[serde(rename = "editor.indent_guide_background_cycle")]
-    pub editor_indent_guide_background_cycle: Option<Vec<Option<String>>>,
+    /// Background color of editor indent guides, or a list of colors cycled per indent depth in IndentAware mode.
+    #[serde(rename = "indent.background")]
+    pub indent_background: Option<IndentColors>,
 
-    /// Guide background color cycle in IndentAware mode.
-    #[serde(rename = "editor.indent_guide_background_cycle_active")]
-    pub editor_indent_guide_background_cycle_active: Option<Vec<Option<String>>>,
+    /// Background color of the active editor indent guide, or a list of colors cycled per indent depth in IndentAware mode.
+    #[serde(rename = "indent.background_active")]
+    pub indent_background_active: Option<IndentColors>,
 
     /// Read-access of a symbol, like reading a variable.
     ///

@@ -4,12 +4,12 @@ use gpui::{HighlightStyle, Hsla};
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::IntoGpui;
 pub use settings::{
     FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
     ThemeStyleContent,
 };
 pub use settings::{FontWeightContent, WindowBackgroundContent};
+use settings::{IndentColors, IntoGpui};
 
 use theme::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -239,6 +239,19 @@ pub fn theme_colors_refinement(
     status_colors: &StatusColorsRefinement,
     is_light: bool,
 ) -> ThemeColorsRefinement {
+    fn parse_indent_colors(colors: &IndentColors) -> Option<Vec<Hsla>> {
+        match colors {
+            IndentColors::Single(color) => try_parse_color(color).ok().map(|color| vec![color]),
+            IndentColors::Vec(colors) => {
+                let colors: Vec<Hsla> = colors
+                    .iter()
+                    .filter_map(|color| try_parse_color(color).ok())
+                    .collect();
+                (!colors.is_empty()).then_some(colors)
+            }
+        }
+    }
+
     let border = this
         .border
         .as_ref()
@@ -589,30 +602,34 @@ pub fn theme_colors_refinement(
             .editor_active_wrap_guide
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
-        editor_indent_guide: this
-            .editor_indent_guide
+        indent_line: this
+            .indent_line
             .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        editor_indent_guide_active: this
-            .editor_indent_guide_active
+            .and_then(parse_indent_colors)
+            .or_else(|| {
+                this.deprecated_editor_indent_guide
+                    .as_ref()
+                    .and_then(|color| try_parse_color(color).ok())
+                    .map(|color| vec![color])
+            }),
+        indent_line_active: this
+            .indent_line_active
             .as_ref()
-            .and_then(|color| try_parse_color(color).ok()),
-        editor_indent_guide_cycle: this
-            .editor_indent_guide_cycle
+            .and_then(parse_indent_colors)
+            .or_else(|| {
+                this.deprecated_editor_indent_guide_active
+                    .as_ref()
+                    .and_then(|color| try_parse_color(color).ok())
+                    .map(|color| vec![color])
+            }),
+        indent_background: this
+            .indent_background
             .as_ref()
-            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
-        editor_indent_guide_cycle_active: this
-            .editor_indent_guide_cycle_active
+            .and_then(parse_indent_colors),
+        indent_background_active: this
+            .indent_background_active
             .as_ref()
-            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
-        editor_indent_guide_background_cycle: this
-            .editor_indent_guide_background_cycle
-            .as_ref()
-            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
-        editor_indent_guide_background_cycle_active: this
-            .editor_indent_guide_background_cycle_active
-            .as_ref()
-            .map(|colors| colors.iter().filter_map(|c| c.as_ref().and_then(|s| try_parse_color(s).ok())).collect()),
+            .and_then(parse_indent_colors),
         editor_document_highlight_read_background,
         editor_document_highlight_write_background: this
             .editor_document_highlight_write_background
@@ -1078,6 +1095,7 @@ mod tests {
         assert_eq!(refinement.editor_diff_hunk_deleted_hollow_border, None);
     }
 
+    #[test]
     fn parse_color(color: &str) -> gpui::Hsla {
         match try_parse_color(color) {
             Ok(color) => color,

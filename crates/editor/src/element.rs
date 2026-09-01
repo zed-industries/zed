@@ -5096,26 +5096,25 @@ impl EditorElement {
 
             let line_color = match (settings.coloring, indent_guide.active) {
                 (IndentGuideColoring::Disabled, _) => None,
-                (IndentGuideColoring::Fixed, false) => Some(colors.editor_indent_guide),
-                (IndentGuideColoring::Fixed, true) => Some(colors.editor_indent_guide_active),
-                (IndentGuideColoring::IndentAware, false) => Some(cycle_hsla(
-                    &colors.editor_indent_guide_cycle,
-                    indent_guide.depth,
-                )),
-                (IndentGuideColoring::IndentAware, true) => Some(cycle_hsla(
-                    &colors.editor_indent_guide_cycle_active,
-                    indent_guide.depth,
-                )),
+                (IndentGuideColoring::Fixed, false) => Some(cycle_hsla(&colors.indent_line, 0)),
+                (IndentGuideColoring::Fixed, true) => {
+                    Some(cycle_hsla(&colors.indent_line_active, 0))
+                }
+                (IndentGuideColoring::IndentAware, false) => {
+                    Some(cycle_hsla(&colors.indent_line, indent_guide.depth))
+                }
+                (IndentGuideColoring::IndentAware, true) => {
+                    Some(cycle_hsla(&colors.indent_line_active, indent_guide.depth))
+                }
             };
 
             let background_color = match (settings.background_coloring, indent_guide.active) {
                 (IndentGuideBackgroundColoring::Disabled, _) => None,
-                (IndentGuideBackgroundColoring::IndentAware, false) => Some(cycle_hsla(
-                    &colors.editor_indent_guide_background_cycle,
-                    indent_guide.depth,
-                )),
+                (IndentGuideBackgroundColoring::IndentAware, false) => {
+                    Some(cycle_hsla(&colors.indent_background, indent_guide.depth))
+                }
                 (IndentGuideBackgroundColoring::IndentAware, true) => Some(cycle_hsla(
-                    &colors.editor_indent_guide_background_cycle_active,
+                    &colors.indent_background_active,
                     indent_guide.depth,
                 )),
             };

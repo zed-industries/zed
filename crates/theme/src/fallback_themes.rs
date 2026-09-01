@@ -175,8 +175,6 @@ pub(crate) fn zed_default_dark() -> Theme {
                 editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_active_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
-                editor_indent_guide_active: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 editor_document_highlight_read_background: hsla(
                     207.8 / 360.,
                     81. / 100.,
@@ -277,26 +275,10 @@ pub(crate) fn zed_default_dark() -> Theme {
                 vim_visual_block_foreground: SystemColors::default().transparent,
                 vim_helix_normal_foreground: SystemColors::default().transparent,
                 vim_helix_select_foreground: SystemColors::default().transparent,
-                editor_indent_guide_cycle: AccentColors::dark()
-                    .0
-                    .iter()
-                    .map(|c| c.alpha(0.2))
-                    .collect(),
-                editor_indent_guide_cycle_active: AccentColors::dark()
-                    .0
-                    .iter()
-                    .map(|c| c.alpha(0.4))
-                    .collect(),
-                editor_indent_guide_background_cycle: AccentColors::dark()
-                    .0
-                    .iter()
-                    .map(|c| c.alpha(0.1))
-                    .collect(),
-                editor_indent_guide_background_cycle_active: AccentColors::dark()
-                    .0
-                    .iter()
-                    .map(|c| c.alpha(0.2))
-                    .collect(),
+                indent_line: AccentColors::dark().with_alpha(0.2),
+                indent_line_active: AccentColors::dark().with_alpha(0.4),
+                indent_background: AccentColors::dark().with_alpha(0.1),
+                indent_background_active: AccentColors::dark().with_alpha(0.2),
             },
             status: StatusColors {
                 conflict: yellow,

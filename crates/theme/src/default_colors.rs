@@ -123,8 +123,6 @@ impl ThemeColors {
             editor_invisible: neutral().light().step_10(),
             editor_wrap_guide: neutral().light_alpha().step_7(),
             editor_active_wrap_guide: neutral().light_alpha().step_8(),
-            editor_indent_guide: neutral().light_alpha().step_5(),
-            editor_indent_guide_active: neutral().light_alpha().step_6(),
             editor_document_highlight_read_background: neutral().light_alpha().step_3(),
             editor_document_highlight_write_background: neutral().light_alpha().step_4(),
             editor_document_highlight_bracket_background: green().light_alpha().step_5(),
@@ -192,26 +190,10 @@ impl ThemeColors {
             vim_visual_block_foreground: system.transparent,
             vim_helix_normal_foreground: system.transparent,
             vim_helix_select_foreground: system.transparent,
-            editor_indent_guide_cycle: AccentColors::light()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.2))
-                .collect(),
-            editor_indent_guide_cycle_active: AccentColors::light()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.4))
-                .collect(),
-            editor_indent_guide_background_cycle: AccentColors::light()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.1))
-                .collect(),
-            editor_indent_guide_background_cycle_active: AccentColors::light()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.2))
-                .collect(),
+            indent_line: AccentColors::light().with_alpha(0.2),
+            indent_line_active: AccentColors::light().with_alpha(0.4),
+            indent_background: AccentColors::light().with_alpha(0.1),
+            indent_background_active: AccentColors::light().with_alpha(0.2),
         }
     }
 
@@ -296,8 +278,6 @@ impl ThemeColors {
             editor_invisible: neutral().dark_alpha().step_4(),
             editor_wrap_guide: neutral().dark_alpha().step_4(),
             editor_active_wrap_guide: neutral().dark_alpha().step_4(),
-            editor_indent_guide: neutral().dark_alpha().step_4(),
-            editor_indent_guide_active: neutral().dark_alpha().step_6(),
             editor_document_highlight_read_background: neutral().dark_alpha().step_4(),
             editor_document_highlight_write_background: neutral().dark_alpha().step_4(),
             editor_document_highlight_bracket_background: green().dark_alpha().step_6(),
@@ -365,26 +345,10 @@ impl ThemeColors {
             vim_visual_block_foreground: system.transparent,
             vim_helix_normal_foreground: system.transparent,
             vim_helix_select_foreground: system.transparent,
-            editor_indent_guide_cycle: AccentColors::dark()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.2))
-                .collect(),
-            editor_indent_guide_cycle_active: AccentColors::dark()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.4))
-                .collect(),
-            editor_indent_guide_background_cycle: AccentColors::dark()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.1))
-                .collect(),
-            editor_indent_guide_background_cycle_active: AccentColors::dark()
-                .0
-                .iter()
-                .map(|c| c.alpha(0.2))
-                .collect(),
+            indent_line: AccentColors::dark().with_alpha(0.2),
+            indent_line_active: AccentColors::dark().with_alpha(0.4),
+            indent_background: AccentColors::dark().with_alpha(0.1),
+            indent_background_active: AccentColors::dark().with_alpha(0.2),
         }
     }
 }
