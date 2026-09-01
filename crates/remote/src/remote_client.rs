@@ -667,10 +667,11 @@ impl RemoteClient {
                 };
             }
 
-            if let Err(error) = remote_connection
-                .kill()
-                .await
-                .context("Failed to kill remote_connection process")
+            if remote_connection.kill_before_reconnect()
+                && let Err(error) = remote_connection
+                    .kill()
+                    .await
+                    .context("Failed to kill remote_connection process")
             {
                 failed!(error, attempts, remote_connection, delegate);
             };
@@ -1613,6 +1614,14 @@ pub trait RemoteConnection: Send + Sync {
     ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
+    /// Whether `RemoteClient::reconnect` must kill the connection before
+    /// starting a new proxy. True for transports with a shared master process
+    /// that may be wedged (SSH); false when each client runs an independent
+    /// proxy, so killing the shared connection would only tear down the
+    /// proxies of other workspaces using it.
+    fn kill_before_reconnect(&self) -> bool {
+        true
+    }
     fn shares_network_interface(&self) -> bool {
         false
     }

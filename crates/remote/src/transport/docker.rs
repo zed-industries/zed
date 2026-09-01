@@ -765,17 +765,33 @@ impl RemoteConnection for DockerExecConnection {
     async fn kill(&self) -> Result<()> {
         self.killed.store(true, Ordering::Release);
         let pids = std::mem::take(&mut *self.proxy_processes.lock());
+        let mut errors = Vec::new();
         for pid in pids {
-            util::command::new_command("kill")
+            if let Err(error) = util::command::new_command("kill")
                 .arg(pid.to_string())
                 .spawn()
-                .with_context(|| format!("failed to kill proxy process {pid}"))?;
+            {
+                errors.push(format!("{pid}: {error}"));
+            }
         }
+        anyhow::ensure!(
+            errors.is_empty(),
+            "failed to kill proxy processes: {}",
+            errors.join(", ")
+        );
         Ok(())
     }
 
     fn has_been_killed(&self) -> bool {
         self.killed.load(Ordering::Acquire)
+    }
+
+    fn kill_before_reconnect(&self) -> bool {
+        // Each client runs its own `docker exec` proxy and the reconnecting
+        // client's proxy is already gone by the time `reconnect` runs, so
+        // killing the shared connection would only tear down the proxies of
+        // other workspaces open in the same container.
+        false
     }
 
     fn build_command(
@@ -935,6 +951,53 @@ mod tests {
 
         assert!(connection.has_been_killed());
         assert!(connection.proxy_processes.lock().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_start_proxy_does_not_kill_existing_proxies(cx: &mut gpui::TestAppContext) {
+        let connection = test_connection();
+        let mut existing_proxy = util::command::new_command("sleep")
+            .arg("600")
+            .spawn()
+            .expect("failed to spawn stand-in proxy process");
+        let existing_pid = existing_proxy.id();
+        connection.proxy_processes.lock().push(existing_pid);
+
+        let (incoming_tx, _incoming_rx) = futures::channel::mpsc::unbounded();
+        let (_outgoing_tx, outgoing_rx) = futures::channel::mpsc::unbounded();
+        let (connection_activity_tx, _connection_activity_rx) =
+            futures::channel::mpsc::channel(1);
+
+        // `test_connection` has no remote binary path, so `start_proxy` fails
+        // before spawning anything; the regression this guards against is it
+        // signalling existing proxies before that point (#63568).
+        connection
+            .start_proxy(
+                "test".to_string(),
+                false,
+                incoming_tx,
+                outgoing_rx,
+                connection_activity_tx,
+                Arc::new(crate::transport::mock::MockDelegate),
+                &mut cx.to_async(),
+            )
+            .await
+            .expect_err("start_proxy should fail without a remote binary path");
+
+        // Give a wrongly-sent signal time to be delivered before polling.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(*connection.proxy_processes.lock(), vec![existing_pid]);
+        assert!(
+            existing_proxy
+                .try_status()
+                .expect("failed to poll stand-in proxy process")
+                .is_none(),
+            "existing proxy process should not have been signalled"
+        );
+        existing_proxy
+            .kill()
+            .expect("failed to clean up stand-in proxy process");
     }
 
     #[test]
