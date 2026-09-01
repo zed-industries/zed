@@ -1,3 +1,5 @@
+corgi_version = "0.1.43"
+
 # corgi build configuration for Zed.
 # Corgi source and documentation: https://github.com/ConradIrwin/corgi
 #
@@ -53,26 +55,31 @@ profiles = ["release"]
 # Reads a package's actions perform that corgi's sandbox does not grant by
 # default. By default only a package's own `.rs` files (plus its manifest) are
 # readable, so non-`.rs` files a build script or macro reads must be listed even
-# when they live inside the package. Paths are relative to the named package's
-# root and are granted and hashed as inputs.
+# when they live inside the package. Entries are glob patterns relative to the
+# named package's root, and every file they match is granted and hashed as an
+# input. A pattern selects files, never directories: `dir/**` is how you take
+# everything under a directory, and `dir/*` takes only what sits directly in it.
 [extra-inputs]
 # Own non-.rs files read at build time (protobufs, bindgen headers, doc/data).
-proto = ["proto"]
-livekit_api = ["vendored/protocol"]
+proto = ["proto/**"]
+livekit_api = ["vendored/protocol/**"]
 media = ["src/bindings.h"]
 gpui = ["README.md"]
 git = ["src/checkpoint.gitignore"]
 git_ui = ["src/commit_message_prompt.txt"]
-editor = ["../grammars/src"]
-edit_prediction = ["license_patterns"]
-agent_skills = ["builtin"]
-agent_settings = ["src/prompts"]
-json_schema_store = ["src/schemas"]
+editor = ["../grammars/src/**"]
+edit_prediction = ["license_patterns/**"]
+agent_skills = ["builtin/**"]
+agent_settings = ["src/prompts/**"]
+json_schema_store = ["src/schemas/**"]
 prettier = ["src/prettier_server.js"]
-zed = ["resources"]
+zed = ["resources/**"]
+zed_extension_api = ["wit/**"]
+gpui_wgpu = ["src/*.wgsl"]
 # Cross-package reads (and, for gpui_apple, its own metal shader source).
-extension_host = ["../extension_api/wit"]
-gpui_apple = ["../gpui/src", "src/shaders.metal"]
+extension_host = ["../extension_api/wit/**"]
+gpui_apple = ["../gpui/src/**", "src/shaders.metal"]
+eval_cli = ["../zed/Cargo.toml"]
 prompt_store = ["../git_ui/src/commit_message_prompt.txt"]
 release_channel = ["../zed/RELEASE_CHANNEL"]
 cli = ["../../script/uninstall.sh"]
@@ -80,4 +87,4 @@ remote_server = ["../zed/Cargo.toml"]
 # `../zed/Cargo.toml`: build.rs reads it for ZED_PKG_VERSION. `../grammars/src`
 # and `src/prompts` are embedded in release builds; dev builds read them at
 # runtime via fs_embed.
-edit_prediction_cli = ["../zed/Cargo.toml", "../grammars/src", "src/prompts"]
+edit_prediction_cli = ["../zed/Cargo.toml", "../grammars/src/**", "src/prompts/**"]
