@@ -1,12 +1,13 @@
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
-    os::fd::{AsRawFd, BorrowedFd},
+    os::fd::{AsRawFd, BorrowedFd, OwnedFd},
     path::PathBuf,
     rc::{Rc, Weak},
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle,
@@ -337,6 +338,7 @@ pub(crate) struct WaylandClientState {
     keyboard_layout: LinuxKeyboardLayout,
     keymap_state: Option<xkb::State>,
     compose_state: Option<xkb::compose::State>,
+    ignored_keyboard_event_warning: KeyboardEventWarningLatch,
     drag: DragState,
     external_drag: Option<ExternalDrag>,
     click: ClickState,
@@ -410,6 +412,123 @@ pub(crate) struct KeyRepeat {
     delay: Duration,
     current_id: u64,
     current_keycode: Option<xkb::Keycode>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct KeyboardMappingReplacement {
+    deleted_pre_edit: bool,
+    modifiers_changed: bool,
+}
+
+#[derive(Default)]
+struct KeyboardEventWarningLatch {
+    reported: bool,
+}
+
+impl KeyboardEventWarningLatch {
+    fn should_report(&mut self) -> bool {
+        if self.reported {
+            false
+        } else {
+            self.reported = true;
+            true
+        }
+    }
+
+    fn reset(&mut self) {
+        self.reported = false;
+    }
+}
+
+fn load_xkb_keyboard_states(
+    file_descriptor: OwnedFd,
+    size: u32,
+) -> anyhow::Result<(xkb::State, Option<xkb::compose::State>)> {
+    anyhow::ensure!(size > 0, "Wayland keymap is empty");
+
+    let context = new_xkb_context()?;
+    let keymap = unsafe {
+        xkb::Keymap::new_from_fd(
+            &context,
+            file_descriptor,
+            size as usize,
+            XKB_KEYMAP_FORMAT_TEXT_V1,
+            KEYMAP_COMPILE_NO_FLAGS,
+        )
+    }
+    .context("failed to read Wayland keymap")?
+    .context("failed to compile Wayland keymap")?;
+    let keymap_state = xkb::State::new(&keymap);
+    anyhow::ensure!(
+        !keymap_state.get_raw_ptr().is_null(),
+        "libxkbcommon failed to create an XKB state"
+    );
+    let compose_state = get_xkb_compose_state(&context);
+
+    Ok((keymap_state, compose_state))
+}
+
+fn update_xkb_modifiers(
+    keymap_state: Option<&mut xkb::State>,
+    modifiers_depressed: u32,
+    modifiers_latched: u32,
+    modifiers_locked: u32,
+    group: u32,
+) -> Option<(u32, Modifiers, Capslock)> {
+    let keymap_state = keymap_state?;
+    let old_layout = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
+    keymap_state.update_mask(
+        modifiers_depressed,
+        modifiers_latched,
+        modifiers_locked,
+        0,
+        0,
+        group,
+    );
+
+    Some((
+        old_layout,
+        modifiers_from_xkb(keymap_state),
+        capslock_from_xkb(keymap_state),
+    ))
+}
+
+fn resolve_xkb_key_event(
+    keymap_state: Option<&xkb::State>,
+    key: u32,
+) -> Option<(&xkb::State, Keycode, xkb::Keysym)> {
+    let keymap_state = keymap_state?;
+    let keycode = Keycode::from(key + MIN_KEYCODE);
+    let keysym = keymap_state.key_get_one_sym(keycode);
+    Some((keymap_state, keycode, keysym))
+}
+
+fn replace_xkb_keyboard_states(
+    keymap_state: &mut Option<xkb::State>,
+    compose_state: &mut Option<xkb::compose::State>,
+    pre_edit_text: &mut Option<String>,
+    repeat: &mut KeyRepeat,
+    modifiers: &mut Modifiers,
+    capslock: &mut Capslock,
+    keyboard_states: Option<(xkb::State, Option<xkb::compose::State>)>,
+) -> KeyboardMappingReplacement {
+    let replacement = KeyboardMappingReplacement {
+        deleted_pre_edit: pre_edit_text.take().is_some(),
+        modifiers_changed: *modifiers != Modifiers::default() || *capslock != Capslock::default(),
+    };
+
+    *keymap_state = None;
+    *compose_state = None;
+    repeat.current_id += 1;
+    repeat.current_keycode = None;
+    *modifiers = Modifiers::default();
+    *capslock = Capslock::default();
+    if let Some((new_keymap_state, new_compose_state)) = keyboard_states {
+        *keymap_state = Some(new_keymap_state);
+        *compose_state = new_compose_state;
+    }
+
+    replacement
 }
 
 pub(crate) enum PendingActivation {
@@ -919,6 +1038,7 @@ impl WaylandClient {
             keyboard_layout: LinuxKeyboardLayout::new(UNKNOWN_KEYBOARD_LAYOUT_NAME),
             keymap_state: None,
             compose_state: None,
+            ignored_keyboard_event_warning: KeyboardEventWarningLatch::default(),
             drag: DragState {
                 data_offer: None,
                 window: None,
@@ -1756,37 +1876,61 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 state.repeat.delay = Duration::from_millis(delay as u64);
             }
             wl_keyboard::Event::Keymap {
-                format: WEnum::Value(format),
-                fd,
-                size,
-                ..
+                format, fd, size, ..
             } => {
-                if format != wl_keyboard::KeymapFormat::XkbV1 {
-                    log::error!("Received keymap format {:?}, expected XkbV1", format);
-                    return;
-                }
-                let xkb_context = match new_xkb_context() {
-                    Ok(context) => context,
-                    Err(error) => {
-                        log::error!("Failed to process Wayland keymap: {error:#}");
-                        return;
+                let keyboard_states = match format {
+                    WEnum::Value(wl_keyboard::KeymapFormat::XkbV1) => {
+                        match load_xkb_keyboard_states(fd, size) {
+                            Ok(keyboard_states) => {
+                                state.ignored_keyboard_event_warning.reset();
+                                Some(keyboard_states)
+                            }
+                            Err(error) => {
+                                log::error!("Failed to process Wayland keymap: {error:#}");
+                                None
+                            }
+                        }
+                    }
+                    format => {
+                        log::error!("Received keymap format {format:?}, expected XkbV1");
+                        None
                     }
                 };
-                let keymap = unsafe {
-                    xkb::Keymap::new_from_fd(
-                        &xkb_context,
-                        fd,
-                        size as usize,
-                        XKB_KEYMAP_FORMAT_TEXT_V1,
-                        KEYMAP_COMPILE_NO_FLAGS,
-                    )
-                    .log_err()
-                    .flatten()
-                    .expect("Failed to create keymap")
-                };
-                state.keymap_state = Some(xkb::State::new(&keymap));
-                state.compose_state = get_xkb_compose_state(&xkb_context);
+
+                let focused_window = state.keyboard_focused_window.clone();
+                let WaylandClientState {
+                    keymap_state,
+                    compose_state,
+                    pre_edit_text,
+                    repeat,
+                    modifiers,
+                    capslock,
+                    ..
+                } = &mut *state;
+                let replacement = replace_xkb_keyboard_states(
+                    keymap_state,
+                    compose_state,
+                    pre_edit_text,
+                    repeat,
+                    modifiers,
+                    capslock,
+                    keyboard_states,
+                );
                 drop(state);
+
+                if let Some(focused_window) = focused_window {
+                    if replacement.deleted_pre_edit {
+                        focused_window.handle_ime(ImeInput::DeleteText);
+                    }
+                    if replacement.modifiers_changed {
+                        focused_window.handle_input(PlatformInput::ModifiersChanged(
+                            ModifiersChangedEvent {
+                                modifiers: Modifiers::default(),
+                                capslock: Capslock::default(),
+                            },
+                        ));
+                    }
+                }
 
                 this.handle_keyboard_layout_change();
             }
@@ -1826,13 +1970,22 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
             } => {
                 let focused_window = state.keyboard_focused_window.clone();
 
-                let keymap_state = state.keymap_state.as_mut().unwrap();
-                let old_layout =
-                    keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
-                keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
-                state.modifiers = modifiers_from_xkb(keymap_state);
-                let keymap_state = state.keymap_state.as_mut().unwrap();
-                state.capslock = capslock_from_xkb(keymap_state);
+                let Some((old_layout, modifiers, capslock)) = update_xkb_modifiers(
+                    state.keymap_state.as_mut(),
+                    mods_depressed,
+                    mods_latched,
+                    mods_locked,
+                    group,
+                ) else {
+                    if state.ignored_keyboard_event_warning.should_report() {
+                        log::warn!(
+                            "Ignoring Wayland modifiers because no usable XKB keymap is available"
+                        );
+                    }
+                    return;
+                };
+                state.modifiers = modifiers;
+                state.capslock = capslock;
 
                 let input = PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: state.modifiers,
@@ -1863,9 +2016,16 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                     return;
                 };
 
-                let keymap_state = state.keymap_state.as_ref().unwrap();
-                let keycode = Keycode::from(key + MIN_KEYCODE);
-                let keysym = keymap_state.key_get_one_sym(keycode);
+                let Some((keymap_state, keycode, keysym)) =
+                    resolve_xkb_key_event(state.keymap_state.as_ref(), key)
+                else {
+                    if state.ignored_keyboard_event_warning.should_report() {
+                        log::warn!(
+                            "Ignoring Wayland key event because no usable XKB keymap is available"
+                        );
+                    }
+                    return;
+                };
 
                 match key_state {
                     wl_keyboard::KeyState::Pressed if !keysym.is_modifier_key() => {
@@ -2903,6 +3063,118 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    #[test]
+    fn ignores_modifiers_without_keymap() {
+        assert!(update_xkb_modifiers(None, 0, 0, 0, 0).is_none());
+    }
+
+    #[test]
+    fn ignores_keys_without_keymap() {
+        assert!(resolve_xkb_key_event(None, 30).is_none());
+    }
+
+    #[test]
+    fn reports_ignored_keyboard_events_once_until_keymap_recovers() {
+        let mut warning = KeyboardEventWarningLatch::default();
+
+        assert!(warning.should_report());
+        assert!(!warning.should_report());
+
+        warning.reset();
+
+        assert!(warning.should_report());
+    }
+
+    #[test]
+    fn rejects_empty_keymap() {
+        let file_descriptor = std::fs::File::open("/dev/null")
+            .expect("null device should be available")
+            .into();
+        let Err(error) = load_xkb_keyboard_states(file_descriptor, 0) else {
+            panic!("empty keymap should be rejected");
+        };
+
+        assert_eq!(error.to_string(), "Wayland keymap is empty");
+    }
+
+    #[test]
+    fn clears_state_when_keymap_becomes_unavailable() {
+        let mut keymap_state = Some(test_xkb_state());
+        let mut compose_state = None;
+        let mut pre_edit_text = Some("composing".to_owned());
+        let mut repeat = KeyRepeat {
+            characters_per_second: 16,
+            delay: Duration::from_millis(500),
+            current_id: 7,
+            current_keycode: Some(Keycode::from(30_u32)),
+        };
+        let mut modifiers = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        let mut capslock = Capslock { on: true };
+
+        let replacement = replace_xkb_keyboard_states(
+            &mut keymap_state,
+            &mut compose_state,
+            &mut pre_edit_text,
+            &mut repeat,
+            &mut modifiers,
+            &mut capslock,
+            None,
+        );
+
+        assert_eq!(
+            replacement,
+            KeyboardMappingReplacement {
+                deleted_pre_edit: true,
+                modifiers_changed: true,
+            }
+        );
+        assert!(keymap_state.is_none());
+        assert!(compose_state.is_none());
+        assert!(pre_edit_text.is_none());
+        assert_eq!(repeat.current_id, 8);
+        assert!(repeat.current_keycode.is_none());
+        assert_eq!(modifiers, Modifiers::default());
+        assert_eq!(capslock, Capslock::default());
+    }
+
+    #[test]
+    fn processes_keyboard_events_with_keymap() {
+        let mut keymap_state = test_xkb_state();
+
+        let Some((old_layout, modifiers, capslock)) =
+            update_xkb_modifiers(Some(&mut keymap_state), 0, 0, 0, 0)
+        else {
+            panic!("modifier update should use the available keymap");
+        };
+        assert_eq!(old_layout, 0);
+        assert_eq!(modifiers, Modifiers::default());
+        assert_eq!(capslock, Capslock::default());
+
+        let Some((_, keycode, keysym)) = resolve_xkb_key_event(Some(&keymap_state), 30) else {
+            panic!("key event should use the available keymap");
+        };
+        assert_eq!(keycode, Keycode::from(30 + MIN_KEYCODE));
+        assert_eq!(keysym, xkb::Keysym::a);
+    }
+
+    fn test_xkb_state() -> xkb::State {
+        let context = new_xkb_context().expect("test XKB context should initialize");
+        let keymap = xkb::Keymap::new_from_names(
+            &context,
+            "",
+            "pc105",
+            "us",
+            "",
+            None,
+            xkb::COMPILE_NO_FLAGS,
+        )
+        .expect("test keymap should compile");
+        xkb::State::new(&keymap)
+    }
 
     #[derive(Default)]
     struct FakeImeCursorRectangleSink {
