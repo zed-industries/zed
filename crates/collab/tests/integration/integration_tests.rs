@@ -2762,7 +2762,7 @@ async fn test_git_diff_base_change(
                 1..2,
                 "TWO\n",
                 "two\n",
-                DiffHunkStatus::modified(DiffHunkSecondaryStatus::HasSecondaryHunk),
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
             )],
         );
     });
