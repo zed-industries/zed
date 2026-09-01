@@ -16,11 +16,7 @@ doctest = true
 
 [features]
 test-support = ["rand", "util_macros", "path/test-support"]
-# Embed `fs_embed!` assets at compile time even in debug builds. Workspaces
-# that want rust-embed's `debug-embed` behavior must enable it through this
-# feature rather than on `rust-embed` directly: the feature changes which
-# variants of `rust_embed::Filenames` exist, and `fs_embed!`'s dev arm can
-# only construct the right one when this crate sees the same feature state.
+# Embed `fs_embed!` assets at compile time even in debug builds.
 debug-embed = ["rust-embed/debug-embed"]
 
 [dependencies]
