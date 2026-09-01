@@ -66,8 +66,7 @@ impl OllamaModelPickerDelegate {
                     picker.delegate.loading = false;
                     match result {
                         Ok(mut fetched_models) => {
-                            if !current_model.is_empty()
-                                && !fetched_models.contains(&current_model)
+                            if !current_model.is_empty() && !fetched_models.contains(&current_model)
                             {
                                 fetched_models.insert(0, current_model.clone());
                             }

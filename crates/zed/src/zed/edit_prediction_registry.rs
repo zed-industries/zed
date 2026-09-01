@@ -376,9 +376,11 @@ mod tests {
         assert!(
             matches!(
                 config,
-                Some(EditPredictionProviderConfig::Zed(EditPredictionModel::Fim {
-                    format: EditPredictionPromptFormat::Qwen,
-                }))
+                Some(EditPredictionProviderConfig::Zed(
+                    EditPredictionModel::Fim {
+                        format: EditPredictionPromptFormat::Qwen,
+                    }
+                ))
             ),
             "expected qwen2.5-coder model to infer the Qwen FIM prompt format"
         );
