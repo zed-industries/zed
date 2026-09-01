@@ -191,6 +191,7 @@ fn init_zed(cx: &mut App) -> anyhow::Result<()> {
             workspace.register_action(open_settings_file);
             workspace.register_action(show_welcome_item);
             workspace.register_action(copy_ssh_public_key);
+            workspace.register_action(copy_ssh_key_setup_command);
             // cmd-= / cmd-- are bound in the default keymap, but the actions
             // are handled by the zed crate, which this shell does not use.
             workspace.register_action(
@@ -407,7 +408,10 @@ gpui::actions!(
         /// Opens the welcome page in the current window.
         ShowWelcomeItem,
         /// Creates an SSH key pair if none exists and copies the public key.
-        CopySshPublicKey
+        CopySshPublicKey,
+        /// Copies a one-liner that installs this device's public key on a
+        /// server, ready to paste into a remote terminal.
+        CopySshKeySetupCommand
     ]
 );
 
@@ -514,6 +518,44 @@ fn show_welcome_item(
     let welcome_page = cx
         .new(|cx| workspace::welcome::WelcomePage::new(workspace.weak_handle(), false, window, cx));
     workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx);
+}
+
+fn copy_ssh_key_setup_command(
+    workspace: &mut Workspace,
+    _: &CopySshKeySetupCommand,
+    _window: &mut gpui::Window,
+    cx: &mut gpui::Context<Workspace>,
+) {
+    match ensure_ssh_public_key() {
+        Ok(public_key) => {
+            let public_key = public_key.trim();
+            let command = format!(
+                "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+                 echo '{public_key}' >> ~/.ssh/authorized_keys && \
+                 chmod 600 ~/.ssh/authorized_keys && echo 'key installed'"
+            );
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(command));
+            struct SshSetupCopied;
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<SshSetupCopied>(),
+                    "Setup command copied. Paste it into a terminal on the server.",
+                ),
+                cx,
+            );
+        }
+        Err(error) => {
+            log::error!("failed to prepare the SSH key: {error:#}");
+            struct SshSetupFailed;
+            workspace.show_toast(
+                workspace::Toast::new(
+                    workspace::notifications::NotificationId::unique::<SshSetupFailed>(),
+                    format!("Could not prepare the SSH key: {error}"),
+                ),
+                cx,
+            );
+        }
+    }
 }
 
 fn open_settings_file(

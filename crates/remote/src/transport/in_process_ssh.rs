@@ -71,6 +71,21 @@ enum Credential {
     Password(String),
 }
 
+/// Credentials that already worked, keyed by `user@host:port`. Reconnecting
+/// builds a fresh connection, and without this every dropped connection would
+/// ask for the password again.
+static CREDENTIAL_CACHE: std::sync::LazyLock<parking_lot::Mutex<HashMap<String, Credential>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(HashMap::default()));
+
+fn credential_cache_key(options: &SshConnectionOptions) -> String {
+    format!(
+        "{}@{}:{}",
+        options.username.as_deref().unwrap_or(""),
+        options.host.to_string(),
+        options.port.unwrap_or(22)
+    )
+}
+
 pub(crate) struct InProcessSshConnection {
     handle: Arc<SshHandle>,
     credential: Credential,
@@ -161,6 +176,35 @@ impl InProcessSshConnection {
             .await?
         };
 
+        if credential.is_none()
+            && let Some(cached) = CREDENTIAL_CACHE
+                .lock()
+                .get(&credential_cache_key(&options))
+                .cloned()
+        {
+            let username = username.clone();
+            (credential, handle) = Tokio::spawn_result(cx, async move {
+                let mut handle = handle;
+                let result = match cached.clone() {
+                    Credential::Key(key) => {
+                        let key = russh::keys::PrivateKeyWithHashAlg::new(
+                            key,
+                            handle.best_supported_rsa_hash().await?.flatten(),
+                        );
+                        handle.authenticate_publickey(username, key).await?
+                    }
+                    Credential::Password(password) => {
+                        handle.authenticate_password(username, password).await?
+                    }
+                };
+                anyhow::Ok((
+                    matches!(result, AuthResult::Success).then_some(cached),
+                    handle,
+                ))
+            })
+            .await?;
+        }
+
         if credential.is_none() {
             let password = match options.password.clone() {
                 Some(password) => password,
@@ -195,6 +239,9 @@ impl InProcessSshConnection {
             };
         }
         let credential = credential.context("the SSH server rejected the credentials")?;
+        CREDENTIAL_CACHE
+            .lock()
+            .insert(credential_cache_key(&options), credential.clone());
         let handle = Arc::new(handle);
 
         delegate.set_status(Some("Detecting remote platform"), cx);
