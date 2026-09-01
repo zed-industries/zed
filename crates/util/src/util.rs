@@ -684,24 +684,73 @@ pub mod __rust_embed {
 /// directory that passes the same rust_embed include/exclude globs the
 /// release derive uses, so the dev and release file sets are identical. Reuses
 /// rust_embed's own matcher rather than reimplementing glob semantics.
-#[cfg(debug_assertions)]
+///
+/// `rust_embed::Filenames` has exactly one variant per compilation context:
+/// `Dynamic` without the `debug-embed` feature, `Embedded` with it. Cargo
+/// unifies features across the whole build graph, so a consumer workspace
+/// enabling `debug-embed` changes the enum this crate sees; each variant
+/// below compiles only in the context where its `Filenames` variant exists.
+#[cfg(all(debug_assertions, not(feature = "debug-embed")))]
 #[doc(hidden)]
 pub fn __fs_embed_iter(
     root_relative: &str,
     includes: &[&str],
     excludes: &[&str],
 ) -> rust_embed::Filenames {
-    let Some(root) = dev_repo_root().map(|root| root.join(root_relative)) else {
-        return rust_embed::Filenames::Dynamic(Box::new(std::iter::empty::<
-            std::borrow::Cow<'static, str>,
-        >()));
-    };
-    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
     let names: Vec<std::borrow::Cow<'static, str>> =
-        rust_embed::utils::get_files(root.to_string_lossy().into_owned(), matcher)
-            .map(|entry| std::borrow::Cow::Owned(entry.rel_path))
+        fs_embed_file_names(root_relative, includes, excludes)
+            .into_iter()
+            .map(std::borrow::Cow::Owned)
             .collect();
     rust_embed::Filenames::Dynamic(Box::new(names.into_iter()))
+}
+
+/// The `debug-embed` arm of [`fs_embed!`]'s dev `iter`. The `Embedded`
+/// variant requires `'static` names, so the checkout is scanned once per
+/// embed site and the resulting name list is leaked and cached. The list
+/// staying fixed for the life of the process matches the macro's contract
+/// that dev edits show up on the next launch; file contents still come from
+/// `get`, which reads the filesystem on every call.
+#[cfg(all(debug_assertions, feature = "debug-embed"))]
+#[doc(hidden)]
+pub fn __fs_embed_iter(
+    root_relative: &str,
+    includes: &[&str],
+    excludes: &[&str],
+) -> rust_embed::Filenames {
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    /// Keyed by root and globs: distinct embed sites may share a root with
+    /// different filters.
+    type EmbedSiteKey = (String, Vec<String>, Vec<String>);
+    static LEAKED_NAMES: Mutex<BTreeMap<EmbedSiteKey, &'static [&'static str]>> =
+        Mutex::new(BTreeMap::new());
+
+    let key = (
+        root_relative.to_string(),
+        includes.iter().map(|glob| glob.to_string()).collect(),
+        excludes.iter().map(|glob| glob.to_string()).collect(),
+    );
+    let names = *LEAKED_NAMES.lock().unwrap().entry(key).or_insert_with(|| {
+        let names: Vec<&'static str> = fs_embed_file_names(root_relative, includes, excludes)
+            .into_iter()
+            .map(|name| &*name.leak())
+            .collect();
+        names.leak()
+    });
+    rust_embed::Filenames::Embedded(names.iter())
+}
+
+#[cfg(debug_assertions)]
+fn fs_embed_file_names(root_relative: &str, includes: &[&str], excludes: &[&str]) -> Vec<String> {
+    let Some(root) = dev_repo_root().map(|root| root.join(root_relative)) else {
+        return Vec::new();
+    };
+    let matcher = rust_embed::utils::PathMatcher::new(includes, excludes);
+    rust_embed::utils::get_files(root.to_string_lossy().into_owned(), matcher)
+        .map(|entry| entry.rel_path)
+        .collect()
 }
 
 /// Backs the dev arm of [`fs_embed!`]'s `get`: reads a single file from the
@@ -984,6 +1033,51 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Exercises `fs_embed!`'s dev arm, whose `RustEmbed::iter` implementation
+    /// must construct whichever `rust_embed::Filenames` variant the current
+    /// feature state provides. Running util's tests with and without the
+    /// `debug-embed` feature covers both variants.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_fs_embed_dev_arm_iter_and_get() {
+        let inherent_names: Vec<_> = FsEmbedTestAssets::iter().collect();
+        assert!(
+            inherent_names.iter().any(|name| name == "util.rs"),
+            "iter should list files matching the include globs, got {inherent_names:?}"
+        );
+        assert!(
+            !inherent_names.iter().any(|name| name.ends_with(".toml")),
+            "iter should filter files excluded by the globs, got {inherent_names:?}"
+        );
+
+        let trait_names: Vec<_> =
+            <FsEmbedTestAssets as crate::__rust_embed::RustEmbed>::iter().collect();
+        assert_eq!(inherent_names, trait_names);
+
+        let file = FsEmbedTestAssets::get("util.rs").expect("util.rs should be readable");
+        assert!(
+            std::str::from_utf8(&file.data)
+                .expect("util.rs should be utf-8")
+                .contains("fs_embed"),
+            "get should read the real file contents"
+        );
+        assert!(
+            FsEmbedTestAssets::get("Cargo.toml").is_none(),
+            "get should filter files excluded by the globs"
+        );
+    }
+
+    // Dev arm only: the release arm's derive names this crate as
+    // `::util`, which does not resolve from util's own unit tests.
+    #[cfg(debug_assertions)]
+    crate::fs_embed! {
+        struct FsEmbedTestAssets,
+        crate_relative = "src",
+        root_relative = "crates/util/src",
+        include = ["*.rs"],
+        exclude = ["test/**/*"],
+    }
 
     #[test]
     fn test_parse_os_release() {
