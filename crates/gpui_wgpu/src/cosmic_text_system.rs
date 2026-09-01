@@ -133,10 +133,6 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn supports_missing_glyph_reporting(&self) -> bool {
-        true
-    }
-
     fn set_missing_glyph_reporter(&self, reporter: MissingGlyphReporter) {
         self.0.write().missing_glyph_reporter = Some(reporter);
     }
@@ -821,12 +817,13 @@ impl CosmicTextSystemState {
         font_runs: &[FontRun],
         missing_text_indices: impl IntoIterator<Item = usize>,
     ) -> Vec<MissingGlyph> {
-        let mut missing_text_indices = missing_text_indices.into_iter().collect::<Vec<_>>();
-        missing_text_indices.sort_unstable();
-        missing_text_indices.dedup();
-        if missing_text_indices.is_empty() {
+        let mut missing_text_indices = missing_text_indices.into_iter().peekable();
+        if missing_text_indices.peek().is_none() {
             return Vec::new();
         }
+        let mut missing_text_indices = missing_text_indices.collect::<Vec<_>>();
+        missing_text_indices.sort_unstable();
+        missing_text_indices.dedup();
 
         let mut font_run_end = 0;
         let font_runs = font_runs

@@ -188,59 +188,6 @@ impl Drop for MissingGlyphReceiver {
     }
 }
 
-#[cfg(test)]
-mod missing_glyph_tests {
-    use super::*;
-
-    #[test]
-    fn bounds_retained_missing_glyphs() {
-        let (wake_sender, _wake_receiver) = async_channel::bounded(1);
-        let state = Arc::<Mutex<MissingGlyphState>>::default();
-        let reporter = MissingGlyphReporter {
-            state: state.clone(),
-            wake_sender,
-        };
-        reporter.report((0..MAX_REPORTED_MISSING_GLYPHS).map(|index| {
-            MissingGlyph::new(index.to_string().into(), FallbackFontClass::Proportional)
-        }));
-        state.lock().pending.clear();
-
-        let newest = MissingGlyph::new("newest".into(), FallbackFontClass::Monospace);
-        reporter.report([newest.clone()]);
-
-        let state = state.lock();
-        assert_eq!(state.reported.len(), MAX_REPORTED_MISSING_GLYPHS);
-        assert_eq!(state.reported_order.len(), MAX_REPORTED_MISSING_GLYPHS);
-        assert!(state.reported.contains(&newest));
-    }
-
-    #[test]
-    fn dropping_receiver_disables_and_clears_reports() {
-        let (wake_sender, wake_receiver) = async_channel::bounded(1);
-        let state = Arc::<Mutex<MissingGlyphState>>::default();
-        let reporter = MissingGlyphReporter {
-            state: state.clone(),
-            wake_sender,
-        };
-        let receiver = MissingGlyphReceiver {
-            state: state.clone(),
-            wake_receiver,
-        };
-        reporter.report([MissingGlyph::new(
-            "missing".into(),
-            FallbackFontClass::Proportional,
-        )]);
-
-        drop(receiver);
-
-        assert!(!reporter.is_active());
-        let state = state.lock();
-        assert!(state.reported.is_empty());
-        assert!(state.reported_order.is_empty());
-        assert!(state.pending.is_empty());
-    }
-}
-
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
     platform_text_system: Arc<dyn PlatformTextSystem>,
@@ -320,13 +267,10 @@ impl TextSystem {
 
     /// Takes the receiver for missing-glyph reports.
     ///
-    /// Only one receiver is available for each supported text system. Taking it
-    /// enables missing-glyph detection in the platform text system. Returns
-    /// `None` when reporting is unsupported or the receiver was already taken.
+    /// Only one receiver is available for each text system. Taking it enables
+    /// missing-glyph detection on platforms that support reporting. Returns
+    /// `None` when the receiver was already taken.
     pub fn take_missing_glyph_receiver(&self) -> Option<MissingGlyphReceiver> {
-        if !self.platform_text_system.supports_missing_glyph_reporting() {
-            return None;
-        }
         let receiver = self.missing_glyph_receiver.lock().take()?;
         self.platform_text_system
             .set_missing_glyph_reporter(self.missing_glyph_reporter.clone());
@@ -1451,5 +1395,58 @@ pub fn font_name_with_fallbacks_shared<'a>(
         ".ZedSans" | "Zed Plex Sans" => const { &SharedString::new_static("IBM Plex Sans") },
         ".ZedMono" | "Zed Plex Mono" => const { &SharedString::new_static("Lilex") },
         _ => name,
+    }
+}
+
+#[cfg(test)]
+mod missing_glyph_tests {
+    use super::*;
+
+    #[test]
+    fn bounds_retained_missing_glyphs() {
+        let (wake_sender, _wake_receiver) = async_channel::bounded(1);
+        let state = Arc::<Mutex<MissingGlyphState>>::default();
+        let reporter = MissingGlyphReporter {
+            state: state.clone(),
+            wake_sender,
+        };
+        reporter.report((0..MAX_REPORTED_MISSING_GLYPHS).map(|index| {
+            MissingGlyph::new(index.to_string().into(), FallbackFontClass::Proportional)
+        }));
+        state.lock().pending.clear();
+
+        let newest = MissingGlyph::new("newest".into(), FallbackFontClass::Monospace);
+        reporter.report([newest.clone()]);
+
+        let state = state.lock();
+        assert_eq!(state.reported.len(), MAX_REPORTED_MISSING_GLYPHS);
+        assert_eq!(state.reported_order.len(), MAX_REPORTED_MISSING_GLYPHS);
+        assert!(state.reported.contains(&newest));
+    }
+
+    #[test]
+    fn dropping_receiver_disables_and_clears_reports() {
+        let (wake_sender, wake_receiver) = async_channel::bounded(1);
+        let state = Arc::<Mutex<MissingGlyphState>>::default();
+        let reporter = MissingGlyphReporter {
+            state: state.clone(),
+            wake_sender,
+        };
+        let receiver = MissingGlyphReceiver {
+            state: state.clone(),
+            wake_receiver,
+        };
+        reporter.report([MissingGlyph::new(
+            "missing".into(),
+            FallbackFontClass::Proportional,
+        )]);
+
+        drop(receiver);
+
+        assert!(!reporter.is_active());
+        let state = state.lock();
+        assert!(state.reported.is_empty());
+        assert!(state.reported_order.is_empty());
+        assert!(state.pending.is_empty());
     }
 }

@@ -458,9 +458,10 @@ pub(crate) struct LineLayoutCache {
     previous_frame: Mutex<FrameCache>,
     current_frame: RwLock<FrameCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
+    /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
     font_generation: Arc<AtomicUsize>,
+    /// Records the generation represented by both frame caches.
     cached_font_generation: AtomicUsize,
-    font_generation_update: Mutex<()>,
 }
 
 #[derive(Default)]
@@ -503,7 +504,6 @@ impl LineLayoutCache {
             platform_text_system,
             font_generation,
             cached_font_generation: AtomicUsize::new(cached_font_generation),
-            font_generation_update: Mutex::new(()),
         }
     }
 
@@ -528,14 +528,6 @@ impl LineLayoutCache {
         }
         let mut current_frame = &mut *self.current_frame.write();
         let mut previous_frame = &mut *self.previous_frame.lock();
-        if range.end.lines_index > previous_frame.used_lines.len()
-            || range.end.wrapped_lines_index > previous_frame.used_wrapped_lines.len()
-            || range.end.lines_by_hash_index > previous_frame.used_lines_by_hash.len()
-            || range.end.wrapped_lines_by_hash_index
-                > previous_frame.used_wrapped_lines_by_hash.len()
-        {
-            return;
-        }
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
             if let Some((key, line)) = previous_frame.lines.remove_entry(key) {
@@ -885,12 +877,12 @@ impl LineLayoutCache {
             return font_generation;
         }
 
-        let _font_generation_update = self.font_generation_update.lock();
+        let mut current_frame = self.current_frame.write();
         if self.cached_font_generation.load(Ordering::Acquire) == font_generation {
             return font_generation;
         }
 
-        *self.current_frame.write() = FrameCache::default();
+        *current_frame = FrameCache::default();
         *self.previous_frame.lock() = FrameCache::default();
         self.cached_font_generation
             .store(font_generation, Ordering::Release);

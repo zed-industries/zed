@@ -1077,10 +1077,6 @@ pub trait PlatformDispatcher: Send + Sync {
 #[expect(missing_docs)]
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
-    /// Returns whether this text system can report unresolved grapheme clusters.
-    fn supports_missing_glyph_reporting(&self) -> bool {
-        false
-    }
     /// Installs a nonblocking sink for unresolved grapheme clusters.
     fn set_missing_glyph_reporter(&self, _reporter: MissingGlyphReporter) {}
     /// Get all available font names.

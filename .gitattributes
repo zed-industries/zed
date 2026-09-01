@@ -1,5 +1,3 @@
-* text=auto eol=lf
-
 # Prevent GitHub from displaying comments within JSON files as errors.
 *.json linguist-language=JSON-with-Comments
 
