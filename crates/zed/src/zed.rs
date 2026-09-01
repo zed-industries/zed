@@ -1345,6 +1345,9 @@ fn register_actions(
                         let buffer = project.update(cx, |project, cx| {
                             project.create_local_buffer("", None, true, cx)
                         });
+                        buffer.update(cx, |buffer, _| {
+                            buffer.set_content_language_detection_enabled(true);
+                        });
                         let editor = cx.new(|cx| {
                             Editor::for_buffer(buffer, Some(project), window, cx)
                         });
@@ -5840,6 +5843,7 @@ mod tests {
                 "bedrock",
                 "branches",
                 "buffer_search",
+                "call_hierarchy",
                 "channel_modal",
                 "cli",
                 "client",

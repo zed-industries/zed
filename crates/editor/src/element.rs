@@ -4664,7 +4664,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
-        let diff_hunk_delegate = editor.read(cx).diff_hunk_delegate();
+        let diff_hunk_renderer = editor.read(cx).diff_hunk_renderer();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
@@ -4736,7 +4736,7 @@ impl EditorElement {
                         sticky_top.min(max_y)
                     };
 
-                    let mut element = diff_hunk_delegate.render_hunk_controls(
+                    let mut element = diff_hunk_renderer.render_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
@@ -6695,7 +6695,7 @@ impl EditorElement {
         let unstaged = !self
             .editor
             .read(cx)
-            .diff_hunk_delegate()
+            .diff_hunk_renderer()
             .render_hunk_as_staged(&status, cx);
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
@@ -8301,9 +8301,13 @@ impl Element for EditorElement {
                         )
                     };
 
-                    let mut highlighted_rows = self
-                        .editor
-                        .update(cx, |editor, cx| editor.highlighted_display_rows(window, cx));
+                    let mut highlighted_rows =
+                        self.editor.read(cx).highlighted_display_rows_in_range(
+                            start_anchor..end_anchor,
+                            start_row..end_row,
+                            &snapshot.display_snapshot,
+                            cx,
+                        );
 
                     let mut highlighted_ranges = self
                         .editor_with_selections(cx)
@@ -9144,7 +9148,8 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let frozen_scroll_state = if self.editor.read(cx).scroll_range_hold.is_some() {
+                    let frozen_scroll_state = if self.editor.read(cx).search_results_hold.is_some()
+                    {
                         let is_rewrapping =
                             self.editor.read(cx).display_map.read(cx).is_rewrapping(cx);
                         self.editor.update(cx, |editor, _| {
@@ -9479,7 +9484,7 @@ impl Element for EditorElement {
                     };
 
                     let (diff_hunk_controls, diff_hunk_control_bounds) =
-                        if is_read_only && self.editor.read(cx).diff_hunk_delegate.is_none() {
+                        if is_read_only && self.editor.read(cx).diff_hunk_renderer.is_none() {
                             (vec![], vec![])
                         } else {
                             self.layout_diff_hunk_controls(
@@ -10874,9 +10879,24 @@ pub fn register_action<T: Action>(
     window: &mut Window,
     listener: impl Fn(&mut Editor, &T, &mut Window, &mut Context<Editor>) + 'static,
 ) {
+    register_action_erased(
+        editor,
+        window,
+        TypeId::of::<T>(),
+        Box::new(move |editor, action, window, cx| {
+            listener(editor, action.downcast_ref().unwrap(), window, cx)
+        }),
+    )
+}
+
+fn register_action_erased(
+    editor: &Entity<Editor>,
+    window: &mut Window,
+    action_type: TypeId,
+    listener: Box<dyn Fn(&mut Editor, &dyn std::any::Any, &mut Window, &mut Context<Editor>)>,
+) {
     let editor = editor.clone();
-    window.on_action(TypeId::of::<T>(), move |action, phase, window, cx| {
-        let action = action.downcast_ref().unwrap();
+    window.on_action(action_type, move |action, phase, window, cx| {
         if phase == DispatchPhase::Bubble {
             editor.update(cx, |editor, cx| {
                 listener(editor, action, window, cx);

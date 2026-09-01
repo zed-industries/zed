@@ -24,6 +24,7 @@ members = [
     "crates/breadcrumbs",
     "crates/buffer_diff",
     "crates/call",
+    "crates/call_hierarchy",
     "crates/channel",
     "crates/cli",
     "crates/client",
@@ -115,6 +116,7 @@ members = [
     "crates/keymap_editor",
     "crates/language",
     "crates/language_core",
+    "crates/language_detection",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_model_core",
@@ -295,6 +297,7 @@ bedrock = { path = "crates/bedrock" }
 breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
+call_hierarchy = { path = "crates/call_hierarchy" }
 channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
@@ -381,6 +384,7 @@ json_schema_store = { path = "crates/json_schema_store" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_core = { path = "crates/language_core" }
+language_detection = { path = "crates/language_detection" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_model_core = { path = "crates/language_model_core" }
@@ -450,7 +454,7 @@ search = { path = "crates/search" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_content = { path = "crates/settings_content" }
-settings_json = { path = "crates/settings_json" }
+settings_json = { path = "crates/settings_json", default-features = false }
 settings_macros = { path = "crates/settings_macros" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 settings_ui = { path = "crates/settings_ui" }
@@ -558,6 +562,7 @@ aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
 base64 = "0.22"
+betlang = "0.1.1"
 bitflags = "2.6.0"
 block = "0.1"
 block2 = "0.6"
@@ -688,12 +693,15 @@ num-format = "0.4.4"
 objc = "0.2"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSAlert",
+    "NSApplication",
     "NSButton",
     "NSControl",
     "NSGraphics",
     "NSResponder",
     "NSView",
     "NSWindow",
+    "block2",
     "objc2-core-foundation",
 ] }
 objc2-foundation = { version = "=0.3.2", default-features = false, features = [
@@ -979,6 +987,18 @@ libwebrtc = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev =
 notify = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 notify-types = { git = "https://github.com/zed-industries/notify", rev = "0890bbb8ca40a4b5d1f67031698dd7918b37d991" }
 webrtc-sys = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "0a1c519cfce9b365229026b55de9b9dbdb6fed3c" }
+
+# corgi runs build.rs/proc-macros in a sandbox with no write access outside the
+# action's own OUT_DIR. Upstream `scratch` bakes its build-time OUT_DIR in via
+# `env!` and hands every crate one shared directory, which the sandbox can't
+# grant and a content-addressed build can't share. This patch reads OUT_DIR at
+# runtime, so each build script gets a private, writable dir in its own entry —
+# where cxx-build writes its shared cxxbridge headers. Kept local rather than a
+# cxx git fork so Windows cargo builds are unaffected (a git checkout of cxx
+# needs symlink support that Windows CI lacks). webrtc-sys is self-contained, so
+# per-crate scratch dirs are sufficient. Upstream issue:
+# https://github.com/dtolnay/cxx/issues/1752
+scratch = { path = "corgi-patches/scratch" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
