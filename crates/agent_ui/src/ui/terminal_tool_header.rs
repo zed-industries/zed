@@ -8,10 +8,35 @@ const ELAPSED_DISPLAY_THRESHOLD: Duration = Duration::from_secs(10);
 
 type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
+#[derive(IntoElement)]
 pub struct TerminalSandboxWarning {
     pub title: SharedString,
     pub detail: SharedString,
     pub docs_url: SharedString,
+}
+
+impl RenderOnce for TerminalSandboxWarning {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Self {
+            title,
+            detail,
+            docs_url,
+        } = self;
+
+        v_flex()
+            .gap_0p5()
+            .p_2()
+            .border_t_1()
+            .border_color(cx.theme().colors().border)
+            .child(Label::new(title).size(LabelSize::Small))
+            .child(Label::new(detail).size(LabelSize::Small).color(Color::Muted))
+            .child(
+                Button::new("sandbox-docs", "View Sandboxing Docs")
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .on_click(move |_, _, cx| cx.open_url(&docs_url)),
+            )
+    }
 }
 
 #[derive(IntoElement, RegisterComponent)]
@@ -78,22 +103,6 @@ impl TerminalToolHeader {
 
     pub fn sandbox_warning(mut self, warning: TerminalSandboxWarning) -> Self {
         self.sandbox_warning = Some(warning);
-        self
-    }
-
-    pub fn on_toggle_expand(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_toggle_expand = Some(Box::new(handler));
-        self
-    }
-
-    pub fn on_stop(
-        mut self,
-        handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_stop = Some(Box::new(handler));
         self
     }
 

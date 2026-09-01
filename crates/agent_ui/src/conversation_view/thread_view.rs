@@ -26,7 +26,6 @@ use crate::completion_provider::{AvailableSkill, PromptLocalCommand, pluralize};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{
     SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip, TerminalSandboxWarning,
-    TerminalToolHeader,
 };
 use crate::unicode_confusables;
 
@@ -42,8 +41,9 @@ use language_model::{
 use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
-    ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
-    Tab, ToolCall as ToolCallCard, ToolCallStatusKind, ToolCallStyle, ToolCallTerminal,
+    ButtonLike, CalloutBorderPosition, Checkbox, SpinnerLabel, SpinnerVariant, SplitButton,
+    SplitButtonStyle, Tab, ToolCall as ToolCallCard, ToolCallStatusKind, ToolCallStyle,
+    ToolCallTerminal,
 };
 use util::markdown::{source_position_from_fragment, split_local_url_fragment};
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -7938,7 +7938,7 @@ impl ThreadView {
         let notice = tool_call
             .sandbox_not_applied
             .as_ref()
-            .map(|reason| self.render_sandbox_not_applied_warning(reason, cx));
+            .map(|reason| self.sandbox_not_applied_warning(reason, cx));
 
         let footer = confirmation_options.map(|options| {
             let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
@@ -7949,6 +7949,7 @@ impl ThreadView {
                 entry_ix,
                 tool_call.id.clone(),
                 focus_handle,
+                false,
                 cx,
             )
         });
@@ -8633,6 +8634,30 @@ impl ThreadView {
                 }
             })
             .children(sibling_content)
+    }
+
+    fn render_sandbox_docs_link(
+        &self,
+        id: &'static str,
+        section: Option<&str>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let url = zed_urls::sandboxing_docs(section, cx);
+
+        Button::new(id, "View Sandboxing Docs")
+            .label_size(LabelSize::Small)
+            .color(Color::Muted)
+            .end_icon(
+                Icon::new(IconName::ArrowUpRight)
+                    .color(Color::Muted)
+                    .size(IconSize::XSmall),
+            )
+            .tooltip({
+                let url = url.clone();
+                move |_, cx| Tooltip::with_meta("Open Docs", None, url.clone(), cx)
+            })
+            .on_click(move |_, _, cx| cx.open_url(&url))
+            .into_any_element()
     }
 
     fn render_sandbox_authorization_details(
