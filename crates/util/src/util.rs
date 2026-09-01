@@ -862,7 +862,9 @@ macro_rules! fs_embed {
                 <$name>::get(file_path)
             }
 
-            fn iter() -> $crate::__rust_embed::Filenames {
+            fn iter(
+            ) -> impl ::core::iter::Iterator<Item = ::std::borrow::Cow<'static, str>> + 'static
+            {
                 $crate::__fs_embed_iter(
                     $root_relative,
                     &[$($($include),*)?],
