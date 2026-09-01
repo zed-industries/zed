@@ -33,7 +33,7 @@ use std::{
     ops::{Deref, DerefMut, Range},
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
 };
 
@@ -90,6 +90,12 @@ impl MissingGlyph {
     }
 }
 
+/// Accepts missing glyphs detected by a platform text system.
+pub trait MissingGlyphSink: Send + Sync {
+    /// Reports grapheme clusters that exhausted font fallback.
+    fn report(&self, missing_glyphs: Vec<MissingGlyph>);
+}
+
 #[derive(Default)]
 struct MissingGlyphState {
     reported: FxHashSet<MissingGlyph>,
@@ -98,24 +104,18 @@ struct MissingGlyphState {
 }
 
 /// Collects missing-glyph reports without invoking application code during layout.
-#[derive(Clone)]
-pub struct MissingGlyphReporter {
+struct MissingGlyphReporter {
     state: Arc<Mutex<MissingGlyphState>>,
     wake_sender: async_channel::Sender<()>,
-    enabled: Arc<AtomicBool>,
 }
 
-impl MissingGlyphReporter {
-    /// Queues newly observed missing glyphs and wakes the receiver.
-    pub fn report(&self, missing_glyphs: impl IntoIterator<Item = MissingGlyph>) {
-        if !self.is_active() {
+impl MissingGlyphSink for MissingGlyphReporter {
+    fn report(&self, missing_glyphs: Vec<MissingGlyph>) {
+        if self.wake_sender.is_closed() {
             return;
         }
 
         let mut state = self.state.lock();
-        if !self.is_active() {
-            return;
-        }
         let mut added = false;
         for missing_glyph in missing_glyphs {
             if state.pending.len() == MAX_REPORTED_MISSING_GLYPHS {
@@ -146,24 +146,14 @@ impl MissingGlyphReporter {
             }
         }
     }
+}
 
+impl MissingGlyphReporter {
     fn reset(&self) {
         let mut state = self.state.lock();
         state.reported.clear();
         state.reported_order.clear();
         state.pending.clear();
-    }
-
-    fn set_enabled(&self, enabled: bool) {
-        self.enabled.store(enabled, Ordering::Release);
-        if !enabled {
-            self.reset();
-        }
-    }
-
-    /// Returns whether missing-glyph reporting is enabled and has a receiver.
-    pub fn is_active(&self) -> bool {
-        self.enabled.load(Ordering::Acquire) && !self.wake_sender.is_closed()
     }
 }
 
@@ -211,7 +201,7 @@ pub struct TextSystem {
     font_runs_pool: Mutex<Vec<Vec<FontRun>>>,
     fallback_font_stack: SmallVec<[Font; 2]>,
     font_generation: Arc<AtomicUsize>,
-    missing_glyph_reporter: MissingGlyphReporter,
+    missing_glyph_reporter: Arc<MissingGlyphReporter>,
     missing_glyph_receiver: Mutex<Option<MissingGlyphReceiver>>,
 }
 
@@ -241,11 +231,10 @@ impl TextSystem {
                 font("Arial"), // macOS, Windows
             ],
             font_generation: Arc::default(),
-            missing_glyph_reporter: MissingGlyphReporter {
+            missing_glyph_reporter: Arc::new(MissingGlyphReporter {
                 state: missing_glyph_state.clone(),
                 wake_sender,
-                enabled: Arc::default(),
-            },
+            }),
             missing_glyph_receiver: Mutex::new(Some(MissingGlyphReceiver {
                 state: missing_glyph_state,
                 wake_receiver,
@@ -281,19 +270,20 @@ impl TextSystem {
 
     /// Takes the receiver for missing-glyph reports.
     ///
-    /// Only one receiver is available for each text system. Taking it enables
-    /// missing-glyph detection on platforms that support reporting. Returns
-    /// `None` when the receiver was already taken.
+    /// Only one receiver is available for each text system. Returns `None` when
+    /// the receiver was already taken.
     pub(crate) fn take_missing_glyph_receiver(&self) -> Option<MissingGlyphReceiver> {
-        let receiver = self.missing_glyph_receiver.lock().take()?;
-        self.platform_text_system
-            .set_missing_glyph_reporter(self.missing_glyph_reporter.clone());
-        self.missing_glyph_reporter.set_enabled(true);
-        Some(receiver)
+        self.missing_glyph_receiver.lock().take()
     }
 
-    pub(crate) fn set_missing_glyph_reporting_enabled(&self, enabled: bool) {
-        self.missing_glyph_reporter.set_enabled(enabled);
+    pub(crate) fn enable_missing_glyph_reporting(&self) {
+        self.platform_text_system
+            .set_missing_glyph_sink(Some(self.missing_glyph_reporter.clone()));
+    }
+
+    pub(crate) fn disable_missing_glyph_reporting(&self) {
+        self.platform_text_system.set_missing_glyph_sink(None);
+        self.missing_glyph_reporter.reset();
     }
 
     #[cfg(test)]
@@ -1433,15 +1423,18 @@ mod missing_glyph_tests {
         let reporter = MissingGlyphReporter {
             state: state.clone(),
             wake_sender,
-            enabled: Arc::new(AtomicBool::new(true)),
         };
-        reporter.report((0..MAX_REPORTED_MISSING_GLYPHS).map(|index| {
-            MissingGlyph::new(index.to_string().into(), FallbackFontClass::Proportional)
-        }));
+        reporter.report(
+            (0..MAX_REPORTED_MISSING_GLYPHS)
+                .map(|index| {
+                    MissingGlyph::new(index.to_string().into(), FallbackFontClass::Proportional)
+                })
+                .collect(),
+        );
         state.lock().pending.clear();
 
         let newest = MissingGlyph::new("newest".into(), FallbackFontClass::Monospace);
-        reporter.report([newest.clone()]);
+        reporter.report(vec![newest.clone()]);
 
         let state = state.lock();
         assert_eq!(state.reported.len(), MAX_REPORTED_MISSING_GLYPHS);
@@ -1450,26 +1443,25 @@ mod missing_glyph_tests {
     }
 
     #[test]
-    fn dropping_receiver_disables_and_clears_reports() {
+    fn dropping_receiver_closes_and_clears_reports() {
         let (wake_sender, wake_receiver) = async_channel::bounded(1);
         let state = Arc::<Mutex<MissingGlyphState>>::default();
         let reporter = MissingGlyphReporter {
             state: state.clone(),
             wake_sender,
-            enabled: Arc::new(AtomicBool::new(true)),
         };
         let receiver = MissingGlyphReceiver {
             state: state.clone(),
             wake_receiver,
         };
-        reporter.report([MissingGlyph::new(
+        reporter.report(vec![MissingGlyph::new(
             "missing".into(),
             FallbackFontClass::Proportional,
         )]);
 
         drop(receiver);
 
-        assert!(!reporter.is_active());
+        assert!(reporter.wake_sender.is_closed());
         let state = state.lock();
         assert!(state.reported.is_empty());
         assert!(state.reported_order.is_empty());

@@ -3,10 +3,10 @@ use crate::{
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
     Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, Point, Render, Result, SharedString, Size, SystemNotification,
-    SystemNotificationResponse, Task, TestDispatcher, TestPlatform, TestScreenCaptureSource,
-    TestWindow, TextSystem, VisualContext, Window, WindowBounds, WindowHandle, WindowOptions,
-    app::GpuiMode, window::ElementArenaScope,
+    Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
+    SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
+    TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
+    WindowHandle, WindowOptions, app::GpuiMode, window::ElementArenaScope,
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
@@ -129,6 +129,45 @@ impl TestAppContext {
         let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
         let platform = TestPlatform::new(background_executor.clone(), foreground_executor.clone());
+        Self::build_with_platform(
+            dispatcher,
+            fn_name,
+            background_executor,
+            foreground_executor,
+            platform,
+        )
+    }
+
+    /// Creates a test context backed by the provided platform text system.
+    pub fn build_with_text_system(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        platform_text_system: Arc<dyn PlatformTextSystem>,
+    ) -> Self {
+        let arc_dispatcher = Arc::new(dispatcher.clone());
+        let background_executor = BackgroundExecutor::new(arc_dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(arc_dispatcher);
+        let platform = TestPlatform::with_text_system(
+            background_executor.clone(),
+            foreground_executor.clone(),
+            platform_text_system,
+        );
+        Self::build_with_platform(
+            dispatcher,
+            fn_name,
+            background_executor,
+            foreground_executor,
+            platform,
+        )
+    }
+
+    fn build_with_platform(
+        dispatcher: TestDispatcher,
+        fn_name: Option<&'static str>,
+        background_executor: BackgroundExecutor,
+        foreground_executor: ForegroundExecutor,
+        platform: Rc<TestPlatform>,
+    ) -> Self {
         let asset_source = Arc::new(());
         let http_client = http_client::FakeHttpClient::with_404_response();
         let text_system = Arc::new(TextSystem::new(platform.text_system()));

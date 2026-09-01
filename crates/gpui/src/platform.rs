@@ -38,7 +38,7 @@ use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
     FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
-    LineLayout, MissingGlyphReporter, Pixels, PlatformGestures, PlatformInput, Point, Priority,
+    LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
     RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Scene, ShapedGlyph,
     ShapedRun, SharedString, Size, SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea,
     hash, point, px, size,
@@ -1078,7 +1078,7 @@ pub trait PlatformDispatcher: Send + Sync {
 pub trait PlatformTextSystem: Send + Sync {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()>;
     /// Installs a nonblocking sink for unresolved grapheme clusters.
-    fn set_missing_glyph_reporter(&self, _reporter: MissingGlyphReporter) {}
+    fn set_missing_glyph_sink(&self, _sink: Option<Arc<dyn MissingGlyphSink>>) {}
     /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
     /// Get the font ID for a font descriptor.

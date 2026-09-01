@@ -6,9 +6,9 @@ use cosmic_text::{
 };
 use gpui::{
     Bounds, DevicePixels, FallbackFontClass, Font, FontFallbacks, FontFeatures, FontId,
-    FontMetrics, FontRun, GlyphId, IsZero as _, LineLayout, MissingGlyph, MissingGlyphReporter,
-    Pixels, PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y,
-    ShapedGlyph, ShapedRun, SharedString, Size, TextRenderingMode, point, size,
+    FontMetrics, FontRun, GlyphId, IsZero as _, LineLayout, MissingGlyph, MissingGlyphSink, Pixels,
+    PlatformTextSystem, RenderGlyphParams, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ShapedGlyph,
+    ShapedRun, SharedString, Size, TextRenderingMode, point, size,
 };
 
 use itertools::Itertools;
@@ -58,7 +58,7 @@ struct CosmicTextSystemState {
     /// for every font face in a family.
     font_ids_by_family_cache: HashMap<FontKey, SmallVec<[FontId; 4]>>,
     system_font_fallback: String,
-    missing_glyph_reporter: Option<MissingGlyphReporter>,
+    missing_glyph_sink: Option<Arc<dyn MissingGlyphSink>>,
 }
 
 struct LoadedFont {
@@ -104,7 +104,7 @@ impl CosmicTextSystem {
             loaded_font_ids_by_key: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
-            missing_glyph_reporter: None,
+            missing_glyph_sink: None,
         }))
     }
 
@@ -123,7 +123,7 @@ impl CosmicTextSystem {
             loaded_font_ids_by_key: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
-            missing_glyph_reporter: None,
+            missing_glyph_sink: None,
         }))
     }
 }
@@ -133,8 +133,8 @@ impl PlatformTextSystem for CosmicTextSystem {
         self.0.write().add_fonts(fonts)
     }
 
-    fn set_missing_glyph_reporter(&self, reporter: MissingGlyphReporter) {
-        self.0.write().missing_glyph_reporter = Some(reporter);
+    fn set_missing_glyph_sink(&self, sink: Option<Arc<dyn MissingGlyphSink>>) {
+        self.0.write().missing_glyph_sink = sink;
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -733,21 +733,17 @@ impl CosmicTextSystemState {
             };
         };
 
-        let missing_glyphs = self
-            .missing_glyph_reporter
-            .as_ref()
-            .filter(|reporter| reporter.is_active())
-            .map(|_| {
-                self.missing_glyphs(
-                    text,
-                    font_runs,
-                    layout
-                        .glyphs
-                        .iter()
-                        .filter(|glyph| glyph.glyph_id == 0)
-                        .map(|glyph| glyph.start),
-                )
-            });
+        let missing_glyphs = self.missing_glyph_sink.as_ref().map(|_| {
+            self.missing_glyphs(
+                text,
+                font_runs,
+                layout
+                    .glyphs
+                    .iter()
+                    .filter(|glyph| glyph.glyph_id == 0)
+                    .map(|glyph| glyph.start),
+            )
+        });
 
         let mut runs: Vec<ShapedRun> = Vec::new();
         for glyph in &layout.glyphs {
@@ -795,10 +791,8 @@ impl CosmicTextSystemState {
             }
         }
 
-        if let Some((reporter, missing_glyphs)) =
-            self.missing_glyph_reporter.as_ref().zip(missing_glyphs)
-        {
-            reporter.report(missing_glyphs);
+        if let Some((sink, missing_glyphs)) = self.missing_glyph_sink.as_ref().zip(missing_glyphs) {
+            sink.report(missing_glyphs);
         }
 
         LineLayout {
@@ -1170,6 +1164,7 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{cell::RefCell, rc::Rc};
 
     fn fid(i: usize) -> FontId {
         FontId(i)
@@ -1240,30 +1235,35 @@ mod tests {
 
     #[test]
     fn reports_graphemes_that_exhaust_font_fallback() -> Result<()> {
-        let text_system = text_system()?;
-        let text = "界";
-        let font_id = text_system.font_id(&gpui::font("IBM Plex Sans"))?;
-        let runs = [FontRun {
-            len: text.len(),
-            font_id,
-        }];
+        let platform_text_system = Arc::new(text_system()?);
+        let dispatcher = gpui::TestDispatcher::new(0);
+        let cx =
+            gpui::TestAppContext::build_with_text_system(dispatcher, None, platform_text_system);
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            let observed = observed.clone();
+            cx.on_missing_glyphs(move |missing_glyphs, _| {
+                observed.borrow_mut().extend_from_slice(missing_glyphs);
+            })
+        });
+        let text: SharedString = "界".into();
 
-        let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
-        let missing_glyphs = text_system.0.read().missing_glyphs(
-            text,
-            &runs,
-            layout
-                .runs
-                .iter()
-                .flat_map(|run| &run.glyphs)
-                .filter(|glyph| glyph.id == GlyphId(0))
-                .map(|glyph| glyph.index),
-        );
+        cx.update(|cx| {
+            let text_system = gpui::WindowTextSystem::new(cx.text_system().clone());
+            let runs = [gpui::TextRun {
+                len: text.len(),
+                font: gpui::font("IBM Plex Sans"),
+                ..Default::default()
+            }];
+            text_system.shape_line(text, gpui::px(14.0), &runs, None);
+        });
+        cx.run_until_parked();
 
-        assert_eq!(missing_glyphs.len(), 1);
-        assert_eq!(missing_glyphs[0].grapheme(), "界");
+        let observed = observed.borrow();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].grapheme(), "界");
         assert_eq!(
-            missing_glyphs[0].font_class(),
+            observed[0].font_class(),
             gpui::FallbackFontClass::Proportional
         );
         Ok(())
