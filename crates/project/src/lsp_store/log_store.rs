@@ -132,7 +132,6 @@ impl Message for RpcMessage {
 pub struct LanguageServerState {
     pub name: Option<LanguageServerName>,
     pub worktree_id: Option<WorktreeId>,
-    pub kind: LanguageServerKind,
     server: Option<Weak<LanguageServer>>,
     log_messages: VecDeque<LogMessage>,
     trace_messages: VecDeque<TraceMessage>,
@@ -154,7 +153,6 @@ impl std::fmt::Debug for LanguageServerState {
         f.debug_struct("LanguageServerState")
             .field("name", &self.name)
             .field("worktree_id", &self.worktree_id)
-            .field("kind", &self.kind)
             .field("log_messages", &self.log_messages)
             .field("trace_messages", &self.trace_messages)
             .field("rpc_state", &self.rpc_state)
@@ -473,7 +471,7 @@ impl LogStore {
                     cx.observe_release(project, move |this, _, _| {
                         this.projects.remove(&weak_project);
                         this.language_servers
-                            .retain(|_, state| state.kind.project() != Some(&weak_project));
+                            .retain(|key, _| key.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, move |log_store, project, event, cx| {
                         let server_kind = if project.read(cx).is_local() {
@@ -611,7 +609,7 @@ impl LogStore {
         server: Option<Arc<LanguageServer>>,
         cx: &mut Context<Self>,
     ) -> Option<&mut LanguageServerState> {
-        let server_key = LanguageServerLogKey::new(kind.clone(), server_id);
+        let server_key = LanguageServerLogKey::new(kind, server_id);
         let server_state = self
             .language_servers
             .entry(server_key.clone())
@@ -620,7 +618,6 @@ impl LogStore {
                 LanguageServerState {
                     name: None,
                     worktree_id: None,
-                    kind,
                     server: server.as_ref().map(Arc::downgrade),
                     rpc_state: None,
                     log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -929,7 +926,7 @@ impl LogStore {
         match &e {
             Event::NewServerLogEntry { key, kind, text } => {
                 if let Some(state) = self.get_language_server_state(key) {
-                    let downstream_client = match &state.kind {
+                    let downstream_client = match &key.kind {
                         LanguageServerKind::Remote { project }
                         | LanguageServerKind::Local { project } => project
                             .upgrade()
