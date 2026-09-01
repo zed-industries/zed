@@ -37,8 +37,8 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, DiffHunkDelegate, Editor, EditorEvent, EditorSettings, ResolvedDiffHunks,
-    ToggleSoftWrap, UncommittedDiffHunkDelegate,
+    Autoscroll, DiffHunkDelegate, DiffReviewHandler, Editor, EditorEvent, EditorSettings,
+    ResolvedDiffHunks, ToggleSoftWrap, UncommittedDiffHunkDelegate,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
@@ -241,6 +241,17 @@ impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
         };
         let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
         delegate.render_hunk_as_staged(status, cx)
+    }
+
+    fn render_hunk_hollow(
+        &self,
+        status: &DiffHunkStatus,
+        buffer_id: Option<BufferId>,
+        cx: &App,
+    ) -> Option<bool> {
+        let splittable = self.splittable.upgrade()?;
+        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
+        delegate.render_hunk_hollow(status, buffer_id, cx)
     }
 }
 
@@ -598,6 +609,7 @@ pub struct SplittableEditor {
     /// mode, regardless of the current diff view style setting.
     too_narrow_for_split: bool,
     last_width: Option<Pixels>,
+    diff_review_handler: Option<DiffReviewHandler>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -643,6 +655,17 @@ impl SplittableEditor {
     ) {
         self.rhs_editor.update(cx, |editor, cx| {
             editor.set_diff_hunk_delegate(delegate, cx);
+        });
+    }
+
+    pub fn set_diff_review_handler(
+        &mut self,
+        handler: Option<DiffReviewHandler>,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff_review_handler = handler.clone();
+        self.update_editors(cx, |editor, cx| {
+            editor.set_diff_review_handler(handler.clone(), cx)
         });
     }
 
@@ -753,6 +776,7 @@ impl SplittableEditor {
             searched_side: None,
             too_narrow_for_split: false,
             last_width: None,
+            diff_review_handler: None,
             _subscriptions: subscriptions,
         }
     }
@@ -782,6 +806,7 @@ impl SplittableEditor {
         });
 
         let splittable = cx.weak_entity();
+        let diff_review_handler = self.diff_review_handler.clone();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
@@ -793,6 +818,7 @@ impl SplittableEditor {
             );
             editor.set_delegate_open_excerpts(true);
             editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_diff_review_handler(diff_review_handler, cx);
             editor.disable_lsp_data();
             editor.disable_runnables();
             editor.disable_diagnostics(cx);

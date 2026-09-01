@@ -4,8 +4,11 @@ use crate::github_review::{
 };
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
-use editor::{Editor, EditorEvent};
-use gpui::{ClipboardItem, Entity, EventEmitter, Subscription, Task};
+use editor::{
+    Editor, EditorEvent,
+    display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
+};
+use gpui::{App, ClipboardItem, Entity, EventEmitter, Focusable, Subscription, Task};
 use project::{Project, git_store::Repository};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf};
@@ -25,6 +28,27 @@ struct SavedDrafts {
     #[serde(default)]
     pending_actions: BTreeMap<String, DiscussionAction>,
     drafts: BTreeMap<String, CommentDraft>,
+}
+
+struct InlineComposerBlock {
+    editor: gpui::WeakEntity<Editor>,
+    block_id: CustomBlockId,
+    path: String,
+    comparison: Option<(Option<String>, Option<String>)>,
+    _view: Entity<InlineGitHubComposer>,
+    _subscription: Subscription,
+}
+
+struct InlineGitHubComposer {
+    github: gpui::WeakEntity<GitHubReview>,
+}
+
+impl Render for InlineGitHubComposer {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.github
+            .update(cx, |github, cx| github.render_inline_composer(window, cx))
+            .unwrap_or_else(|_| gpui::Empty.into_any_element())
+    }
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -78,6 +102,7 @@ pub(crate) struct GitHubReview {
     write_task: Option<Task<()>>,
     copied_prompt: bool,
     copied_prompt_task: Option<Task<()>>,
+    inline_composer: Option<InlineComposerBlock>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -148,6 +173,7 @@ impl GitHubReview {
             write_task: None,
             copied_prompt: false,
             copied_prompt_task: None,
+            inline_composer: None,
             _subscriptions: subscriptions,
         }
     }
@@ -298,6 +324,7 @@ impl GitHubReview {
     }
 
     pub fn attach(&mut self, checkout: Checkout, window: &mut Window, cx: &mut Context<Self>) {
+        self.remove_inline_composer(true, cx);
         self.save_draft(cx);
         self.generation += 1;
         self.selected_repo = Some(checkout.repository.clone());
@@ -326,6 +353,7 @@ impl GitHubReview {
         cx.notify();
     }
     pub fn close_review(&mut self, cx: &mut Context<Self>) {
+        self.remove_inline_composer(true, cx);
         self.save_draft(cx);
         self.detached = true;
         self.checkout = None;
@@ -342,6 +370,7 @@ impl GitHubReview {
     }
 
     pub fn detach(&mut self, cx: &mut Context<Self>) {
+        self.remove_inline_composer(true, cx);
         self.detached = true;
         cx.notify();
     }
@@ -458,6 +487,7 @@ impl GitHubReview {
         if self.posting {
             return;
         }
+        self.remove_inline_composer(true, cx);
         self.save_draft(cx);
         self.target = target;
         self.previewing = false;
@@ -473,6 +503,211 @@ impl GitHubReview {
         self.showing_discussion = true;
         self.browsing = false;
         cx.notify();
+    }
+
+    pub fn select_inline_target(
+        &mut self,
+        target: CommentTarget,
+        editor: Entity<Editor>,
+        anchor: multi_buffer::Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_target(target, window, cx);
+        if self.posting {
+            return;
+        }
+        let github = cx.weak_entity();
+        let view = cx.new(|_| InlineGitHubComposer { github });
+        let path = match &self.target {
+            CommentTarget::Inline { path, .. } => path.clone(),
+            _ => return,
+        };
+        let comparison = self
+            .review
+            .as_ref()
+            .and_then(|review| {
+                review
+                    .read_with(cx, |review, cx| review.comparison_for_path(&path, cx))
+                    .ok()
+            })
+            .flatten();
+        let subscription = cx.subscribe(&editor, |_, _, event, cx| {
+            if matches!(
+                event,
+                EditorEvent::BufferEdited
+                    | EditorEvent::Edited { .. }
+                    | EditorEvent::BuffersEdited { .. }
+                    | EditorEvent::BuffersRemoved { .. }
+                    | EditorEvent::FileHandleChanged
+            ) {
+                let this = cx.weak_entity();
+                cx.defer(move |cx| {
+                    this.update(cx, |this, cx| {
+                        if !this.inline_composer_is_current(cx) {
+                            this.remove_inline_composer(true, cx);
+                        }
+                    })
+                    .ok();
+                });
+            }
+        });
+        let view_for_block = view.clone();
+        let block_ids = editor.update(cx, |editor, cx| {
+            editor.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Below(anchor),
+                    height: Some(9),
+                    style: BlockStyle::Sticky,
+                    priority: 1,
+                    render: std::sync::Arc::new(move |_| view_for_block.clone().into_any_element()),
+                }],
+                None,
+                cx,
+            )
+        });
+        let Some(block_id) = block_ids.into_iter().next() else {
+            self.error = Some("Could not open the inline GitHub composer".into());
+            cx.notify();
+            return;
+        };
+        self.inline_composer = Some(InlineComposerBlock {
+            editor: editor.downgrade(),
+            block_id,
+            path,
+            comparison,
+            _view: view,
+            _subscription: subscription,
+        });
+        self.composer.focus_handle(cx).focus(window, cx);
+        cx.notify();
+    }
+
+    fn remove_inline_composer(&mut self, save_draft: bool, cx: &mut Context<Self>) {
+        if save_draft {
+            self.save_draft(cx);
+        }
+        let Some(inline) = self.inline_composer.take() else {
+            return;
+        };
+        inline
+            .editor
+            .update(cx, |editor, cx| {
+                editor.remove_blocks([inline.block_id].into_iter().collect(), None, cx)
+            })
+            .ok();
+        cx.notify();
+    }
+
+    fn inline_composer_is_current(&self, cx: &App) -> bool {
+        let Some(inline) = &self.inline_composer else {
+            return true;
+        };
+        self.review
+            .as_ref()
+            .and_then(|review| {
+                review
+                    .read_with(cx, |review, cx| {
+                        review.comparison_for_path(&inline.path, cx)
+                    })
+                    .ok()
+            })
+            .flatten()
+            == inline.comparison
+    }
+
+    fn render_inline_composer(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let body = self.composer.read(cx).text(cx);
+        let languages = self.project.read(cx).languages().clone();
+        let preview = self.preview_markdown.get_or_insert_with(|| {
+            (
+                body.clone(),
+                crate::review_markdown::new(&body, languages, cx),
+            )
+        });
+        if preview.0 != body {
+            preview.1.update(cx, |markdown, cx| {
+                markdown.replace(crate::review_markdown::source(&body), cx)
+            });
+            preview.0 = body;
+        }
+        let preview = preview.1.clone();
+        let pending = self.busy || self.posting;
+        let unknown = self.draft().is_some_and(|draft| draft.outcome_unknown);
+        let target = target_label(&self.target);
+        v_flex()
+            .id("inline-github-comment-composer")
+            .w_full()
+            .min_w_0()
+            .gap_1()
+            .p_2()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().editor_background)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(Label::new(target).size(LabelSize::XSmall))
+                    .child(
+                        Button::new("close-inline-github-comment", "Cancel").on_click(
+                            cx.listener(|this, _, _, cx| this.remove_inline_composer(true, cx)),
+                        ),
+                    ),
+            )
+            .when_some(self.error.clone(), |view, error| {
+                view.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("write-inline-github-comment", "Write")
+                            .toggle_state(!self.previewing)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.previewing = false;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("preview-inline-github-comment", "Preview")
+                            .toggle_state(self.previewing)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.previewing = true;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .p_2()
+                    .map(|view| {
+                        if self.previewing {
+                            view.child(crate::review_markdown::render(preview, window, cx))
+                        } else {
+                            view.child(self.composer.clone())
+                        }
+                    }),
+            )
+            .when(self.detached, |view| {
+                view.child(
+                    Label::new("Review detached from the checkout. Draft saved.")
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
+                )
+            })
+            .child(
+                Button::new("post-inline-github-comment", "Post to GitHub")
+                    .disabled(pending || self.detached || unknown || self.load_failed)
+                    .on_click(cx.listener(|this, _, window, cx| this.post(window, cx))),
+            )
+            .into_any_element()
     }
     pub fn show_error(&mut self, error: String, cx: &mut Context<Self>) {
         self.error = Some(error);
@@ -1249,6 +1484,7 @@ impl GitHubReview {
                             comment,
                         });
                         this.saved.drafts.remove(&key);
+                        this.remove_inline_composer(false, cx);
                         this.composer
                             .update(cx, |editor, cx| editor.set_text("", window, cx));
                         this.target = CommentTarget::General;
@@ -1384,7 +1620,15 @@ impl Render for GitHubReview {
                     .child(h_flex().gap_1()
                         .child(Button::new("write-comment", "Write").toggle_state(!self.previewing).on_click(cx.listener(|this, _, _, cx| { this.previewing = false; cx.notify(); })))
                         .child(Button::new("preview-comment", "Preview").toggle_state(self.previewing).on_click(cx.listener(|this, _, _, cx| { this.previewing = true; cx.notify(); }))))
-                    .child(div().min_w_0().border_1().border_color(cx.theme().colors().border).p_2().map(|view| if self.previewing { view.child(crate::review_markdown::render(preview, window, cx)) } else { view.child(self.composer.clone()) }))
+                    .child(div().min_w_0().border_1().border_color(cx.theme().colors().border).p_2().map(|view| {
+                        if self.inline_composer.is_some() {
+                            view.child(Label::new("This draft is open in the diff.").size(LabelSize::Small))
+                        } else if self.previewing {
+                            view.child(crate::review_markdown::render(preview, window, cx))
+                        } else {
+                            view.child(self.composer.clone())
+                        }
+                    }))
                     .when(self.detached, |view| view.child(Label::new("Review detached from the checkout. Drafts are kept; reopen the PR to post.").size(LabelSize::Small).color(Color::Warning)))
                     .when(unknown, |view| view.child(Label::new("The last post may have succeeded. Refresh and inspect the discussion before retrying.").size(LabelSize::Small).color(Color::Warning))
                         .child(Button::new("confirm-comment-retry", "I checked GitHub; allow retry").disabled(pending || !self.reconciled).on_click(cx.listener(|this, _, _, cx| {
@@ -1496,6 +1740,49 @@ mod tests {
         }
         assert!(!prompt.contains("Fixture"));
         assert!(!prompt.contains("untrusted-login-42"));
+    }
+
+    #[gpui::test]
+    async fn inline_composer_uses_and_preserves_the_durable_github_draft(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"a.txt":"base"}))
+            .await;
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (view, cx) = cx.add_window_view(|window, cx| GitHubReview::new(project, window, cx));
+        view.update_in(cx, |view, window, cx| {
+            view.storage_key = Some("test-inline-github-draft".into());
+            view.attach(checkout(1), window, cx);
+            let editor = cx.new(|cx| Editor::single_line(window, cx));
+            let target = CommentTarget::Inline {
+                path: "a.txt".into(),
+                side: crate::github_review::DiffSide::Right,
+                start_line: 1,
+                line: 1,
+                head_sha: "a".repeat(40),
+                base_sha: "b".repeat(40),
+            };
+            view.select_inline_target(
+                target.clone(),
+                editor,
+                multi_buffer::Anchor::Min,
+                window,
+                cx,
+            );
+            assert!(view.inline_composer.is_some());
+            assert_eq!(view.target, target);
+            view.composer
+                .update(cx, |editor, cx| editor.set_text("inline draft", window, cx));
+            view.remove_inline_composer(true, cx);
+            assert!(view.inline_composer.is_none());
+            assert_eq!(view.draft().unwrap().body, "inline draft");
+        });
     }
 
     #[gpui::test]

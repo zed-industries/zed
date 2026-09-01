@@ -61,7 +61,13 @@ use std::{
     cmp::Ordering,
     sync::{Arc, atomic},
 };
-use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    future::Future,
+    rc::Rc,
+    sync::atomic::AtomicBool,
+    time::Instant,
+};
 use std::{iter, sync::atomic::AtomicUsize};
 use task::TaskVariables;
 use test::build_editor_with_project;
@@ -42455,6 +42461,53 @@ async fn test_diff_review_button_shown_when_ai_enabled(cx: &mut TestAppContext) 
             "show_diff_review_button should be true"
         );
     });
+}
+
+#[gpui::test]
+fn test_external_diff_review_handler_bypasses_local_review_feature_gate(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let called = Rc::new(RefCell::new(None));
+    let called_for_handler = called.clone();
+    let end_diff_review_drag_returned = Rc::new(Cell::new(false));
+    let end_diff_review_drag_returned_for_handler = end_diff_review_drag_returned.clone();
+    let editor = cx.add_window(|window, cx| {
+        let mut editor = Editor::single_line(window, cx);
+        editor.set_text("first\nsecond", window, cx);
+        editor.set_show_diff_review_button(true, cx);
+        editor.set_diff_review_handler(
+            Some(DiffReviewHandler::new(
+                |_| true,
+                move |editor, range, _, cx| {
+                    // External review handlers may need to inspect the originating editor
+                    // before opening their UI. This must run after the mouse event releases
+                    // the editor's update lease.
+                    assert!(end_diff_review_drag_returned_for_handler.get());
+                    assert_eq!(editor.read(cx).text(cx), "first\nsecond");
+                    let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+                    assert_eq!(
+                        range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                        Point::new(0, 0)..Point::new(0, 5)
+                    );
+                    *called_for_handler.borrow_mut() = Some(range);
+                },
+            )),
+            cx,
+        );
+        editor
+    });
+
+    editor
+        .update(cx, |editor, window, cx| {
+            assert!(editor.has_diff_review_handler(cx));
+            editor.start_diff_review_drag(DisplayRow(0), window, cx);
+            editor.end_diff_review_drag(window, cx);
+            assert!(called.borrow().is_none());
+            end_diff_review_drag_returned.set(true);
+            assert!(editor.diff_review_overlays.is_empty());
+        })
+        .unwrap();
+
+    assert!(called.borrow().is_some());
 }
 
 /// Helper function to create a DiffHunkKey for testing.

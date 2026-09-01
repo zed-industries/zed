@@ -8,14 +8,15 @@ use crate::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
+use buffer_diff::DiffHunkStatus;
 use editor::{
-    Addon, Editor, EditorEvent, RestoreOnlyDiffHunkDelegate, SplittableEditor,
-    actions::SendReviewToAgent,
+    Addon, DiffHunkDelegate, Editor, EditorEvent, ResolvedDiffHunks, RestoreOnlyDiffHunkDelegate,
+    SplittableEditor, actions::SendReviewToAgent,
 };
 use git::{repository::DiffType, status::FileStatus};
 use gpui::{
-    Action, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
-    SharedString, Subscription, Task, WeakEntity,
+    Action, AnyElement, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable,
+    MouseButton, Pixels, Render, SharedString, Subscription, Task, WeakEntity,
 };
 use language::{BufferId, Capability};
 use project::{
@@ -28,9 +29,10 @@ use project::{
 use settings::{GitDiffBaseSetting, Settings};
 use std::{
     any::{Any, TypeId},
+    ops::Range,
     sync::Arc,
 };
-use ui::{DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
+use ui::{Checkbox, DiffStat, Divider, ElevationIndex, PopoverMenu, Tooltip, prelude::*};
 use workspace::{
     ItemHandle, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -63,6 +65,7 @@ pub struct BranchDiff {
 
 struct BranchDiffAddon {
     branch_diff: Entity<diff_buffer_list::DiffBufferList>,
+    review: Option<WeakEntity<crate::branch_review::BranchReview>>,
 }
 
 impl Addon for BranchDiffAddon {
@@ -70,10 +73,111 @@ impl Addon for BranchDiffAddon {
         self
     }
 
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
     fn override_status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
         self.branch_diff
             .read(cx)
             .status_for_buffer_id(buffer_id, cx)
+    }
+
+    fn render_buffer_header_controls(
+        &self,
+        _: &multi_buffer::ExcerptBoundaryInfo,
+        buffer: &language::BufferSnapshot,
+        _: &Window,
+        cx: &App,
+    ) -> Option<gpui::AnyElement> {
+        let review = self.review.as_ref()?.upgrade()?;
+        let path = review.read(cx).path_for_buffer(buffer.remote_id(), cx)?;
+        let (viewed, disabled, tooltip) = review.read(cx).viewed_control_state(&path, cx)?;
+        let weak_review = review.downgrade();
+        let checkbox = Checkbox::new(
+            ("branch-review-viewed", buffer.remote_id().to_proto()),
+            viewed.into(),
+        )
+        .disabled(disabled)
+        .fill()
+        .elevation(ElevationIndex::Surface)
+        .tooltip(Tooltip::text(tooltip))
+        .on_click(move |_, window, cx| {
+            weak_review
+                .update(cx, |review, cx| {
+                    review.toggle_viewed_from_ui(&path, window, cx);
+                    cx.stop_propagation();
+                })
+                .ok();
+        });
+        Some(
+            h_flex()
+                .id(("branch-review-viewed-slot", buffer.remote_id().to_proto()))
+                .text_lg()
+                .child(checkbox)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(|_, _, cx| cx.stop_propagation())
+                .into_any_element(),
+        )
+    }
+}
+
+struct BranchReviewDiffHunkDelegate {
+    review: WeakEntity<crate::branch_review::BranchReview>,
+}
+
+impl DiffHunkDelegate for BranchReviewDiffHunkDelegate {
+    fn toggle(
+        &self,
+        _: Vec<ResolvedDiffHunks>,
+        _: &mut Editor,
+        _: &mut Window,
+        _: &mut gpui::Context<Editor>,
+    ) {
+    }
+
+    fn stage_or_unstage(
+        &self,
+        _: bool,
+        _: Vec<ResolvedDiffHunks>,
+        _: &mut Editor,
+        _: &mut Window,
+        _: &mut gpui::Context<Editor>,
+    ) {
+    }
+
+    fn restore(
+        &self,
+        _: Vec<ResolvedDiffHunks>,
+        _: &mut Editor,
+        _: &mut Window,
+        _: &mut gpui::Context<Editor>,
+    ) {
+    }
+
+    fn render_hunk_controls(
+        &self,
+        _: u32,
+        _: &DiffHunkStatus,
+        _: Range<multi_buffer::Anchor>,
+        _: bool,
+        _: Pixels,
+        _: &Entity<Editor>,
+        _: &mut Window,
+        _: &mut App,
+    ) -> AnyElement {
+        gpui::Empty.into_any_element()
+    }
+
+    fn render_hunk_hollow(
+        &self,
+        _: &DiffHunkStatus,
+        buffer_id: Option<BufferId>,
+        cx: &App,
+    ) -> Option<bool> {
+        let review = self.review.upgrade()?;
+        let path = review.read(cx).path_for_buffer(buffer_id?, cx)?;
+        Some(review.read(cx).is_viewed(&path, cx))
     }
 }
 
@@ -355,6 +459,7 @@ impl BranchDiff {
                         rhs_editor.set_read_only(false);
                         rhs_editor.register_addon(BranchDiffAddon {
                             branch_diff: branch_diff_for_addon,
+                            review: None,
                         });
                     });
                 },
@@ -374,14 +479,28 @@ impl BranchDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let review = cx.new(|cx| {
+            crate::branch_review::BranchReview::new(project.clone(), diff.clone(), window, cx)
+        });
         let diff_event_subscription = Subscription::join(
             cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
                 cx.emit(event.clone())
             }),
             cx.observe(&diff, |_, _, cx| cx.notify()),
         );
-        let review = cx.new(|cx| {
-            crate::branch_review::BranchReview::new(project.clone(), diff.clone(), window, cx)
+        let editor = diff.read(cx).editor().clone();
+        editor.update(cx, |split, cx| {
+            split.set_diff_hunk_delegate(
+                Some(Arc::new(BranchReviewDiffHunkDelegate {
+                    review: review.downgrade(),
+                })),
+                cx,
+            );
+            split.rhs_editor().update(cx, |editor, _| {
+                if let Some(addon) = editor.addon_mut::<BranchDiffAddon>() {
+                    addon.review = Some(review.downgrade());
+                }
+            });
         });
         Self {
             review,
@@ -1161,6 +1280,13 @@ mod tests {
         cx.run_until_parked();
 
         let editor = diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
+        assert!(editor.read_with(cx, |editor, _| {
+            editor
+                .addon::<BranchDiffAddon>()
+                .and_then(|addon| addon.review.as_ref())
+                .and_then(WeakEntity::upgrade)
+                .is_some()
+        }));
 
         let expected_diff = "
                 - A

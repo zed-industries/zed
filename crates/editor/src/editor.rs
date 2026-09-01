@@ -796,6 +796,38 @@ pub trait Addon: 'static {
     }
 }
 
+#[derive(Clone)]
+pub struct DiffReviewHandler {
+    is_enabled: Arc<dyn Fn(&App) -> bool + 'static>,
+    select: Arc<dyn Fn(Entity<Editor>, Range<Anchor>, &mut Window, &mut App) + 'static>,
+}
+
+impl DiffReviewHandler {
+    pub fn new(
+        is_enabled: impl Fn(&App) -> bool + 'static,
+        select: impl Fn(Entity<Editor>, Range<Anchor>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            is_enabled: Arc::new(is_enabled),
+            select: Arc::new(select),
+        }
+    }
+
+    fn is_enabled(&self, cx: &App) -> bool {
+        (self.is_enabled)(cx)
+    }
+
+    fn select(
+        &self,
+        editor: Entity<Editor>,
+        range: Range<Anchor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        (self.select)(editor, range, window, cx)
+    }
+}
+
 struct ChangeLocation {
     current: Option<Vec<Anchor>>,
     original: Vec<Anchor>,
@@ -1016,6 +1048,7 @@ pub struct Editor {
     show_bookmarks: Option<bool>,
     show_breakpoints: Option<bool>,
     show_diff_review_button: bool,
+    diff_review_handler: Option<DiffReviewHandler>,
     show_wrap_guides: Option<bool>,
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
@@ -2355,6 +2388,7 @@ impl Editor {
             show_bookmarks: None,
             show_breakpoints: None,
             show_diff_review_button: false,
+            diff_review_handler: None,
             show_wrap_guides: None,
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),

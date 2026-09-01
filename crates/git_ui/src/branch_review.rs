@@ -12,7 +12,7 @@ use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
-    App, AppContext as _, Context, Entity, Focusable, Render, Subscription, Task, WeakEntity,
+    App, AppContext as _, Context, Entity, FocusHandle, Render, Subscription, Task, WeakEntity,
     Window, uniform_list,
 };
 use language::{Buffer, BufferEvent};
@@ -21,12 +21,18 @@ use project::{
     git_store::diff_buffer_list::{DiffBase, DiffBufferList},
 };
 use settings::Settings;
-use std::{collections::BTreeMap, path::PathBuf, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+    time::Duration,
+};
 use ui::{Checkbox, ElevationIndex, Tooltip, prelude::*};
 use util::ResultExt as _;
 
 const REVIEW_TREE_INDENT: f32 = 16.0;
 const REVIEW_ROW_HEIGHT: f32 = 1.75;
+const REVIEW_ENTRY_LABEL_SIZE: LabelSize = LabelSize::Default;
+const REVIEW_AUXILIARY_LABEL_SIZE: LabelSize = LabelSize::Small;
 
 fn review_path_tooltip(path: &RepoPath, renamed_from: Option<&RepoPath>) -> String {
     renamed_from.map_or_else(
@@ -92,6 +98,13 @@ pub(crate) enum ReviewEvent {
     Reply(u64),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ViewedTransition {
+    MarkingViewed,
+    MarkingUnviewed,
+    NoChange,
+}
+
 impl gpui::EventEmitter<ReviewEvent> for BranchReview {}
 
 pub(crate) struct BranchReview {
@@ -99,7 +112,9 @@ pub(crate) struct BranchReview {
     diff: WeakEntity<DiffMultibuffer>,
     list: Entity<DiffBufferList>,
     entries: BTreeMap<RepoPath, ReviewEntry>,
+    buffer_paths: HashMap<language::BufferId, RepoPath>,
     pending_viewed: HashSet<RepoPath>,
+    auto_folded_pending: HashSet<RepoPath>,
     comments: Vec<crate::github_review::PublishedComment>,
     comment_markdown: BTreeMap<u64, (String, Entity<markdown::Markdown>)>,
     expanded_threads: HashSet<u64>,
@@ -111,6 +126,7 @@ pub(crate) struct BranchReview {
     rebuild_scheduled: bool,
     collapsed: HashSet<String>,
     selected: Option<RepoPath>,
+    panel_focus_handle: Option<FocusHandle>,
     search: Entity<Editor>,
     query: String,
     filter: ReviewFilter,
@@ -160,7 +176,9 @@ impl BranchReview {
             diff: diff.downgrade(),
             list,
             entries: BTreeMap::new(),
+            buffer_paths: HashMap::default(),
             pending_viewed: HashSet::default(),
+            auto_folded_pending: HashSet::default(),
             comments: Vec::new(),
             comment_markdown: BTreeMap::new(),
             expanded_threads: HashSet::default(),
@@ -169,6 +187,7 @@ impl BranchReview {
             rebuild_scheduled: false,
             collapsed: HashSet::default(),
             selected: None,
+            panel_focus_handle: None,
             search,
             query: String::new(),
             filter: ReviewFilter::All,
@@ -222,18 +241,18 @@ impl BranchReview {
         Some(((!deleted).then(|| buffer.text()), diff.base_text_string(cx)))
     }
 
-    pub fn path_for_buffer(&self, buffer_id: language::BufferId, cx: &App) -> Option<RepoPath> {
-        self.entries.iter().find_map(|(path, entry)| {
-            (entry
-                .buffer
-                .as_ref()
-                .is_some_and(|buffer| buffer.read(cx).remote_id() == buffer_id)
-                || entry
-                    .diff
-                    .as_ref()
-                    .is_some_and(|diff| diff.read(cx).base_text(cx).remote_id() == buffer_id))
-            .then(|| path.clone())
-        })
+    pub fn path_for_buffer(&self, buffer_id: language::BufferId, _cx: &App) -> Option<RepoPath> {
+        self.buffer_paths.get(&buffer_id).cloned()
+    }
+
+    fn notify_diff_editors(&self, cx: &mut Context<Self>) {
+        let Some(diff) = self.diff.upgrade() else {
+            return;
+        };
+        let editor = diff.read(cx).editor().clone();
+        editor.update(cx, |split, cx| {
+            split.update_editors(cx, |_, cx| cx.notify());
+        });
     }
 
     pub fn set_comments(
@@ -558,7 +577,9 @@ impl BranchReview {
             .map(|buffer| buffer.repo_path.clone())
             .collect();
         self.entries.retain(|path, _| paths.contains(path));
+        self.buffer_paths.retain(|_, path| paths.contains(path));
         self.pending_viewed.retain(|path| paths.contains(path));
+        self.auto_folded_pending.retain(|path| paths.contains(path));
         for buffer in &buffers {
             self.entries
                 .entry(buffer.repo_path.clone())
@@ -652,9 +673,12 @@ impl BranchReview {
                                         }
                                     }
                                 });
+                                let (added, removed) =
+                                    loaded.diff.read(cx).snapshot(cx).changed_row_counts();
+                                let buffer_id = loaded.main_buffer.read(cx).remote_id();
+                                let base_buffer_id = loaded.diff.read(cx).base_text(cx).remote_id();
+                                this.buffer_paths.retain(|_, candidate| candidate != &path);
                                 if let Some(entry) = this.entries.get_mut(&path) {
-                                    let (added, removed) =
-                                        loaded.diff.read(cx).snapshot(cx).changed_row_counts();
                                     entry.status = buffer.file_status;
                                     entry.buffer = Some(loaded.main_buffer);
                                     entry.diff = Some(loaded.diff);
@@ -662,6 +686,8 @@ impl BranchReview {
                                     entry._subscriptions = vec![subscription, diff_subscription];
                                     entry.error = None;
                                 }
+                                this.buffer_paths.insert(buffer_id, path.clone());
+                                this.buffer_paths.insert(base_buffer_id, path.clone());
                                 if this.should_validate(&path, cx) {
                                     this.reconcile(&path, cx);
                                 }
@@ -686,6 +712,10 @@ impl BranchReview {
                 this.loading = false;
                 this.error = result.err().map(|error| format!("{error:#}"));
                 this.rebuild_rows(cx);
+                // The buffer-to-path index above drives the header checkbox and
+                // Viewed hunk treatment. Refresh once after hydration so excerpts
+                // painted earlier pick up that state without repainting per file.
+                this.notify_diff_editors(cx);
             })
             .log_err();
         }));
@@ -868,15 +898,24 @@ impl BranchReview {
                             entry.error = None;
                         }
                         Err(error) => {
+                            let was_pending = this.pending_viewed.remove(&path);
                             entry.fingerprint = None;
                             entry.validated_comparison = None;
                             entry.error = Some(format!("{error:#}"));
+                            if was_pending && this.auto_folded_pending.remove(&path) {
+                                if let Some(diff) = this.diff.upgrade() {
+                                    diff.update(cx, |diff, cx| {
+                                        diff.unfold_path(&path, cx);
+                                    });
+                                }
+                            }
                         }
                     }
                 }
                 if let Some((fingerprint, base, current)) = pending_approval
                     && let Some(state) = &this.state
                 {
+                    this.auto_folded_pending.remove(&path);
                     state.update(cx, |state, cx| {
                         state.set_viewed(
                             path.to_string(),
@@ -887,6 +926,7 @@ impl BranchReview {
                     });
                 }
                 this.schedule_rebuild(cx);
+                this.notify_diff_editors(cx);
             })
             .log_err();
         }));
@@ -956,7 +996,7 @@ impl BranchReview {
             .and_then(|entry| entry.fingerprint.as_ref())
     }
 
-    fn is_viewed(&self, path: &RepoPath, cx: &App) -> bool {
+    pub(crate) fn is_viewed(&self, path: &RepoPath, cx: &App) -> bool {
         if self.pending_viewed.contains(path) {
             return true;
         }
@@ -965,6 +1005,40 @@ impl BranchReview {
             .is_some_and(|(fingerprint, state)| {
                 state.read(cx).is_viewed(&path.to_string(), fingerprint)
             })
+    }
+
+    pub(crate) fn viewed_control_state(
+        &self,
+        path: &RepoPath,
+        cx: &App,
+    ) -> Option<(bool, bool, String)> {
+        let entry = self.entries.get(path)?;
+        let viewed = self.is_viewed(path, cx);
+        let disabled = !self.scope_matches(cx)
+            || self.list.read(cx).is_tree_base_loading()
+            || self.list.read(cx).tree_diff_error().is_some()
+            || self.error.is_some()
+            || entry.buffer.is_none()
+            || entry.diff.is_none()
+            || entry
+                .hash_task
+                .as_ref()
+                .is_some_and(|task| !task.is_ready())
+            || self
+                .state
+                .as_ref()
+                .is_none_or(|state| state.read(cx).error.is_some());
+        let reasons = self.change_reasons(path, cx);
+        let tooltip = entry.error.clone().unwrap_or_else(|| {
+            if viewed {
+                "Mark unviewed".into()
+            } else if !reasons.is_empty() {
+                format!("Changed since Viewed: {}", reasons.join(", "))
+            } else {
+                "Mark Viewed: approve this comparison".into()
+            }
+        });
+        Some((viewed, disabled, tooltip))
     }
 
     fn change_reasons(&self, path: &RepoPath, cx: &App) -> Vec<&'static str> {
@@ -989,6 +1063,38 @@ impl BranchReview {
                 ReviewFilter::Unviewed => !self.is_viewed(path, cx),
                 ReviewFilter::Changed => !self.change_reasons(path, cx).is_empty(),
             }
+    }
+
+    pub(crate) fn set_panel_focus_handle(
+        &mut self,
+        focus_handle: Option<FocusHandle>,
+        cx: &mut Context<Self>,
+    ) {
+        self.panel_focus_handle = focus_handle;
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn selected_path(&self) -> Option<&RepoPath> {
+        self.selected.as_ref()
+    }
+
+    fn panel_is_focused(&self, window: &Window) -> bool {
+        self.panel_focus_handle
+            .as_ref()
+            .is_some_and(|focus_handle| focus_handle.is_focused(window))
+    }
+
+    pub(crate) fn open_path_from_panel(
+        &mut self,
+        path: RepoPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(focus_handle) = &self.panel_focus_handle {
+            focus_handle.focus(window, cx);
+        }
+        self.open_path(path, window, cx);
     }
 
     fn open_path(&mut self, path: RepoPath, window: &mut Window, cx: &mut Context<Self>) {
@@ -1209,20 +1315,39 @@ impl BranchReview {
         self.rebuild_rows(cx);
     }
 
-    fn toggle_viewed_from_ui(
+    pub(crate) fn toggle_viewed_from_ui(
         &mut self,
         path: &RepoPath,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> ViewedTransition {
         let delta_side = self
             .diff
             .read_with(cx, |diff, _| diff.viewed_delta_side())
             .ok()
             .flatten();
+        let was_viewed = self.is_viewed(path, cx);
+        let was_pending = self.pending_viewed.contains(path);
         self.toggle_viewed(path, cx);
+        let is_viewed = self.is_viewed(path, cx);
+        let transition = match (was_viewed, is_viewed) {
+            (false, true) => ViewedTransition::MarkingViewed,
+            (true, false) => ViewedTransition::MarkingUnviewed,
+            _ => ViewedTransition::NoChange,
+        };
+        if transition == ViewedTransition::MarkingViewed
+            && let Some(diff) = self.diff.upgrade()
+            && diff.update(cx, |diff, cx| diff.fold_path(path, cx))
+            && !was_pending
+            && self.pending_viewed.contains(path)
+        {
+            self.auto_folded_pending.insert(path.clone());
+        }
+        if transition != ViewedTransition::NoChange {
+            self.notify_diff_editors(cx);
+        }
         let Some(delta_side) = delta_side else {
-            return;
+            return transition;
         };
         if matches!(
             self.approved_snapshot(path, cx),
@@ -1232,6 +1357,7 @@ impl BranchReview {
         } else {
             self.show_branch_comparison(window, cx);
         }
+        transition
     }
 
     #[ztracing::instrument(skip_all, fields(entries = self.entries.len()))]
@@ -1359,7 +1485,7 @@ impl BranchReview {
                         Label::new(name)
                             .single_line()
                             .truncate()
-                            .size(LabelSize::Small)
+                            .size(REVIEW_ENTRY_LABEL_SIZE)
                             .color(Color::Muted),
                     );
 
@@ -1382,7 +1508,7 @@ impl BranchReview {
                     .child(name_row)
                     .child(
                         Label::new(format!("{viewed}/{total}"))
-                            .size(LabelSize::XSmall)
+                            .size(REVIEW_AUXILIARY_LABEL_SIZE)
                             .color(Color::Muted),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -1397,33 +1523,12 @@ impl BranchReview {
                 let Some(entry) = self.entries.get(&path) else {
                     return div().into_any_element();
                 };
-                let viewed = self.is_viewed(&path, cx);
-                let disabled = !self.scope_matches(cx)
-                    || self.list.read(cx).is_tree_base_loading()
-                    || self.list.read(cx).tree_diff_error().is_some()
-                    || self.error.is_some()
-                    || entry.buffer.is_none()
-                    || entry.diff.is_none()
-                    || entry
-                        .hash_task
-                        .as_ref()
-                        .is_some_and(|task| !task.is_ready())
-                    || self
-                        .state
-                        .as_ref()
-                        .is_none_or(|state| state.read(cx).error.is_some());
+                let Some((viewed, disabled, tooltip)) = self.viewed_control_state(&path, cx) else {
+                    return div().into_any_element();
+                };
                 let renamed_from = self.list.read(cx).renamed_from(&path);
                 let checkbox_path = path.clone();
                 let reasons = self.change_reasons(&path, cx);
-                let tooltip = entry.error.clone().unwrap_or_else(|| {
-                    if viewed {
-                        "Mark unviewed".into()
-                    } else if !reasons.is_empty() {
-                        format!("Changed since Viewed: {}", reasons.join(", "))
-                    } else {
-                        "Mark Viewed: approve this comparison".into()
-                    }
-                });
                 let path_tooltip = review_path_tooltip(&path, renamed_from);
                 let file_name = path
                     .as_std_path()
@@ -1450,13 +1555,7 @@ impl BranchReview {
                         colors.ghost_element_active,
                     )
                 };
-                let focused = self.diff.upgrade().is_some_and(|diff| {
-                    diff.read(cx)
-                        .editor()
-                        .read(cx)
-                        .focus_handle(cx)
-                        .is_focused(window)
-                });
+                let focused = self.panel_is_focused(window);
                 let name_row = h_flex()
                     .min_w_0()
                     .flex_1()
@@ -1467,7 +1566,7 @@ impl BranchReview {
                         Label::new(file_name)
                             .single_line()
                             .truncate()
-                            .size(LabelSize::Small)
+                            .size(REVIEW_ENTRY_LABEL_SIZE)
                             .when(entry.status.is_deleted(), Label::strikethrough),
                     );
                 let change_tooltip = format!("Changed since Viewed: {}", reasons.join(", "));
@@ -1506,7 +1605,7 @@ impl BranchReview {
                     .when_some(diff_stat, |row, (added, removed)| {
                         row.child(
                             ui::DiffStat::new(("review-diff-stat", index), added, removed)
-                                .label_size(LabelSize::Small),
+                                .label_size(REVIEW_AUXILIARY_LABEL_SIZE),
                         )
                     })
                     .child(
@@ -1523,12 +1622,12 @@ impl BranchReview {
                                     .tooltip(Tooltip::text(tooltip))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
-                                        this.toggle_viewed_from_ui(&checkbox_path, window, cx)
+                                        this.toggle_viewed_from_ui(&checkbox_path, window, cx);
                                     })),
                             ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_path(path.clone(), window, cx)
+                        this.open_path_from_panel(path.clone(), window, cx)
                     }))
                     .into_any_element()
             }
@@ -1853,6 +1952,12 @@ mod tests {
     use util::path;
     use workspace::MultiWorkspace;
 
+    #[test]
+    fn review_row_typography_matches_git_panel_entries() {
+        assert_eq!(REVIEW_ENTRY_LABEL_SIZE, LabelSize::default());
+        assert_eq!(REVIEW_AUXILIARY_LABEL_SIZE, LabelSize::Small);
+    }
+
     #[gpui::test]
     async fn review_rows_expose_native_git_statuses_and_diff_stats(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -1917,6 +2022,60 @@ mod tests {
             assert_eq!(review.diff_stat(&deleted, cx), Some((0, 1)));
             assert_eq!(review.list.read(cx).buffer_load_count(), 3);
         });
+
+        let buffer_id = review.read_with(cx, |review, cx| {
+            review.entries[&modified]
+                .buffer
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .remote_id()
+        });
+        let editor = diff.read_with(cx, |diff, cx| diff.editor(cx));
+        let rhs = editor.read_with(cx, |editor, _| editor.rhs_editor().clone());
+        assert!(!rhs.read_with(cx, |editor, cx| { editor.is_buffer_folded(buffer_id, cx) }));
+
+        review.update_in(cx, |review, window, cx| {
+            assert_eq!(
+                review.toggle_viewed_from_ui(&modified, window, cx),
+                ViewedTransition::MarkingViewed
+            );
+        });
+        assert!(rhs.read_with(cx, |editor, cx| { editor.is_buffer_folded(buffer_id, cx) }));
+        assert!(rhs.read_with(cx, |editor, cx| {
+            editor
+                .diff_hunk_delegate()
+                .render_hunk_hollow(
+                    &buffer_diff::DiffHunkStatus::modified_none(),
+                    Some(buffer_id),
+                    cx,
+                )
+                .unwrap()
+        }));
+
+        for _ in 0..5 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        cx.run_until_parked();
+
+        review.update_in(cx, |review, window, cx| {
+            assert_eq!(
+                review.toggle_viewed_from_ui(&modified, window, cx),
+                ViewedTransition::MarkingUnviewed
+            );
+        });
+        assert!(rhs.read_with(cx, |editor, cx| { editor.is_buffer_folded(buffer_id, cx) }));
+        assert!(!rhs.read_with(cx, |editor, cx| {
+            editor
+                .diff_hunk_delegate()
+                .render_hunk_hollow(
+                    &buffer_diff::DiffHunkStatus::modified_none(),
+                    Some(buffer_id),
+                    cx,
+                )
+                .unwrap()
+        }));
     }
 
     #[test]

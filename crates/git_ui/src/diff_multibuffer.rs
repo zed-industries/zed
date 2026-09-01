@@ -205,6 +205,38 @@ impl DiffMultibuffer {
         self.viewed_delta.as_ref().map(|delta| delta.side)
     }
 
+    pub(crate) fn fold_path(&mut self, path: &RepoPath, cx: &mut Context<Self>) -> bool {
+        let Some(buffer_id) = self
+            .buffer_subscriptions
+            .get(path)
+            .map(|subscriptions| subscriptions.display_buffer.read(cx).remote_id())
+        else {
+            return false;
+        };
+        self.editor.update(cx, |split, cx| {
+            split
+                .rhs_editor()
+                .update(cx, |editor, cx| editor.fold_buffer(buffer_id, cx));
+        });
+        true
+    }
+
+    pub(crate) fn unfold_path(&mut self, path: &RepoPath, cx: &mut Context<Self>) -> bool {
+        let Some(buffer_id) = self
+            .buffer_subscriptions
+            .get(path)
+            .map(|subscriptions| subscriptions.display_buffer.read(cx).remote_id())
+        else {
+            return false;
+        };
+        self.editor.update(cx, |split, cx| {
+            split
+                .rhs_editor()
+                .update(cx, |editor, cx| editor.unfold_buffer(buffer_id, cx));
+        });
+        true
+    }
+
     pub(crate) fn show_viewed_delta(
         &mut self,
         path: RepoPath,
@@ -530,7 +562,15 @@ impl DiffMultibuffer {
                         cx,
                     );
                 }
-                buffer_diff::BufferDiffEvent::BaseTextChanged => {}
+                buffer_diff::BufferDiffEvent::BaseTextChanged => {
+                    // Progressive loading can briefly expose a placeholder base and
+                    // therefore a whole-file hunk. Drop those provisional excerpts
+                    // before the following DiffChanged event installs the real
+                    // ranges, rather than permanently merging both sets.
+                    this.editor.update(cx, |editor, cx| {
+                        editor.remove_excerpts_for_path(path_key.clone(), cx)
+                    });
+                }
             }
         });
         let conflict_set_subscription = conflict_set.as_ref().map(|conflict_set| {

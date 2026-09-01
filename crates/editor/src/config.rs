@@ -228,6 +228,15 @@ impl Editor {
         cx.notify();
     }
 
+    pub fn set_diff_review_handler(
+        &mut self,
+        handler: Option<DiffReviewHandler>,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff_review_handler = handler;
+        cx.notify();
+    }
+
     fn set_show_scrollbars(&mut self, show: bool, cx: &mut Context<Self>) {
         self.show_scrollbars = ScrollbarAxes {
             horizontal: show,

@@ -5,14 +5,15 @@ use crate::{
 };
 use anyhow::{Context as _, Result, ensure};
 use db::kvp::KeyValueStore;
+use editor::{DiffReviewHandler, Editor};
 use gpui::{
-    AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
+    App, AsyncWindowContext, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
     WeakEntity,
 };
 use project::git_store::{GitStoreEvent, diff_buffer_list::DiffBase};
 use serde::{Deserialize, Serialize};
 use settings::{IntoGpui as _, Settings};
-use std::path::PathBuf;
+use std::{ops::Range, path::PathBuf};
 use ui::{Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::{
@@ -254,15 +255,23 @@ impl BranchReviewPanel {
             return;
         }
         if self.session.as_ref().is_some_and(|session| session.item == item && matches!(item.read(cx).diff_base(cx), DiffBase::Merge { base_ref } if base_ref.as_ref() == session.comparison.base_ref)) { return; }
-        let branch_diff = item.read(cx);
-        let Some(repo) = branch_diff.repo(cx) else {
-            return;
+        let (repo, base_ref, review, diff_editor) = {
+            let branch_diff = item.read(cx);
+            let Some(repo) = branch_diff.repo(cx) else {
+                return;
+            };
+            let DiffBase::Merge { base_ref } = branch_diff.diff_base(cx) else {
+                return;
+            };
+            (
+                repo,
+                base_ref.clone(),
+                branch_diff.review.clone(),
+                branch_diff.editor(cx),
+            )
         };
         let repo = repo.read(cx);
         let Some(branch) = repo.branch.as_ref() else {
-            return;
-        };
-        let DiffBase::Merge { base_ref } = branch_diff.diff_base(cx) else {
             return;
         };
         let comparison = SavedComparison {
@@ -280,7 +289,15 @@ impl BranchReviewPanel {
                     .and_then(|saved| saved.checkout.clone())
             }),
         };
-        let review = branch_diff.review.clone();
+        if let Some(previous) = &self.session
+            && previous.item != item
+        {
+            let previous_review = previous.item.read(cx).review.clone();
+            previous_review.update(cx, |review, cx| review.set_panel_focus_handle(None, cx));
+        }
+        review.update(cx, |review, cx| {
+            review.set_panel_focus_handle(Some(self.focus_handle.clone()), cx)
+        });
         if let Some(checkout) = &comparison.checkout {
             match checkout.review_key(&comparison.worktree) {
                 Ok(key) => review.update(cx, |review, cx| review.set_storage_key(Some(key), cx)),
@@ -297,13 +314,39 @@ impl BranchReviewPanel {
             });
             self.github.update(cx, |github, cx| github.detach(cx));
         }
+        let handler = comparison.checkout.as_ref().map(|_| {
+            let review_for_enabled = review.downgrade();
+            let panel = cx.weak_entity();
+            DiffReviewHandler::new(
+                move |cx| {
+                    review_for_enabled
+                        .read_with(cx, |review, cx| !review.is_viewed_delta(cx))
+                        .unwrap_or(false)
+                },
+                move |editor, range, window, cx| {
+                    panel
+                        .update(cx, |panel, cx| {
+                            panel.comment_range(editor, range, window, cx)
+                        })
+                        .ok();
+                },
+            )
+        });
+        diff_editor.update(cx, |editor, cx| editor.set_diff_review_handler(handler, cx));
         self.ignored_item = None;
         let subscription = cx.subscribe_in(
             &review,
             window,
             |this, _, event: &ReviewEvent, window, cx| match event {
                 ReviewEvent::OpenDiff => {
-                    cx.defer_in(window, |this, window, cx| this.open_diff(window, cx))
+                    let keep_panel_focus = this.focus_handle.contains_focused(window, cx);
+                    let panel_focus_handle = this.focus_handle.clone();
+                    cx.defer_in(window, move |this, window, cx| {
+                        this.open_diff(window, cx);
+                        if keep_panel_focus {
+                            panel_focus_handle.focus(window, cx);
+                        }
+                    })
                 }
                 ReviewEvent::Reply(id) => {
                     this.github.update(cx, |github, cx| {
@@ -467,65 +510,96 @@ impl BranchReviewPanel {
     fn comment_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let result: Result<CommentTarget> = (|| {
             let session = self.session.as_ref().context("Open a PR review first")?;
-            let checkout = session
-                .comparison
-                .checkout
-                .as_ref()
-                .context("This is a local branch comparison")?;
-            ensure!(
-                !session.item.read(cx).review.read(cx).is_viewed_delta(cx),
-                "Switch to the Branch comparison before selecting lines for a GitHub comment"
-            );
             let split = session.item.read(cx).editor(cx);
             let split = split.read(cx);
-            let editor_handle = split.focused_editor();
+            let editor_handle = split.focused_editor().clone();
             let editor = editor_handle.read(cx);
             let selection = editor.selections.newest_anchor();
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let ranges: Vec<_> = snapshot
-                .range_to_buffer_ranges_with_deleted_hunks(selection.start..selection.end)
-                .collect();
-            ensure!(
-                ranges.len() == 1,
-                "Select lines on one side of one file to comment"
-            );
-            let (buffer, range, deleted) = ranges
-                .first()
-                .context("Select a changed line in the diff")?;
-            let side = if deleted.is_some() || split.lhs_editor() == Some(editor_handle) {
-                DiffSide::Left
-            } else {
-                DiffSide::Right
-            };
-            let path = session
-                .item
-                .read(cx)
-                .review
-                .read(cx)
-                .path_for_buffer(buffer.remote_id(), cx)
-                .context("The selected excerpt is not part of this PR comparison")?
-                .to_string();
-            use language::ToPoint as _;
-            let start = range.start.to_point(buffer);
-            let end = range.end.to_point(buffer);
-            let line = if end.column == 0 && end.row > start.row {
-                end.row
-            } else {
-                end.row + 1
-            };
-            Ok(CommentTarget::Inline {
-                path,
-                side,
-                start_line: start.row + 1,
-                line,
-                head_sha: checkout.pull_request.head.sha.clone(),
-                base_sha: checkout.pull_request.base.sha.clone(),
-            })
+            self.comment_target(&editor_handle, selection.start..selection.end, cx)
         })();
         self.github.update(cx, |github, cx| match result {
             Ok(target) => github.select_target(target, window, cx),
             Err(error) => github.show_error(format!("{error:#}"), cx),
         });
+    }
+
+    fn comment_range(
+        &mut self,
+        editor: Entity<Editor>,
+        range: Range<multi_buffer::Anchor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let anchor = range.end;
+        match self.comment_target(&editor, range, cx) {
+            Ok(target) => self.github.update(cx, |github, cx| {
+                github.select_inline_target(target, editor, anchor, window, cx)
+            }),
+            Err(error) => self
+                .github
+                .update(cx, |github, cx| github.show_error(format!("{error:#}"), cx)),
+        }
+    }
+
+    fn comment_target(
+        &self,
+        editor_handle: &Entity<Editor>,
+        selection: Range<multi_buffer::Anchor>,
+        cx: &App,
+    ) -> Result<CommentTarget> {
+        let session = self.session.as_ref().context("Open a PR review first")?;
+        let checkout = session
+            .comparison
+            .checkout
+            .as_ref()
+            .context("This is a local branch comparison")?;
+        ensure!(
+            !session.item.read(cx).review.read(cx).is_viewed_delta(cx),
+            "Switch to the Branch comparison before selecting lines for a GitHub comment"
+        );
+        let split = session.item.read(cx).editor(cx);
+        let split = split.read(cx);
+        let editor = editor_handle.read(cx);
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let ranges: Vec<_> = snapshot
+            .range_to_buffer_ranges_with_deleted_hunks(selection)
+            .collect();
+        ensure!(
+            ranges.len() == 1,
+            "Select lines on one side of one file to comment"
+        );
+        let (buffer, range, deleted) = ranges
+            .first()
+            .context("Select a changed line in the diff")?;
+        let side = if deleted.is_some() || split.lhs_editor() == Some(editor_handle) {
+            DiffSide::Left
+        } else {
+            DiffSide::Right
+        };
+        let path = session
+            .item
+            .read(cx)
+            .review
+            .read(cx)
+            .path_for_buffer(buffer.remote_id(), cx)
+            .context("The selected excerpt is not part of this PR comparison")?
+            .to_string();
+        use language::ToPoint as _;
+        let start = range.start.to_point(buffer);
+        let end = range.end.to_point(buffer);
+        let line = if end.column == 0 && end.row > start.row {
+            end.row
+        } else {
+            end.row + 1
+        };
+        Ok(CommentTarget::Inline {
+            path,
+            side,
+            start_line: start.row + 1,
+            line,
+            head_sha: checkout.pull_request.head.sha.clone(),
+            base_sha: checkout.pull_request.base.sha.clone(),
+        })
     }
 
     fn open_diff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -544,12 +618,13 @@ impl BranchReviewPanel {
 
     fn close_review(&mut self, cx: &mut Context<Self>) {
         if let Some(session) = &self.session {
-            session
-                .item
-                .read(cx)
-                .review
-                .clone()
-                .update(cx, |review, cx| review.set_comments(Vec::new(), cx));
+            let (review, editor) = {
+                let item = session.item.read(cx);
+                (item.review.clone(), item.editor(cx))
+            };
+            review.update(cx, |review, cx| review.set_panel_focus_handle(None, cx));
+            editor.update(cx, |editor, cx| editor.set_diff_review_handler(None, cx));
+            review.update(cx, |review, cx| review.set_comments(Vec::new(), cx));
         }
         self.ignored_item = self
             .session
@@ -783,6 +858,7 @@ impl Render for BranchReviewPanel {
 mod tests {
     use super::*;
     use fs::FakeFs;
+    use git::repository::RepoPath;
     use gpui::TestAppContext;
     use project::Project;
     use serde_json::json;
@@ -843,6 +919,34 @@ mod tests {
         cx.run_until_parked();
         panel.read_with(cx, |panel, _| {
             assert_eq!(panel.session.as_ref().unwrap().item, diff)
+        });
+        let review = diff.read_with(cx, |diff, _| diff.review.clone());
+        let editor_focus = diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).focus_handle(cx));
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        let selected_path = RepoPath::new("a.txt").unwrap();
+        review.update_in(cx, |review, window, cx| {
+            review.open_path_from_panel(selected_path.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        panel.update_in(cx, |panel, window, _| {
+            assert!(panel.focus_handle.is_focused(window));
+        });
+        review.read_with(cx, |review, _| {
+            assert_eq!(review.selected_path(), Some(&selected_path));
+        });
+        cx.update(|window, cx| editor_focus.focus(window, cx));
+        panel.update_in(cx, |panel, window, _| {
+            assert!(!panel.focus_handle.is_focused(window));
+        });
+        review.read_with(cx, |review, _| {
+            assert_eq!(review.selected_path(), Some(&selected_path));
+        });
+        review.update_in(cx, |review, window, cx| {
+            review.open_path_from_panel(selected_path.clone(), window, cx)
+        });
+        cx.run_until_parked();
+        panel.update_in(cx, |panel, window, _| {
+            assert!(panel.focus_handle.is_focused(window));
         });
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
         pane.update_in(cx, |pane, window, cx| {

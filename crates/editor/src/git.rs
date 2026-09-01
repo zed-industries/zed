@@ -83,6 +83,15 @@ pub trait DiffHunkDelegate {
     fn render_hunk_as_staged(&self, status: &DiffHunkStatus, _cx: &App) -> bool {
         !status.has_secondary_hunk()
     }
+
+    fn render_hunk_hollow(
+        &self,
+        _status: &DiffHunkStatus,
+        _buffer_id: Option<BufferId>,
+        _cx: &App,
+    ) -> Option<bool> {
+        None
+    }
 }
 
 pub struct UncommittedDiffHunkDelegate;
@@ -1165,6 +1174,12 @@ impl Editor {
         self.show_diff_review_button
     }
 
+    pub(super) fn has_diff_review_handler(&self, cx: &App) -> bool {
+        self.diff_review_handler
+            .as_ref()
+            .is_some_and(|handler| handler.is_enabled(cx))
+    }
+
     pub(super) fn render_diff_review_button(
         &self,
         display_row: DisplayRow,
@@ -1173,6 +1188,11 @@ impl Editor {
     ) -> impl IntoElement {
         let text_color = cx.theme().colors().text;
         let icon_color = cx.theme().colors().icon_accent;
+        let tooltip = if self.has_diff_review_handler(cx) {
+            "Add GitHub comment (drag to select multiple lines)"
+        } else {
+            "Add Review (drag to select multiple lines)"
+        };
 
         h_flex()
             .id("diff_review_button")
@@ -1189,7 +1209,7 @@ impl Editor {
                     .border_color(icon_color.opacity(0.5))
             })
             .child(Icon::new(IconName::Plus).size(IconSize::Small))
-            .tooltip(Tooltip::text("Add Review (drag to select multiple lines)"))
+            .tooltip(Tooltip::text(tooltip))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(move |editor, _event: &gpui::MouseDownEvent, window, cx| {
@@ -1240,7 +1260,29 @@ impl Editor {
         if let Some(drag_state) = self.diff_review_drag_state.take() {
             let snapshot = self.snapshot(window, cx);
             let range = drag_state.row_range(&snapshot.display_snapshot);
-            self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
+            if let Some(handler) = self
+                .diff_review_handler
+                .clone()
+                .filter(|handler| handler.is_enabled(cx))
+            {
+                let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+                let start = snapshot
+                    .display_snapshot
+                    .display_point_to_point(range.start().as_display_point(), Bias::Left);
+                let end = snapshot
+                    .display_snapshot
+                    .display_point_to_point(range.end().as_display_point(), Bias::Left);
+                let line_end =
+                    Point::new(end.row, buffer_snapshot.line_len(MultiBufferRow(end.row)));
+                let anchor_range =
+                    buffer_snapshot.anchor_after(start)..buffer_snapshot.anchor_before(line_end);
+                let editor = cx.entity();
+                window.defer(cx, move |window, cx| {
+                    handler.select(editor, anchor_range, window, cx);
+                });
+            } else {
+                self.show_diff_review_overlay(*range.start()..*range.end(), window, cx);
+            }
         }
         cx.notify();
     }

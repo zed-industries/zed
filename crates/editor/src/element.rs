@@ -2553,7 +2553,9 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         cx: &App,
     ) -> Option<(DisplayRow, Option<u32>)> {
-        if !cx.has_flag::<DiffReviewFeatureFlag>() {
+        if !self.editor.read(cx).has_diff_review_handler(cx)
+            && !cx.has_flag::<DiffReviewFeatureFlag>()
+        {
             return None;
         }
 
@@ -5297,7 +5299,18 @@ impl EditorElement {
                         .editor_background
                         .blend(background_color);
 
-                    if !self.diff_hunk_hollow(status, cx) {
+                    let buffer_id = match hunk {
+                        DisplayDiffHunk::Unfolded {
+                            multi_buffer_range, ..
+                        } => layout
+                            .position_map
+                            .snapshot
+                            .buffer_snapshot()
+                            .anchor_to_buffer_anchor(multi_buffer_range.start)
+                            .map(|(anchor, _)| anchor.buffer_id),
+                        DisplayDiffHunk::Folded { .. } => None,
+                    };
+                    if !self.diff_hunk_hollow(status, buffer_id, cx) {
                         window.paint_quad(quad(
                             hunk_bounds,
                             corner_radii,
@@ -6605,12 +6618,17 @@ impl EditorElement {
         )
     }
 
-    fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged = !self
-            .editor
-            .read(cx)
-            .diff_hunk_delegate()
-            .render_hunk_as_staged(&status, cx);
+    fn diff_hunk_hollow(
+        &self,
+        status: DiffHunkStatus,
+        buffer_id: Option<BufferId>,
+        cx: &mut App,
+    ) -> bool {
+        let delegate = self.editor.read(cx).diff_hunk_delegate();
+        if let Some(hollow) = delegate.render_hunk_hollow(&status, buffer_id, cx) {
+            return hollow;
+        }
+        let unstaged = !delegate.render_hunk_as_staged(&status, cx);
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
@@ -8306,11 +8324,12 @@ impl Element for EditorElement {
                             type_id: None,
                         };
 
-                        let background = if self.diff_hunk_hollow(diff_status, cx) {
-                            hollow_highlight
-                        } else {
-                            filled_highlight
-                        };
+                        let background =
+                            if self.diff_hunk_hollow(diff_status, row_info.buffer_id, cx) {
+                                hollow_highlight
+                            } else {
+                                filled_highlight
+                            };
 
                         let base_display_point =
                             DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
