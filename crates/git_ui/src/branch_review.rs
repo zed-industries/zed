@@ -1771,6 +1771,23 @@ mod tests {
                 .read(cx)
                 .remote_id()
         });
+        let unrelated_buffer_id = review.read_with(cx, |review, cx| {
+            review.entries[&b]
+                .buffer
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .remote_id()
+        });
+        let expected_base_buffer_id = review.read_with(cx, |review, cx| {
+            review.entries[&a]
+                .diff
+                .as_ref()
+                .unwrap()
+                .read(cx)
+                .base_text(cx)
+                .remote_id()
+        });
         review.update_in(cx, |review, window, cx| {
             review.open_path(a.clone(), window, cx);
             review.show_selected_viewed_delta(ViewedDeltaSide::WorkingFile, window, cx);
@@ -1779,15 +1796,14 @@ mod tests {
         let delta_editor =
             diff.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
         delta_editor.read_with(cx, |editor, cx| {
-            assert!(
-                editor
-                    .buffer()
-                    .read(cx)
-                    .snapshot(cx)
-                    .all_buffer_ids()
-                    .any(|buffer_id| buffer_id == expected_buffer_id),
-                "Since Viewed must retain the live project buffer"
-            );
+            let buffer_ids = editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .all_buffer_ids()
+                .collect::<Vec<_>>();
+            assert_eq!(buffer_ids, vec![expected_buffer_id]);
+            assert!(!buffer_ids.contains(&unrelated_buffer_id));
         });
         delta_editor.update_in(cx, |editor, window, cx| {
             cx.focus_self(window);
@@ -1803,6 +1819,24 @@ mod tests {
         review.update_in(cx, |review, window, cx| {
             review.show_selected_viewed_delta(ViewedDeltaSide::Base, window, cx);
             assert!(review.is_viewed_delta(cx));
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        cx.run_until_parked();
+        delta_editor.read_with(cx, |editor, cx| {
+            let buffer_ids = editor
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .all_buffer_ids()
+                .collect::<Vec<_>>();
+            assert!(
+                buffer_ids
+                    .iter()
+                    .all(|buffer_id| *buffer_id == expected_base_buffer_id)
+            );
+            assert!(!buffer_ids.contains(&unrelated_buffer_id));
+        });
+        review.update_in(cx, |review, window, cx| {
             review.show_branch_comparison(window, cx);
         });
         cx.executor().advance_clock(Duration::from_millis(250));

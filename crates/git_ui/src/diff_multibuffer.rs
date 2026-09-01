@@ -722,6 +722,13 @@ impl DiffMultibuffer {
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
                 for diff_buffer in buffers_to_load {
+                    if this
+                        .viewed_delta
+                        .as_ref()
+                        .is_some_and(|delta| delta.path != diff_buffer.repo_path)
+                    {
+                        continue;
+                    }
                     live_repo_paths.insert(diff_buffer.repo_path.clone());
                     let path_key = project_diff_path_key(
                         &repo,
@@ -758,10 +765,6 @@ impl DiffMultibuffer {
 
             this.buffer_subscriptions
                 .retain(|repo_path, _| live_repo_paths.contains(repo_path));
-
-            if let Some(viewed_delta) = &this.viewed_delta {
-                entries.retain(|_, entry| entry.repo_path == viewed_delta.path);
-            }
 
             (entries, this.viewed_delta.clone())
         })?;
