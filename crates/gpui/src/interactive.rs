@@ -1,6 +1,6 @@
 use crate::{
-    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
-    Window, point, seal::Sealed,
+    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, LongPressEvent, Modifiers, Pixels,
+    Point, Render, Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
 use std::{any::Any, fmt::Debug, ops::Deref, path::PathBuf};
@@ -103,8 +103,8 @@ pub enum TouchPhase {
 /// [`TouchPhase::Started`] through [`TouchPhase::Ended`] or
 /// [`TouchPhase::Cancelled`].
 ///
-/// The value is opaque and platform-defined; it is only guaranteed to be
-/// stable for the duration of the touch and unique among concurrent touches.
+/// The value is opaque and assigned by the platform. A platform window must
+/// not reuse an identifier for a later touch.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TouchId(pub u64);
 
@@ -789,6 +789,8 @@ pub enum PlatformInput {
     ScrollWheel(ScrollWheelEvent),
     /// A pinch gesture was performed.
     Pinch(PinchEvent),
+    /// A long-press gesture recognized from touch input.
+    LongPress(LongPressEvent),
     /// Files were dragged and dropped onto the window.
     FileDrop(FileDropEvent),
     /// A raw touch event on a touch screen.
@@ -808,6 +810,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(event) => Some(event),
             PlatformInput::ScrollWheel(event) => Some(event),
             PlatformInput::Pinch(event) => Some(event),
+            PlatformInput::LongPress(event) => Some(event),
             PlatformInput::FileDrop(event) => Some(event),
             PlatformInput::Touch(_) => None,
         }
@@ -825,6 +828,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => None,
             PlatformInput::ScrollWheel(_) => None,
             PlatformInput::Pinch(_) => None,
+            PlatformInput::LongPress(_) => None,
             PlatformInput::FileDrop(_) => None,
             PlatformInput::Touch(_) => None,
         }
@@ -844,6 +848,7 @@ impl PlatformInput {
             PlatformInput::MouseExited(_) => "mouse_exited",
             PlatformInput::ScrollWheel(_) => "scroll_wheel",
             PlatformInput::Pinch(_) => "pinch",
+            PlatformInput::LongPress(_) => "long_press",
             PlatformInput::FileDrop(_) => "file_drop",
             PlatformInput::Touch(_) => "touch",
         }
