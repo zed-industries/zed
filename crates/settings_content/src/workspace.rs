@@ -140,7 +140,7 @@ pub struct WorkspaceSettingsContent {
     /// to the editor.
     ///
     /// Default: false
-    pub close_panel_on_toggle: Option<bool>,
+    pub close_panel_on_focus_toggle: Option<bool>,
     /// Controls whether Zed or the window manager or compositor draws window decorations on Linux.
     ///
     /// Default: client

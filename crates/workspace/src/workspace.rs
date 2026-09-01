@@ -4495,7 +4495,7 @@ impl Workspace {
 
     /// Focus the panel of the given type if it isn't already focused. If it is
     /// already focused, then transfer focus back to the workspace center.
-    /// When the `close_panel_on_toggle` setting is enabled, also closes the
+    /// When the `close_panel_on_focus_toggle` setting is enabled, also closes the
     /// panel when transferring focus back to the center.
     pub fn toggle_panel_focus<T: Panel>(
         &mut self,
@@ -4508,7 +4508,7 @@ impl Workspace {
             did_focus_panel
         });
 
-        if !did_focus_panel && WorkspaceSettings::get_global(cx).close_panel_on_toggle {
+        if !did_focus_panel && WorkspaceSettings::get_global(cx).close_panel_on_focus_toggle {
             self.close_panel::<T>(window, cx);
         }
 
@@ -14033,7 +14033,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_panel_on_toggle(cx: &mut gpui::TestAppContext) {
+    async fn test_close_panel_on_focus_toggle(cx: &mut gpui::TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -14053,10 +14053,10 @@ mod tests {
             pane.add_item(Box::new(item), true, true, None, window, cx);
         });
 
-        // Enable close_panel_on_toggle
+        // Enable close_panel_on_focus_toggle
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.workspace.close_panel_on_toggle = Some(true);
+                settings.workspace.close_panel_on_focus_toggle = Some(true);
             });
         });
 
@@ -14124,7 +14124,7 @@ mod tests {
         // from a focused panel moves focus to center but leaves the dock open.
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.workspace.close_panel_on_toggle = Some(false);
+                settings.workspace.close_panel_on_focus_toggle = Some(false);
             });
         });
 
