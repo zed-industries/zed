@@ -1452,6 +1452,7 @@
       "cmd-down": "markdown::ScrollToBottom",
       "cmd-shift-v": "markdown::CloseAndReturnToEditor",
       "cmd-f": "buffer_search::Deploy",
+      "cmd-a": "editor::SelectAll"
     },
   },
   {

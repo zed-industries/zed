@@ -3711,6 +3711,7 @@ mod tests {
         preview.read_with(cx, |preview, cx| {
             assert_eq!(
                 preview.markdown.read(cx).selected_source(),
+                // Should not select the trailing newlines
                 Some("Hello\n\nworld")
             );
         });
