@@ -42,6 +42,15 @@ pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
+
+pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
+    matches!(model_id, "claude-fable-5-1")
+}
+
+pub fn supports_forced_tool_use(model_id: &str) -> bool {
+    !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
+}
 
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
@@ -183,7 +192,9 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-fable-5"
+            "claude-fable-5-1"
+                | "claude-fable-5"
+                | "claude-mythos-5-1"
                 | "claude-mythos-5"
                 | "claude-mythos-preview"
                 | "claude-opus-5"
@@ -200,6 +211,9 @@ impl Model {
         }
         if supports_compaction {
             extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
+        }
+        if binds_thinking_blocks_to_prefix(&entry.id) {
+            extra_beta_headers.push(THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
         }
 
         Self {
@@ -802,6 +816,8 @@ pub enum Thinking {
     Adaptive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_binding: Option<ThinkingBlockBinding>,
     },
     /// Explicitly turns thinking off. Required by models where thinking runs
     /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
@@ -814,6 +830,22 @@ pub enum Thinking {
 pub enum AdaptiveThinkingDisplay {
     Omitted,
     Summarized,
+}
+
+/// Controls for models that bind thinking blocks to the request prefix (see
+/// [`binds_thinking_blocks_to_prefix`]). Requires the
+/// [`THINKING_BINDING_CONTROLS_BETA_HEADER`] beta header.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingBlockBinding {
+    pub prefix_mismatch_behavior: PrefixMismatchBehavior,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrefixMismatchBehavior {
+    /// Drop an invalidated thinking block and continue, instead of rejecting
+    /// the request with a 400.
+    DropBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString)]
@@ -1407,6 +1439,31 @@ mod tests {
             assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
             assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
         }
+    }
+
+    #[test]
+    fn from_listed_enables_compaction_and_binding_controls_for_fable_5_1() {
+        let model = Model::from_listed(listed_entry(
+            "claude-fable-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+
+        // Mythos 5.1 supports compaction but doesn't run the prefix-binding
+        // check, so it must not get the binding-controls header.
+        let model = Model::from_listed(listed_entry(
+            "claude-mythos-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(!beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
     }
 
     #[test]
