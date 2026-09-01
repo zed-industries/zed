@@ -41,7 +41,7 @@ impl ClipboardSelection {
         let line_range = if file_path.is_some() {
             buffer
                 .range_to_buffer_range(range)
-                .map(|(_, buffer_range)| buffer_range.start.row..=buffer_range.end.row)
+                .map(|(_, buffer_range)| line_range_for_selection(buffer_range))
         } else {
             None
         };

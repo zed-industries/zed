@@ -8,6 +8,7 @@ use collections::{HashMap, HashSet};
 use editor::{
     Anchor, Editor, EditorSnapshot, FoldPlaceholder, ToOffset,
     display_map::{Crease, CreaseId, CreaseMetadata, FoldId},
+    line_range_for_selection,
     scroll::Autoscroll,
 };
 use futures::{AsyncReadExt as _, FutureExt as _, future::Shared};
@@ -554,7 +555,7 @@ impl MentionSet {
                 .text_for_range(selection_range.clone())
                 .collect::<String>();
             let point_range = selection_range.to_point(&snapshot);
-            let line_range = point_range.start.row..=point_range.end.row;
+            let line_range = line_range_for_selection(point_range);
 
             let uri = MentionUri::Selection {
                 abs_path: abs_path.clone(),

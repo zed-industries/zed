@@ -67,7 +67,7 @@ use chrono::{DateTime, Utc};
 use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
-use editor::{Editor, MultiBuffer};
+use editor::{Editor, MultiBuffer, line_range_for_selection};
 use extension_host::ExtensionStore;
 use feature_flags::{CreateThreadToolFeatureFlag, FeatureFlagAppExt as _};
 
@@ -758,7 +758,7 @@ fn format_selection_for_terminal(
                 };
                 let snapshot = buffer.snapshot();
                 let point_range = range.to_point(&snapshot);
-                let line_range = point_range.start.row..=point_range.end.row;
+                let line_range = line_range_for_selection(point_range);
                 parts.push(format_terminal_selection_reference(
                     project,
                     &project_path,
@@ -9300,6 +9300,26 @@ mod tests {
         // Lines are 1-based and inclusive; the path is presented as
         // `<rel-path>:<start>-<end>`, with a trailing space.
         assert_eq!(pasted, "file.rs:2-3 ");
+
+        editor.update_in(&mut cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
+                selections.select_ranges([text::Point::new(1, 0)..text::Point::new(2, 0)]);
+            });
+        });
+        workspace.update_in(&mut cx, |_, window, cx| {
+            window.dispatch_action(AddSelectionToThread.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let pasted: String = terminal
+            .update(&mut cx, |terminal, _| terminal.take_input_log())
+            .into_iter()
+            .map(|bytes| String::from_utf8(bytes).expect("pasted bytes should be valid UTF-8"))
+            .collect();
+        assert_eq!(
+            pasted, "file.rs:2 ",
+            "a selection ending at column zero should exclude that row"
+        );
     }
 
     async fn setup_panel(cx: &mut TestAppContext) -> (Entity<AgentPanel>, VisualTestContext) {

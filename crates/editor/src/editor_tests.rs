@@ -10568,8 +10568,8 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
     let selection = &selections[0];
     assert_eq!(
         selection.line_range,
-        Some(2..=5),
-        "line range should be from original file (rows 2-5), not multibuffer rows (0-2)"
+        Some(2..=4),
+        "line range should use original file rows 2-4, excluding the column-zero endpoint, not multibuffer rows 0-2"
     );
 }
 
