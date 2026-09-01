@@ -1,5 +1,7 @@
 use crate::{
     diff_multibuffer::{DiffMultibuffer, ViewedDeltaSide, project_diff_path_key},
+    git_panel_settings::GitPanelSettings,
+    git_status_icon,
     review_state::{Fingerprint, ReviewScope, ReviewState, SnapshotAvailability, digest},
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -10,16 +12,33 @@ use file_icons::FileIcons;
 use futures::StreamExt as _;
 use git::{repository::RepoPath, status::FileStatus};
 use gpui::{
-    App, AppContext as _, Context, Entity, Render, Subscription, Task, WeakEntity, uniform_list,
+    App, AppContext as _, Context, Entity, Focusable, Render, Subscription, Task, WeakEntity,
+    Window, uniform_list,
 };
 use language::{Buffer, BufferEvent};
 use project::{
     Project,
     git_store::diff_buffer_list::{DiffBase, DiffBufferList},
 };
+use settings::Settings;
 use std::{collections::BTreeMap, path::PathBuf, time::Duration};
-use ui::{Checkbox, ListItem, Tooltip, prelude::*};
+use ui::{Checkbox, ElevationIndex, Tooltip, prelude::*};
 use util::ResultExt as _;
+
+const REVIEW_TREE_INDENT: f32 = 16.0;
+const REVIEW_ROW_HEIGHT: f32 = 1.75;
+
+fn review_path_tooltip(path: &RepoPath, renamed_from: Option<&RepoPath>) -> String {
+    renamed_from.map_or_else(
+        || path.to_string(),
+        |source| {
+            format!(
+                "{} (renamed from {}; review both entries)",
+                &**path, &**source
+            )
+        },
+    )
+}
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum ReviewFilter {
@@ -881,6 +900,12 @@ impl BranchReview {
             .unwrap_or_default()
     }
 
+    fn diff_stat(&self, path: &RepoPath, cx: &App) -> Option<(usize, usize)> {
+        let diff = self.entries.get(path)?.diff.as_ref()?;
+        let (added, removed) = diff.read(cx).snapshot(cx).changed_row_counts();
+        Some((added as usize, removed as usize))
+    }
+
     fn matches_filter(&self, path: &RepoPath, cx: &App) -> bool {
         path.to_string().to_lowercase().contains(&self.query)
             && match self.filter {
@@ -1196,7 +1221,7 @@ impl BranchReview {
         });
     }
 
-    fn render_row(&self, index: usize, cx: &Context<Self>) -> AnyElement {
+    fn render_row(&self, index: usize, window: &Window, cx: &Context<Self>) -> AnyElement {
         match self.rows[index].clone() {
             Row::Folder {
                 path,
@@ -1206,24 +1231,74 @@ impl BranchReview {
                 total,
             } => {
                 let expanded = !self.collapsed.contains(&path);
-                let toggle_path = path.clone();
-                ListItem::new(("review-folder", index))
-                    .indent_level(depth + 1)
-                    .toggle(expanded)
-                    .always_show_disclosure_icon(true)
-                    .on_toggle(cx.listener(move |this, _, _, cx| {
-                        if !this.collapsed.remove(&toggle_path) {
-                            this.collapsed.insert(toggle_path.clone());
+                let settings = GitPanelSettings::get_global(cx);
+                let folder_indicators = FileIcons::get_folder_indicators(
+                    settings.folder_indicator,
+                    expanded,
+                    std::path::Path::new(&path),
+                    cx,
+                );
+                let fallback_chevron = if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                };
+                let fallback_folder = if expanded {
+                    IconName::FolderOpen
+                } else {
+                    IconName::Folder
+                };
+                let render_indicator = |themed: Option<SharedString>, fallback: IconName| {
+                    themed
+                        .map(Icon::from_path)
+                        .unwrap_or_else(|| Icon::new(fallback))
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                };
+                let name_row = h_flex()
+                    .min_w_0()
+                    .gap_1()
+                    .pl(px(depth as f32 * REVIEW_TREE_INDENT))
+                    .child(h_flex().flex_none().gap_0p5().children({
+                        let mut indicators = Vec::new();
+                        if settings.folder_indicator.shows_chevron() {
+                            indicators.push(render_indicator(
+                                folder_indicators.chevron,
+                                fallback_chevron,
+                            ));
                         }
-                        this.rebuild_rows(cx);
+                        if settings.folder_indicator.shows_icon() {
+                            indicators
+                                .push(render_indicator(folder_indicators.icon, fallback_folder));
+                        }
+                        indicators
                     }))
-                    .start_slot(
-                        Icon::new(IconName::Folder)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                    .child(Label::new(name).size(LabelSize::Small))
-                    .end_slot(
+                    .child(
+                        Label::new(name)
+                            .single_line()
+                            .truncate()
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    );
+
+                h_flex()
+                    .id(("review-folder", index))
+                    .h(rems(REVIEW_ROW_HEIGHT))
+                    .min_w_0()
+                    .w_full()
+                    .pl_2p5()
+                    .pr_1()
+                    .gap_1p5()
+                    .justify_between()
+                    .border_1()
+                    .border_r_2()
+                    .bg(cx.theme().colors().ghost_element_background)
+                    .hover(|style| style.bg(cx.theme().colors().ghost_element_hover))
+                    .active(|style| style.bg(cx.theme().colors().ghost_element_active))
+                    .cursor_pointer()
+                    .tooltip(Tooltip::text(path.clone()))
+                    .child(name_row)
+                    .child(
                         Label::new(format!("{viewed}/{total}"))
                             .size(LabelSize::XSmall)
                             .color(Color::Muted),
@@ -1256,15 +1331,6 @@ impl BranchReview {
                         .as_ref()
                         .is_none_or(|state| state.read(cx).error.is_some());
                 let renamed_from = self.list.read(cx).renamed_from(&path);
-                let (status, color) = if renamed_from.is_some() {
-                    ("R", Color::VersionControlModified)
-                } else if entry.status.is_deleted() {
-                    ("D", Color::VersionControlDeleted)
-                } else if entry.status.is_created() {
-                    ("A", Color::VersionControlAdded)
-                } else {
-                    ("M", Color::VersionControlModified)
-                };
                 let checkbox_path = path.clone();
                 let reasons = self.change_reasons(&path, cx);
                 let tooltip = entry.error.clone().unwrap_or_else(|| {
@@ -1276,62 +1342,108 @@ impl BranchReview {
                         "Mark Viewed: approve this comparison".into()
                     }
                 });
-                let icon = FileIcons::get_icon(path.as_std_path(), cx)
-                    .map(Icon::from_path)
-                    .unwrap_or_else(|| Icon::new(IconName::File));
-                let path_tooltip = renamed_from.map_or_else(
-                    || path.to_string(),
-                    |source| {
-                        format!(
-                            "{} (renamed from {}; review both entries)",
-                            &*path, &**source
-                        )
-                    },
-                );
-                ListItem::new(("review-file", index))
+                let path_tooltip = review_path_tooltip(&path, renamed_from);
+                let file_name = path
+                    .as_std_path()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                let diff_stat = self.diff_stat(&path, cx);
+                let selected = self.selected.as_ref() == Some(&path);
+                let selected_bg_alpha = 0.08;
+                let state_opacity_step = 0.04;
+                let info_color = cx.theme().status().info;
+                let colors = cx.theme().colors();
+                let (base_background, hover_background, active_background) = if selected {
+                    (
+                        info_color.alpha(selected_bg_alpha),
+                        info_color.alpha(selected_bg_alpha + state_opacity_step),
+                        info_color.alpha(selected_bg_alpha + state_opacity_step * 2.0),
+                    )
+                } else {
+                    (
+                        colors.ghost_element_background,
+                        colors.ghost_element_hover,
+                        colors.ghost_element_active,
+                    )
+                };
+                let focused = self.diff.upgrade().is_some_and(|diff| {
+                    diff.read(cx)
+                        .editor()
+                        .read(cx)
+                        .focus_handle(cx)
+                        .is_focused(window)
+                });
+                let name_row = h_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1()
+                    .pl(px(depth as f32 * REVIEW_TREE_INDENT))
+                    .child(git_status_icon(entry.status))
+                    .child(
+                        Label::new(file_name)
+                            .single_line()
+                            .truncate()
+                            .size(LabelSize::Small)
+                            .when(entry.status.is_deleted(), Label::strikethrough),
+                    );
+                let change_tooltip = format!("Changed since Viewed: {}", reasons.join(", "));
+
+                h_flex()
+                    .id(("review-file", index))
+                    .h(rems(REVIEW_ROW_HEIGHT))
+                    .w_full()
+                    .pl_2p5()
+                    .pr_1()
+                    .gap_1p5()
+                    .border_1()
+                    .border_r_2()
+                    .when(selected && focused, |row| {
+                        row.border_color(cx.theme().colors().panel_focused_border)
+                    })
+                    .bg(base_background)
+                    .hover(|style| style.bg(hover_background))
+                    .active(|style| style.bg(active_background))
+                    .cursor_pointer()
                     .tooltip(Tooltip::text(path_tooltip))
-                    .indent_level(depth + 1)
-                    .toggle_state(self.selected.as_ref() == Some(&path))
-                    .start_slot(
+                    .child(name_row)
+                    .when(!reasons.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .id(("review-change-warning", index))
+                                .flex_none()
+                                .tooltip(Tooltip::text(change_tooltip))
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Warning),
+                                ),
+                        )
+                    })
+                    .when_some(diff_stat, |row, (added, removed)| {
+                        row.child(
+                            ui::DiffStat::new(("review-diff-stat", index), added, removed)
+                                .label_size(LabelSize::Small),
+                        )
+                    })
+                    .child(
                         h_flex()
-                            .gap_1()
+                            .id(("review-viewed-wrapper", index))
+                            .flex_none()
+                            .occlude()
+                            .cursor_pointer()
                             .child(
                                 Checkbox::new(("review-viewed", index), viewed.into())
+                                    .fill()
+                                    .elevation(ElevationIndex::Surface)
                                     .disabled(disabled)
                                     .tooltip(Tooltip::text(tooltip))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
                                         this.toggle_viewed_from_ui(&checkbox_path, window, cx)
                                     })),
-                            )
-                            .child(icon.size(IconSize::Small).color(Color::Muted)),
-                    )
-                    .child(
-                        Label::new(
-                            path.as_std_path()
-                                .file_name()
-                                .unwrap_or_default()
-                                .to_string_lossy()
-                                .into_owned(),
-                        )
-                        .size(LabelSize::Small)
-                        .color(if viewed {
-                            Color::Muted
-                        } else {
-                            Color::Default
-                        }),
-                    )
-                    .end_slot(
-                        h_flex()
-                            .gap_1()
-                            .when(!reasons.is_empty(), |row| {
-                                row.child(
-                                    Icon::new(IconName::ArrowCircle)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                            })
-                            .child(Label::new(status).size(LabelSize::XSmall).color(color)),
+                            ),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_path(path.clone(), window, cx)
@@ -1633,9 +1745,9 @@ impl Render for BranchReview {
                 uniform_list(
                     "branch-review-files",
                     self.rows.len(),
-                    cx.processor(|this, range: std::ops::Range<usize>, _, cx| {
+                    cx.processor(|this, range: std::ops::Range<usize>, window, cx| {
                         range
-                            .map(|index| this.render_row(index, cx))
+                            .map(|index| this.render_row(index, window, cx))
                             .collect::<Vec<_>>()
                     }),
                 )
@@ -1657,6 +1769,81 @@ mod tests {
     use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
+
+    #[gpui::test]
+    async fn review_rows_expose_native_git_statuses_and_diff_stats(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {"logs": {"refs": {"heads": {"feature": "branch created\n"}}}},
+                "modified.txt": "new\n",
+                "added.txt": "added\n"
+            }),
+        )
+        .await;
+        let git_dir = Path::new(path!("/project/.git"));
+        fs.set_branch_name(git_dir, Some("feature"));
+        fs.set_head_and_index_for_repo(
+            git_dir,
+            &[
+                ("modified.txt", "new\n".into()),
+                ("added.txt", "added\n".into()),
+            ],
+        );
+        fs.set_merge_base_content_for_repo(
+            git_dir,
+            &[
+                ("modified.txt", "old\n".into()),
+                ("deleted.txt", "deleted\n".into()),
+            ],
+        );
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |workspace, _| workspace.workspace().clone());
+        let diff = cx
+            .update(|window, cx| {
+                BranchDiff::new_with_default_branch(project, workspace, window, cx)
+            })
+            .await
+            .unwrap();
+        let review = diff.read_with(cx, |diff, _| diff.review.clone());
+        for _ in 0..5 {
+            cx.run_until_parked();
+            cx.executor().advance_clock(Duration::from_millis(100));
+        }
+        cx.run_until_parked();
+
+        let modified = RepoPath::new("modified.txt").unwrap();
+        let added = RepoPath::new("added.txt").unwrap();
+        let deleted = RepoPath::new("deleted.txt").unwrap();
+        review.read_with(cx, |review, cx| {
+            assert!(review.entries[&modified].status.is_modified());
+            assert!(review.entries[&added].status.is_created());
+            assert!(review.entries[&deleted].status.is_deleted());
+            assert_eq!(review.diff_stat(&modified, cx), Some((1, 1)));
+            assert_eq!(review.diff_stat(&added, cx), Some((1, 0)));
+            assert_eq!(review.diff_stat(&deleted, cx), Some((0, 1)));
+        });
+    }
+
+    #[test]
+    fn renamed_file_tooltip_preserves_both_paths() {
+        let path = RepoPath::new("src/new_name.rs").unwrap();
+        let source = RepoPath::new("src/old_name.rs").unwrap();
+        assert_eq!(
+            review_path_tooltip(&path, Some(&source)),
+            "src/new_name.rs (renamed from src/old_name.rs; review both entries)"
+        );
+    }
 
     #[gpui::test]
     async fn native_diff_edits_autosave_and_invalidate_only_the_edited_file(
