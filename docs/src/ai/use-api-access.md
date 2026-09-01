@@ -25,6 +25,8 @@ Zed supports these first-class API providers for model-backed Zed AI features:
   - [Custom DeepSeek Models](#deepseek-custom-models)
 - [xAI](#xai)
   - [Custom xAI Models](#xai-custom-models)
+- [SLNG](#slng)
+  - [Custom SLNG Models](#slng-custom-models)
 - [OpenCode API](#opencode)
   - [Custom OpenCode Models](#opencode-custom-models)
 - [Anthropic-compatible endpoints](#anthropic-compatible)
@@ -53,6 +55,7 @@ Zed also reads provider-specific environment variables. Non-empty environment va
 | Mistral           | `MISTRAL_API_KEY`                                     |
 | DeepSeek          | `DEEPSEEK_API_KEY`                                    |
 | xAI               | `XAI_API_KEY`                                         |
+| SLNG              | `SLNG_API_KEY`                                        |
 | OpenCode          | `OPENCODE_API_KEY`                                    |
 | OpenRouter        | `OPENROUTER_API_KEY`                                  |
 | Vercel AI Gateway | `VERCEL_AI_GATEWAY_API_KEY`                           |
@@ -341,6 +344,56 @@ image support, or a custom endpoint.
   }
 }
 ```
+
+### SLNG {#slng}
+
+Use SLNG API access when you have an SLNG API key. SLNG provides regional voice AI infrastructure with TTS and STT models across EU, AU, and Asia.
+
+1. Sign up at [SLNG Dashboard](https://slng.ai/dashboard) and create an API key.
+2. Open Agent Settings with {#action agent::OpenSettings} and go to the SLNG section.
+3. Enter your SLNG API key.
+
+Zed also reads `SLNG_API_KEY` from the local Zed process environment.
+
+#### Custom SLNG Models {#slng-custom-models}
+
+Add custom SLNG models when you need to configure specific TTS or STT models, custom token limits, or regional endpoints.
+
+```json [settings]
+{
+  "language_models": {
+    "slng": {
+      "api_url": "https://api.slng.ai/v1",
+      "available_models": [
+        {
+          "name": "deepgram-aura-2",
+          "display_name": "Deepgram Aura 2 (TTS)",
+          "max_tokens": 16000,
+          "max_output_tokens": 16000
+        },
+        {
+          "name": "deepgram-nova-3",
+          "display_name": "Deepgram Nova 3 (STT)",
+          "max_tokens": 0,
+          "max_output_tokens": 0
+        },
+        {
+          "name": "cartesia-sonic-3-5",
+          "display_name": "Cartesia Sonic 3.5 (TTS)",
+          "max_tokens": 16000,
+          "max_output_tokens": 16000
+        }
+      ]
+    }
+  }
+}
+```
+
+SLNG offers 19 voice AI models:
+- **11 TTS models:** Deepgram Aura 2, Bulbul v3, Cartesia Sonic 3/3.5, Fish TTS S2.1 Pro, Gradium TTS, Inworld Max 1.5, Kugel 2, Murf Falcon, Sarvam Saaras, Soniox TTS RT v1
+- **8 STT models:** Deepgram Nova 3 (Standard, Medical, Multi), Fish Audio ASR, Gradium STT, Reson8 STT v1, Soniox Speech AI RT v5, Speechmatics Realtime v2
+
+For the complete model list, see [SLNG Models](https://docs.slng.ai/models).
 
 ### OpenCode API {#opencode}
 
