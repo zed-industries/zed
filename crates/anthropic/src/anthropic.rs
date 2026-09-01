@@ -42,32 +42,12 @@ pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
-
-/// Beta header enabling [`ThinkingBlockBinding`] controls on models that
-/// bind thinking blocks to the request prefix.
-/// <https://platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1>
 pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
 
-/// Model IDs that bind thinking blocks to the exact conversation prefix that
-/// produced them. On these models, changing anything before a replayed
-/// thinking block (the system prompt, the tools array, or an earlier turn)
-/// invalidates the block, and replaying it is rejected with a 400 saying
-/// "The block is bound to a different conversation". We rebuild the system
-/// prompt and tool list between requests (rules files, profile and MCP
-/// changes), so requests to these models opt into dropping invalidated
-/// blocks instead: see [`ThinkingBlockBinding`].
-///
-/// Claude Mythos 5.1 shares Claude Fable 5.1's capabilities but does not run
-/// this check, so it is excluded here.
 pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
     matches!(model_id, "claude-fable-5-1")
 }
 
-/// Model IDs that reject forced tool use: `tool_choice` of type `any` or
-/// `tool` returns a 400 `invalid_request_error`. Thinking is always on for
-/// these models and a forced tool call would skip it, so Anthropic dropped
-/// support; `auto` and `none` still work.
-/// <https://platform.claude.com/docs/en/models/fable-5-1/whats-new-fable-5-1>
 pub fn supports_forced_tool_use(model_id: &str) -> bool {
     !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
 }

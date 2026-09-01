@@ -405,10 +405,6 @@ pub fn into_anthropic(
             }
             AnthropicModelMode::AdaptiveThinking => Some(Thinking::Adaptive {
                 display: Some(AdaptiveThinkingDisplay::Summarized),
-                // Replayed thinking blocks these models have bound to an
-                // earlier conversation prefix would otherwise fail the whole
-                // request with a 400; dropping them server-side loses only
-                // the invalidated reasoning.
                 block_binding: crate::binds_thinking_blocks_to_prefix(&model).then_some(
                     ThinkingBlockBinding {
                         prefix_mismatch_behavior: PrefixMismatchBehavior::DropBlock,
