@@ -2020,23 +2020,40 @@ impl GitRepository for RealGitRepository {
                 let merge_base = String::from_utf8_lossy(&merge_base_output.stdout);
                 let merge_base = merge_base.trim();
 
+                let mut ls_tree_arguments = vec![
+                    OsString::from("ls-tree"),
+                    OsString::from("-z"),
+                    OsString::from(merge_base),
+                    OsString::from("--"),
+                ];
+                ls_tree_arguments.extend(
+                    recreated
+                        .iter()
+                        .map(|(path, _)| OsString::from(path.as_unix_str())),
+                );
+                let base_entries = git.build_command(&ls_tree_arguments).output().await?;
+                if !base_entries.status.success() {
+                    let stderr = String::from_utf8_lossy(&base_entries.stderr);
+                    anyhow::bail!("git ls-tree failed: {stderr}");
+                }
+                let base_modes = base_entries
+                    .stdout
+                    .split(|byte| *byte == 0)
+                    .filter_map(|entry| {
+                        let entry = String::from_utf8_lossy(entry);
+                        let (metadata, path) = entry.split_once('\t')?;
+                        let mode = metadata.split_ascii_whitespace().next()?;
+                        Some((path.to_owned(), mode.to_owned()))
+                    })
+                    .collect::<HashMap<_, _>>();
+
                 for (path, old) in recreated {
                     let full_path = working_directory.join(path.as_std_path());
                     let metadata = match smol::fs::symlink_metadata(&full_path).await {
                         Ok(metadata) => metadata,
                         Err(_) => continue,
                     };
-                    let base_entry = git
-                        .build_command(
-                            &["ls-tree", merge_base, "--", path.as_unix_str()].map(OsString::from),
-                        )
-                        .output()
-                        .await?;
-                    if !base_entry.status.success() {
-                        continue;
-                    }
-                    let base_mode = String::from_utf8_lossy(&base_entry.stdout);
-                    let Some(base_mode) = base_mode.split_ascii_whitespace().next() else {
+                    let Some(base_mode) = base_modes.get(path.as_unix_str()) else {
                         continue;
                     };
                     let current_mode = if metadata.file_type().is_symlink() {

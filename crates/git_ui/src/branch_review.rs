@@ -52,6 +52,7 @@ struct ReviewEntry {
     status: FileStatus,
     buffer: Option<Entity<Buffer>>,
     diff: Option<Entity<BufferDiff>>,
+    diff_stat: Option<(usize, usize)>,
     fingerprint: Option<Fingerprint>,
     validated_snapshot: Option<language::BufferSnapshot>,
     validated_base: Option<language::BufferSnapshot>,
@@ -98,6 +99,7 @@ pub(crate) struct BranchReview {
     diff: WeakEntity<DiffMultibuffer>,
     list: Entity<DiffBufferList>,
     entries: BTreeMap<RepoPath, ReviewEntry>,
+    pending_viewed: HashSet<RepoPath>,
     comments: Vec<crate::github_review::PublishedComment>,
     comment_markdown: BTreeMap<u64, (String, Entity<markdown::Markdown>)>,
     expanded_threads: HashSet<u64>,
@@ -106,6 +108,7 @@ pub(crate) struct BranchReview {
         Vec<editor::display_map::CustomBlockId>,
     )>,
     rows: Vec<Row>,
+    rebuild_scheduled: bool,
     collapsed: HashSet<String>,
     selected: Option<RepoPath>,
     search: Entity<Editor>,
@@ -157,11 +160,13 @@ impl BranchReview {
             diff: diff.downgrade(),
             list,
             entries: BTreeMap::new(),
+            pending_viewed: HashSet::default(),
             comments: Vec::new(),
             comment_markdown: BTreeMap::new(),
             expanded_threads: HashSet::default(),
             comment_blocks: Vec::new(),
             rows: Vec::new(),
+            rebuild_scheduled: false,
             collapsed: HashSet::default(),
             selected: None,
             search,
@@ -482,6 +487,7 @@ impl BranchReview {
         }
     }
 
+    #[ztracing::instrument(skip_all)]
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
@@ -534,7 +540,9 @@ impl BranchReview {
                                 if let Some(entry) = this.entries.get_mut(&path) {
                                     entry.validated_snapshot = None;
                                 }
-                                this.reconcile(&path, cx);
+                                if this.should_validate(&path, cx) {
+                                    this.reconcile(&path, cx);
+                                }
                             }
                         })
                         .is_err()
@@ -550,6 +558,7 @@ impl BranchReview {
             .map(|buffer| buffer.repo_path.clone())
             .collect();
         self.entries.retain(|path, _| paths.contains(path));
+        self.pending_viewed.retain(|path| paths.contains(path));
         for buffer in &buffers {
             self.entries
                 .entry(buffer.repo_path.clone())
@@ -557,6 +566,7 @@ impl BranchReview {
                     status: buffer.file_status,
                     buffer: None,
                     diff: None,
+                    diff_stat: None,
                     fingerprint: None,
                     validated_snapshot: None,
                     validated_base: None,
@@ -627,22 +637,34 @@ impl BranchReview {
                                                 | BufferEvent::Reloaded
                                                 | BufferEvent::Saved
                                         ) {
-                                            this.reconcile(&path, cx);
+                                            if this.should_validate(&path, cx) {
+                                                this.reconcile(&path, cx);
+                                            }
                                         }
                                     }
                                 });
                                 let diff_subscription = cx.subscribe(&loaded.diff, {
                                     let path = path.clone();
-                                    move |this, _, _, cx| this.reconcile(&path, cx)
+                                    move |this, _, _, cx| {
+                                        this.update_diff_stat(&path, cx);
+                                        if this.should_validate(&path, cx) {
+                                            this.reconcile(&path, cx)
+                                        }
+                                    }
                                 });
                                 if let Some(entry) = this.entries.get_mut(&path) {
+                                    let (added, removed) =
+                                        loaded.diff.read(cx).snapshot(cx).changed_row_counts();
                                     entry.status = buffer.file_status;
                                     entry.buffer = Some(loaded.main_buffer);
                                     entry.diff = Some(loaded.diff);
+                                    entry.diff_stat = Some((added as usize, removed as usize));
                                     entry._subscriptions = vec![subscription, diff_subscription];
                                     entry.error = None;
                                 }
-                                this.reconcile(&path, cx);
+                                if this.should_validate(&path, cx) {
+                                    this.reconcile(&path, cx);
+                                }
                             }
                             Err(error) => {
                                 if let Some(entry) = this.entries.get_mut(&path) {
@@ -670,6 +692,30 @@ impl BranchReview {
         cx.notify();
     }
 
+    fn should_validate(&self, path: &RepoPath, cx: &App) -> bool {
+        self.pending_viewed.contains(path)
+            || self
+                .state
+                .as_ref()
+                .is_some_and(|state| state.read(cx).has_approval(&path.to_string()))
+    }
+
+    fn update_diff_stat(&mut self, path: &RepoPath, cx: &mut Context<Self>) {
+        let tracked_by_tree = self.list.read(cx).base_oid_for_path(path).is_some();
+        let Some(entry) = self.entries.get_mut(path) else {
+            return;
+        };
+        let Some(diff) = &entry.diff else {
+            return;
+        };
+        let (added, removed) = diff.read(cx).snapshot(cx).changed_row_counts();
+        entry.diff_stat = Some((added as usize, removed as usize));
+        entry.changed = tracked_by_tree || added != 0 || removed != 0;
+        self.schedule_rebuild(cx);
+        cx.notify();
+    }
+
+    #[ztracing::instrument(skip_all, fields(path = %path))]
     fn reconcile(&mut self, path: &RepoPath, cx: &mut Context<Self>) {
         let Some(entry) = self.entries.get_mut(path) else {
             return;
@@ -697,6 +743,7 @@ impl BranchReview {
         let generation = self.generation;
         entry.hash_generation += 1;
         let hash_generation = entry.hash_generation;
+        let approving = self.pending_viewed.contains(path);
 
         if !buffer.read(cx).is_dirty()
             && buffer.read(cx).file().is_some_and(|file| {
@@ -711,9 +758,11 @@ impl BranchReview {
         let expected_base = base.clone();
         let path = path.clone();
         entry.hash_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
+            if !approving {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+            }
             let result = async {
                 let metadata = fs.metadata(&abs_path).await?;
                 if metadata.is_some_and(|metadata| {
@@ -780,6 +829,7 @@ impl BranchReview {
                 if this.generation != generation {
                     return;
                 }
+                let mut pending_approval = None;
                 if let Some(entry) = this.entries.get_mut(&path) {
                     if entry.hash_generation != hash_generation {
                         return;
@@ -806,6 +856,10 @@ impl BranchReview {
                                     )
                                 });
                             }
+                            if this.pending_viewed.remove(&path) {
+                                pending_approval =
+                                    Some((fingerprint.clone(), base.clone(), current.clone()));
+                            }
                             entry.fingerprint = Some(fingerprint);
                             entry.validated_snapshot = Some(expected_snapshot);
                             entry.validated_base = Some(expected_base);
@@ -820,11 +874,33 @@ impl BranchReview {
                         }
                     }
                 }
-                this.rebuild_rows(cx);
+                if let Some((fingerprint, base, current)) = pending_approval
+                    && let Some(state) = &this.state
+                {
+                    state.update(cx, |state, cx| {
+                        state.set_viewed(
+                            path.to_string(),
+                            Some(fingerprint),
+                            Some((base.as_deref(), current.as_deref())),
+                            cx,
+                        )
+                    });
+                }
+                this.schedule_rebuild(cx);
             })
             .log_err();
         }));
-        self.rebuild_rows(cx);
+    }
+
+    fn schedule_rebuild(&mut self, cx: &mut Context<Self>) {
+        if self.rebuild_scheduled {
+            return;
+        }
+        self.rebuild_scheduled = true;
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            this.update(cx, |this, cx| this.rebuild_rows(cx)).log_err();
+        });
     }
 
     fn scope_matches(&self, cx: &App) -> bool {
@@ -845,7 +921,6 @@ impl BranchReview {
 
     fn validated_fingerprint(&self, path: &RepoPath, cx: &App) -> Option<&Fingerprint> {
         if !self.scope_matches(cx)
-            || self.loading
             || self.error.is_some()
             || self.list.read(cx).is_tree_base_loading()
             || self.list.read(cx).tree_diff_error().is_some()
@@ -882,6 +957,9 @@ impl BranchReview {
     }
 
     fn is_viewed(&self, path: &RepoPath, cx: &App) -> bool {
+        if self.pending_viewed.contains(path) {
+            return true;
+        }
         self.validated_fingerprint(path, cx)
             .zip(self.state.as_ref())
             .is_some_and(|(fingerprint, state)| {
@@ -900,10 +978,8 @@ impl BranchReview {
             .unwrap_or_default()
     }
 
-    fn diff_stat(&self, path: &RepoPath, cx: &App) -> Option<(usize, usize)> {
-        let diff = self.entries.get(path)?.diff.as_ref()?;
-        let (added, removed) = diff.read(cx).snapshot(cx).changed_row_counts();
-        Some((added as usize, removed as usize))
+    fn diff_stat(&self, path: &RepoPath, _cx: &App) -> Option<(usize, usize)> {
+        self.entries.get(path)?.diff_stat
     }
 
     fn matches_filter(&self, path: &RepoPath, cx: &App) -> bool {
@@ -1063,7 +1139,6 @@ impl BranchReview {
 
     fn toggle_viewed(&mut self, path: &RepoPath, cx: &mut Context<Self>) {
         if !self.scope_matches(cx)
-            || self.loading
             || self.list.read(cx).is_tree_base_loading()
             || self.list.read(cx).tree_diff_error().is_some()
             || self.error.is_some()
@@ -1081,6 +1156,11 @@ impl BranchReview {
             return;
         }
         let Some(fingerprint) = entry.fingerprint.clone() else {
+            if entry.buffer.is_some() && entry.diff.is_some() {
+                self.pending_viewed.insert(path.clone());
+                self.reconcile(path, cx);
+                self.rebuild_rows(cx);
+            }
             return;
         };
         if entry
@@ -1154,7 +1234,9 @@ impl BranchReview {
         }
     }
 
+    #[ztracing::instrument(skip_all, fields(entries = self.entries.len()))]
     fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
+        self.rebuild_scheduled = false;
         if !self.comments.is_empty() {
             let review = cx.weak_entity();
             cx.defer(move |cx| {
@@ -1319,9 +1401,9 @@ impl BranchReview {
                 let disabled = !self.scope_matches(cx)
                     || self.list.read(cx).is_tree_base_loading()
                     || self.list.read(cx).tree_diff_error().is_some()
-                    || self.loading
                     || self.error.is_some()
-                    || entry.fingerprint.is_none()
+                    || entry.buffer.is_none()
+                    || entry.diff.is_none()
                     || entry
                         .hash_task
                         .as_ref()
@@ -1493,12 +1575,13 @@ impl Render for BranchReview {
             .or_else(|| state.and_then(|state| state.error.clone()))
             .or_else(|| self.list.read(cx).tree_diff_error().map(str::to_owned));
         let saving = state.is_some_and(|state| state.saving);
-        let validating = self.loading
-            || self.list.read(cx).is_tree_base_loading()
-            || self
-                .entries
-                .values()
-                .any(|entry| entry.fingerprint.is_none() && entry.error.is_none());
+        let validating = self.list.read(cx).is_tree_base_loading()
+            || self.entries.values().any(|entry| {
+                entry
+                    .hash_task
+                    .as_ref()
+                    .is_some_and(|task| !task.is_ready())
+            });
         let selected_snapshot = self
             .selected
             .as_ref()
@@ -1832,6 +1915,7 @@ mod tests {
             assert_eq!(review.diff_stat(&modified, cx), Some((1, 1)));
             assert_eq!(review.diff_stat(&added, cx), Some((1, 0)));
             assert_eq!(review.diff_stat(&deleted, cx), Some((0, 1)));
+            assert_eq!(review.list.read(cx).buffer_load_count(), 3);
         });
     }
 

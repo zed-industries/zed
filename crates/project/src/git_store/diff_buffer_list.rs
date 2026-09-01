@@ -1,7 +1,10 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
-use futures::StreamExt;
+use futures::{
+    FutureExt, StreamExt,
+    future::{LocalBoxFuture, Shared},
+};
 use git::{
     repository::RepoPath,
     status::{DiffTreeType, FileStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus},
@@ -15,6 +18,8 @@ use sum_tree::SumTree;
 use text::BufferId;
 use util::ResultExt;
 use ztracing::instrument;
+
+use std::sync::Arc;
 
 use crate::{
     ConflictSet,
@@ -48,6 +53,8 @@ pub struct DiffBufferList {
     tree_diff_base_task: Option<Task<()>>,
     reload_generation: u64,
     tree_diff_error: Option<String>,
+    buffer_loads: HashMap<RepoPath, SharedDiffBufferLoad>,
+    buffer_load_count: usize,
     _subscription: Subscription,
     buffer_subscriptions: HashMap<BufferId, Subscription>,
     buffer_store_subscription: Option<Subscription>,
@@ -119,6 +126,8 @@ impl DiffBufferList {
             tree_diff_base_task: None,
             reload_generation: 0,
             tree_diff_error: None,
+            buffer_loads: HashMap::default(),
+            buffer_load_count: 0,
             _subscription: git_store_subscription,
             buffer_store_subscription: None,
             buffer_subscriptions: HashMap::default(),
@@ -181,6 +190,8 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.buffer_loads.clear();
+        self.buffer_load_count = 0;
         self.reload_generation += 1;
         cx.emit(BranchDiffEvent::FileListChanged);
         *self.update_needed.borrow_mut() = ();
@@ -196,6 +207,8 @@ impl DiffBufferList {
         self.tree_diff = None;
         self.statuses_by_path = None;
         self.tree_diff_base_task = None;
+        self.buffer_loads.clear();
+        self.buffer_load_count = 0;
         self.reload_generation += 1;
         self.diff_base = diff_base;
 
@@ -323,6 +336,7 @@ impl DiffBufferList {
             .is_some_and(|task| !task.is_ready())
     }
 
+    #[instrument(skip_all)]
     pub async fn reload_tree_diff(this: WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let tasks = this.update(cx, |this, cx| {
             this.reload_generation += 1;
@@ -364,6 +378,8 @@ impl DiffBufferList {
             let statuses_by_path = this.repo.as_ref().map(|repo| {
                 build_statuses(&repo.read(cx).snapshot, &committed_tree_diff, &tree_diff)
             });
+            this.buffer_loads.clear();
+            this.buffer_load_count = 0;
             this.committed_tree_diff = Some(committed_tree_diff);
             this.tree_diff = Some(tree_diff);
             this.statuses_by_path = statuses_by_path;
@@ -420,7 +436,8 @@ impl DiffBufferList {
                     .as_ref()
                     .and_then(|tree| tree.entries.get(&item.repo_path))
                     .cloned();
-                let task = Self::load_buffer(
+                let task = self.shared_buffer_load(
+                    item.repo_path.clone(),
                     self.diff_base.clone(),
                     branch_diff,
                     project_path,
@@ -467,7 +484,8 @@ impl DiffBufferList {
                     output.push(DiffBuffer {
                         repo_path: path.clone(),
                         file_status: FileStatus::worktree(StatusCode::Modified),
-                        load: Self::load_buffer(
+                        load: self.shared_buffer_load(
+                            path.clone(),
                             self.diff_base.clone(),
                             branch_diff,
                             project_path,
@@ -483,16 +501,22 @@ impl DiffBufferList {
                 output.sort_by(|left, right| left.repo_path.cmp(&right.repo_path));
                 return output;
             };
+            let tree_entries = tree_diff
+                .entries
+                .iter()
+                .map(|(path, status)| (path.clone(), status.clone()))
+                .collect::<Vec<_>>();
 
-            for (path, branch_diff) in tree_diff.entries.iter() {
-                if seen.contains(path) {
+            for (path, branch_diff) in tree_entries {
+                if seen.contains(&path) {
                     continue;
                 }
 
-                let Some(project_path) = repo.read(cx).repo_path_to_project_path(path, cx) else {
+                let Some(project_path) = repo.read(cx).repo_path_to_project_path(&path, cx) else {
                     continue;
                 };
-                let task = Self::load_buffer(
+                let task = self.shared_buffer_load(
+                    path.clone(),
                     self.diff_base.clone(),
                     Some(branch_diff.clone()),
                     project_path,
@@ -502,14 +526,42 @@ impl DiffBufferList {
                 );
 
                 output.push(DiffBuffer {
-                    repo_path: path.clone(),
+                    repo_path: path,
                     load: task,
-                    file_status: diff_status_to_file_status(branch_diff),
+                    file_status: diff_status_to_file_status(&branch_diff),
                 });
             }
         }
         output.sort_by(|left, right| left.repo_path.cmp(&right.repo_path));
         output
+    }
+
+    #[instrument(skip_all)]
+    fn shared_buffer_load(
+        &mut self,
+        repo_path: RepoPath,
+        diff_base: DiffBase,
+        branch_diff: Option<git::status::TreeDiffStatus>,
+        project_path: crate::ProjectPath,
+        repo: Entity<Repository>,
+        git_store: Entity<GitStore>,
+        cx: &Context<Self>,
+    ) -> SharedDiffBufferLoad {
+        if let Some(load) = self.buffer_loads.get(&repo_path) {
+            return load.clone();
+        }
+        let load = Self::load_buffer(diff_base, branch_diff, project_path, repo, git_store, cx)
+            .map(|result| result.map_err(Arc::new))
+            .boxed_local()
+            .shared();
+        self.buffer_load_count += 1;
+        self.buffer_loads.insert(repo_path, load.clone());
+        load
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn buffer_load_count(&self) -> usize {
+        self.buffer_load_count
     }
 
     #[instrument(skip_all)]
@@ -658,7 +710,7 @@ fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> File
     file_status
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LoadedDiffBuffer {
     pub display_buffer: Entity<Buffer>,
     pub main_buffer: Entity<Buffer>,
@@ -666,9 +718,12 @@ pub struct LoadedDiffBuffer {
     pub conflict_set: Option<Entity<ConflictSet>>,
 }
 
-#[derive(Debug)]
+pub type SharedDiffBufferLoad =
+    Shared<LocalBoxFuture<'static, std::result::Result<LoadedDiffBuffer, Arc<anyhow::Error>>>>;
+
+#[derive(Clone, Debug)]
 pub struct DiffBuffer {
     pub repo_path: RepoPath,
     pub file_status: FileStatus,
-    pub load: Task<Result<LoadedDiffBuffer>>,
+    pub load: SharedDiffBufferLoad,
 }

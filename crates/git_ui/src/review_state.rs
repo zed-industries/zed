@@ -326,13 +326,6 @@ impl ReviewRecords {
             "Unsupported Branch Review state version"
         );
         records.schema_version = 3;
-        for approval in records.viewed.values() {
-            if let Some(snapshot) = &approval.snapshot {
-                snapshot
-                    .decode()
-                    .context("Unable to read a saved Viewed snapshot")?;
-            }
-        }
         Ok(records)
     }
 
@@ -442,6 +435,10 @@ impl ReviewState {
         self.error.is_none() && self.records.is_viewed(path, fingerprint)
     }
 
+    pub fn has_approval(&self, path: &str) -> bool {
+        self.error.is_none() && self.records.viewed.contains_key(path)
+    }
+
     pub fn change_reasons(&self, path: &str, fingerprint: &Fingerprint) -> Vec<&'static str> {
         if self.error.is_some() {
             return Vec::new();
@@ -538,15 +535,10 @@ impl ReviewState {
         self.persist(cx);
     }
 
+    #[ztracing::instrument(skip_all, fields(approvals = self.records.viewed.len()))]
     fn persist(&mut self, cx: &mut Context<Self>) {
-        let value = match serde_json::to_string(&self.records) {
-            Ok(value) => value,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                cx.notify();
-                return;
-            }
-        };
+        let records = self.records.clone();
+        let serialized = cx.background_spawn(async move { serde_json::to_string(&records) });
         self.revision += 1;
         let revision = self.revision;
         let previous_write = self.write_task.take();
@@ -554,12 +546,16 @@ impl ReviewState {
         let key = self.key.clone();
         self.saving = true;
         self.write_task = Some(cx.spawn(async move |this, cx| {
-            // Keep writes ordered even when several checkboxes are clicked before
-            // SQLite finishes. The app-owned entity outlives every review view.
-            if let Some(previous_write) = previous_write {
-                previous_write.await;
+            let result: Result<()> = async {
+                let value = serialized.await?;
+                // Keep writes ordered even when several checkboxes are clicked before
+                // SQLite finishes. The app-owned entity outlives every review view.
+                if let Some(previous_write) = previous_write {
+                    previous_write.await;
+                }
+                database.write_kvp(key, value).await
             }
-            let result = database.write_kvp(key, value).await;
+            .await;
             this.update(cx, |this, cx| {
                 if this.revision == revision {
                     this.saving = false;
@@ -654,7 +650,16 @@ mod tests {
                 snapshot: Some(corrupt),
             },
         );
-        assert!(ReviewRecords::restore(Some(&serde_json::to_string(&records).unwrap())).is_err());
+        let restored =
+            ReviewRecords::restore(Some(&serde_json::to_string(&records).unwrap())).unwrap();
+        assert!(
+            restored.viewed["a"]
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .decode()
+                .is_err()
+        );
     }
 
     #[test]
