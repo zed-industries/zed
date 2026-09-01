@@ -1159,12 +1159,12 @@ impl Extension {
         match self {
             Extension::V0_8_0(ext) => {
                 let config = config.into();
-                let dap_binary = ext
+                let scenario = ext
                     .call_dap_config_to_scenario(store, &config)
                     .await?
                     .map_err(|error| wasmtime::Error::msg(format!("{error:?}")))?;
 
-                Ok(Ok(dap_binary.try_into().into_wasmtime_result()?))
+                Ok(Ok(scenario.try_into().into_wasmtime_result()?))
             }
             Extension::V0_6_0(ext) => {
                 let config: latest::DebugConfig = config.into();
@@ -1200,7 +1200,7 @@ impl Extension {
         match self {
             Extension::V0_8_0(ext) => {
                 let build_config_template = build_config_template.into();
-                let dap_binary = ext
+                let scenario = ext
                     .call_dap_locator_create_scenario(
                         store,
                         &locator_name,
@@ -1210,7 +1210,7 @@ impl Extension {
                     )
                     .await?;
 
-                Ok(dap_binary
+                Ok(scenario
                     .map(TryInto::try_into)
                     .transpose()
                     .into_wasmtime_result()?)
@@ -1283,6 +1283,59 @@ impl Extension {
             | Extension::V0_0_1(_) => Err(wasmtime::Error::msg(
                 "`run_dap_locator` not available prior to v0.6.0",
             )),
+        }
+    }
+
+    pub async fn call_build_context(
+        &self,
+        store: &mut Store<WasmState>,
+        language_name: &str,
+        variables: &task::TaskVariables,
+        project_env: Option<&collections::HashMap<String, String>>,
+        location: latest::TaskContextLocation,
+        worktree: Resource<latest::ExtensionWorktree>,
+    ) -> wasmtime::Result<Result<Vec<latest::TaskVariable>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                let wit_variables = variables
+                    .iter()
+                    .map(|(name, value)| latest::TaskVariable {
+                        name: name.to_string(),
+                        value: value.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let wit_project_env = project_env.map(|env| {
+                    env.iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>()
+                });
+                ext.call_build_context(
+                    store,
+                    language_name,
+                    &wit_variables,
+                    wit_project_env.as_ref(),
+                    &location,
+                    worktree,
+                )
+                .await
+            }
+            _ => Ok(Ok(Vec::new())),
+        }
+    }
+
+    pub async fn call_associated_tasks(
+        &self,
+        store: &mut Store<WasmState>,
+        language_name: &str,
+        file: Option<latest::TaskContextFile>,
+        worktree: Resource<latest::ExtensionWorktree>,
+    ) -> wasmtime::Result<Result<Vec<latest::TaskDefinition>, String>> {
+        match self {
+            Extension::V0_8_0(ext) => {
+                ext.call_associated_tasks(store, language_name, file.as_ref(), worktree)
+                    .await
+            }
+            _ => Ok(Ok(Vec::new())),
         }
     }
 }

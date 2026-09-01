@@ -4102,6 +4102,26 @@ impl Extension for FakeExtension {
         Arc::from(Path::new("/fake-extension-work-dir"))
     }
 
+    async fn build_context(
+        &self,
+        _language_name: String,
+        _variables: task::TaskVariables,
+        _project_env: Option<collections::HashMap<String, String>>,
+        _location: extension::TaskContextLocation,
+        _worktree: Arc<dyn WorktreeDelegate>,
+    ) -> anyhow::Result<task::TaskVariables> {
+        Ok(task::TaskVariables::default())
+    }
+
+    async fn associated_tasks(
+        &self,
+        _language_name: String,
+        _file: Option<extension::TaskContextFile>,
+        _worktree: Arc<dyn WorktreeDelegate>,
+    ) -> anyhow::Result<Vec<task::TaskTemplate>> {
+        Ok(Vec::new())
+    }
+
     async fn language_server_command(
         &self,
         _language_server_id: LanguageServerName,

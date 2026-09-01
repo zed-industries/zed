@@ -1,0 +1,54 @@
+interface task {
+    use common.{range, env-vars};
+
+    record task-context-location {
+        worktree-id: u64,
+        /// Path relative to the worktree root.
+        file-path: string,
+        range: range,
+    }
+
+    record task-context-file {
+        worktree-id: u64,
+        /// Path relative to the worktree root.
+        path: string,
+    }
+
+    record task-variable {
+        name: string,
+        value: string,
+    }
+
+    record task-definition {
+        label: string,
+        command: string,
+        args: list<string>,
+        env: env-vars,
+        cwd: option<string>,
+        use-new-terminal: option<bool>,
+        allow-concurrent-runs: option<bool>,
+        reveal: option<reveal-strategy>,
+        reveal-target: option<reveal-target>,
+        hide: option<hide-strategy>,
+        shell: option<shell>,
+        show-summary: option<bool>,
+        show-command: option<bool>,
+        tags: list<string>,
+    }
+
+    enum reveal-strategy { always, no-focus, never }
+    enum reveal-target { center, dock }
+    enum hide-strategy { never, always, on-success }
+
+    variant shell {
+        system,
+        program(string),
+        with-arguments(shell-with-arguments),
+    }
+
+    record shell-with-arguments {
+        program: string,
+        args: list<string>,
+        title-override: option<string>,
+    }
+}

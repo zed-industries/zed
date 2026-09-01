@@ -15,8 +15,8 @@ use collections::{BTreeMap, BTreeSet, FxHashSet, HashMap, HashSet, btree_map};
 pub use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use extension::{
-    ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy, ExtensionEvents,
-    ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
+    ExtensionContextProvider, ExtensionContextServerProxy, ExtensionDebugAdapterProviderProxy,
+    ExtensionEvents, ExtensionGrammarProxy, ExtensionHostProxy, ExtensionLanguageProxy,
     ExtensionLanguageServerProxy, ExtensionSnippetProxy, ExtensionThemeProxy,
 };
 use fs::{Fs, RemoveOptions, RenameOptions};
@@ -40,7 +40,8 @@ use language::{
     QueryFileContents, QueryFiles, Rope,
 };
 use node_runtime::NodeRuntime;
-use project::{ContextProviderWithTasks, Project};
+use parking_lot::RwLock;
+use project::Project;
 use release_channel::ReleaseChannel;
 use remote::{ConnectionState, RemoteClient, RemoteClientEvent};
 use semver::Version;
@@ -76,6 +77,20 @@ pub use extension_settings::ExtensionSettings;
 use crate::headless_host::hash_directory_contents;
 
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
+
+#[derive(Clone)]
+struct ExtensionProvider {
+    wasm_extensions: Arc<RwLock<HashMap<Arc<str>, Arc<WasmExtension>>>>,
+}
+
+impl extension::ExtensionProviderProxy for ExtensionProvider {
+    fn extension_by_id(&self, extension_id: &str) -> Option<Arc<dyn extension::Extension>> {
+        self.wasm_extensions
+            .read()
+            .get(extension_id)
+            .map(|extension| extension.clone() as Arc<dyn extension::Extension>)
+    }
+}
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 pub(crate) const REMOTE_SYNC_RETRY_DELAY: Duration = Duration::from_secs(1);
 pub(crate) const MAX_REMOTE_SYNC_RETRY_DELAY: Duration = Duration::from_secs(60);
@@ -172,7 +187,8 @@ pub struct ExtensionStore {
     pub index_path: PathBuf,
     pub modified_extensions: HashSet<Arc<str>>,
     pub wasm_host: Arc<WasmHost>,
-    pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
+    extension_provider: Arc<ExtensionProvider>,
+    pub wasm_extensions: Vec<(Arc<ExtensionManifest>, Arc<WasmExtension>)>,
     pub tasks: Vec<Task<()>>,
     pub(crate) remote_clients: HashMap<EntityId, RemoteClientState>,
     pub(crate) initial_index_load: Shared<Task<()>>,
@@ -396,6 +412,9 @@ impl ExtensionStore {
                 work_dir,
                 cx,
             ),
+            extension_provider: Arc::new(ExtensionProvider {
+                wasm_extensions: Arc::new(RwLock::new(HashMap::default())),
+            }),
             wasm_extensions: Vec::new(),
             fs,
             http_client,
@@ -418,6 +437,9 @@ impl ExtensionStore {
                     this.fs.metadata(&this.installed_dir),
                 )
             });
+
+        let proxy = ExtensionHostProxy::global(cx);
+        proxy.register_extension_provider_proxy((*this.extension_provider).clone());
 
         // Normally, there is no need to rebuild the index. But if the index file
         // is invalid or is out-of-date according to the filesystem mtimes, then
@@ -1397,6 +1419,11 @@ impl ExtensionStore {
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
+        let mut wasm_extensions = self.extension_provider.wasm_extensions.write();
+        for id in &extensions_to_unload {
+            wasm_extensions.remove(id);
+        }
+        drop(wasm_extensions);
         self.proxy.remove_user_themes(themes_to_remove);
         self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
@@ -1507,6 +1534,8 @@ impl ExtensionStore {
             ]);
             let rules_path = language_path.join(SemanticTokenRules::FILE_NAME);
 
+            let extension_id = language.extension.clone();
+            let language_name_for_loader = language_name.clone();
             let registered = self.proxy.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
@@ -1515,11 +1544,24 @@ impl ExtensionStore {
                 Arc::new({
                     let fs = self.fs.clone();
                     let query_files = language.query_files;
+                    let extension_id = extension_id.clone();
+                    let language_name = language_name_for_loader;
                     move || {
                         let fs = fs.clone();
                         let language_path = language_path.clone();
-                        async move { load_plugin_language(fs, &language_path, query_files).await }
-                            .boxed()
+                        let extension_id = extension_id.clone();
+                        let language_name = language_name.clone();
+                        async move {
+                            load_plugin_language(
+                                fs,
+                                &language_path,
+                                query_files,
+                                extension_id,
+                                language_name,
+                            )
+                            .await
+                        }
+                        .boxed()
                     }
                 }),
             );
@@ -1527,7 +1569,7 @@ impl ExtensionStore {
                 continue;
             }
 
-            semantic_token_rules_paths.push((language_name, rules_path));
+            semantic_token_rules_paths.push((language_name.clone(), rules_path));
         }
 
         let fs = self.fs.clone();
@@ -1653,7 +1695,7 @@ impl ExtensionStore {
                 this.reload_complete_senders.clear();
 
                 for (manifest, wasm_extension) in &wasm_extensions {
-                    let extension = Arc::new(wasm_extension.clone());
+                    let extension = wasm_extension.clone();
 
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
@@ -1693,7 +1735,11 @@ impl ExtensionStore {
                     }
                 }
 
-                this.wasm_extensions.extend(wasm_extensions);
+                this.wasm_extensions.extend(wasm_extensions.clone());
+                this.extension_provider
+                    .wasm_extensions
+                    .write()
+                    .extend(wasm_extensions.into_iter().map(|(m, e)| (m.id.clone(), e)));
                 this.proxy.set_extensions_loaded();
                 this.proxy.reload_current_theme(cx);
                 this.proxy.reload_current_icon_theme(cx);
@@ -2329,6 +2375,8 @@ async fn load_plugin_language(
     fs: Arc<dyn Fs>,
     language_path: &Path,
     query_files: Option<QueryFiles>,
+    extension_id: Arc<str>,
+    language_name: LanguageName,
 ) -> Result<LoadedLanguage> {
     let config = {
         let fs = fs.clone();
@@ -2338,24 +2386,27 @@ async fn load_plugin_language(
             toml::from_str::<LanguageConfig>(&contents).map_err(anyhow::Error::from)
         }
     };
-    let context_provider = {
+    let static_templates = {
         let fs = fs.clone();
         let tasks_path = language_path.join(TaskTemplates::FILE_NAME);
         async move {
-            fs.load(&tasks_path).await.ok().and_then(|contents| {
-                serde_json_lenient::from_str(&contents)
-                    .log_err()
-                    .map(|definitions| {
-                        Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>
-                    })
-            })
+            fs.load(&tasks_path)
+                .await
+                .ok()
+                .and_then(|contents| serde_json_lenient::from_str(&contents).log_err())
         }
     };
-    let (config, queries, context_provider) = futures::try_join!(
+    let (config, queries, static_templates) = futures::try_join!(
         config,
         async move { Ok(load_plugin_queries(fs, &language_path, query_files).await) },
-        async move { Ok(context_provider.await) }
+        async move { Ok(static_templates.await) }
     )?;
+
+    let context_provider = Some(Arc::new(ExtensionContextProvider {
+        extension_id,
+        language_name,
+        static_templates,
+    }) as Arc<dyn language::ContextProvider>);
 
     Ok(LoadedLanguage {
         config,
