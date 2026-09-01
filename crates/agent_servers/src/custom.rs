@@ -9,6 +9,7 @@ use language_model::{ApiKey, EnvVar};
 use project::{
     Project,
     agent_server_store::{AgentId, AllAgentServersSettings},
+    trusted_worktrees::TrustedWorktrees,
 };
 use settings::{AgentConfigOptionValue, SettingsStore, update_settings_file};
 use std::{rc::Rc, sync::Arc};
@@ -18,6 +19,10 @@ pub const GEMINI_ID: &str = "gemini";
 pub const CLAUDE_AGENT_ID: &str = "claude-acp";
 pub const CODEX_ID: &str = "codex-acp";
 pub const CURSOR_ID: &str = "cursor";
+
+fn gemini_workspace_is_trusted(project: &Entity<Project>, cx: &App) -> bool {
+    !TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
+}
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {
@@ -241,6 +246,10 @@ impl AgentServer for CustomAgentServer {
                 }
                 GEMINI_ID => {
                     extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
+                    extra_env.insert(
+                        "GEMINI_CLI_TRUST_WORKSPACE".to_owned(),
+                        gemini_workspace_is_trusted(&project, cx).to_string(),
+                    );
                 }
                 _ => {}
             }
@@ -334,12 +343,16 @@ fn default_settings_for_agent() -> settings::CustomAgentServerSettings {
 mod tests {
     use super::*;
     use collections::HashMap;
+    use fs::FakeFs;
     use gpui::TestAppContext;
     use project::agent_registry_store::{
         AgentRegistryStore, RegistryAgent, RegistryAgentMetadata, RegistryNpxAgent,
     };
+    use project::trusted_worktrees::{self, DbTrustedPaths, PathTrust, TrustedWorktrees};
+    use serde_json::json;
     use settings::Settings as _;
     use ui::SharedString;
+    use util::path;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -427,5 +440,42 @@ mod tests {
         cx.update(|cx| {
             assert!(is_registry_agent("agent-from-settings", cx));
         });
+    }
+
+    #[gpui::test]
+    async fn test_gemini_workspace_trust_matches_zed(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({ "main.rs": "" }))
+            .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+        let worktree_id = worktree_store.read_with(cx, |store, cx| {
+            store
+                .worktrees()
+                .next()
+                .expect("test worktree should exist")
+                .read(cx)
+                .id()
+        });
+        let trusted_worktrees = cx.update(|cx| {
+            trusted_worktrees::init(DbTrustedPaths::default(), cx);
+            trusted_worktrees::track_worktree_trust(worktree_store.clone(), None, None, None, cx);
+            TrustedWorktrees::try_get_global(cx).expect("trust global should be set")
+        });
+
+        trusted_worktrees.update(cx, |store, cx| {
+            assert!(!store.can_trust(&worktree_store, worktree_id, cx));
+        });
+        cx.update(|cx| assert!(!gemini_workspace_is_trusted(&project, cx)));
+
+        trusted_worktrees.update(cx, |store, cx| {
+            store.trust(
+                &worktree_store,
+                [PathTrust::Worktree(worktree_id)].into_iter().collect(),
+                cx,
+            );
+        });
+        cx.update(|cx| assert!(gemini_workspace_is_trusted(&project, cx)));
     }
 }
