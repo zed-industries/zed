@@ -1,3 +1,6 @@
+#[cfg(test)]
+extern crate self as util;
+
 #[cfg(not(target_family = "wasm"))]
 pub mod archive;
 #[cfg(not(target_family = "wasm"))]
@@ -684,65 +687,19 @@ pub mod __rust_embed {
 /// directory that passes the same rust_embed include/exclude globs the
 /// release derive uses, so the dev and release file sets are identical. Reuses
 /// rust_embed's own matcher rather than reimplementing glob semantics.
-///
-/// `rust_embed::Filenames` has exactly one variant per compilation context:
-/// `Dynamic` without the `debug-embed` feature, `Embedded` with it. Cargo
-/// unifies features across the whole build graph, so a consumer workspace
-/// enabling `debug-embed` changes the enum this crate sees; each variant
-/// below compiles only in the context where its `Filenames` variant exists.
 #[cfg(all(debug_assertions, not(feature = "debug-embed")))]
 #[doc(hidden)]
 pub fn __fs_embed_iter(
     root_relative: &str,
     includes: &[&str],
     excludes: &[&str],
-) -> rust_embed::Filenames {
-    let names: Vec<std::borrow::Cow<'static, str>> =
-        fs_embed_file_names(root_relative, includes, excludes)
-            .into_iter()
-            .map(std::borrow::Cow::Owned)
-            .collect();
-    rust_embed::Filenames::Dynamic(Box::new(names.into_iter()))
+) -> impl Iterator<Item = std::borrow::Cow<'static, str>> + 'static {
+    fs_embed_file_names(root_relative, includes, excludes)
+        .into_iter()
+        .map(std::borrow::Cow::Owned)
 }
 
-/// The `debug-embed` arm of [`fs_embed!`]'s dev `iter`. The `Embedded`
-/// variant requires `'static` names, so the checkout is scanned once per
-/// embed site and the resulting name list is leaked and cached. The list
-/// staying fixed for the life of the process matches the macro's contract
-/// that dev edits show up on the next launch; file contents still come from
-/// `get`, which reads the filesystem on every call.
-#[cfg(all(debug_assertions, feature = "debug-embed"))]
-#[doc(hidden)]
-pub fn __fs_embed_iter(
-    root_relative: &str,
-    includes: &[&str],
-    excludes: &[&str],
-) -> rust_embed::Filenames {
-    use std::collections::BTreeMap;
-    use std::sync::Mutex;
-
-    /// Keyed by root and globs: distinct embed sites may share a root with
-    /// different filters.
-    type EmbedSiteKey = (String, Vec<String>, Vec<String>);
-    static LEAKED_NAMES: Mutex<BTreeMap<EmbedSiteKey, &'static [&'static str]>> =
-        Mutex::new(BTreeMap::new());
-
-    let key = (
-        root_relative.to_string(),
-        includes.iter().map(|glob| glob.to_string()).collect(),
-        excludes.iter().map(|glob| glob.to_string()).collect(),
-    );
-    let names = *LEAKED_NAMES.lock().unwrap().entry(key).or_insert_with(|| {
-        let names: Vec<&'static str> = fs_embed_file_names(root_relative, includes, excludes)
-            .into_iter()
-            .map(|name| &*name.leak())
-            .collect();
-        names.leak()
-    });
-    rust_embed::Filenames::Embedded(names.iter())
-}
-
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(feature = "debug-embed")))]
 fn fs_embed_file_names(root_relative: &str, includes: &[&str], excludes: &[&str]) -> Vec<String> {
     let Some(root) = dev_repo_root().map(|root| root.join(root_relative)) else {
         return Vec::new();
@@ -756,7 +713,7 @@ fn fs_embed_file_names(root_relative: &str, includes: &[&str], excludes: &[&str]
 /// Backs the dev arm of [`fs_embed!`]'s `get`: reads a single file from the
 /// checkout, returning `None` when the include/exclude globs filter it out so
 /// `get` matches release's embedded set exactly.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(feature = "debug-embed")))]
 #[doc(hidden)]
 pub fn __fs_embed_get(
     root_relative: &str,
@@ -774,37 +731,31 @@ pub fn __fs_embed_get(
     rust_embed::utils::read_file_from_fs(&root.join(file_path)).ok()
 }
 
-/// A `rust_embed` asset source that embeds files in release builds and reads them
-/// from the checkout at runtime in dev builds (edits show up on the next launch
-/// with no rebuild). One invocation replaces the previous pairing of a
-/// `#[cfg(not(debug_assertions))] #[derive(RustEmbed)]` struct with a separate
-/// dev macro, and keeps a single source of truth for the include/exclude globs.
-///
-/// It expands to both arms:
-/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding
-///   `crate_relative` at build time, with the given `include`/`exclude` globs.
-/// * Dev (`debug_assertions`): a runtime filesystem source rooted at
-///   `root_relative`, applying those same globs through rust_embed's own matcher.
-///
-/// Two paths are required because the arms resolve from different bases: the
-/// release derive reads `crate_relative` relative to the crate's `Cargo.toml`
-/// at build time (rust_embed's rule), while the dev arm resolves `root_relative`
-/// relative to the repository root at runtime via [`dev_repo_root`]. Baking the
-/// build-time path into the dev artifact would point at the wrong checkout from
-/// another worktree and is rejected by corgi, whose sandbox requires
-/// checkout-independent output.
-///
-/// ```ignore
-/// util::fs_embed! {
-///     pub struct Assets,
-///     crate_relative = "../../assets",
-///     root_relative = "assets",
-///     include = ["fonts/**/*", "themes/**/*", "*.md"],
-///     exclude = ["themes/src/*", "*.DS_Store"],
-/// }
-/// ```
+#[cfg(feature = "debug-embed")]
+#[doc(hidden)]
 #[macro_export]
-macro_rules! fs_embed {
+macro_rules! __fs_embed {
+    (
+        $vis:vis struct $name:ident,
+        crate_relative = $crate_relative:literal,
+        root_relative = $root_relative:literal
+        $(, include = [$($include:literal),* $(,)?])?
+        $(, exclude = [$($exclude:literal),* $(,)?])?
+        $(,)?
+    ) => {
+        #[derive($crate::__rust_embed::RustEmbed)]
+        #[crate_path = "::util::__rust_embed"]
+        #[folder = $crate_relative]
+        $($(#[include = $include])*)?
+        $($(#[exclude = $exclude])*)?
+        $vis struct $name;
+    };
+}
+
+#[cfg(not(feature = "debug-embed"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __fs_embed {
     (
         $vis:vis struct $name:ident,
         crate_relative = $crate_relative:literal,
@@ -872,6 +823,40 @@ macro_rules! fs_embed {
                 )
             }
         }
+    };
+}
+
+/// A `rust_embed` asset source that embeds files in release builds. Dev builds
+/// read from the checkout at runtime unless the `debug-embed` feature is enabled,
+/// in which case they embed the files too.
+///
+/// It expands to one of these arms:
+/// * Release (`not(debug_assertions)`): `#[derive(RustEmbed)]` embedding
+///   `crate_relative` at build time, with the given `include`/`exclude` globs.
+/// * Dev with `debug-embed`: the same compile-time embedding as release.
+/// * Dev without `debug-embed`: a runtime filesystem source rooted at
+///   `root_relative`; edits appear on the next launch without a rebuild.
+///
+/// Two paths are required because the arms resolve from different bases: the
+/// derive reads `crate_relative` relative to the crate's `Cargo.toml`, while the
+/// runtime dev arm resolves `root_relative` relative to the repository root via
+/// [`dev_repo_root`]. Baking the build-time path into that arm would point at the
+/// wrong checkout from another worktree and is rejected by corgi, whose sandbox
+/// requires checkout-independent output.
+///
+/// ```ignore
+/// util::fs_embed! {
+///     pub struct Assets,
+///     crate_relative = "../../assets",
+///     root_relative = "assets",
+///     include = ["fonts/**/*", "themes/**/*", "*.md"],
+///     exclude = ["themes/src/*", "*.DS_Store"],
+/// }
+/// ```
+#[macro_export]
+macro_rules! fs_embed {
+    ($($tokens:tt)*) => {
+        $crate::__fs_embed!($($tokens)*);
     };
 }
 
@@ -1036,13 +1021,8 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
 mod tests {
     use super::*;
 
-    /// Exercises `fs_embed!`'s dev arm, whose `RustEmbed::iter` implementation
-    /// must construct whichever `rust_embed::Filenames` variant the current
-    /// feature state provides. Running util's tests with and without the
-    /// `debug-embed` feature covers both variants.
-    #[cfg(debug_assertions)]
     #[test]
-    fn test_fs_embed_dev_arm_iter_and_get() {
+    fn test_fs_embed_iter_and_get() {
         let inherent_names: Vec<_> = FsEmbedTestAssets::iter().collect();
         assert!(
             inherent_names.iter().any(|name| name == "util.rs"),
@@ -1070,13 +1050,22 @@ mod tests {
         );
     }
 
-    // Dev arm only: the release arm's derive names this crate as
-    // `::util`, which does not resolve from util's own unit tests.
-    #[cfg(debug_assertions)]
+    #[cfg(not(feature = "debug-embed"))]
     crate::fs_embed! {
         struct FsEmbedTestAssets,
         crate_relative = "src",
         root_relative = "crates/util/src",
+        include = ["*.rs"],
+        exclude = ["test/**/*"],
+    }
+
+    // A consuming workspace does not contain a git dependency's files at this
+    // repository-relative path, so `debug-embed` must not consult it.
+    #[cfg(feature = "debug-embed")]
+    crate::fs_embed! {
+        struct FsEmbedTestAssets,
+        crate_relative = "src",
+        root_relative = "this-path-must-not-be-read",
         include = ["*.rs"],
         exclude = ["test/**/*"],
     }
