@@ -459,7 +459,23 @@ impl Item for ProjectDiff {
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.diff.read(cx).active_project_path(cx)
+        let project_path = self.diff.read(cx).active_project_path(cx)?;
+        // Switching the diff to another repository rebuilds its buffers
+        // asynchronously, so for a moment the visible buffers still belong to
+        // the previously shown repository. Reporting that stale path makes the
+        // workspace flip the active repository back to it (the file the user
+        // clicked in the newly selected repository ends up switching the panel
+        // back to the old one). Only report the path once it belongs to the
+        // repository the diff is currently showing.
+        if let Some(repo) = self.repo(cx)
+            && repo
+                .read(cx)
+                .project_path_to_repo_path(&project_path, cx)
+                .is_none()
+        {
+            return None;
+        }
+        Some(project_path)
     }
 
     fn set_nav_history(
@@ -989,7 +1005,7 @@ mod tests {
     use buffer_diff::DiffHunkSecondaryStatus;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use multi_buffer::PathKey;
     use project::FakeFs;
     use serde_json::json;
@@ -1359,6 +1375,97 @@ mod tests {
         let paths_b = diff_item.read_with(cx, |diff, cx| diff.excerpt_paths(cx));
         assert_eq!(paths_b.len(), 1);
         assert_eq!(*paths_b[0], *"b.txt");
+    }
+
+    #[gpui::test]
+    async fn test_deploy_at_keeps_selected_repository_active(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project_a"),
+            json!({
+                ".git": {},
+                "a.txt": "CHANGED_A\n",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            path!("/project_b"),
+            json!({
+                ".git": {},
+                "b.txt": "CHANGED_B\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_a/.git")),
+            &[("a.txt", "original_a\n".to_string())],
+        );
+        fs.set_head_and_index_for_repo(
+            Path::new(path!("/project_b/.git")),
+            &[("b.txt", "original_b\n".to_string())],
+        );
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new(path!("/project_a")),
+                Path::new(path!("/project_b")),
+            ],
+            cx,
+        )
+        .await;
+
+        let (worktree_a_id, worktree_b_id) = project.read_with(cx, |project, cx| {
+            let mut worktrees: Vec<_> = project.worktrees(cx).collect();
+            worktrees.sort_by_key(|w| w.read(cx).abs_path());
+            (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
+        });
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        let select_repo_and_open_diff = |worktree_id, cx: &mut VisualTestContext| {
+            workspace.update(cx, |workspace, cx| {
+                let git_store = workspace.project().read(cx).git_store().clone();
+                git_store.update(cx, |git_store, cx| {
+                    git_store.set_active_repo_for_worktree(worktree_id, cx);
+                });
+            });
+            cx.focus(&workspace);
+            cx.update(|window, cx| {
+                window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+            });
+            cx.run_until_parked();
+        };
+
+        // Show project A's diff, then switch to project B so the shared
+        // ProjectDiff item ends up displaying project B's buffers.
+        select_repo_and_open_diff(worktree_a_id, cx);
+        select_repo_and_open_diff(worktree_b_id, cx);
+
+        // Select project A again and open its diff, as if the user picked
+        // project A in the git panel and then clicked one of its files. The
+        // diff still shows project B's buffers for a moment while it rebuilds,
+        // and that stale path must not flip the active repository back to B.
+        select_repo_and_open_diff(worktree_a_id, cx);
+
+        let active_repo_path = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .project()
+                .read(cx)
+                .active_repository(cx)
+                .map(|repo| repo.read(cx).work_directory_abs_path.as_ref().to_path_buf())
+        });
+        assert_eq!(
+            active_repo_path.as_deref(),
+            Some(Path::new(path!("/project_a"))),
+            "active repository should stay on the explicitly selected project A"
+        );
     }
 
     #[gpui::test]
