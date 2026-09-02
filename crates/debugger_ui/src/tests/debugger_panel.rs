@@ -2691,3 +2691,158 @@ async fn test_restart_request_is_not_sent_more_than_once_until_response(
         "A second restart should be allowed after the first one completes"
     );
 }
+
+#[gpui::test]
+async fn test_console_editor_accessor_resolves_active_session_console(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    // Before any session: the accessor must return None.
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            assert!(debug_panel.read(cx).console_editor(cx).is_none());
+        })
+        .unwrap();
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: None,
+            output: "Console output line".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    // With an active session: the accessor must resolve the console editor
+    // rendering the session's output, so surfaces like `AddSelectionToThread`
+    // can reach it even though it never becomes `active_item()`.
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let console_editor = debug_panel.read(cx).console_editor(cx).unwrap();
+            assert_eq!(console_editor.read(cx).text(cx), "Console output line\n");
+
+            let active_session = debug_panel.read(cx).active_session().unwrap();
+            let running_state = active_session.read(cx).running_state();
+            let chained_console_editor = running_state.read(cx).console().read(cx).editor().clone();
+            assert_eq!(
+                console_editor.entity_id(),
+                chained_console_editor.entity_id(),
+                "accessor must return the active session's console editor"
+            );
+        })
+        .unwrap();
+}
+
+#[gpui::test]
+async fn test_debug_terminal_accessor_resolves_active_session_terminal(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    // needed because the debugger launches a terminal which starts a background PTY
+    cx.executor().allow_parking();
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    // No terminal was requested yet: the accessor must return None.
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            assert!(debug_panel.read(cx).debug_terminal(cx).is_none());
+        })
+        .unwrap();
+
+    client
+        .fake_reverse_request::<RunInTerminal>(RunInTerminalRequestArguments {
+            kind: None,
+            title: None,
+            cwd: std::env::temp_dir().to_string_lossy().into_owned(),
+            args: vec![],
+            env: None,
+            args_can_be_interpreted_by_shell: None,
+        })
+        .await;
+
+    cx.run_until_parked();
+
+    // After the adapter's RunInTerminal reverse request, the accessor must
+    // resolve the session's terminal view, so surfaces like
+    // `AddSelectionToThread` can reach it even though it is never
+    // `active_item()`.
+    workspace
+        .update(cx, |workspace, _window, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let terminal_view = debug_panel.read(cx).debug_terminal(cx).unwrap();
+
+            let active_session = debug_panel.read(cx).active_session().unwrap();
+            let running_state = active_session.read(cx).running_state();
+            let chained_terminal = running_state
+                .read(cx)
+                .debug_terminal
+                .read(cx)
+                .terminal
+                .clone()
+                .unwrap();
+            assert_eq!(
+                terminal_view.entity_id(),
+                chained_terminal.entity_id(),
+                "accessor must return the active session's terminal view"
+            );
+        })
+        .unwrap();
+}
