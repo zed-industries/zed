@@ -111,10 +111,20 @@ pub struct ImageItem {
 }
 
 #[derive(Clone)]
+pub struct PdfPageEntry {
+    pub page_index: usize,
+    pub width: u32,
+    pub height: u32,
+    pub image: Arc<gpui::Image>,
+}
+
+#[derive(Clone)]
 pub struct PdfPageInfo {
     pub current_page: usize,
     pub total_pages: usize,
     pub pdf_bytes: Arc<Vec<u8>>,
+    pub pages: Vec<PdfPageEntry>,
+    pub full_text: Option<String>,
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -254,6 +264,15 @@ impl ImageItem {
         self.pdf_info.as_ref().map(|p| p.total_pages).unwrap_or(1)
     }
 
+    pub fn extract_text(&self) -> Option<String> {
+        let info = self.pdf_info.as_ref()?;
+        if let Some(ref text) = info.full_text {
+            Some(text.clone())
+        } else {
+            kkpdf_zed::PdfiumEngine::new().extract_text_from_bytes(&info.pdf_bytes, None).ok()
+        }
+    }
+
     pub fn set_page(&mut self, page_index: usize, cx: &mut Context<Self>) -> bool {
         let Some(ref mut info) = self.pdf_info else {
             return false;
@@ -262,26 +281,22 @@ impl ImageItem {
             return false;
         }
 
-        match create_gpui_image_from_pdf_page(&info.pdf_bytes, page_index) {
-            Ok((new_image, width, height)) => {
-                info.current_page = page_index;
-                self.image = new_image;
-                self.image_metadata = Some(ImageMetadata {
-                    width,
-                    height,
-                    file_size: info.pdf_bytes.len() as u64,
-                    format: image::ImageFormat::Png,
-                    colors: ImageColorInfo::from_color_type(image::ColorType::Rgba8),
-                });
-                cx.emit(ImageItemEvent::Reloaded);
-                cx.emit(ImageItemEvent::MetadataUpdated);
-                cx.notify();
-                true
-            }
-            Err(e) => {
-                log::error!("Failed to render PDF page {}: {:#}", page_index, e);
-                false
-            }
+        info.current_page = page_index;
+        if let Some(page) = info.pages.get(page_index) {
+            self.image = page.image.clone();
+            self.image_metadata = Some(ImageMetadata {
+                width: page.width,
+                height: page.height,
+                file_size: info.pdf_bytes.len() as u64,
+                format: image::ImageFormat::Png,
+                colors: ImageColorInfo::from_color_type(image::ColorType::Rgba8),
+            });
+            cx.emit(ImageItemEvent::Reloaded);
+            cx.emit(ImageItemEvent::MetadataUpdated);
+            cx.notify();
+            true
+        } else {
+            false
         }
     }
 
@@ -319,31 +334,37 @@ impl ImageItem {
                 let cur_page = this.read_with(cx, |this, _| this.current_page()).unwrap_or(0);
 
                 if is_pdf {
-                    if let Ok(engine) = anyhow::Ok(kkpdf_zed::pdfium::PdfiumEngine::new()) {
-                        if let Ok(doc) = engine.load_document_from_bytes(&bytes, None) {
-                            let total_pages = doc.total_pages();
-                            let target_page = cur_page.min(total_pages.saturating_sub(1));
-                            if let Ok((img, width, height)) = create_gpui_image_from_pdf_page(&bytes, target_page) {
-                                this.update(cx, |this, cx| {
-                                    this.image = img;
-                                    this.pdf_info = Some(PdfPageInfo {
-                                        current_page: target_page,
-                                        total_pages,
-                                        pdf_bytes: Arc::new(bytes.clone()),
-                                    });
-                                    this.image_metadata = Some(ImageMetadata {
-                                        width,
-                                        height,
-                                        file_size: bytes.len() as u64,
-                                        format: image::ImageFormat::Png,
-                                        colors: ImageColorInfo::from_color_type(image::ColorType::Rgba8),
-                                    });
-                                    cx.emit(ImageItemEvent::Reloaded);
-                                    cx.emit(ImageItemEvent::MetadataUpdated);
-                                })
-                                .log_err();
-                            }
-                        }
+                    if let Ok((pages, full_text)) = create_gpui_images_from_pdf(&bytes) {
+                        let total_pages = pages.len();
+                        let target_page = cur_page.min(total_pages.saturating_sub(1));
+                        let first_image = pages
+                            .get(target_page)
+                            .map(|p| p.image.clone())
+                            .unwrap_or_else(|| create_gpui_image(bytes.clone()).unwrap());
+                        let (width, height) = pages
+                            .get(target_page)
+                            .map(|p| (p.width, p.height))
+                            .unwrap_or((0, 0));
+                        this.update(cx, |this, cx| {
+                            this.image = first_image;
+                            this.pdf_info = Some(PdfPageInfo {
+                                current_page: target_page,
+                                total_pages,
+                                pdf_bytes: Arc::new(bytes.clone()),
+                                pages,
+                                full_text,
+                            });
+                            this.image_metadata = Some(ImageMetadata {
+                                width,
+                                height,
+                                file_size: bytes.len() as u64,
+                                format: image::ImageFormat::Png,
+                                colors: ImageColorInfo::from_color_type(image::ColorType::Rgba8),
+                            });
+                            cx.emit(ImageItemEvent::Reloaded);
+                            cx.emit(ImageItemEvent::MetadataUpdated);
+                        })
+                        .log_err();
                     }
                 } else if let Some(image) = create_gpui_image(bytes).log_err() {
                     this.update(cx, |this, cx| {
@@ -720,19 +741,28 @@ impl RemoteImageStore {
                     }
 
                     let is_pdf = content.starts_with(b"%PDF-");
-                    let pdf_info = if is_pdf {
-                        let engine = kkpdf_zed::pdfium::PdfiumEngine::new();
-                        let doc = engine.load_document_from_bytes(&content, None).log_err();
-                        doc.map(|doc| PdfPageInfo {
-                            current_page: 0,
-                            total_pages: doc.total_pages(),
-                            pdf_bytes: Arc::new(content.clone()),
-                        })
+                    let (image, pdf_info) = if is_pdf {
+                        if let Ok((pages, full_text)) = create_gpui_images_from_pdf(&content) {
+                            let first_image = pages
+                                .first()
+                                .map(|p| p.image.clone())
+                                .unwrap_or_else(|| create_gpui_image(content.clone()).unwrap());
+                            let total_pages = pages.len();
+                            let pdf_info = PdfPageInfo {
+                                current_page: 0,
+                                total_pages,
+                                pdf_bytes: Arc::new(content.clone()),
+                                pages,
+                                full_text,
+                            };
+                            (first_image, Some(pdf_info))
+                        } else {
+                            (create_gpui_image(content.clone())?, None)
+                        }
                     } else {
-                        None
+                        (create_gpui_image(content.clone())?, None)
                     };
                     let image_metadata = ImageItem::compute_metadata_from_bytes(&content).log_err();
-                    let image = create_gpui_image(content)?;
 
                     let proto_file = loading.state.file.context("missing file in image state")?;
                     let worktree_id = WorktreeId::from_proto(proto_file.worktree_id);
@@ -791,18 +821,27 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
         cx.spawn(async move |image_store, cx| {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let is_pdf = content.starts_with(b"%PDF-");
-            let pdf_info = if is_pdf {
-                let engine = kkpdf_zed::pdfium::PdfiumEngine::new();
-                let doc = engine.load_document_from_bytes(&content, None).log_err();
-                doc.map(|doc| PdfPageInfo {
-                    current_page: 0,
-                    total_pages: doc.total_pages(),
-                    pdf_bytes: Arc::new(content.clone()),
-                })
+            let (image, pdf_info) = if is_pdf {
+                if let Ok((pages, full_text)) = create_gpui_images_from_pdf(&content) {
+                    let first_image = pages
+                        .first()
+                        .map(|p| p.image.clone())
+                        .unwrap_or_else(|| create_gpui_image(content.clone()).unwrap());
+                    let total_pages = pages.len();
+                    let pdf_info = PdfPageInfo {
+                        current_page: 0,
+                        total_pages,
+                        pdf_bytes: Arc::new(content.clone()),
+                        pages,
+                        full_text,
+                    };
+                    (first_image, Some(pdf_info))
+                } else {
+                    (create_gpui_image(content.clone())?, None)
+                }
             } else {
-                None
+                (create_gpui_image(content.clone())?, None)
             };
-            let image = create_gpui_image(content)?;
 
             let entity = cx.new(|cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
@@ -1071,6 +1110,49 @@ impl LocalImageStore {
 
         Some(())
     }
+}
+
+pub fn create_gpui_images_from_pdf(
+    pdf_bytes: &[u8],
+) -> anyhow::Result<(Vec<PdfPageEntry>, Option<String>)> {
+    let engine = kkpdf_zed::pdfium::PdfiumEngine::new();
+    let doc = engine.load_document_from_bytes(pdf_bytes, None)?;
+    let total_pages = doc.total_pages();
+    let options = kkpdf_zed::rasterizer::RasterizerOptions {
+        target_dpi: 144.0,
+        zoom_factor: 1.0,
+        dark_mode: false,
+        saturation_threshold: 0.18,
+    };
+
+    let mut pages = Vec::with_capacity(total_pages);
+    for page_idx in 0..total_pages {
+        let page = engine.render_page_from_bytes(pdf_bytes, page_idx, options)?;
+        let mut png_bytes: Vec<u8> = Vec::new();
+        let mut cursor = std::io::Cursor::new(&mut png_bytes);
+        let img_buf = image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+            page.width,
+            page.height,
+            page.rgba_buffer.as_ref().clone(),
+        )
+        .ok_or_else(|| anyhow::anyhow!("Failed to convert RGBA to ImageBuffer"))?;
+
+        img_buf.write_to(&mut cursor, image::ImageFormat::Png)?;
+        let image = Arc::new(gpui::Image::from_bytes(
+            gpui::ImageFormat::Png,
+            png_bytes,
+        ));
+        pages.push(PdfPageEntry {
+            page_index: page_idx,
+            width: page.width,
+            height: page.height,
+            image,
+        });
+    }
+
+    let full_text = engine.extract_text_from_bytes(pdf_bytes, None).ok();
+
+    Ok((pages, full_text))
 }
 
 pub fn create_gpui_image_from_pdf_page(

@@ -56,7 +56,11 @@ actions!(
         /// Go to first page (PDF).
         FirstPage,
         /// Go to last page (PDF).
-        LastPage
+        LastPage,
+        /// Copy text from PDF.
+        CopyText,
+        /// Toggle text inspection panel.
+        ToggleTextPanel
     ]
 );
 
@@ -81,6 +85,10 @@ pub struct ImageView {
     image_size: Option<(u32, u32)>,
     pending_image: Option<Arc<gpui::Image>>,
     displayed_image: Option<DisplayedImage>,
+    pdf_scroll_handle: gpui::ScrollHandle,
+    show_text_panel: bool,
+    text_buffer: Option<Entity<language::Buffer>>,
+    text_editor: Option<Entity<Editor>>,
 }
 
 struct DisplayedImage {
@@ -190,6 +198,10 @@ impl ImageView {
             image_size,
             pending_image: Some(pending_image),
             displayed_image: None,
+            pdf_scroll_handle: gpui::ScrollHandle::new(),
+            show_text_panel: false,
+            text_buffer: None,
+            text_editor: None,
         }
     }
 
@@ -260,27 +272,71 @@ impl ImageView {
     }
 
     fn next_page(&mut self, _: &NextPage, _window: &mut Window, cx: &mut Context<Self>) {
-        self.image_item.update(cx, |item, cx| {
-            item.next_page(cx);
+        let changed = self.image_item.update(cx, |item, cx| {
+            item.next_page(cx)
         });
+        if changed {
+            let cur = self.image_item.read(cx).current_page();
+            self.pdf_scroll_handle.scroll_to_top_of_item(cur);
+            cx.notify();
+        }
     }
 
     fn previous_page(&mut self, _: &PreviousPage, _window: &mut Window, cx: &mut Context<Self>) {
-        self.image_item.update(cx, |item, cx| {
-            item.previous_page(cx);
+        let changed = self.image_item.update(cx, |item, cx| {
+            item.previous_page(cx)
         });
+        if changed {
+            let cur = self.image_item.read(cx).current_page();
+            self.pdf_scroll_handle.scroll_to_top_of_item(cur);
+            cx.notify();
+        }
     }
 
     fn first_page(&mut self, _: &FirstPage, _window: &mut Window, cx: &mut Context<Self>) {
-        self.image_item.update(cx, |item, cx| {
-            item.first_page(cx);
+        let changed = self.image_item.update(cx, |item, cx| {
+            item.first_page(cx)
         });
+        if changed {
+            self.pdf_scroll_handle.scroll_to_top_of_item(0);
+            cx.notify();
+        }
     }
 
     fn last_page(&mut self, _: &LastPage, _window: &mut Window, cx: &mut Context<Self>) {
-        self.image_item.update(cx, |item, cx| {
-            item.last_page(cx);
+        let changed = self.image_item.update(cx, |item, cx| {
+            item.last_page(cx)
         });
+        if changed {
+            let cur = self.image_item.read(cx).current_page();
+            self.pdf_scroll_handle.scroll_to_top_of_item(cur);
+            cx.notify();
+        }
+    }
+
+    fn copy_text(&mut self, _: &CopyText, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = self.image_item.read(cx).extract_text() {
+            if !text.is_empty() {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text));
+            }
+        }
+    }
+
+    fn toggle_text_panel(&mut self, _: &ToggleTextPanel, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_text_panel = !self.show_text_panel;
+        if self.show_text_panel && self.text_editor.is_none() {
+            if let Some(text) = self.image_item.read(cx).extract_text() {
+                let buffer = cx.new(|cx| language::Buffer::local(text, cx));
+                let editor = cx.new(|cx| {
+                    let mut editor = Editor::for_buffer(buffer.clone(), Some(self.project.clone()), window, cx);
+                    editor.set_read_only(true);
+                    editor
+                });
+                self.text_buffer = Some(buffer);
+                self.text_editor = Some(editor);
+            }
+        }
+        cx.notify();
     }
 
     fn reveal_in_file_manager(
@@ -453,17 +509,7 @@ impl Element for ImageContentElement {
         let image_view = self.image_view.read(cx);
         let image = image_view.image_item.read(cx).image.clone();
 
-        let first_layout = image_view.container_bounds.is_none();
-
-        let initial_zoom_level = first_layout
-            .then(|| {
-                image_view
-                    .image_size
-                    .map(|image_size| ImageView::compute_fit_to_view_zoom(bounds, image_size))
-            })
-            .flatten();
-
-        let zoom_level = initial_zoom_level.unwrap_or(image_view.zoom_level);
+        let zoom_level = image_view.zoom_level;
 
         let pan_offset = image_view.pan_offset;
         let border_color = cx.theme().colors().border;
@@ -493,9 +539,6 @@ impl Element for ImageContentElement {
             let render_image = image.clone().use_render_image(window, cx);
             this.update_displayed_image(&image, render_image, window, cx);
             this.container_bounds = Some(bounds);
-            if let Some(initial_zoom_level) = initial_zoom_level {
-                this.zoom_level = initial_zoom_level;
-            }
         });
 
         let mut image_content = div()
@@ -692,6 +735,10 @@ impl Item for ImageView {
             image_size: self.image_size,
             pending_image: None,
             displayed_image: None,
+            pdf_scroll_handle: gpui::ScrollHandle::new(),
+            show_text_panel: self.show_text_panel,
+            text_buffer: None,
+            text_editor: None,
         })))
     }
 
@@ -799,6 +846,8 @@ impl Focusable for ImageView {
 
 impl Render for ImageView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let pdf_info = self.image_item.read(cx).pdf_info.clone();
+
         div()
             .track_focus(&self.focus_handle(cx))
             .key_context("ImageViewer")
@@ -812,29 +861,108 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::previous_page))
             .on_action(cx.listener(Self::first_page))
             .on_action(cx.listener(Self::last_page))
+            .on_action(cx.listener(Self::copy_text))
+            .on_action(cx.listener(Self::toggle_text_panel))
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
             .child({
-                let container = div()
-                    .id("image-container")
-                    .size_full()
-                    .overflow_hidden()
-                    .cursor(if self.is_dragging() {
-                        gpui::CursorStyle::ClosedHand
-                    } else {
-                        gpui::CursorStyle::OpenHand
-                    })
-                    .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
-                    .on_pinch(cx.listener(Self::handle_pinch))
-                    .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
-                    .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
-                    .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-                    .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
-                    .on_mouse_move(cx.listener(Self::handle_mouse_move))
-                    .child(ImageContentElement::new(cx.entity()));
+                if let Some(pdf_info) = pdf_info.filter(|info| !info.pages.is_empty()) {
+                    let border_color = cx.theme().colors().border;
+                    let zoom_level = self.zoom_level;
+                    let total_pages = pdf_info.total_pages;
 
-                container
+                    let main_pdf_view = div()
+                        .id("pdf-scroll-container")
+                        .track_scroll(&self.pdf_scroll_handle)
+                        .overflow_y_scroll()
+                        .size_full()
+                        .child(
+                            v_flex()
+                                .w_full()
+                                .items_center()
+                                .py_6()
+                                .gap_8()
+                                .children(pdf_info.pages.into_iter().map(|page| {
+                                    let page_w = px(page.width as f32 * zoom_level);
+                                    let page_h = px(page.height as f32 * zoom_level);
+                                    let page_idx = page.page_index;
+                                    v_flex()
+                                        .id(("pdf-page-container", page_idx))
+                                        .items_center()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .id(("pdf-page-canvas", page_idx))
+                                                .w(page_w)
+                                                .h(page_h)
+                                                .shadow_md()
+                                                .border_1()
+                                                .border_color(border_color)
+                                                .bg(gpui::white())
+                                                .child(
+                                                    img(page.image)
+                                                        .id(("pdf-page-img", page_idx))
+                                                        .size_full()
+                                                )
+                                        )
+                                        .child(
+                                            Label::new(format!("Page {} of {}", page_idx + 1, total_pages))
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                        )
+                                }))
+                        );
+
+                    if self.show_text_panel {
+                        h_flex()
+                            .size_full()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .h_full()
+                                    .child(main_pdf_view)
+                            )
+                            .child(Divider::vertical())
+                            .child(
+                                div()
+                                    .w_96()
+                                    .h_full()
+                                    .p_2()
+                                    .bg(cx.theme().colors().panel_background)
+                                    .child(
+                                        if let Some(editor) = &self.text_editor {
+                                            div().size_full().child(editor.clone()).into_any_element()
+                                        } else {
+                                            div().size_full().child(Label::new("Extracting text...")).into_any_element()
+                                        }
+                                    )
+                            )
+                            .into_any_element()
+                    } else {
+                        main_pdf_view.into_any_element()
+                    }
+                } else {
+                    let container = div()
+                        .id("image-container")
+                        .size_full()
+                        .overflow_hidden()
+                        .cursor(if self.is_dragging() {
+                            gpui::CursorStyle::ClosedHand
+                        } else {
+                            gpui::CursorStyle::OpenHand
+                        })
+                        .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
+                        .on_pinch(cx.listener(Self::handle_pinch))
+                        .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+                        .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+                        .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+                        .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+                        .on_mouse_move(cx.listener(Self::handle_mouse_move))
+                        .child(ImageContentElement::new(cx.entity()));
+
+                    container.into_any_element()
+                }
             })
     }
 }
@@ -978,9 +1106,10 @@ impl Render for ImageViewToolbarControls {
         };
 
         let image_item = image_view.read(cx).image_item.clone();
-        let (is_pdf, current_page, total_pages) = {
+        let (is_pdf, current_page, total_pages, show_text_panel) = {
             let item = image_item.read(cx);
-            (item.is_pdf(), item.current_page(), item.total_pages())
+            let show_text = image_view.read(cx).show_text_panel;
+            (item.is_pdf(), item.current_page(), item.total_pages(), show_text)
         };
 
         h_flex()
@@ -1015,6 +1144,36 @@ impl Render for ImageViewToolbarControls {
                             if let Some(view) = image_view_next.upgrade() {
                                 view.update(cx, |this, cx| {
                                     this.next_page(&NextPage, window, cx);
+                                });
+                            }
+                        }),
+                )
+                .child(Divider::vertical())
+            })
+            .when(is_pdf, |this| {
+                let image_view_copy = image_view.downgrade();
+                let image_view_text = image_view.downgrade();
+                this.child(
+                    IconButton::new("copy-text", IconName::Copy)
+                        .icon_size(IconSize::Small)
+                        .tooltip(|_window, cx| Tooltip::for_action("Copy Text", &CopyText, cx))
+                        .on_click(move |_, window, cx| {
+                            if let Some(view) = image_view_copy.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.copy_text(&CopyText, window, cx);
+                                });
+                            }
+                        }),
+                )
+                .child(
+                    IconButton::new("toggle-text-panel", IconName::FileDoc)
+                        .icon_size(IconSize::Small)
+                        .toggle_state(show_text_panel)
+                        .tooltip(|_window, cx| Tooltip::for_action("Toggle Text Panel", &ToggleTextPanel, cx))
+                        .on_click(move |_, window, cx| {
+                            if let Some(view) = image_view_text.upgrade() {
+                                view.update(cx, |this, cx| {
+                                    this.toggle_text_panel(&ToggleTextPanel, window, cx);
                                 });
                             }
                         }),

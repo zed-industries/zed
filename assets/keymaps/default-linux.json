@@ -1589,7 +1589,9 @@
       "pageup": "image_viewer::PreviousPage",
       "k": "image_viewer::PreviousPage",
       "home": "image_viewer::FirstPage",
-      "end": "image_viewer::LastPage"
+      "end": "image_viewer::LastPage",
+      "ctrl-c": "image_viewer::CopyText",
+      "ctrl-shift-t": "image_viewer::ToggleTextPanel"
     },
   },
   {
