@@ -112,6 +112,15 @@ pub trait EntityInputHandler: 'static + Sized {
     ) -> TextInputConfiguration {
         TextInputConfiguration::default()
     }
+
+    /// See [`InputHandler::text_input_editable_range`] for details
+    fn text_input_editable_range(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        None
+    }
 }
 
 /// The canonical implementation of [`crate::PlatformInputHandler`]. Call [`Window::handle_input`]
@@ -263,6 +272,15 @@ impl<V: EntityInputHandler> InputHandler for ElementInputHandler<V> {
         self.view
             .update(cx, |view, cx| view.text_input_configuration(window, cx))
     }
+
+    fn text_input_editable_range(
+        &mut self,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<Range<usize>> {
+        self.view
+            .update(cx, |view, cx| view.text_input_editable_range(window, cx))
+    }
 }
 
 #[cfg(test)]
@@ -338,7 +356,7 @@ mod tests {
         assert_eq!(test_window.text_input_configurations().len(), 3);
 
         // Losing focus reverts the platform to the default configuration.
-        cx.update_window(window, |_, window, _| window.blur())
+        cx.update_window(window, |_, window, cx| window.blur(cx))
             .unwrap();
         draw(cx);
         assert_eq!(
