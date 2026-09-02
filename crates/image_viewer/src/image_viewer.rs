@@ -684,6 +684,16 @@ impl ImageView {
         }
     }
 
+    /// Validates whether a URI embedded within a PDF is safe to trigger via external browser/handler.
+    /// Whitelists standard, safe URI schemes (https, http, mailto) to prevent
+    /// local file leakage (file://), arbitrary command execution, or malicious protocol handler invocation.
+    pub(crate) fn is_safe_pdf_url(url: &str) -> bool {
+        let lower = url.trim().to_ascii_lowercase();
+        lower.starts_with("https://")
+            || lower.starts_with("http://")
+            || lower.starts_with("mailto:")
+    }
+
     pub(crate) fn calculate_pdf_autoscroll_velocity(
         cursor_y: Pixels,
         viewport_top: Pixels,
@@ -1648,7 +1658,11 @@ impl Render for ImageView {
                                                         .on_mouse_down(
                                                             MouseButton::Left,
                                                             move |_event: &MouseDownEvent, _window, cx| {
-                                                                cx.open_url(&link_url);
+                                                                if Self::is_safe_pdf_url(&link_url) {
+                                                                    cx.open_url(&link_url);
+                                                                } else {
+                                                                    log::warn!("Blocked opening potentially unsafe PDF link: {}", link_url);
+                                                                }
                                                                 cx.stop_propagation();
                                                             },
                                                         )
@@ -2483,6 +2497,23 @@ mod tests {
         assert_eq!(v_far_up, -v_far_down);
         assert_eq!(v_far_up, 9500.0);
         assert_eq!(v_far_down, -9500.0);
+    }
+
+    #[test]
+    fn test_pdf_safe_url_whitelist() {
+        // Allowed safe schemes
+        assert!(ImageView::is_safe_pdf_url("https://zed.dev"));
+        assert!(ImageView::is_safe_pdf_url("http://example.com/path"));
+        assert!(ImageView::is_safe_pdf_url("mailto:support@zed.dev"));
+        assert!(ImageView::is_safe_pdf_url("  HTTPS://DOCS.RS  "));
+
+        // Dangerous / blocked schemes
+        assert!(!ImageView::is_safe_pdf_url("file:///etc/passwd"));
+        assert!(!ImageView::is_safe_pdf_url("javascript:alert(1)"));
+        assert!(!ImageView::is_safe_pdf_url("data:text/html,<script>alert(1)</script>"));
+        assert!(!ImageView::is_safe_pdf_url("shell:launch"));
+        assert!(!ImageView::is_safe_pdf_url("powershell:something"));
+        assert!(!ImageView::is_safe_pdf_url("ms-msdt:/id DevDiagnostic"));
     }
 }
 

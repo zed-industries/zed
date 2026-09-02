@@ -114,6 +114,7 @@ members = [
     "crates/journal",
     "crates/json_schema_store",
     "crates/keymap_editor",
+    "crates/kkpdf_zed",
     "crates/language",
     "crates/language_core",
     "crates/language_detection",
@@ -376,7 +377,7 @@ http_client_tls = { path = "crates/http_client_tls" }
 http_proxy = { path = "crates/http_proxy" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
-kkpdf-zed = { path = "../../kkpdf-zed" }
+kkpdf-zed = { path = "crates/kkpdf_zed" }
 input_latency_ui = { path = "crates/input_latency_ui" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
@@ -740,6 +741,7 @@ parse_int = "0.9"
 partial-json-fixer = "0.5.3"
 pathfinder_geometry = "0.5"
 pciid-parser = "0.8.0"
+pdfium-render = { version = "0.8", features = ["image"] }
 percent-encoding = "2.3.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "bb8e04607b96a3865d6aa4bb2a5a5a82ce05b5f0" }
