@@ -3188,7 +3188,7 @@ dependencies = [
  "async-lock",
  "cloud_api_types",
  "futures 0.3.32",
- "futures-lite 1.13.0",
+ "futures-lite 2.6.1",
  "gpui",
  "gpui_tokio",
  "http_client",
