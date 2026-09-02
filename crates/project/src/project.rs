@@ -2669,6 +2669,7 @@ impl Project {
                 &old_abs_path,
                 &new_abs_path,
                 is_dir,
+                false,
                 cx.clone(),
             )
             .await;

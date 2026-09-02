@@ -8547,6 +8547,362 @@ async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
     });
 }
 
+/// A server that answers renames. With `watch_renames` it also asks to be told
+/// before and after a Rust file moves, the way rust-analyzer asks to be told
+/// before one.
+fn rename_capabilities(watch_renames: bool) -> lsp::ServerCapabilities {
+    let watched = lsp::FileOperationRegistrationOptions {
+        filters: vec![FileOperationFilter {
+            scheme: Some("file".to_owned()),
+            pattern: lsp::FileOperationPattern {
+                glob: "**/*.rs".to_owned(),
+                matches: Some(lsp::FileOperationPatternKind::File),
+                options: None,
+            },
+        }],
+    };
+    lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Left(true)),
+        workspace: watch_renames.then(|| lsp::WorkspaceServerCapabilities {
+            workspace_folders: None,
+            file_operations: Some(lsp::WorkspaceFileOperationsServerCapabilities {
+                will_rename: Some(watched.clone()),
+                did_rename: Some(watched),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    }
+}
+
+// A server that registered `willRenameFiles` can answer a rename with the file
+// move alone and hold the edits for the references back, to stop a client that
+// asks as well from applying them twice. rust-analyzer does that for every
+// module rename. Unless the move asks, the file lands at its new name with
+// every reference to the old one left behind, and the crate stops compiling.
+#[gpui::test]
+async fn test_workspace_edit_asks_what_the_move_changes(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "main.rs": "mod clock;\nfn main() { clock::digit(); }",
+            "clock.rs": "pub fn digit() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: rename_capabilities(true),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // The whole answer, in the shape rust-analyzer sends it. The file moves and
+    // nothing else is said.
+    fake_server.set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Operations(vec![
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                    old_uri: Uri::from_file_path(path!("/dir/clock.rs")).unwrap(),
+                    new_uri: Uri::from_file_path(path!("/dir/glyphs.rs")).unwrap(),
+                    options: None,
+                    annotation_id: None,
+                })),
+            ])),
+            change_annotations: None,
+        }))
+    });
+
+    let asked_before_the_move = Arc::new(OnceLock::new());
+    fake_server.set_request_handler::<WillRenameFiles, _, _>({
+        let asked_before_the_move = asked_before_the_move.clone();
+        let fs = fs.clone();
+        move |params, _| {
+            let asked_before_the_move = asked_before_the_move.clone();
+            let fs = fs.clone();
+            async move {
+                assert_eq!(params.files.len(), 1);
+                assert_eq!(params.files[0].old_uri, uri!("file:///dir/clock.rs"));
+                assert_eq!(params.files[0].new_uri, uri!("file:///dir/glyphs.rs"));
+                // The edits below are worked out from where the file is now, so
+                // the question has to come before the move.
+                asked_before_the_move
+                    .set(fs.load(Path::new(path!("/dir/clock.rs"))).await.is_ok())
+                    .unwrap();
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: None,
+                    document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                        text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                            uri: Uri::from_file_path(path!("/dir/main.rs")).unwrap(),
+                            version: None,
+                        },
+                        edits: vec![
+                            lsp::Edit::Plain(lsp::TextEdit::new(
+                                lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 9)),
+                                "glyphs".to_string(),
+                            )),
+                            lsp::Edit::Plain(lsp::TextEdit::new(
+                                lsp::Range::new(
+                                    lsp::Position::new(1, 12),
+                                    lsp::Position::new(1, 17),
+                                ),
+                                "glyphs".to_string(),
+                            )),
+                        ],
+                    }])),
+                    change_annotations: None,
+                }))
+            }
+        }
+    });
+
+    let told_after_the_move = Arc::new(OnceLock::new());
+    fake_server.handle_notification::<DidRenameFiles, _>({
+        let told_after_the_move = told_after_the_move.clone();
+        move |params, _| {
+            assert_eq!(params.files.len(), 1);
+            told_after_the_move
+                .set((
+                    params.files[0].old_uri.clone(),
+                    params.files[0].new_uri.clone(),
+                ))
+                .ok();
+        }
+    });
+
+    let transaction = project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 4, "glyphs".to_string(), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        told_after_the_move.get(),
+        Some(&(
+            uri!("file:///dir/clock.rs").to_owned(),
+            uri!("file:///dir/glyphs.rs").to_owned()
+        )),
+        "the server should have been told the move happened"
+    );
+    assert_eq!(
+        asked_before_the_move.get(),
+        Some(&true),
+        "the server should have been asked, and asked before the file moved"
+    );
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        "mod glyphs;\nfn main() { glyphs::digit(); }",
+        "the references the server sent back should have been applied"
+    );
+    assert!(fs.load(Path::new(path!("/dir/glyphs.rs"))).await.is_ok());
+    assert!(fs.load(Path::new(path!("/dir/clock.rs"))).await.is_err());
+
+    // The edits belong to the transaction this workspace edit produced, so undo
+    // reaches them, and the file it left renamed can be reported against them.
+    assert!(transaction.0.contains_key(&buffer));
+    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.text()),
+        "mod clock;\nfn main() { clock::digit(); }",
+        "undo should reach the edits that came back with the move"
+    );
+}
+
+// The question only goes to servers that asked for it. One that registered
+// nothing is not interested in the move and should not be interrupted by it.
+#[gpui::test]
+async fn test_workspace_edit_does_not_ask_a_server_that_is_not_watching(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "main.rs": "mod clock;\nfn main() { clock::digit(); }",
+            "clock.rs": "pub fn digit() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: rename_capabilities(false),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    fake_server.set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Operations(vec![
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                    old_uri: Uri::from_file_path(path!("/dir/clock.rs")).unwrap(),
+                    new_uri: Uri::from_file_path(path!("/dir/glyphs.rs")).unwrap(),
+                    options: None,
+                    annotation_id: None,
+                })),
+            ])),
+            change_annotations: None,
+        }))
+    });
+
+    let times_asked = Arc::new(atomic::AtomicUsize::new(0));
+    fake_server.set_request_handler::<WillRenameFiles, _, _>({
+        let times_asked = times_asked.clone();
+        move |_params, _| {
+            times_asked.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(None) }
+        }
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 4, "glyphs".to_string(), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(times_asked.load(atomic::Ordering::SeqCst), 0);
+    assert!(fs.load(Path::new(path!("/dir/glyphs.rs"))).await.is_ok());
+}
+
+// The answer to the question may itself move a file. Asking again about that
+// move would let a server keep the exchange going forever, so the moves an
+// answer makes are carried out without a further question.
+#[gpui::test]
+async fn test_workspace_edit_does_not_ask_about_the_moves_an_answer_makes(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "main.rs": "mod clock;\nfn main() { clock::digit(); }",
+            "clock.rs": "pub fn digit() {}",
+            "extra.rs": "pub fn extra() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: rename_capabilities(true),
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    fake_server.set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+        Ok(Some(lsp::WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Operations(vec![
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                    old_uri: Uri::from_file_path(path!("/dir/clock.rs")).unwrap(),
+                    new_uri: Uri::from_file_path(path!("/dir/glyphs.rs")).unwrap(),
+                    options: None,
+                    annotation_id: None,
+                })),
+            ])),
+            change_annotations: None,
+        }))
+    });
+
+    let times_asked = Arc::new(atomic::AtomicUsize::new(0));
+    fake_server.set_request_handler::<WillRenameFiles, _, _>({
+        let times_asked = times_asked.clone();
+        move |_params, _| {
+            times_asked.fetch_add(1, atomic::Ordering::SeqCst);
+            async move {
+                Ok(Some(lsp::WorkspaceEdit {
+                    changes: None,
+                    document_changes: Some(DocumentChanges::Operations(vec![
+                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(
+                            lsp::RenameFile {
+                                old_uri: Uri::from_file_path(path!("/dir/extra.rs")).unwrap(),
+                                new_uri: Uri::from_file_path(path!("/dir/spare.rs")).unwrap(),
+                                options: None,
+                                annotation_id: None,
+                            },
+                        )),
+                    ])),
+                    change_annotations: None,
+                }))
+            }
+        }
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 4, "glyphs".to_string(), cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        times_asked.load(atomic::Ordering::SeqCst),
+        1,
+        "the move the answer made should not have been asked about"
+    );
+    // Both moves still happen. Not asking about the second one is not the same
+    // as refusing to make it.
+    assert!(fs.load(Path::new(path!("/dir/glyphs.rs"))).await.is_ok());
+    assert!(fs.load(Path::new(path!("/dir/spare.rs"))).await.is_ok());
+}
+
 #[gpui::test]
 async fn test_search(cx: &mut gpui::TestAppContext) {
     init_test(cx);
