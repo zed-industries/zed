@@ -173,6 +173,20 @@ fn general_page(cx: &App) -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "On New Window",
+                description: "What to show when opening a new window.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("on_new_window"),
+                    pick: |settings_content| settings_content.workspace.on_new_window.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.on_new_window = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "On Last Window Closed",
                 description: "What to do when the last window is closed.",
                 field: Box::new(SettingField {
