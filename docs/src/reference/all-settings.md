@@ -2004,6 +2004,41 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
+## Focus Follows Mouse
+
+- Description: Whether the focused panel follows the mouse location.
+- Setting: `focus_follows_mouse`
+- Default:
+
+```json [settings]
+{
+  "focus_follows_mouse": {
+    "enabled": false,
+    "debounce_ms": 250
+  }
+}
+```
+
+### Enabled
+
+- Description: Whether hovering over a dock or pane moves focus to it.
+- Setting: `enabled`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+### Debounce
+
+- Description: How long the mouse must hover over a panel before it is focused, in milliseconds.
+- Setting: `debounce_ms`
+- Default: `250`
+
+**Options**
+
+Non-negative `integer` values
+
 ## Format On Save {#format-on-save}
 
 - Description: Whether or not to perform a buffer format before saving.
