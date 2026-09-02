@@ -10572,6 +10572,54 @@ async fn test_clipboard_line_numbers_from_multibuffer(cx: &mut TestAppContext) {
         "line range should use original file rows 2-4, excluding the column-zero endpoint, not multibuffer rows 0-2"
     );
 
+    editor.update_in(cx, |editor, _window, cx| {
+        editor.set_wrap_width(Some(20.0.into()), cx);
+    });
+    cx.run_until_parked();
+    editor.update_in(cx, |editor, window, cx| {
+        let display_snapshot = editor.display_snapshot(cx);
+        let start = DisplayPoint::new(DisplayRow(0), 0);
+        let end = Point::new(0, "third line".len() as u32).to_display_point(&display_snapshot);
+        assert!(end.row() > start.row(), "expected the first line to wrap");
+
+        editor.select(
+            SelectPhase::Begin {
+                position: start,
+                add: false,
+                click_count: 1,
+            },
+            window,
+            cx,
+        );
+        editor.select(
+            SelectPhase::Update {
+                position: end,
+                goal_column: end.column(),
+                scroll_delta: gpui::Point::default(),
+            },
+            window,
+            cx,
+        );
+        editor.select(SelectPhase::End, window, cx);
+        editor.copy(&Copy, window, cx);
+    });
+
+    let wrapped_clipboard_selections: Vec<ClipboardSelection> = cx
+        .read_from_clipboard()
+        .and_then(|item| item.entries().first().cloned())
+        .and_then(|entry| match entry {
+            gpui::ClipboardEntry::String(text) => text.metadata_json(),
+            _ => None,
+        })
+        .expect("should have clipboard selections");
+    assert_eq!(
+        wrapped_clipboard_selections
+            .first()
+            .and_then(|selection| selection.line_range.clone()),
+        Some(2..=2),
+        "soft-wrapped display rows should remain one logical buffer row"
+    );
+
     editor.update_in(cx, |editor, window, cx| editor.cut(&Cut, window, cx));
     let cut_source_locations = cx.read_from_clipboard().and_then(|item| {
         item.entries().first().and_then(|entry| match entry {
