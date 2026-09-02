@@ -27,7 +27,7 @@ use std::sync::atomic::AtomicBool;
 
 use std::process::{ExitStatus, Output};
 use std::str::FromStr;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use std::{
     cmp::Ordering,
     path::{Path, PathBuf},
@@ -3824,6 +3824,14 @@ async fn untracked_files_for_checkpoint(git: &GitBinary) -> Result<Vec<String>> 
 }
 
 async fn add_files_to_index(git: &GitBinary, files: &[String]) -> Result<()> {
+    add_files_to_index_with_timeout(git, files, Duration::from_secs(30)).await
+}
+
+async fn add_files_to_index_with_timeout(
+    git: &GitBinary,
+    files: &[String],
+    timeout_duration: Duration,
+) -> Result<()> {
     if files.is_empty() {
         return Ok(());
     }
@@ -3833,6 +3841,7 @@ async fn add_files_to_index(git: &GitBinary, files: &[String]) -> Result<()> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()?;
 
     let mut stdin = BufWriter::new(
@@ -3848,7 +3857,16 @@ async fn add_files_to_index(git: &GitBinary, files: &[String]) -> Result<()> {
     stdin.flush().await?;
     drop(stdin);
 
-    let output = process.output().await?;
+    let output = {
+        let output = process.output().fuse();
+        let timeout = git.executor.timer(timeout_duration).fuse();
+        futures::pin_mut!(output, timeout);
+
+        select_biased! {
+            output = output => output?,
+            _ = timeout => bail!("git update-index timed out after {} seconds", timeout_duration.as_secs()),
+        }
+    };
     anyhow::ensure!(
         output.status.success(),
         GitBinaryCommandError {
@@ -5457,6 +5475,35 @@ mod tests {
             path,
             git_directory.join(format!("index-{}.tmp", Uuid::nil()))
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[gpui::test]
+    async fn test_add_files_to_index_times_out(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let directory = tempfile::tempdir().expect("failed to create temporary directory");
+        let git_binary_path = directory.path().join("blocking-git.cmd");
+        fs::write(
+            &git_binary_path,
+            "@echo off\r\ntimeout /t 1 /nobreak >nul\r\n",
+        )
+        .expect("failed to create blocking Git script");
+
+        let git = GitBinary::new(
+            git_binary_path,
+            directory.path().to_path_buf(),
+            directory.path().join(".git"),
+            cx.executor(),
+            true,
+        );
+
+        let error =
+            add_files_to_index_with_timeout(&git, &["untracked-file".to_string()], Duration::ZERO)
+                .await
+                .expect_err("blocking Git command should time out");
+
+        assert!(error.to_string().contains("git update-index timed out"));
     }
 
     #[gpui::test]
