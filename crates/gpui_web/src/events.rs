@@ -480,7 +480,7 @@ impl WebWindowInner {
     ///
     /// We don't use `navigator.virtualKeyboard` here because it's
     /// Chromium-only.
-    fn sync_virtual_keyboard(self: &Rc<Self>, editable: bool) {
+    pub(crate) fn sync_virtual_keyboard(self: &Rc<Self>, editable: bool) {
         let was_editable = !self.ime_mirror.read_only();
         self.ime_mirror.set_read_only(!editable);
         // Trigger a focus event only when the keyboard actually needs
