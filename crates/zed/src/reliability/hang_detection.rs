@@ -47,13 +47,9 @@ pub(crate) fn start(client: Arc<Client>, cx: &mut App) {
         // constantly.
         Duration::from_millis(100)
     } else {
-        // At least two dropped frames on any display, so the rule means the
-        // same thing at 60Hz and 120Hz. The previous 8ms budget qualified
-        // nearly every busy frame and produced thousands of incidents per
-        // report; frame smoothness is measured by `Frame Duration Report`
-        // instead. Lower this as the hangs it currently surfaces get fixed;
-        // `budget_incidents` in the telemetry event is the signal for when.
-        Duration::from_millis(50)
+        // At least one dropped frame on any display. Generous while budget
+        // incidents are plentiful; lower it as they get fixed.
+        Duration::from_millis(24)
     };
 
     if cfg!(debug_assertions) {
