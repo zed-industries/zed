@@ -206,13 +206,13 @@ pub trait Extension: Send + Sync {
     /// `variables` contains the task variables resolved so far and the names in the list
     /// this method returns will be prefixed with `ZED_CUSTOM_` and then merged with it.
     /// Note that if this returns variables by the same name as tree-sitter captures, (already
-    /// seen with `ZED_CUSTOM_` prefix here) it will override their values.
+    /// seen with `ZED_CUSTOM_` prefix in `variables`) it will override their values.
 
     fn build_context(
         &mut self,
-        _language_name: String,
-        _variables: Vec<TaskVariable>,
-        _project_env: Option<EnvVars>,
+        _language_name: &LanguageName,
+        _variables: &[TaskVariable],
+        _project_env: Option<&EnvVars>,
         _location: &TaskContextLocation,
         _worktree: &Worktree,
     ) -> Result<Vec<TaskVariable>> {
@@ -222,7 +222,7 @@ pub trait Extension: Send + Sync {
     /// Returns task definitions associated with the current file or project.
     fn associated_tasks(
         &mut self,
-        _language_name: String,
+        _language_name: &LanguageName,
         _file: Option<&TaskContextFile>,
         _worktree: &Worktree,
     ) -> Result<Vec<TaskDefinition>> {
@@ -599,7 +599,13 @@ impl wit::Guest for Component {
         location: TaskContextLocation,
         worktree: &Worktree,
     ) -> Result<Vec<TaskVariable>, String> {
-        extension().build_context(language_name, variables, project_env, &location, worktree)
+        extension().build_context(
+            &LanguageName(language_name),
+            &variables,
+            project_env.as_ref(),
+            &location,
+            worktree,
+        )
     }
 
     fn associated_tasks(
@@ -607,7 +613,7 @@ impl wit::Guest for Component {
         file: Option<TaskContextFile>,
         worktree: &Worktree,
     ) -> Result<Vec<TaskDefinition>, String> {
-        extension().associated_tasks(language_name, file.as_ref(), worktree)
+        extension().associated_tasks(&LanguageName(language_name), file.as_ref(), worktree)
     }
 }
 
@@ -624,6 +630,28 @@ impl LanguageServerId {
 impl AsRef<str> for LanguageServerId {
     fn as_ref(&self) -> &str {
         &self.0
+    }
+}
+
+/// The name of a language.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub struct LanguageName(String);
+
+impl LanguageName {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl AsRef<str> for LanguageName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for LanguageName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
