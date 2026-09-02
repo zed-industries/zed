@@ -152,6 +152,8 @@ pub enum Model {
     Glm5_3,
     #[serde(rename = "glm-5.3-flash")]
     Glm5_3Flash,
+    #[serde(rename = "longcat-2.0")]
+    LongCat2_0,
     #[serde(rename = "grok-build-0.1")]
     GrokBuild0_1,
     #[serde(rename = "grok-4.5")]
@@ -237,6 +239,7 @@ impl Model {
             | Self::MimoV2_5
             | Self::Glm5_3
             | Self::Glm5_3Flash
+            | Self::LongCat2_0
             | Self::Qwen3_7Plus
             | Self::Qwen3_7Max
             | Self::Qwen3_8Max
@@ -305,6 +308,7 @@ impl Model {
             Self::Glm5_2 => "glm-5.2",
             Self::Glm5_3 => "glm-5.3",
             Self::Glm5_3Flash => "glm-5.3-flash",
+            Self::LongCat2_0 => "longcat-2.0",
             Self::GrokBuild0_1 => "grok-build-0.1",
             Self::Grok4_5 => "grok-4.5",
             Self::Grok4_6 => "grok-4.6",
@@ -378,6 +382,7 @@ impl Model {
             Self::Glm5_2 => "GLM 5.2",
             Self::Glm5_3 => "GLM 5.3",
             Self::Glm5_3Flash => "GLM 5.3 Flash",
+            Self::LongCat2_0 => "LongCat 2.0",
             Self::GrokBuild0_1 => "Grok Build 0.1",
             Self::Grok4_5 => "Grok 4.5",
             Self::Grok4_6 => "Grok 4.6",
@@ -466,6 +471,7 @@ impl Model {
             | Self::Glm5_2
             | Self::Glm5_3
             | Self::Glm5_3Flash
+            | Self::LongCat2_0
             | Self::GrokBuild0_1
             | Self::KimiK2_5
             | Self::KimiK2_6
@@ -498,6 +504,7 @@ impl Model {
             | Self::Glm5_2
             | Self::Glm5_3
             | Self::Glm5_3Flash
+            | Self::LongCat2_0
             | Self::MiniMaxM2_5
             | Self::MiniMaxM2_7
             | Self::MiniMaxM3 => true,
@@ -561,6 +568,7 @@ impl Model {
                 }
             }
             Self::Glm5_3 | Self::Glm5_3Flash | Self::Glm5_2 => 1_000_000,
+            Self::LongCat2_0 => 1_000_000,
             Self::KimiK2_6 | Self::KimiK2_5 | Self::KimiK2_7Code => 262_144,
             Self::KimiK3 => 1_048_576,
             Self::GrokBuild0_1 => 256_000,
@@ -652,6 +660,7 @@ impl Model {
                 }
             }
             Self::Glm5_3 | Self::Glm5_3Flash | Self::Glm5_2 => Some(131_072),
+            Self::LongCat2_0 => Some(131_072),
             Self::KimiK2_6 | Self::KimiK2_5 => Some(65_536),
             Self::KimiK2_7Code => Some(262_144),
             Self::KimiK3 => Some(131_072),
@@ -751,6 +760,7 @@ impl Model {
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::Qwen3_7Max
+            | Self::LongCat2_0
             | Self::Hy3 => false,
 
             Self::Custom { protocol, .. } => matches!(
@@ -898,6 +908,8 @@ impl Model {
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
             ]),
+
+            Self::LongCat2_0 => Some(vec![ReasoningEffort::None, ReasoningEffort::Max]),
 
             // Tencent models
             Self::Hy3 => Some(vec![
