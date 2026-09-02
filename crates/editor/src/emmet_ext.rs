@@ -15,7 +15,9 @@ use text::Point;
 use util::ResultExt as _;
 
 use crate::scroll::Autoscroll;
-use crate::{Editor, InlineInputPreview, WrapWithAbbreviation, element::register_action};
+use crate::{
+    Editor, InlineInputPreview, SelectionEffects, WrapWithAbbreviation, element::register_action,
+};
 
 const PREVIEW_DEBOUNCE: Duration = Duration::from_millis(150);
 const MAX_HISTORY_ENTRIES: usize = 20;
@@ -38,7 +40,7 @@ const TAG_NODE_KINDS: [&str; 5] = [
 
 const STYLESHEET_LANGUAGE_IDS: [&str; 6] = ["css", "sass", "scss", "less", "sss", "stylus"];
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default)]
 struct WrapFilters {
     trim: bool,
     comment: bool,
@@ -120,15 +122,24 @@ pub fn wrap_with_abbreviation(
     if ranges.is_empty() {
         return;
     }
-    if !ranges
-        .iter()
-        .any(|range| resolve_wrap_target(editor, range, cx).is_some())
-    {
+    if !ranges.iter().any(|range| {
+        build_wrap_target(editor, range, WrapFilters::default(), &snapshot, cx).is_some()
+    }) {
         log_unavailable();
         return;
     }
 
-    let position = inline_input_position(&ranges, editor, &snapshot);
+    editor.change_selections(SelectionEffects::default(), window, cx, |selections| {
+        selections.select_anchor_ranges(ranges.iter().cloned())
+    });
+    let newest = editor.selections.newest_anchor();
+    let start_column = newest.start.to_point(&snapshot).column;
+    let end_row = MultiBufferRow(newest.end.to_point(&snapshot).row);
+    let position = snapshot.anchor_before(Point::new(
+        end_row.0,
+        start_column.min(snapshot.line_len(end_row)),
+    ));
+    let preview_language = snapshot.language_at(position).cloned();
     let history = cx
         .try_global::<WrapAbbreviationHistory>()
         .map(|history| history.0.clone())
@@ -138,6 +149,7 @@ pub fn wrap_with_abbreviation(
     editor.show_inline_input(
         "Emmet abbreviation, e.g. ul>li*",
         position,
+        preview_language,
         history,
         move |editor, text, window, cx| {
             wrap_targets_in_expanded_abbreviation(editor, &confirm_ranges, text, window, cx)
@@ -150,28 +162,6 @@ pub fn wrap_with_abbreviation(
     );
 }
 
-fn inline_input_position(
-    ranges: &[Range<Anchor>],
-    editor: &Editor,
-    snapshot: &MultiBufferSnapshot,
-) -> Anchor {
-    let newest_head = editor.selections.newest_anchor().head().to_offset(snapshot);
-    let range = ranges
-        .iter()
-        .find(|range| {
-            let range = range.start.to_offset(snapshot)..range.end.to_offset(snapshot);
-            range.contains(&newest_head) || range.end == newest_head
-        })
-        .or(ranges.last());
-    let Some(range) = range else {
-        return editor.selections.newest_anchor().head();
-    };
-    let start_column = range.start.to_point(snapshot).column;
-    let end_row = MultiBufferRow(range.end.to_point(snapshot).row);
-    let column = start_column.min(snapshot.line_len(end_row));
-    snapshot.anchor_before(Point::new(end_row.0, column))
-}
-
 struct WrapTarget {
     range: Range<Anchor>,
     text: Option<Vec<String>>,
@@ -180,12 +170,6 @@ struct WrapTarget {
     language: String,
     indent: String,
     base_indent: String,
-}
-
-struct WrapTargetServer {
-    buffer: Entity<Buffer>,
-    server_id: LanguageServerId,
-    language: String,
 }
 
 fn language_supports_wrap(language: &Language, project: &Project) -> bool {
@@ -197,11 +181,13 @@ fn language_supports_wrap(language: &Language, project: &Project) -> bool {
         })
 }
 
-fn resolve_wrap_target(
+fn build_wrap_target(
     editor: &Editor,
     range: &Range<Anchor>,
+    filters: WrapFilters,
+    snapshot: &MultiBufferSnapshot,
     cx: &App,
-) -> Option<WrapTargetServer> {
+) -> Option<WrapTarget> {
     let project = editor.project.as_ref()?.read(cx);
     let multi_buffer = editor.buffer().read(cx);
     let (buffer, start) = multi_buffer.text_anchor_for_position(range.start, cx)?;
@@ -222,21 +208,6 @@ fn resolve_wrap_target(
     if STYLESHEET_LANGUAGE_IDS.contains(&language.as_str()) {
         return None;
     }
-    Some(WrapTargetServer {
-        buffer,
-        server_id,
-        language,
-    })
-}
-
-fn build_wrap_target(
-    editor: &Editor,
-    range: &Range<Anchor>,
-    filters: WrapFilters,
-    snapshot: &MultiBufferSnapshot,
-    cx: &App,
-) -> Option<WrapTarget> {
-    let server = resolve_wrap_target(editor, range, cx)?;
     let text = snapshot.text_for_range(range.clone()).collect::<String>();
     let settings = snapshot.language_settings_at(range.start, cx);
     let indent = if settings.hard_tabs {
@@ -248,9 +219,9 @@ fn build_wrap_target(
     Some(WrapTarget {
         text: selection_lines(&text, &base_indent, filters.trim),
         range: range.clone(),
-        buffer: server.buffer,
-        server_id: server.server_id,
-        language: server.language,
+        buffer,
+        server_id,
+        language,
         indent,
         base_indent,
     })
@@ -364,12 +335,12 @@ fn wrap_targets_in_expanded_abbreviation(
         editor
             .update_in(cx, |editor, window, cx| {
                 for error in &errors {
-                    log::error!("Failed to expand Emmet abbreviation: {error:?}");
+                    log::error!("{error:#}");
                 }
                 if expansions.is_empty() {
                     let message = match errors.first() {
-                        Some(error) => format!("Failed to expand Emmet abbreviation: {error}"),
-                        None => format!("No Emmet expansion for {abbreviation:?}"),
+                        Some(error) => error.root_cause().to_string(),
+                        None => no_expansion_message(&abbreviation),
                     };
                     editor.set_inline_input_preview(Some(InlineInputPreview::Error(message)), cx);
                     return anyhow::Ok(());
@@ -444,12 +415,8 @@ fn update_expansion_preview(
             .update(cx, |editor, cx| {
                 let preview = match result {
                     Ok(Some(expansion)) => InlineInputPreview::Text(expansion_text(&expansion)),
-                    Ok(None) => InlineInputPreview::Error(format!(
-                        "No Emmet expansion for {abbreviation:?}"
-                    )),
-                    Err(error) => InlineInputPreview::Error(format!(
-                        "Failed to expand Emmet abbreviation: {error}"
-                    )),
+                    Ok(None) => InlineInputPreview::Error(no_expansion_message(&abbreviation)),
+                    Err(error) => InlineInputPreview::Error(error.root_cause().to_string()),
                 };
                 editor.set_inline_input_preview(Some(preview), cx);
             })
@@ -489,6 +456,10 @@ fn expansion_text(expansion: &str) -> String {
         .unwrap_or_else(|_| expansion.to_string())
 }
 
+fn no_expansion_message(abbreviation: &str) -> String {
+    format!("No Emmet expansion for {abbreviation:?}")
+}
+
 fn remember_abbreviation(abbreviation: SharedString, cx: &mut App) {
     let history = &mut cx.default_global::<WrapAbbreviationHistory>().0;
     history.retain(|entry| *entry != abbreviation);
@@ -505,55 +476,21 @@ fn base_indent_for(range_start: Anchor, snapshot: &MultiBufferSnapshot) -> Strin
     snapshot.indent_size_for_line(row).chars().collect()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum MarkupNode {
-    Element,
-    Tag,
-    Other,
-}
-
-struct MarkupAncestors<'a> {
-    snapshot: &'a MultiBufferSnapshot,
-    range: Option<Range<MultiBufferOffset>>,
-}
-
-impl Iterator for MarkupAncestors<'_> {
-    type Item = (MarkupNode, Range<MultiBufferOffset>);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let current = self.range.take()?;
-        let (node, node_range) = self.snapshot.syntax_ancestor(current.clone())?;
-        if node_range != current {
-            self.range = Some(node_range.clone());
-        }
-        let kind = node.kind();
-        let markup_node = if ELEMENT_NODE_KINDS.contains(&kind) {
-            MarkupNode::Element
-        } else if TAG_NODE_KINDS.contains(&kind) {
-            MarkupNode::Tag
-        } else {
-            MarkupNode::Other
-        };
-        Some((markup_node, node_range))
-    }
-}
-
-fn markup_ancestors(
-    position: MultiBufferOffset,
-    snapshot: &MultiBufferSnapshot,
-) -> MarkupAncestors<'_> {
-    MarkupAncestors {
-        snapshot,
-        range: Some(position..position),
-    }
-}
-
 fn enclosing_element_range(
     position: MultiBufferOffset,
     snapshot: &MultiBufferSnapshot,
 ) -> Option<Range<MultiBufferOffset>> {
-    markup_ancestors(position, snapshot)
-        .find_map(|(node, range)| (node == MarkupNode::Element).then_some(range))
+    let mut range = position..position;
+    while let Some((node, node_range)) = snapshot.syntax_ancestor(range.clone()) {
+        if ELEMENT_NODE_KINDS.contains(&node.kind()) {
+            return Some(node_range);
+        }
+        if node_range == range {
+            return None;
+        }
+        range = node_range;
+    }
+    None
 }
 
 fn expand_over_partial_tags(
@@ -574,15 +511,20 @@ fn element_range_for_partial_tag(
     position: MultiBufferOffset,
     snapshot: &MultiBufferSnapshot,
 ) -> Option<Range<MultiBufferOffset>> {
+    let mut range = position..position;
     let mut in_tag = false;
-    for (node, node_range) in markup_ancestors(position, snapshot) {
-        match node {
-            MarkupNode::Tag => {
-                in_tag |= node_range.start < position && position < node_range.end;
+    while let Some((node, node_range)) = snapshot.syntax_ancestor(range.clone()) {
+        if TAG_NODE_KINDS.contains(&node.kind()) {
+            if node_range.start < position && position < node_range.end {
+                in_tag = true;
             }
-            MarkupNode::Element => return in_tag.then_some(node_range),
-            MarkupNode::Other => {}
+        } else if ELEMENT_NODE_KINDS.contains(&node.kind()) {
+            return in_tag.then_some(node_range);
         }
+        if node_range == range {
+            return None;
+        }
+        range = node_range;
     }
     None
 }
@@ -737,6 +679,14 @@ mod tests {
         cx.executor().run_until_parked();
 
         select_and_wrap(&editor, [Point::new(1, 3)..Point::new(1, 3)], cx);
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.display_snapshot(cx);
+            assert_eq!(
+                editor.selections.newest::<Point>(&snapshot).range(),
+                Point::new(1, 2)..Point::new(1, 14),
+                "the element about to be wrapped should be selected so it is visible"
+            );
+        });
 
         let mut requests = fake_server.set_request_handler::<LspExpandAbbreviation, _, _>(
             |params, _| async move {
@@ -1576,7 +1526,9 @@ mod tests {
         cx: &mut VisualTestContext,
     ) {
         editor.update_in(cx, |editor, window, cx| {
-            editor.change_selections(Default::default(), window, cx, |s| s.select_ranges(ranges));
+            editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+                s.select_ranges(ranges)
+            });
             wrap_with_abbreviation(editor, &WrapWithAbbreviation, window, cx);
         });
     }

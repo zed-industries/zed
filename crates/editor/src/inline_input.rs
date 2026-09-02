@@ -1,11 +1,16 @@
+use gpui::StyledText;
+use language::HighlightId;
+
 use super::*;
 
 pub struct InlineInputState {
     pub editor: Entity<Editor>,
     block_id: CustomBlockId,
+    position: Anchor,
     confirm_task: Option<Task<()>>,
     preview_task: Option<Task<()>>,
     pub(crate) preview: Option<InlineInputPreview>,
+    preview_language: Option<Arc<Language>>,
     block_height: u32,
     history: Vec<SharedString>,
     history_ix: Option<usize>,
@@ -27,7 +32,7 @@ pub(crate) enum InlineInputPreview {
     Error(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) enum InlineInputHistoryDirection {
     Older,
     Newer,
@@ -36,31 +41,22 @@ pub(crate) enum InlineInputHistoryDirection {
 const INLINE_INPUT_PREVIEW_MIN_LINES: usize = 8;
 
 impl InlineInputPreview {
-    fn display_lines(&self, max_lines: usize) -> Vec<SharedString> {
+    fn display_text(&self, max_lines: usize) -> (String, u32) {
         let text = match self {
             InlineInputPreview::Text(text) => text,
             InlineInputPreview::Error(message) => message,
         };
-        let mut lines = text
-            .lines()
-            .map(|line| {
-                if line.is_empty() {
-                    SharedString::from(" ")
-                } else {
-                    SharedString::from(line.to_string())
-                }
-            })
-            .collect::<Vec<_>>();
-        if lines.is_empty() {
-            lines.push(SharedString::from(" "));
+        let line_count = text.lines().count().max(1);
+        if line_count <= max_lines {
+            return (text.to_string(), line_count as u32);
         }
-        if lines.len() > max_lines {
-            let hidden_lines = lines.len() - max_lines;
-            lines.truncate(max_lines);
-            let noun = if hidden_lines == 1 { "line" } else { "lines" };
-            lines.push(SharedString::from(format!("… +{hidden_lines} more {noun}")));
-        }
-        lines
+        let hidden_lines = line_count - max_lines;
+        let noun = if hidden_lines == 1 { "line" } else { "lines" };
+        let shown = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
+        (
+            format!("{shown}\n… +{hidden_lines} more {noun}"),
+            max_lines as u32 + 1,
+        )
     }
 
     fn is_error(&self) -> bool {
@@ -69,8 +65,32 @@ impl InlineInputPreview {
 }
 
 struct RenderedPreview {
-    lines: Vec<SharedString>,
+    text: SharedString,
+    highlights: Vec<(Range<usize>, HighlightId)>,
+    height_in_lines: u32,
     is_error: bool,
+}
+
+impl RenderedPreview {
+    fn new(
+        preview: &InlineInputPreview,
+        language: Option<&Arc<Language>>,
+        max_lines: usize,
+    ) -> Self {
+        let (text, height_in_lines) = preview.display_text(max_lines);
+        let highlights = match (preview, language) {
+            (InlineInputPreview::Text(_), Some(language)) => {
+                language.highlight_text(&Rope::from(text.as_str()), 0..text.len())
+            }
+            _ => Vec::new(),
+        };
+        Self {
+            text: SharedString::from(text),
+            highlights,
+            height_in_lines,
+            is_error: preview.is_error(),
+        }
+    }
 }
 
 impl Editor {
@@ -95,6 +115,7 @@ impl Editor {
         &mut self,
         placeholder: &str,
         position: Anchor,
+        preview_language: Option<Arc<Language>>,
         history: Vec<SharedString>,
         on_confirm: impl Fn(&mut Editor, String, &mut Window, &mut Context<Editor>) -> Option<Task<()>>
         + 'static,
@@ -145,7 +166,10 @@ impl Editor {
                 render: render_inline_input_block(input.clone(), None),
                 priority: 0,
             }],
-            Some(Autoscroll::fit()),
+            Some(reveal_block_below(
+                position,
+                &self.buffer().read(cx).snapshot(cx),
+            )),
             cx,
         );
         let Some(&block_id) = block_ids.first() else {
@@ -157,9 +181,11 @@ impl Editor {
         self.pending_inline_input = Some(InlineInputState {
             editor: input,
             block_id,
+            position,
             confirm_task: None,
             preview_task: None,
             preview: None,
+            preview_language,
             block_height: 1,
             history_ix: (!history.is_empty()).then_some(0),
             history,
@@ -179,17 +205,19 @@ impl Editor {
             return;
         };
         let block_id = state.block_id;
+        let position = state.position;
         let input = state.editor.clone();
-        let rendered = preview.as_ref().map(|preview| RenderedPreview {
-            lines: preview.display_lines(max_lines),
-            is_error: preview.is_error(),
+        let rendered = preview.as_ref().map(|preview| {
+            RenderedPreview::new(preview, state.preview_language.as_ref(), max_lines)
         });
         let height = 1 + rendered
             .as_ref()
-            .map_or(0, |rendered| rendered.lines.len() as u32);
+            .map_or(0, |rendered| rendered.height_in_lines);
         state.preview = preview;
-        let autoscroll = (height != state.block_height).then_some(Autoscroll::fit());
+        let resized = height != state.block_height;
         state.block_height = height;
+        let autoscroll =
+            resized.then(|| reveal_block_below(position, &self.buffer().read(cx).snapshot(cx)));
         self.replace_blocks(
             HashMap::from_iter([(block_id, render_inline_input_block(input, rendered))]),
             None,
@@ -261,6 +289,14 @@ impl Editor {
     }
 }
 
+fn reveal_block_below(position: Anchor, snapshot: &MultiBufferSnapshot) -> Autoscroll {
+    let row_below = position.to_point(snapshot).row + 1;
+    if row_below > snapshot.max_point().row {
+        return Autoscroll::center().for_anchor(position);
+    }
+    Autoscroll::fit().for_anchor(snapshot.anchor_before(Point::new(row_below, 0)))
+}
+
 fn render_inline_input_block(
     input: Entity<Editor>,
     preview: Option<RenderedPreview>,
@@ -268,6 +304,8 @@ fn render_inline_input_block(
     Arc::new(move |cx: &mut BlockContext| {
         v_flex()
             .block_mouse_except_scroll()
+            .w_full()
+            .bg(cx.theme().colors().elevated_surface_background)
             .pl(cx.anchor_x)
             .child(EditorElement::new(
                 &input,
@@ -282,19 +320,23 @@ fn render_inline_input_block(
                 },
             ))
             .when_some(preview.as_ref(), |this, preview| {
-                let text_style = cx.editor_style.text.clone();
-                let color = if preview.is_error {
+                let mut text_style = cx.editor_style.text.clone();
+                text_style.color = if preview.is_error {
                     cx.theme().status().error
                 } else {
                     cx.theme().colors().text_muted
                 };
-                this.children(preview.lines.iter().cloned().map(|line| {
-                    div()
-                        .font_family(text_style.font().family)
-                        .text_size(text_style.font_size)
-                        .text_color(color)
-                        .child(line)
-                }))
+                let syntax = cx.theme().syntax();
+                let highlights = preview
+                    .highlights
+                    .iter()
+                    .filter_map(|(range, highlight_id)| {
+                        Some((range.clone(), *syntax.get(*highlight_id)?))
+                    });
+                this.child(
+                    StyledText::new(preview.text.clone())
+                        .with_default_highlights(&text_style, highlights),
+                )
             })
             .into_any_element()
     })
@@ -310,12 +352,19 @@ mod tests {
             .map(|ix| format!("line{ix}"))
             .collect::<Vec<_>>()
             .join("\n");
-        let preview = InlineInputPreview::Text(text);
-        let lines = preview.display_lines(8);
-        assert_eq!(lines.len(), 9);
-        assert_eq!(lines[8].as_ref(), "… +4 more lines");
-        assert_eq!(preview.display_lines(11).len(), 12);
-        assert_eq!(preview.display_lines(11)[11].as_ref(), "… +1 more line");
-        assert_eq!(preview.display_lines(12).len(), 12);
+        let preview = InlineInputPreview::Text(text.clone());
+        let (shown, height) = preview.display_text(8);
+        assert_eq!(height, 9);
+        assert_eq!(
+            shown,
+            format!(
+                "{}\n… +4 more lines",
+                text.lines().take(8).collect::<Vec<_>>().join("\n")
+            )
+        );
+        let (shown, height) = preview.display_text(11);
+        assert_eq!(height, 12);
+        assert_eq!(shown.lines().last(), Some("… +1 more line"));
+        assert_eq!(preview.display_text(12), (text, 12));
     }
 }

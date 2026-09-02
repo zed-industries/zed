@@ -5266,7 +5266,7 @@ async fn test_client_can_wrap_with_emmet_abbreviation(
     );
 
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(Default::default(), window, cx, |s| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
             s.select_ranges([Point::new(0, 3)..Point::new(0, 8)])
         });
         wrap_with_abbreviation(editor, &WrapWithAbbreviation, window, cx);
