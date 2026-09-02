@@ -345,7 +345,8 @@ pub struct LocalLspStore {
     >,
     restricted_worktrees_tasks: HashMap<WorktreeId, (Subscription, watch::Receiver<bool>)>,
     all_language_servers_stopped: bool,
-    stopped_server_ids_to_names: HashMap<LanguageServerId, LanguageServerName>,
+    stopped_server_ids_to_names_and_worktrees:
+        HashMap<LanguageServerId, (LanguageServerName, HashSet<WorktreeId>)>,
 
     buffers_to_refresh_hash_set: HashSet<BufferId>,
     buffers_to_refresh_queue: VecDeque<BufferId>,
@@ -4726,7 +4727,7 @@ impl LspStore {
                 workspace_pull_diagnostics_result_ids: HashMap::default(),
                 restricted_worktrees_tasks: HashMap::default(),
                 all_language_servers_stopped: false,
-                stopped_server_ids_to_names: HashMap::default(),
+                stopped_server_ids_to_names_and_worktrees: HashMap::default(),
                 watched_manifest_filenames: ManifestProvidersStore::global(cx)
                     .manifest_file_names(),
             }),
@@ -11640,7 +11641,7 @@ impl LspStore {
         this.update(&mut cx, |lsp_store, cx| {
             let buffers =
                 lsp_store.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-            lsp_store.restart_language_servers_for_buffers(
+            lsp_store.restart_language_servers_for_buffers_in_worktree(
                 buffers,
                 envelope
                     .payload
@@ -11660,6 +11661,7 @@ impl LspStore {
                     })
                     .collect(),
                 true,
+                envelope.payload.worktree_id.map(WorktreeId::from_proto),
                 cx,
             );
         });
@@ -12101,11 +12103,13 @@ impl LspStore {
 
         let server_identifier = {
             let mut first_key = None;
+            let mut stopped_worktree_ids = HashSet::default();
 
             for (key, _) in local
                 .language_server_ids
                 .extract_if(|_, state| state.id == server_id)
             {
+                stopped_worktree_ids.insert(key.worktree_id);
                 if first_key.is_none() {
                     first_key = Some(key);
                 }
@@ -12114,8 +12118,8 @@ impl LspStore {
             if let Some(first_key) = first_key {
                 if retain_stopped_status {
                     local
-                        .stopped_server_ids_to_names
-                        .insert(server_id, first_key.name.clone());
+                        .stopped_server_ids_to_names_and_worktrees
+                        .insert(server_id, (first_key.name.clone(), stopped_worktree_ids));
                 }
 
                 Some((first_key.name, first_key.worktree_id))
@@ -12337,6 +12341,39 @@ impl LspStore {
         clear_stopped: bool,
         cx: &mut Context<Self>,
     ) {
+        self.restart_language_servers_for_buffers_in_worktree(
+            buffers,
+            only_restart_servers,
+            clear_stopped,
+            None,
+            cx,
+        );
+    }
+
+    pub fn restart_language_server_for_worktree(
+        &mut self,
+        buffers: Vec<Entity<Buffer>>,
+        server_name: LanguageServerName,
+        worktree_id: WorktreeId,
+        cx: &mut Context<Self>,
+    ) {
+        self.restart_language_servers_for_buffers_in_worktree(
+            buffers,
+            HashSet::from_iter([LanguageServerSelector::Name(server_name)]),
+            true,
+            Some(worktree_id),
+            cx,
+        );
+    }
+
+    fn restart_language_servers_for_buffers_in_worktree(
+        &mut self,
+        buffers: Vec<Entity<Buffer>>,
+        only_restart_servers: HashSet<LanguageServerSelector>,
+        clear_stopped: bool,
+        worktree_id: Option<WorktreeId>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::RestartLanguageServers {
                 project_id,
@@ -12365,6 +12402,7 @@ impl LspStore {
                     })
                     .collect(),
                 all: false,
+                worktree_id: worktree_id.map(|worktree_id| worktree_id.to_proto()),
             });
             cx.background_spawn(request).detach_and_log_err(cx);
         } else {
@@ -12381,7 +12419,12 @@ impl LspStore {
                                 .find_map(|(seed, state)| {
                                     (state.id == id).then(|| seed.name.clone())
                                 })
-                                .or_else(|| local.stopped_server_ids_to_names.get(&id).cloned())
+                                .or_else(|| {
+                                    local
+                                        .stopped_server_ids_to_names_and_worktrees
+                                        .get(&id)
+                                        .map(|(name, _)| name.clone())
+                                })
                                 .map(LanguageServerSelector::Name)
                                 .unwrap_or(LanguageServerSelector::Id(id)),
                             LanguageServerSelector::Name(_) => selector,
@@ -12389,6 +12432,28 @@ impl LspStore {
                         .collect()
                 })
                 .unwrap_or_else(|| only_restart_servers.clone());
+            let only_stop_servers = if let Some(worktree_id) = worktree_id {
+                self.as_local()
+                    .into_iter()
+                    .flat_map(|local| {
+                        only_restart_servers.iter().flat_map(|selector| {
+                            local
+                                .language_server_ids
+                                .iter()
+                                .filter_map(move |(seed, state)| match selector {
+                                    LanguageServerSelector::Id(id) => (state.id == *id
+                                        && seed.worktree_id == worktree_id)
+                                        .then_some(LanguageServerSelector::Id(*id)),
+                                    LanguageServerSelector::Name(name) => (seed.name == *name
+                                        && seed.worktree_id == worktree_id)
+                                        .then_some(LanguageServerSelector::Id(state.id)),
+                                })
+                        })
+                    })
+                    .collect()
+            } else {
+                only_restart_servers.clone()
+            };
             let stop_task = if only_restart_servers.is_empty() {
                 self.stop_local_language_servers_for_buffers(
                     &buffers,
@@ -12397,12 +12462,7 @@ impl LspStore {
                     cx,
                 )
             } else {
-                self.stop_local_language_servers_for_buffers(
-                    &[],
-                    only_restart_servers.clone(),
-                    false,
-                    cx,
-                )
+                self.stop_local_language_servers_for_buffers(&[], only_stop_servers, false, cx)
             };
             cx.spawn(async move |lsp_store, cx| {
                 stop_task.await;
@@ -12414,16 +12474,33 @@ impl LspStore {
                         if only_restart_servers.is_empty() {
                             lsp_store.stopped_language_servers.clear();
                             if let Some(local) = lsp_store.as_local_mut() {
-                                local.stopped_server_ids_to_names.clear();
+                                local.stopped_server_ids_to_names_and_worktrees.clear();
                             }
                         } else {
                             for selector in &only_register_servers {
                                 if let LanguageServerSelector::Name(name) = selector {
-                                    lsp_store.stopped_language_servers.remove(name);
+                                    if let Some(worktree_id) = worktree_id {
+                                        lsp_store.update_stopped_language_servers(
+                                            name.clone(),
+                                            worktree_id,
+                                            &BinaryStatus::Starting,
+                                        );
+                                    } else {
+                                        lsp_store.stopped_language_servers.remove(name);
+                                    }
                                     if let Some(local) = lsp_store.as_local_mut() {
-                                        local
-                                            .stopped_server_ids_to_names
-                                            .retain(|_, stopped_name| stopped_name != name);
+                                        local.stopped_server_ids_to_names_and_worktrees.retain(
+                                            |_, (stopped_name, stopped_worktree_ids)| {
+                                                if stopped_name != name {
+                                                    return true;
+                                                }
+                                                let Some(worktree_id) = worktree_id else {
+                                                    return false;
+                                                };
+                                                stopped_worktree_ids.remove(&worktree_id);
+                                                !stopped_worktree_ids.is_empty()
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -14215,6 +14292,9 @@ fn subscribe_to_binary_statuses(
         while let Some(binary_status_update) = server_statuses.next().await {
             if lsp_store
                 .update(cx, |lsp_store, cx| {
+                    if lsp_store.as_local().is_none() {
+                        return;
+                    }
                     let worktree_id = binary_status_update.worktree_id;
                     if lsp_store
                         .worktree_store
@@ -15738,7 +15818,7 @@ mod tests {
     use settings::SettingsStore;
 
     #[gpui::test]
-    async fn binary_statuses_are_scoped_to_their_worktree(cx: &mut TestAppContext) {
+    async fn binary_statuses_are_scoped_to_their_lsp_store(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -15796,6 +15876,40 @@ mod tests {
         );
 
         let second_lsp_store = second_project.read_with(cx, |project, _| project.lsp_store());
+        let first_worktree_store =
+            first_lsp_store.read_with(cx, |lsp_store, _| lsp_store.worktree_store.clone());
+        second_lsp_store.update(cx, |lsp_store, _| {
+            lsp_store.worktree_store = first_worktree_store;
+            lsp_store.mode = LspStoreMode::Remote(RemoteLspStore {
+                upstream_client: None,
+                upstream_project_id: 1,
+            });
+            lsp_store.language_server_statuses.insert(
+                LanguageServerId(43),
+                LanguageServerStatus {
+                    name: language_server_name.clone(),
+                    language_name: None,
+                    server_version: None,
+                    server_readable_version: None,
+                    pending_work: Default::default(),
+                    has_pending_diagnostic_updates: false,
+                    progress_tokens: Default::default(),
+                    worktree: Some(first_worktree_id),
+                    binary: None,
+                    configuration: None,
+                    workspace_folders: Default::default(),
+                    process_id: None,
+                },
+            );
+        });
+        assert!(
+            second_lsp_store.read_with(cx, |lsp_store, cx| lsp_store
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(first_worktree_id, cx)
+                .is_some()),
+            "the second store should have a colliding worktree id",
+        );
         assert_eq!(
             second_lsp_store.read_with(cx, |lsp_store, cx| {
                 language_server_id_for_binary_status(
@@ -15805,7 +15919,8 @@ mod tests {
                     cx,
                 )
             }),
-            None
+            Some(LanguageServerId(43)),
+            "the colliding guest server should resolve by the same worktree id and name",
         );
 
         first_lsp_store
