@@ -671,6 +671,34 @@ impl ImageView {
         }
     }
 
+    pub(crate) fn calculate_pdf_autoscroll_dy(
+        cursor_y: Pixels,
+        viewport_top: Pixels,
+        viewport_bottom: Pixels,
+    ) -> Pixels {
+        let edge_threshold = px(96.0);
+        let top_threshold = viewport_top + edge_threshold;
+        let bottom_threshold = viewport_bottom - edge_threshold;
+
+        if cursor_y > bottom_threshold {
+            let dist = f32::from(cursor_y - bottom_threshold).max(0.0);
+            let edge_val = f32::from(edge_threshold);
+            let ratio = (dist / edge_val).min(1.0);
+            let extra = f32::from(cursor_y - viewport_bottom).max(0.0);
+            let speed = 10.0 + (38.0 * ratio.powf(1.5)) + (extra * 0.4).min(24.0);
+            -px(speed)
+        } else if cursor_y < top_threshold {
+            let dist = f32::from(top_threshold - cursor_y).max(0.0);
+            let edge_val = f32::from(edge_threshold);
+            let ratio = (dist / edge_val).min(1.0);
+            let extra = f32::from(viewport_top - cursor_y).max(0.0);
+            let speed = 10.0 + (38.0 * ratio.powf(1.5)) + (extra * 0.4).min(24.0);
+            px(speed)
+        } else {
+            px(0.)
+        }
+    }
+
     fn check_pdf_autoscroll(&mut self, cx: &mut Context<Self>) {
         if !self.pdf_mouse_down || self.pdf_drag_position.is_none() {
             self.pdf_autoscroll_task = None;
@@ -697,38 +725,34 @@ impl ImageView {
 
                     let viewport_bounds = this.pdf_scroll_handle.bounds();
                     if viewport_bounds.size.height <= px(0.) {
-                        return false;
+                        return true;
                     }
 
-                    let edge_threshold = px(70.0);
-                    let top_threshold = viewport_bounds.top() + edge_threshold;
-                    let bottom_threshold = viewport_bounds.bottom() - edge_threshold;
-
-                    let mut scroll_dy = px(0.);
-                    if cursor_pos.y > bottom_threshold {
-                        let dist: f32 = (cursor_pos.y - bottom_threshold).into();
-                        let speed = (dist * 0.35 + 4.0).clamp(4.0, 32.0);
-                        scroll_dy = -px(speed);
-                    } else if cursor_pos.y < top_threshold {
-                        let dist: f32 = (top_threshold - cursor_pos.y).into();
-                        let speed = (dist * 0.35 + 4.0).clamp(4.0, 32.0);
-                        scroll_dy = px(speed);
-                    }
+                    let scroll_dy = Self::calculate_pdf_autoscroll_dy(
+                        cursor_pos.y,
+                        viewport_bounds.top(),
+                        viewport_bounds.bottom(),
+                    );
 
                     if scroll_dy != px(0.) {
                         let current_offset = this.pdf_scroll_handle.offset();
                         let max_offset = this.pdf_scroll_handle.max_offset();
                         let new_y = (current_offset.y + scroll_dy).clamp(-max_offset.y, px(0.));
                         if new_y != current_offset.y {
+                            let dy = new_y - current_offset.y;
                             this.pdf_scroll_handle.set_offset(point(current_offset.x, new_y));
+                            {
+                                let mut bounds_map = this.page_bounds.borrow_mut();
+                                for bounds in bounds_map.values_mut() {
+                                    bounds.origin.y += dy;
+                                }
+                            }
                             this.update_pdf_drag_selection(cursor_pos, cx);
                             cx.notify();
-                            return true;
                         }
                     }
 
-                    this.pdf_autoscroll_task = None;
-                    false
+                    true
                 }).unwrap_or(false);
 
                 if !should_continue {
@@ -1453,15 +1477,6 @@ impl Render for ImageView {
                         .id("pdf-viewport-wrapper")
                         .relative()
                         .size_full()
-                        .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                            this.handle_pdf_general_mouse_move(event.position, cx);
-                        }))
-                        .on_mouse_up(
-                            MouseButton::Left,
-                            cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                this.handle_pdf_mouse_up(cx);
-                            }),
-                        )
                         .child(
                             div()
                                 .id("pdf-scroll-container")
@@ -1477,15 +1492,6 @@ impl Render for ImageView {
                                         this.pdf_drag_position = None;
                                         this.pdf_autoscroll_task = None;
                                         cx.notify();
-                                    }),
-                                )
-                                .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                                    this.handle_pdf_general_mouse_move(event.position, cx);
-                                }))
-                                .on_mouse_up(
-                                    MouseButton::Left,
-                                    cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                        this.handle_pdf_mouse_up(cx);
                                     }),
                                 )
                                 .on_scroll_wheel(cx.listener(|_this, _event: &ScrollWheelEvent, _window, cx| {
@@ -1527,15 +1533,6 @@ impl Render for ImageView {
                                                         cx.stop_propagation();
                                                         window.focus(&this.focus_handle, cx);
                                                         this.handle_pdf_canvas_mouse_down(page_idx, event.position, event.click_count, cx);
-                                                    }),
-                                                )
-                                                .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _window, cx| {
-                                                    this.handle_pdf_general_mouse_move(event.position, cx);
-                                                }))
-                                                .on_mouse_up(
-                                                    MouseButton::Left,
-                                                    cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                                        this.handle_pdf_mouse_up(cx);
                                                     }),
                                                 )
                                                 .on_mouse_down(
@@ -2407,6 +2404,47 @@ mod tests {
 
         let text_backward = ImageView::collect_selection_text(&pages, 1, 1, 0, 1);
         assert_eq!(text_backward, "world\n\nfrom page");
+    }
+
+    #[test]
+    fn test_pdf_autoscroll_symmetry_and_speed() {
+        let v_top = px(100.0);
+        let v_bottom = px(900.0);
+        // Neutral zone (middle of viewport)
+        assert_eq!(
+            ImageView::calculate_pdf_autoscroll_dy(px(500.0), v_top, v_bottom),
+            px(0.0)
+        );
+
+        // At edge threshold (dist = 0)
+        let top_thresh = px(196.0); // 100 + 96
+        let bot_thresh = px(804.0); // 900 - 96
+        let dy_thresh_up = ImageView::calculate_pdf_autoscroll_dy(top_thresh - px(0.01), v_top, v_bottom);
+        let dy_thresh_down = ImageView::calculate_pdf_autoscroll_dy(bot_thresh + px(0.01), v_top, v_bottom);
+        assert_eq!(f32::from(dy_thresh_up).round(), 10.0);
+        assert_eq!(f32::from(dy_thresh_down).round(), -10.0);
+
+        // Mid-margin (dist = 48px into margin)
+        let top_mid = v_top + px(48.0);
+        let bot_mid = v_bottom - px(48.0);
+        let dy_up = ImageView::calculate_pdf_autoscroll_dy(top_mid, v_top, v_bottom);
+        let dy_down = ImageView::calculate_pdf_autoscroll_dy(bot_mid, v_top, v_bottom);
+        assert_eq!(dy_up, -dy_down);
+        assert!(f32::from(dy_up) > 20.0);
+
+        // At exact viewport edge (dist = 96px, ratio = 1.0)
+        let dy_edge_up = ImageView::calculate_pdf_autoscroll_dy(v_top, v_top, v_bottom);
+        let dy_edge_down = ImageView::calculate_pdf_autoscroll_dy(v_bottom, v_top, v_bottom);
+        assert_eq!(dy_edge_up, -dy_edge_down);
+        assert_eq!(dy_edge_up, px(48.0));
+        assert_eq!(dy_edge_down, -px(48.0));
+
+        // Past viewport edge (extra = 20px)
+        let dy_past_up = ImageView::calculate_pdf_autoscroll_dy(v_top - px(20.0), v_top, v_bottom);
+        let dy_past_down = ImageView::calculate_pdf_autoscroll_dy(v_bottom + px(20.0), v_top, v_bottom);
+        assert_eq!(dy_past_up, -dy_past_down);
+        assert_eq!(dy_past_up, px(56.0));
+        assert_eq!(dy_past_down, -px(56.0));
     }
 }
 
