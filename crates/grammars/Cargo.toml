@@ -11,10 +11,11 @@ workspace = true
 path = "src/grammars.rs"
 
 [dependencies]
+anyhow.workspace = true
 language_core.workspace = true
 rust-embed.workspace = true
-anyhow.workspace = true
 toml.workspace = true
+util.workspace = true
 
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-bash = { workspace = true, optional = true }

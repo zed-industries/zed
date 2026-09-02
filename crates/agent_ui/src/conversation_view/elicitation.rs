@@ -1457,7 +1457,7 @@ impl<'a> ElicitationCard<'a> {
             .colors()
             .element_background
             .blend(cx.theme().colors().editor_foreground.opacity(0.025));
-        let tool_name_font_size = rems_from_px(13.);
+        let tool_name_font_size = rems_from_px(13_f32);
         let is_pending = matches!(&self.elicitation.status, ElicitationStatus::Pending { .. });
         let is_accepted_url = matches!(
             (&self.elicitation.status, &self.elicitation.request.mode),
@@ -1715,7 +1715,7 @@ impl<'a> ElicitationCard<'a> {
                                     self.entry_ix, option.value
                                 )))
                                 .w_full()
-                                .min_h(rems_from_px(28.))
+                                .min_h(rems_from_px(28_f32))
                                 .items_start()
                                 .gap_1p5()
                                 .rounded_sm()
@@ -1782,7 +1782,7 @@ impl<'a> ElicitationCard<'a> {
                 h_flex()
                     .id(option_id)
                     .w_full()
-                    .min_h(rems_from_px(28.))
+                    .min_h(rems_from_px(28_f32))
                     .items_start()
                     .gap_1p5()
                     .rounded_sm()
@@ -1925,7 +1925,7 @@ impl<'a> ElicitationCard<'a> {
             .min_w_0()
             .items_start()
             .child(
-                div().h(rems_from_px(16.)).flex().items_center().child(
+                div().h(rems_from_px(16_f32)).flex().items_center().child(
                     Icon::new(IconName::Link)
                         .size(IconSize::XSmall)
                         .color(Color::Muted),

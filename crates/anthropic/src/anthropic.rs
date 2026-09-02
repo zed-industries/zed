@@ -42,9 +42,21 @@ pub fn requires_explicit_thinking_opt_out(model_id: &str) -> bool {
 
 pub const FABLE_MODEL_ID_PREFIX: &str = "claude-fable-5";
 pub const FABLE_FALLBACK_MODEL_ID: &str = "claude-opus-4-8";
+pub const THINKING_BINDING_CONTROLS_BETA_HEADER: &str = "thinking-binding-controls-2026-08-01";
+
+pub fn binds_thinking_blocks_to_prefix(model_id: &str) -> bool {
+    matches!(model_id, "claude-fable-5-1")
+}
+
+pub fn supports_forced_tool_use(model_id: &str) -> bool {
+    !matches!(model_id, "claude-fable-5-1" | "claude-mythos-5-1")
+}
 
 /// <https://platform.claude.com/docs/en/build-with-claude/compaction>
 pub const COMPACTION_BETA_HEADER: &str = "compact-2026-01-12";
+
+/// The smallest input-token trigger Anthropic accepts for compaction.
+pub const MIN_COMPACTION_TRIGGER_TOKENS: u64 = 50_000;
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -180,13 +192,16 @@ impl Model {
         // <https://platform.claude.com/docs/en/build-with-claude/compaction#supported-models>
         let supports_compaction = matches!(
             entry.id.as_str(),
-            "claude-fable-5"
+            "claude-fable-5-1"
+                | "claude-fable-5"
+                | "claude-mythos-5-1"
                 | "claude-mythos-5"
                 | "claude-mythos-preview"
                 | "claude-opus-5"
                 | "claude-opus-4-8"
                 | "claude-opus-4-7"
                 | "claude-opus-4-6"
+                | "claude-sonnet-5"
                 | "claude-sonnet-4-6"
         );
 
@@ -196,6 +211,9 @@ impl Model {
         }
         if supports_compaction {
             extra_beta_headers.push(COMPACTION_BETA_HEADER.to_string());
+        }
+        if binds_thinking_blocks_to_prefix(&entry.id) {
+            extra_beta_headers.push(THINKING_BINDING_CONTROLS_BETA_HEADER.to_string());
         }
 
         Self {
@@ -260,7 +278,7 @@ pub async fn stream_completion(
     .map(|output| output.0)
 }
 
-/// A raw model entry returned by the Anthropic models listing endpoint.
+/// A validated model entry returned by the Anthropic models listing endpoint.
 #[derive(Clone, Debug, Deserialize)]
 pub struct ListModelEntry {
     pub id: String,
@@ -272,8 +290,51 @@ pub struct ListModelEntry {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApiListModelEntry {
+    id: String,
+    display_name: String,
+    max_input_tokens: Option<u64>,
+    max_tokens: Option<u64>,
+    #[serde(default)]
+    capabilities: Option<ModelCapabilities>,
+}
+
+impl ApiListModelEntry {
+    fn into_listed(self) -> Option<ListModelEntry> {
+        let Self {
+            id,
+            display_name,
+            max_input_tokens,
+            max_tokens,
+            capabilities,
+        } = self;
+
+        let missing_fields = match (&max_input_tokens, &max_tokens) {
+            (None, None) => Some("`max_input_tokens` and `max_tokens`"),
+            (None, Some(_)) => Some("`max_input_tokens`"),
+            (Some(_), None) => Some("`max_tokens`"),
+            (Some(_), Some(_)) => None,
+        };
+        if let Some(missing_fields) = missing_fields {
+            log::error!(
+                "Filtering out Anthropic model `{id}` because the API returned null for {missing_fields}"
+            );
+            return None;
+        }
+
+        Some(ListModelEntry {
+            id,
+            display_name,
+            max_input_tokens: max_input_tokens?,
+            max_tokens: max_tokens?,
+            capabilities,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
 struct ListModelsResponse {
-    data: Vec<ListModelEntry>,
+    data: Vec<ApiListModelEntry>,
 }
 
 /// Fetch the list of models available to the current API key. The returned
@@ -286,7 +347,7 @@ pub async fn list_models(
     api_url: &str,
     api_key: &str,
     extra_headers: &CustomHeaders,
-) -> Result<Vec<Model>> {
+) -> Result<Vec<Model>, AnthropicError> {
     let uri = format!("{api_url}/v1/models?limit=1000");
 
     let request = HttpRequest::builder()
@@ -297,33 +358,33 @@ pub async fn list_models(
         .header("Accept", "application/json")
         .extra_headers(extra_headers)
         .body(AsyncBody::default())
-        .context("failed to build Anthropic models list request")?;
+        .map_err(AnthropicError::BuildRequestBody)?;
 
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let mut response = client
         .send(request)
         .await
-        .context("failed to send Anthropic models list request")?;
+        .map_err(|error| AnthropicError::HttpSend { host, error })?;
+
+    if !response.status().is_success() {
+        let rate_limits = RateLimitInfo::from_headers(response.headers());
+        return Err(handle_error_response(response, rate_limits).await);
+    }
 
     let mut body = String::new();
     response
         .body_mut()
         .read_to_string(&mut body)
         .await
-        .context("failed to read Anthropic models list response")?;
-
-    anyhow::ensure!(
-        response.status().is_success(),
-        "failed to list Anthropic models: {} {}",
-        response.status(),
-        body,
-    );
+        .map_err(AnthropicError::ReadResponse)?;
 
     let parsed: ListModelsResponse =
-        serde_json::from_str(&body).context("failed to parse Anthropic models list response")?;
+        serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?;
 
     let models = parsed
         .data
         .into_iter()
+        .filter_map(ApiListModelEntry::into_listed)
         .map(Model::from_listed)
         .collect::<Vec<_>>();
     Ok(models)
@@ -390,10 +451,11 @@ async fn send_request(
         .body(AsyncBody::from(serialized_request))
         .map_err(AnthropicError::BuildRequestBody)?;
 
+    let host = request.uri().host().unwrap_or(api_url).to_owned();
     let response = client
         .send(request)
         .await
-        .map_err(AnthropicError::HttpSend)?;
+        .map_err(|error| AnthropicError::HttpSend { host, error })?;
 
     let rate_limits = RateLimitInfo::from_headers(response.headers());
 
@@ -404,14 +466,19 @@ async fn handle_error_response(
     mut response: http::Response<AsyncBody>,
     rate_limits: RateLimitInfo,
 ) -> AnthropicError {
-    if response.status().as_u16() == 529 {
+    let status = response.status();
+    if status.as_u16() == 529 {
         return AnthropicError::ServerOverloaded {
+            status,
             retry_after: rate_limits.retry_after,
         };
     }
 
     if let Some(retry_after) = rate_limits.retry_after {
-        return AnthropicError::RateLimit { retry_after };
+        return AnthropicError::RateLimit {
+            status,
+            retry_after,
+        };
     }
 
     let mut body = String::new();
@@ -426,9 +493,12 @@ async fn handle_error_response(
     }
 
     match serde_json::from_str::<Event>(&body) {
-        Ok(Event::Error { error }) => AnthropicError::ApiError(error),
+        Ok(Event::Error { error }) => AnthropicError::ApiError {
+            status: Some(status),
+            error,
+        },
         Ok(_) | Err(_) => AnthropicError::HttpResponseError {
-            status_code: response.status(),
+            status_code: status,
             message: body,
         },
     }
@@ -756,6 +826,8 @@ pub enum Thinking {
     Adaptive {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<AdaptiveThinkingDisplay>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        block_binding: Option<ThinkingBlockBinding>,
     },
     /// Explicitly turns thinking off. Required by models where thinking runs
     /// by default (see [`requires_explicit_thinking_opt_out`]); only accepted
@@ -768,6 +840,22 @@ pub enum Thinking {
 pub enum AdaptiveThinkingDisplay {
     Omitted,
     Summarized,
+}
+
+/// Controls for models that bind thinking blocks to the request prefix (see
+/// [`binds_thinking_blocks_to_prefix`]). Requires the
+/// [`THINKING_BINDING_CONTROLS_BETA_HEADER`] beta header.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThinkingBlockBinding {
+    pub prefix_mismatch_behavior: PrefixMismatchBehavior,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PrefixMismatchBehavior {
+    /// Drop an invalidated thinking block and continue, instead of rejecting
+    /// the request with a 400.
+    DropBlock,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, EnumString)]
@@ -811,6 +899,9 @@ pub enum ContextManagementEdit {
     Compact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trigger: Option<CompactionTrigger>,
+        /// Stops after emitting the compaction block instead of continuing the response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_after_compaction: Option<bool>,
     },
 }
 
@@ -858,6 +949,44 @@ pub struct Request {
     pub top_p: Option<f32>,
 }
 
+impl Request {
+    /// Configures this request to stop after native compaction.
+    ///
+    /// Tool definitions remain in the request so the trigger observes the same
+    /// context and prompt-cache prefix as normal generation. Tool choice is
+    /// disabled because explicit compaction must only produce replacement
+    /// context.
+    ///
+    /// Claude 4.6 and later reject requests ending in an assistant message as
+    /// unsupported prefill, so completed conversations receive a final user
+    /// turn that requests compaction.
+    pub fn into_compact_request(mut self) -> Self {
+        self.tool_choice = (!self.tools.is_empty()).then_some(ToolChoice::None);
+        if self
+            .messages
+            .last()
+            .is_some_and(|message| message.role == Role::Assistant)
+        {
+            self.messages.push(Message {
+                role: Role::User,
+                content: vec![RequestContent::Text {
+                    text: "Compact the conversation so far.".to_string(),
+                    cache_control: None,
+                }],
+            });
+        }
+        self.context_management = Some(ContextManagement {
+            edits: vec![ContextManagementEdit::Compact {
+                trigger: Some(CompactionTrigger::InputTokens {
+                    value: MIN_COMPACTION_TRIGGER_TOKENS,
+                }),
+                pause_after_compaction: Some(true),
+            }],
+        });
+        self
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Speed {
@@ -888,14 +1017,15 @@ pub struct Usage {
     pub cache_creation_input_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_read_input_tokens: Option<u64>,
-    /// Only populated when a new compaction is triggered during the request.
+    /// Per-sampling token counts returned when the compaction beta is enabled.
+    ///
     /// The top-level token fields exclude compaction iterations, so total
     /// billable usage is the sum across all iterations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub iterations: Option<Vec<UsageIteration>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageIteration {
     #[serde(rename = "type")]
     pub iteration_type: UsageIterationType,
@@ -991,7 +1121,7 @@ pub enum AnthropicError {
     BuildRequestBody(http::Error),
 
     /// Failed to send the HTTP request
-    HttpSend(anyhow::Error),
+    HttpSend { host: String, error: anyhow::Error },
 
     /// Failed to deserialize the response from JSON
     DeserializeResponse(serde_json::Error),
@@ -1006,13 +1136,22 @@ pub enum AnthropicError {
     },
 
     /// Rate limit exceeded
-    RateLimit { retry_after: Duration },
+    RateLimit {
+        status: StatusCode,
+        retry_after: Duration,
+    },
 
     /// Server overloaded
-    ServerOverloaded { retry_after: Option<Duration> },
+    ServerOverloaded {
+        status: StatusCode,
+        retry_after: Option<Duration>,
+    },
 
     /// API returned an error response
-    ApiError(ApiError),
+    ApiError {
+        status: Option<StatusCode>,
+        error: ApiError,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]
@@ -1032,14 +1171,20 @@ pub enum ApiErrorCode {
     InvalidRequestError,
     /// 401 - `authentication_error`: There's an issue with your API key.
     AuthenticationError,
+    /// 402 - `billing_error`: There's an issue with the account's billing.
+    BillingError,
     /// 403 - `permission_error`: Your API key does not have permission to use the specified resource.
     PermissionError,
     /// 404 - `not_found_error`: The requested resource was not found.
     NotFoundError,
+    /// 409 - `conflict_error`: The request conflicts with the current state of the resource.
+    ConflictError,
     /// 413 - `request_too_large`: Request exceeds the maximum allowed number of bytes.
     RequestTooLarge,
     /// 429 - `rate_limit_error`: Your account has hit a rate limit.
     RateLimitError,
+    /// 504 - `timeout_error`: Anthropic's gateway timed out while processing the request.
+    TimeoutError,
     /// 500 - `api_error`: An unexpected error has occurred internal to Anthropic's systems.
     ApiError,
     /// 529 - `overloaded_error`: Anthropic's API is temporarily overloaded.
@@ -1104,7 +1249,11 @@ pub fn completion_error_from_anthropic(
     match error {
         AnthropicError::SerializeRequest(error) => Error::SerializeRequest { provider, error },
         AnthropicError::BuildRequestBody(error) => Error::BuildRequestBody { provider, error },
-        AnthropicError::HttpSend(error) => Error::HttpSend { provider, error },
+        AnthropicError::HttpSend { host, error } => Error::HttpSend {
+            provider,
+            host,
+            error,
+        },
         AnthropicError::DeserializeResponse(error) => {
             Error::DeserializeResponse { provider, error }
         }
@@ -1112,21 +1261,37 @@ pub fn completion_error_from_anthropic(
         AnthropicError::HttpResponseError {
             status_code,
             message,
-        } => Error::HttpResponseError {
-            provider,
-            status_code,
-            message,
-        },
-        AnthropicError::RateLimit { retry_after } => Error::RateLimitExceeded {
-            provider,
-            retry_after: Some(retry_after),
-        },
-        AnthropicError::ServerOverloaded { retry_after } => Error::ServerOverloaded {
-            provider,
+        } => Error::from_http_status(provider, status_code, message, None),
+        AnthropicError::RateLimit {
+            status,
             retry_after,
-        },
-        AnthropicError::ApiError(api_error) => {
-            completion_error_from_anthropic_api(api_error, provider)
+        } => {
+            let message = format!("{provider}'s API rate limit exceeded");
+            Error::from_provider_response(
+                provider,
+                Some(status),
+                None,
+                message,
+                Some(retry_after),
+                language_model_core::ProviderErrorCategory::RateLimit,
+            )
+        }
+        AnthropicError::ServerOverloaded {
+            status,
+            retry_after,
+        } => {
+            let message = format!("{provider}'s API servers are overloaded right now");
+            Error::from_provider_response(
+                provider,
+                Some(status),
+                None,
+                message,
+                retry_after,
+                language_model_core::ProviderErrorCategory::Overloaded,
+            )
+        }
+        AnthropicError::ApiError { status, error } => {
+            completion_error_from_anthropic_api_with_status(error, provider, status)
         }
     }
 }
@@ -1135,46 +1300,230 @@ pub fn completion_error_from_anthropic_api(
     error: ApiError,
     provider: language_model_core::LanguageModelProviderName,
 ) -> language_model_core::LanguageModelCompletionError {
+    completion_error_from_anthropic_api_with_status(error, provider, None)
+}
+
+fn completion_error_from_anthropic_api_with_status(
+    error: ApiError,
+    provider: language_model_core::LanguageModelProviderName,
+    status: Option<StatusCode>,
+) -> language_model_core::LanguageModelCompletionError {
     use ApiErrorCode::*;
     use language_model_core::LanguageModelCompletionError as Error;
-    match error.code() {
-        Some(code) => match code {
-            InvalidRequestError => Error::BadRequestFormat {
-                provider,
-                message: error.message,
-            },
-            AuthenticationError => Error::AuthenticationError {
-                provider,
-                message: error.message,
-            },
-            PermissionError => Error::PermissionError {
-                provider,
-                message: error.message,
-            },
-            NotFoundError => Error::ApiEndpointNotFound { provider },
-            RequestTooLarge => Error::PromptTooLarge {
-                tokens: language_model_core::parse_prompt_too_long(&error.message),
-            },
-            RateLimitError => Error::RateLimitExceeded {
-                provider,
-                retry_after: None,
-            },
-            ApiError => Error::ApiInternalServerError {
-                provider,
-                message: error.message,
-            },
-            OverloadedError => Error::ServerOverloaded {
-                provider,
-                retry_after: None,
-            },
+    use language_model_core::ProviderErrorCategory;
+    let category = match error.code() {
+        Some(InvalidRequestError) => {
+            if let Some(tokens) = parse_prompt_too_long(&error.message) {
+                ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(tokens),
+                }
+            } else {
+                ProviderErrorCategory::InvalidRequest
+            }
+        }
+        Some(AuthenticationError) => ProviderErrorCategory::Authentication,
+        Some(BillingError) => ProviderErrorCategory::PaymentRequired,
+        Some(PermissionError) => ProviderErrorCategory::Permission,
+        Some(NotFoundError) => ProviderErrorCategory::EndpointNotFound,
+        Some(ConflictError) => ProviderErrorCategory::Conflict,
+        Some(RequestTooLarge) => ProviderErrorCategory::PromptTooLarge {
+            tokens: parse_prompt_too_long(&error.message),
         },
-        None => Error::Other(error.into()),
-    }
+        Some(RateLimitError) => ProviderErrorCategory::RateLimit,
+        Some(TimeoutError) => ProviderErrorCategory::Timeout,
+        Some(ApiError) => ProviderErrorCategory::InternalServer,
+        Some(OverloadedError) => ProviderErrorCategory::Overloaded,
+        None => ProviderErrorCategory::Other,
+    };
+    Error::from_provider_response(
+        provider,
+        status,
+        Some(error.error_type),
+        error.message,
+        None,
+        category,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http_client::FakeHttpClient;
+
+    #[test]
+    fn list_models_preserves_anthropic_api_errors() {
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(http::Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(AsyncBody::from(
+                    r#"{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"},"request_id":"request-id"}"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(list_models(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            "invalid-key",
+            &CustomHeaders::default(),
+        ))
+        .expect_err("authentication should fail");
+
+        assert!(matches!(
+            error,
+            AnthropicError::ApiError {
+                status: Some(StatusCode::UNAUTHORIZED),
+                error: ApiError {
+                    error_type,
+                    message,
+                },
+            } if error_type == "authentication_error" && message == "invalid x-api-key"
+        ));
+    }
+
+    #[test]
+    fn list_models_preserves_anthropic_http_send_hostname() {
+        let client =
+            FakeHttpClient::create(|_| async move { Err(anyhow::anyhow!("DNS lookup failed")) });
+
+        let error = futures::executor::block_on(list_models(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            "test-key",
+            &CustomHeaders::default(),
+        ))
+        .expect_err("request should fail");
+        let completion_error: language_model_core::LanguageModelCompletionError = error.into();
+
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::HttpSend {
+                host,
+                error,
+                ..
+            } if host == "api.anthropic.com" && error.to_string() == "DNS lookup failed"
+        ));
+    }
+
+    #[test]
+    fn list_models_maps_anthropic_billing_errors_to_payment_required() {
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(http::Response::builder()
+                .status(StatusCode::PAYMENT_REQUIRED)
+                .body(AsyncBody::from(
+                    r#"{"type":"error","error":{"type":"billing_error","message":"There is a problem with your billing information."},"request_id":"request-id"}"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(list_models(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            "test-key",
+            &CustomHeaders::default(),
+        ))
+        .expect_err("billing error should fail");
+        let completion_error: language_model_core::LanguageModelCompletionError = error.into();
+
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PaymentRequired,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn request_too_large_preserves_reported_token_count() {
+        let error = completion_error_from_anthropic_api(
+            ApiError {
+                error_type: "request_too_large".to_string(),
+                message: "prompt is too long: 1500000 tokens".to_string(),
+            },
+            language_model_core::ANTHROPIC_PROVIDER_NAME,
+        );
+
+        assert!(matches!(
+            error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                category: language_model_core::ProviderErrorCategory::PromptTooLarge {
+                    tokens: Some(1_500_000),
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn list_models_preserves_anthropic_conflict_errors() {
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(http::Response::builder()
+                .status(StatusCode::CONFLICT)
+                .body(AsyncBody::from(
+                    r#"{"type":"error","error":{"type":"conflict_error","message":"The resource was modified concurrently."},"request_id":"request-id"}"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(list_models(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            "test-key",
+            &CustomHeaders::default(),
+        ))
+        .expect_err("conflict should fail");
+        let completion_error: language_model_core::LanguageModelCompletionError = error.into();
+
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                provider,
+                status: Some(StatusCode::CONFLICT),
+                code: Some(code),
+                message,
+                retry_after: None,
+                category: language_model_core::ProviderErrorCategory::Conflict,
+            } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "conflict_error"
+                && message == "The resource was modified concurrently."
+        ));
+    }
+
+    #[test]
+    fn list_models_maps_anthropic_timeout_errors_to_gateway_timeout() {
+        let client = FakeHttpClient::create(|_| async move {
+            Ok(http::Response::builder()
+                .status(StatusCode::GATEWAY_TIMEOUT)
+                .body(AsyncBody::from(
+                    r#"{"type":"error","error":{"type":"timeout_error","message":"The request timed out."},"request_id":"request-id"}"#,
+                ))
+                .expect("valid response"))
+        });
+
+        let error = futures::executor::block_on(list_models(
+            client.as_ref(),
+            ANTHROPIC_API_URL,
+            "test-key",
+            &CustomHeaders::default(),
+        ))
+        .expect_err("timeout should fail");
+        let completion_error: language_model_core::LanguageModelCompletionError = error.into();
+
+        assert!(matches!(
+            completion_error,
+            language_model_core::LanguageModelCompletionError::ProviderRejection {
+                provider,
+                message,
+                status: Some(StatusCode::GATEWAY_TIMEOUT),
+                code: Some(code),
+                retry_after: None,
+                category: language_model_core::ProviderErrorCategory::Timeout,
+            } if provider == language_model_core::ANTHROPIC_PROVIDER_NAME
+                && code == "timeout_error"
+                && message == "The request timed out."
+        ));
+    }
 
     fn listed_entry(id: &str, capabilities: ModelCapabilities) -> ListModelEntry {
         ListModelEntry {
@@ -1184,6 +1533,47 @@ mod tests {
             max_tokens: 64_000,
             capabilities: Some(capabilities),
         }
+    }
+
+    #[test]
+    fn api_list_model_entry_filters_null_token_limits() {
+        let entries: Vec<ApiListModelEntry> = serde_json::from_str(
+            r#"[
+                {
+                    "id": "valid",
+                    "display_name": "Valid",
+                    "max_input_tokens": 200000,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-input",
+                    "display_name": "Null Input",
+                    "max_input_tokens": null,
+                    "max_tokens": 64000
+                },
+                {
+                    "id": "null-output",
+                    "display_name": "Null Output",
+                    "max_input_tokens": 200000,
+                    "max_tokens": null
+                },
+                {
+                    "id": "null-both",
+                    "display_name": "Null Both",
+                    "max_input_tokens": null,
+                    "max_tokens": null
+                }
+            ]"#,
+        )
+        .expect("entries should deserialize");
+
+        let entries = entries
+            .into_iter()
+            .filter_map(ApiListModelEntry::into_listed)
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "valid");
     }
 
     #[test]
@@ -1249,6 +1639,31 @@ mod tests {
             assert!(beta_headers.contains(FAST_MODE_BETA_HEADER));
             assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
         }
+    }
+
+    #[test]
+    fn from_listed_enables_compaction_and_binding_controls_for_fable_5_1() {
+        let model = Model::from_listed(listed_entry(
+            "claude-fable-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
+
+        // Mythos 5.1 supports compaction but doesn't run the prefix-binding
+        // check, so it must not get the binding-controls header.
+        let model = Model::from_listed(listed_entry(
+            "claude-mythos-5-1",
+            ModelCapabilities::default(),
+        ));
+        let beta_headers = model
+            .beta_headers()
+            .expect("model should have beta headers");
+        assert!(beta_headers.contains(COMPACTION_BETA_HEADER));
+        assert!(!beta_headers.contains(THINKING_BINDING_CONTROLS_BETA_HEADER));
     }
 
     #[test]

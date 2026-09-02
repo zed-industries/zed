@@ -1,5 +1,9 @@
 use crate::display::WebDisplay;
-use crate::events::{ClickState, EventListenerHandle, WebEventListeners, is_mac_platform};
+use crate::events::{
+    ClickState, EventListenerHandle, TouchIds, WebEventListeners, is_mac_platform,
+};
+use crate::ime_mirror::ImeMirror;
+use crate::platform::WebWindowLifecycle;
 use std::sync::Arc;
 use std::{cell::Cell, cell::RefCell, rc::Rc};
 
@@ -7,10 +11,10 @@ use gpui::{
     AnyWindowHandle, Bounds, Capslock, Decorations, DevicePixels, DispatchEventResult, GpuSpecs,
     Modifiers, MouseButton, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ResizeEdge, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
+    ResizeEdge, Scene, Size, TextInputConfiguration, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px,
 };
-use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig};
+use gpui_wgpu::{WgpuContext, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 use wasm_bindgen::prelude::*;
 
 #[derive(Default)]
@@ -45,24 +49,50 @@ pub(crate) struct WebWindowMutableState {
 pub(crate) struct WebWindowInner {
     pub(crate) browser_window: web_sys::Window,
     pub(crate) canvas: web_sys::HtmlCanvasElement,
-    pub(crate) input_element: web_sys::HtmlInputElement,
+    pub(crate) ime_mirror: ImeMirror,
     pub(crate) has_device_pixel_support: bool,
     pub(crate) is_mac: bool,
     pub(crate) state: RefCell<WebWindowMutableState>,
     pub(crate) callbacks: RefCell<WebWindowCallbacks>,
     pub(crate) click_state: RefCell<ClickState>,
+    pub(crate) touch_ids: RefCell<TouchIds>,
     pub(crate) pressed_button: Cell<Option<MouseButton>>,
     pub(crate) last_physical_size: Cell<(u32, u32)>,
     pub(crate) notify_scale: Cell<bool>,
     pub(crate) is_composing: Cell<bool>,
+    /// Set while `sync_virtual_keyboard` blur/focus-cycles the hidden input.
+    /// The cycle is a keyboard-visibility hint, not a real activity change;
+    /// letting the focus/blur listeners report it would re-enter GPUI
+    /// synchronously from inside an input dispatch, and a `RefCell`
+    /// double-borrow panic on wasm never unwinds, wedging the app.
+    pub(crate) suppress_focus_status_events: Cell<bool>,
+    /// The visual viewport's width and greatest height seen at that width,
+    /// in layout pixels. The keyboard-visibility probe compares the current
+    /// height against this maximum; the width detects rotation, which must
+    /// restart the calibration.
+    pub(crate) visual_viewport_probe: Cell<(f64, f64)>,
+    /// The visual viewport height when the current pointer gesture began.
+    /// A mid-gesture change means the software keyboard opened or closed and
+    /// reflowed the layout, so the release position no longer refers to what
+    /// the user aimed at.
+    pub(crate) gesture_start_visual_viewport_height: Cell<f64>,
+    /// A touch that may still resolve into a tap: its pointer id and starting
+    /// position, cleared once it travels beyond touch slop. Virtual keyboard
+    /// and IME focus may only change when a touch release completes a tap;
+    /// pans must leave them untouched, or scrolling over editable content
+    /// flickers the keyboard and drags the caret around.
+    pub(crate) touch_tap_candidate: Cell<Option<(i32, Point<Pixels>)>>,
     mql_handle: RefCell<Option<MqlHandle>>,
     pending_physical_size: Cell<Option<(u32, u32)>>,
     raf_id: Cell<Option<i32>>,
+    raf_function: RefCell<Option<js_sys::Function>>,
 }
 
 pub struct WebWindow {
     inner: Rc<WebWindowInner>,
     display: Rc<dyn PlatformDisplay>,
+    lifecycle: Rc<Cell<WebWindowLifecycle>>,
+    active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
     _raf_closure: Closure<dyn FnMut()>,
     _resize_observer: Option<web_sys::ResizeObserver>,
     _resize_observer_closure: Closure<dyn FnMut(js_sys::Array)>,
@@ -70,79 +100,71 @@ pub struct WebWindow {
 }
 
 impl WebWindow {
-    pub fn new(
-        _handle: AnyWindowHandle,
-        _params: WindowParams,
-        context: &WgpuContext,
-        browser_window: web_sys::Window,
-    ) -> anyhow::Result<Self> {
+    pub(crate) fn prepare_canvas(
+        browser_window: &web_sys::Window,
+    ) -> anyhow::Result<web_sys::HtmlCanvasElement> {
         let document = browser_window
             .document()
             .ok_or_else(|| anyhow::anyhow!("No `document` found on window"))?;
-
         let canvas: web_sys::HtmlCanvasElement = document
             .create_element("canvas")
-            .map_err(|e| anyhow::anyhow!("Failed to create canvas element: {e:?}"))?
+            .map_err(|error| anyhow::anyhow!("Failed to create canvas element: {error:?}"))?
             .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not a canvas: {e:?}"))?;
-
-        let dpr = browser_window.device_pixel_ratio() as f32;
-        let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
-        let has_device_pixel_support = check_device_pixel_support();
-
+            .map_err(|error| anyhow::anyhow!("Created element is not a canvas: {error:?}"))?;
         canvas.set_tab_index(-1);
 
         let style = canvas.style();
-        style
-            .set_property("width", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas width style: {e:?}"))?;
-        style
-            .set_property("height", "100%")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas height style: {e:?}"))?;
-        style
-            .set_property("display", "block")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas display style: {e:?}"))?;
-        style
-            .set_property("outline", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set canvas outline style: {e:?}"))?;
-        style
-            .set_property("touch-action", "none")
-            .map_err(|e| anyhow::anyhow!("Failed to set touch-action style: {e:?}"))?;
+        for (property, value) in [
+            ("width", "100%"),
+            ("height", "100%"),
+            ("display", "block"),
+            ("outline", "none"),
+            ("touch-action", "none"),
+        ] {
+            style.set_property(property, value).map_err(|error| {
+                anyhow::anyhow!("Failed to set canvas {property} style: {error:?}")
+            })?;
+        }
 
         let body = document
             .body()
             .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
         body.append_child(&canvas)
-            .map_err(|e| anyhow::anyhow!("Failed to append canvas to body: {e:?}"))?;
+            .map_err(|error| anyhow::anyhow!("Failed to append canvas to body: {error:?}"))?;
+        Ok(canvas)
+    }
 
-        let input_element: web_sys::HtmlInputElement = document
-            .create_element("input")
-            .map_err(|e| anyhow::anyhow!("Failed to create input element: {e:?}"))?
-            .dyn_into()
-            .map_err(|e| anyhow::anyhow!("Created element is not an input: {e:?}"))?;
-        let input_style = input_element.style();
-        input_style.set_property("position", "fixed").ok();
-        input_style.set_property("top", "0").ok();
-        input_style.set_property("left", "0").ok();
-        input_style.set_property("width", "1px").ok();
-        input_style.set_property("height", "1px").ok();
-        input_style.set_property("opacity", "0").ok();
-        body.append_child(&input_element)
-            .map_err(|e| anyhow::anyhow!("Failed to append input to body: {e:?}"))?;
-        input_element.focus().ok();
-
-        let device_size = Size {
-            width: DevicePixels(0),
-            height: DevicePixels(0),
-        };
-
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        _handle: AnyWindowHandle,
+        _params: WindowParams,
+        context: &WgpuContext,
+        canvas: web_sys::HtmlCanvasElement,
+        surface: wgpu::Surface<'static>,
+        browser_window: web_sys::Window,
+        lifecycle: Rc<Cell<WebWindowLifecycle>>,
+        active_window: Rc<RefCell<Option<AnyWindowHandle>>>,
+    ) -> anyhow::Result<Self> {
+        let document = browser_window
+            .document()
+            .ok_or_else(|| anyhow::anyhow!("No `document` found on window"))?;
+        let body = document
+            .body()
+            .ok_or_else(|| anyhow::anyhow!("No `body` found on document"))?;
+        let dpr = browser_window.device_pixel_ratio() as f32;
+        let max_texture_dimension = context.device.limits().max_texture_dimension_2d;
+        let has_device_pixel_support = check_device_pixel_support();
         let renderer_config = WgpuSurfaceConfig {
-            size: device_size,
+            size: Size {
+                width: DevicePixels(0),
+                height: DevicePixels(0),
+            },
             transparent: false,
             preferred_present_mode: None,
         };
+        let renderer = WgpuRenderer::new_from_surface(context, surface, renderer_config)?;
 
-        let renderer = WgpuRenderer::new_from_canvas(context, &canvas, renderer_config)?;
+        let ime_mirror = ImeMirror::new(&document, &body)?;
 
         let display: Rc<dyn PlatformDisplay> = Rc::new(WebDisplay::new(browser_window.clone()));
 
@@ -171,23 +193,29 @@ impl WebWindow {
         let inner = Rc::new(WebWindowInner {
             browser_window,
             canvas,
-            input_element,
+            ime_mirror,
             has_device_pixel_support,
             is_mac,
             state: RefCell::new(mutable_state),
             callbacks: RefCell::new(WebWindowCallbacks::default()),
             click_state: RefCell::new(ClickState::default()),
+            touch_ids: RefCell::new(TouchIds::default()),
             pressed_button: Cell::new(None),
             last_physical_size: Cell::new((0, 0)),
             notify_scale: Cell::new(false),
             is_composing: Cell::new(false),
+            suppress_focus_status_events: Cell::new(false),
+            visual_viewport_probe: Cell::new((0.0, 0.0)),
+            gesture_start_visual_viewport_height: Cell::new(0.0),
+            touch_tap_candidate: Cell::new(None),
             mql_handle: RefCell::new(None),
             pending_physical_size: Cell::new(None),
             raf_id: Cell::new(None),
+            raf_function: RefCell::new(None),
         });
 
         let raf_closure = inner.create_raf_closure();
-        inner.schedule_raf(&raf_closure);
+        inner.wake_frame_loop();
 
         let resize_observer_closure = Self::create_resize_observer_closure(Rc::clone(&inner));
         let resize_observer =
@@ -203,6 +231,8 @@ impl WebWindow {
         Ok(Self {
             inner,
             display,
+            lifecycle,
+            active_window,
             _raf_closure: raf_closure,
             _resize_observer: resize_observer,
             _resize_observer_closure: resize_observer_closure,
@@ -309,6 +339,20 @@ impl WebWindow {
                 |callbacks| &mut callbacks.resize,
                 |callback| callback(new_size, dpr_f32),
             );
+
+            // ResizeObserver runs after layout but before the browser paints.
+            // Render synchronously here so the newly resized CSS canvas is
+            // never presented with its previous backing image stretched into
+            // the new viewport dimensions.
+            inner.with_callback(
+                |callbacks| &mut callbacks.request_frame,
+                |callback| {
+                    callback(RequestFrameOptions {
+                        require_presentation: true,
+                        force_render: true,
+                    })
+                },
+            );
         })
     }
 }
@@ -333,41 +377,40 @@ impl WebWindowInner {
     }
 
     fn create_raf_closure(self: &Rc<Self>) -> Closure<dyn FnMut()> {
-        let raf_handle: Rc<RefCell<Option<js_sys::Function>>> = Rc::new(RefCell::new(None));
-        let raf_handle_inner = Rc::clone(&raf_handle);
-
         let this = Rc::clone(self);
         let closure = Closure::new(move || {
+            // The request that fired is no longer pending; clear it before
+            // running the frame so wakeups issued while the frame executes
+            // (e.g. views invalidated during draw) schedule the next request
+            // instead of being swallowed.
+            this.raf_id.set(None);
             this.with_callback(
                 |callbacks| &mut callbacks.request_frame,
                 |callback| {
                     callback(RequestFrameOptions {
-                        require_presentation: true,
+                        require_presentation: false,
                         force_render: false,
                     })
                 },
             );
-
-            // Re-schedule for the next frame
-            if let Some(ref func) = *raf_handle_inner.borrow() {
-                this.raf_id
-                    .set(this.browser_window.request_animation_frame(func).ok());
-            }
         });
 
         let js_func: js_sys::Function =
             closure.as_ref().unchecked_ref::<js_sys::Function>().clone();
-        *raf_handle.borrow_mut() = Some(js_func);
+        *self.raf_function.borrow_mut() = Some(js_func);
 
         closure
     }
 
-    fn schedule_raf(&self, closure: &Closure<dyn FnMut()>) {
-        self.raf_id.set(
-            self.browser_window
-                .request_animation_frame(closure.as_ref().unchecked_ref())
-                .ok(),
-        );
+    pub(crate) fn wake_frame_loop(&self) {
+        if self.raf_id.get().is_some() {
+            return;
+        }
+        let raf_function = self.raf_function.borrow();
+        if let Some(func) = raf_function.as_ref() {
+            self.raf_id
+                .set(self.browser_window.request_animation_frame(func).ok());
+        }
     }
 
     fn observe_canvas(&self, observer: &web_sys::ResizeObserver) {
@@ -502,6 +545,9 @@ impl Drop for WebWindow {
                 .cancel_animation_frame(raf_id)
                 .ok();
         }
+        // A frame waker that outlives this window must not re-schedule the
+        // freed closure; without a stored function, `wake_frame_loop` no-ops.
+        self.inner.raf_function.borrow_mut().take();
         if let Some(ref observer) = self._resize_observer {
             observer.disconnect();
         }
@@ -513,8 +559,9 @@ impl Drop for WebWindow {
 
         let canvas: &web_sys::Element = self.inner.canvas.as_ref();
         canvas.remove();
-        let input_element: &web_sys::Element = self.inner.input_element.as_ref();
-        input_element.remove();
+        self.inner.ime_mirror.remove();
+        self.active_window.borrow_mut().take();
+        self.lifecycle.set(WebWindowLifecycle::Closed);
     }
 }
 
@@ -640,6 +687,10 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow_mut().input_handler.take()
     }
 
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        self.inner.ime_mirror.apply_configuration(&configuration);
+    }
+
     fn prompt(
         &self,
         _level: PromptLevel,
@@ -702,6 +753,19 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow().is_fullscreen
     }
 
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        // Hold the inner window weakly: the waker is stored in the window's
+        // invalidator, and `callbacks.request_frame` captures a clone of that
+        // invalidator, so a strong reference here would form a cycle and leak
+        // the window on close.
+        let inner = Rc::downgrade(&self.inner);
+        Some(Rc::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.wake_frame_loop();
+            }
+        }))
+    }
+
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.inner.callbacks.borrow_mut().request_frame = Some(callback);
     }
@@ -758,10 +822,6 @@ impl PlatformWindow for WebWindow {
         }
 
         self.inner.state.borrow_mut().renderer.draw(scene);
-    }
-
-    fn completed_frame(&self) {
-        // On web, presentation happens automatically via wgpu surface present
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {

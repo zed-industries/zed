@@ -499,6 +499,8 @@ impl ContextServerStore {
                         | WorktreeStoreEvent::WorktreeRemoved(_, _)
                 ) && !DisableAiSettings::get_global(cx).disable_ai
                 {
+                    this.context_server_settings =
+                        Self::resolve_all_context_server_settings(&this.worktree_store, cx);
                     this.available_context_servers_changed(cx);
                 }
             }));

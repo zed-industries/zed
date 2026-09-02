@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition.workspace = true
 name = "zed"
-version = "1.15.0"
+version = "1.19.0"
 publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -12,6 +12,11 @@ default-run = "zed"
 workspace = true
 
 [features]
+inspector = [
+    "gpui/inspector",
+    "inspector_ui/inspector",
+    "ui/derive_inspector_reflection",
+]
 tracy = ["ztracing/tracy"]
 # LEAK_BACKTRACE=1 cargo run --features zed/track-project-leak --profile release-fast
 track-project-leak = ["gpui/leak-detection"]
@@ -63,10 +68,13 @@ path = "src/visual_test_runner.rs"
 required-features = ["visual-tests"]
 
 [dependencies]
+acp_thread.workspace = true
 acp_tools.workspace = true
+action_log = { workspace = true, optional = true }
 activity_indicator.workspace = true
-agent.workspace = true
 agent-client-protocol.workspace = true
+agent.workspace = true
+agent_servers = { workspace = true, optional = true }
 agent_settings.workspace = true
 agent_skills.workspace = true
 agent_ui = { workspace = true, features = ["audio"] }
@@ -78,22 +86,22 @@ auto_update.workspace = true
 auto_update_ui.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
-chrono.workspace = true
+call_hierarchy.workspace = true
 channel.workspace = true
+chrono.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
+clock = { workspace = true, optional = true }
 codestral.workspace = true
 collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
-component.workspace = true
 component_preview.workspace = true
 copilot.workspace = true
 copilot_chat.workspace = true
 copilot_ui.workspace = true
 crashes.workspace = true
-csv_preview.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
 debug_adapter_extension.workspace = true
@@ -117,20 +125,22 @@ git_hosting_providers.workspace = true
 git_ui = { workspace = true, features = ["call"] }
 git_ui_core.workspace = true
 go_to_line.workspace = true
-system_specs.workspace = true
-gpui = { workspace = true, features = ["input-latency-histogram", "profiler"] }
-gpui_platform = {workspace = true, features=["screen-capture", "font-kit", "wayland", "x11"]}
-hdrhistogram.workspace = true
-image = { workspace = true, optional = true }
-itertools.workspace = true
-semver.workspace = true
-tempfile = { workspace = true, optional = true }
-clock = { workspace = true, optional = true }
-acp_thread.workspace = true
-action_log = { workspace = true, optional = true }
-agent_servers = { workspace = true, optional = true }
+gpui = { workspace = true, features = ["profiler", "stacker"] }
+gpui_platform = { workspace = true, features = [
+    "screen-capture",
+    "font-kit",
+    "wayland",
+    "x11",
+] }
 gpui_tokio.workspace = true
+image = { workspace = true, optional = true }
+spin = "0.10.0"
+itertools.workspace = true
 rayon.workspace = true
+semver.workspace = true
+system_specs.workspace = true
+tabular_data_preview.workspace = true
+tempfile = { workspace = true, optional = true }
 
 edit_prediction.workspace = true
 edit_prediction_ui.workspace = true
@@ -157,8 +167,8 @@ markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
-miniprofiler_ui.workspace = true
 mimalloc = { version = "0.1", optional = true }
+miniprofiler_ui.workspace = true
 node_runtime.workspace = true
 notifications.workspace = true
 onboarding.workspace = true
@@ -196,21 +206,19 @@ snippets_ui.workspace = true
 svg_preview.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
-task.workspace = true
 tasks_ui.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
-theme_settings.workspace = true
 theme_extension.workspace = true
 theme_selector.workspace = true
+theme_settings.workspace = true
 time.workspace = true
 time_format.workspace = true
 title_bar.workspace = true
-ztracing.workspace = true
-tracing.workspace = true
 toolchain_selector.workspace = true
+tracing.workspace = true
 ui.workspace = true
 ui_prompt.workspace = true
 url.workspace = true
@@ -225,27 +233,22 @@ web_search_providers.workspace = true
 which_key.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zed_credentials_provider.workspace = true
 zed_env_vars.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+ztracing.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 etw_tracing.workspace = true
 windows.workspace = true
-gpui = { workspace = true, features = [
-    "input-latency-histogram",
-    "windows-manifest",
-] }
+gpui = { workspace = true, features = ["profiler", "windows-manifest"] }
 
 [build-dependencies]
 windows_resources = { path = "../windows_resources" }
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
-gpui = { workspace = true, features = [
-    "input-latency-histogram",
-    "wayland",
-    "x11",
-] }
+gpui = { workspace = true, features = ["profiler", "wayland", "x11"] }
 ashpd.workspace = true
 image.workspace = true
 
@@ -257,10 +260,11 @@ image.workspace = true
 pkg-config = "0.3.22"
 
 [dev-dependencies]
+activity_indicator = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["input-latency-histogram", "test-support"] }
+gpui = { workspace = true, features = ["profiler", "test-support"] }
 image_viewer = { workspace = true, features = ["test-support"] }
 itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
@@ -276,7 +280,6 @@ image.workspace = true
 agent_ui = { workspace = true, features = ["test-support"] }
 search = { workspace = true, features = ["test-support"] }
 repl = { workspace = true, features = ["test-support"] }
-
 
 
 [package.metadata.bundle-dev]
@@ -311,5 +314,5 @@ osx_minimum_system_version = "10.15.7"
 osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
-[package.metadata.cargo-machete]
-ignored = ["profiling", "zstd", "tracing"]
+[package.metadata.cargo-shear]
+ignored = ["profiling", "tracing"]

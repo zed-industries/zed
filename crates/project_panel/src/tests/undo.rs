@@ -2,17 +2,19 @@
 
 use client::proto;
 use collections::HashSet;
+use editor::Editor;
 use fs::{FakeFs, Fs};
-use gpui::{App, BorrowAppContext, Entity, VisualTestContext};
-use project::Project;
+use gpui::{App, BorrowAppContext, Context, Entity, VisualTestContext, Window};
+use project::{Project, ProjectPath};
 use serde_json::{Value, json};
-use settings::SettingsStore;
+use settings::{SettingsStore, SplicingVec};
 use std::path::Path;
 use std::sync::Arc;
-use workspace::{MultiWorkspace, register_project_item};
+use util::rel_path::rel_path;
+use workspace::{Item, MultiWorkspace, register_project_item};
 
 use crate::project_panel_tests::{self, TestProjectItemView, find_project_entry, select_path};
-use crate::{NewDirectory, NewFile, ProjectPanel, Redo, Rename, Trash, Undo};
+use crate::{NewDirectory, NewFile, Open, ProjectPanel, Redo, Rename, Trash, Undo};
 
 struct TestContext {
     panel: Entity<ProjectPanel>,
@@ -32,7 +34,7 @@ fn path(path: impl AsRef<str>) -> String {
     {
         let mut path = path.replace("/", "\\");
         if path.starts_with("\\") {
-            path = format!("C:{}", &path);
+            path = format!("C:{path}");
         }
         path
     }
@@ -50,6 +52,7 @@ impl TestContext {
         });
         self.cx.run_until_parked();
     }
+
     async fn redo(&mut self) {
         self.panel.update_in(&mut self.cx, |panel, window, cx| {
             panel.redo(&Redo, window, cx);
@@ -57,7 +60,40 @@ impl TestContext {
         self.cx.run_until_parked();
     }
 
+    fn open_path(&mut self, path: &str) {
+        select_path(&self.panel, &format!("workspace/{path}"), &mut self.cx);
+        self.panel.update_in(&mut self.cx, |panel, window, cx| {
+            panel.open(&Open, window, cx)
+        });
+        self.cx.run_until_parked();
+    }
+
+    #[track_caller]
+    fn assert_prompt(&self, expected: &str) {
+        let (prompt, _) = self
+            .cx
+            .cx
+            .pending_prompt()
+            .expect("should have pending prompt");
+        assert!(
+            prompt.contains(expected),
+            "expected prompt to contain {expected:?}, got {prompt:?}"
+        );
+    }
+
+    #[track_caller]
+    fn answer(&self, answer: &str) {
+        assert!(
+            self.cx.cx.has_pending_prompt(),
+            "should have pending prompt"
+        );
+
+        self.cx.cx.simulate_prompt_answer(answer);
+        self.cx.run_until_parked();
+    }
+
     /// Note this only works when every file has an extension
+    #[track_caller]
     fn assert_fs_state_is(&mut self, state: &[&str]) {
         let state: HashSet<_> = state
             .into_iter()
@@ -94,6 +130,7 @@ impl TestContext {
         );
     }
 
+    #[track_caller]
     fn assert_not_exists(&mut self, file: &str) {
         assert_eq!(
             find_project_entry(&self.panel, &format!("workspace/{file}"), &mut self.cx),
@@ -231,6 +268,7 @@ impl TestContext {
 
     async fn new_with_tree(cx: &mut gpui::TestAppContext, tree: Value) -> TestContext {
         project_panel_tests::init_test(cx);
+        cx.update(register_project_item::<Editor>);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/workspace", tree).await;
@@ -256,6 +294,23 @@ impl TestContext {
     fn update_app<R>(&mut self, update: impl FnOnce(&mut App) -> R) -> R {
         self.cx.cx.update(update)
     }
+
+    #[track_caller]
+    fn update_active_editor<R>(
+        &mut self,
+        update: impl FnOnce(&mut Editor, &mut Window, &mut Context<'_, Editor>) -> R,
+    ) -> R {
+        let editor = self
+            .panel
+            .read_with(&self.cx, |panel, _| panel.workspace.upgrade())
+            .expect("workspace should still exist")
+            .read_with(&self.cx, |workspace, cx| {
+                workspace.active_item_as::<Editor>(cx)
+            })
+            .expect("editor should be open");
+
+        editor.update_in(&mut self.cx, update)
+    }
 }
 
 #[gpui::test]
@@ -273,6 +328,57 @@ async fn rename_undo_redo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn rename_with_dir_undo_redo(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    // Renaming a file like `a.txt` to `files/a.txt` will create the `files`
+    // directory, in case it doesn't exist yet.
+    cx.rename("a.txt", "files/nested/a.txt").await;
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/nested/", "files/nested/a.txt"]);
+
+    // Undoing the rename operation should also delete the `files` directory, as
+    // it was created specifically for the rename operation.
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+
+    // Redoing the rename operation should recreate the `files` directory and
+    // move `a.txt` back into it.
+    cx.redo().await;
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/nested/", "files/nested/a.txt"]);
+
+    // Lastly, let's insert a different file into the `files` directory to
+    // ensure that, when undoing the `Rename` operation, we don't delete the
+    // directory, as it is not empty.
+    // The file will be created directly through the `Project` layer instead of
+    // the `ProjectPanel`, to ensure that it doesn't get recorded and, when undo
+    // is called, we're undoing the rename.
+    cx.panel
+        .update(&mut cx.cx, |panel, cx| {
+            panel.project.update(cx, |project, cx| {
+                let worktree_id = project
+                    .worktrees(cx)
+                    .next()
+                    .expect("project should have a worktree")
+                    .read(cx)
+                    .id();
+
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: rel_path("files/external.txt").into(),
+                };
+
+                project.create_entry(project_path, false, cx)
+            })
+        })
+        .await
+        .unwrap();
+    cx.cx.run_until_parked();
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "files/", "files/external.txt"]);
+}
+
+#[gpui::test]
 async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
     let path = path("/workspace/c.txt");
@@ -287,11 +393,51 @@ async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.fs.write(Path::new(&path), b"Hello!").await.unwrap();
 
     cx.undo().await;
+    cx.answer("Trash");
     cx.assert_not_exists("c.txt");
 
     cx.redo().await;
     cx.assert_exists("c.txt");
     assert_eq!(cx.fs.load(Path::new(&path)).await.unwrap(), "Hello!");
+}
+
+#[gpui::test]
+async fn undo_create_cancel_trash(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    cx.create_file("c.txt").await;
+
+    cx.undo().await;
+    cx.answer("Cancel");
+    cx.assert_exists("c.txt");
+
+    cx.undo().await;
+    cx.answer("Trash");
+    cx.assert_not_exists("c.txt");
+}
+
+#[gpui::test]
+async fn undo_create_dirty_file(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    cx.create_file("c.txt").await;
+
+    // After `c.txt` is created, it should now be open in the editor, so we'll
+    // simulate inserting some content into the file, without saving, in order
+    // to make it dirty.
+    cx.update_active_editor(|editor, window, cx| {
+        editor.handle_input("unsaved changes", window, cx);
+        assert!(editor.is_dirty(cx));
+    });
+
+    cx.undo().await;
+    cx.answer("Cancel");
+    cx.assert_exists("c.txt");
+    cx.update_active_editor(|editor, _window, cx| assert!(editor.is_dirty(cx)));
+
+    cx.undo().await;
+    cx.answer("Don't Save");
+    cx.assert_not_exists("c.txt");
 }
 
 #[gpui::test]
@@ -301,6 +447,7 @@ async fn create_dir_undo(cx: &mut gpui::TestAppContext) {
     cx.create_directory("new_dir").await;
     cx.assert_exists("new_dir");
     cx.undo().await;
+    cx.answer("Trash");
     cx.assert_not_exists("new_dir");
 }
 
@@ -365,6 +512,7 @@ async fn two_sequential_undos(cx: &mut gpui::TestAppContext) {
     cx.assert_fs_state_is(&["b.txt", "x.txt", "y.txt"]);
 
     cx.undo().await;
+    cx.answer("Trash");
     cx.assert_fs_state_is(&["b.txt", "x.txt"]);
 
     cx.undo().await;
@@ -392,6 +540,7 @@ async fn trash_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.assert_fs_state_is(&["a.txt", "b.txt"]);
 
     cx.redo().await;
+    cx.answer("Trash");
     cx.assert_fs_state_is(&[]);
 }
 
@@ -423,6 +572,7 @@ async fn trash_directory_undo_redo(cx: &mut gpui::TestAppContext) {
     );
 
     cx.redo().await;
+    cx.answer("Trash");
     cx.assert_fs_state_is(&["a.txt"]);
 }
 
@@ -519,10 +669,10 @@ async fn excluded_create_is_not_recorded(cx: &mut gpui::TestAppContext) {
     cx.update_app(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.worktree.file_scan_exclusions = Some(vec![
+                settings.project.worktree.file_scan_exclusions = Some(SplicingVec::from(vec![
                     "**/token.secret".to_string(),
                     "**/banana.secret".to_string(),
-                ]);
+                ]));
             });
         });
 
@@ -542,4 +692,42 @@ async fn excluded_create_is_not_recorded(cx: &mut gpui::TestAppContext) {
 
     cx.undo().await;
     cx.assert_fs_state_is(&["a.txt", "token.secret", "banana.secret"]);
+}
+
+#[gpui::test]
+async fn cancel_partial_trash_batch(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    cx.trash(&["a.txt", "b.txt"]).await;
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+
+    cx.redo().await;
+    cx.answer("Cancel");
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+
+    cx.redo().await;
+    cx.answer("Trash");
+    cx.assert_fs_state_is(&[]);
+}
+
+#[gpui::test]
+async fn batch_trash_warns_about_unsaved_changes(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    cx.trash(&["a.txt", "b.txt"]).await;
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+
+    cx.open_path("a.txt");
+    cx.update_active_editor(|editor, window, cx| {
+        editor.handle_input("unsaved changes", window, cx);
+    });
+
+    cx.redo().await;
+    cx.assert_prompt("1 of these has unsaved changes, which will be lost.");
+
+    cx.answer("Cancel");
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+    cx.update_active_editor(|editor, _window, cx| assert!(editor.is_dirty(cx)));
 }
