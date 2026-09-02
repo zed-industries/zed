@@ -869,11 +869,10 @@ fn update_command_palette_filter(cx: &mut App) {
         // settings UI now. Applied after the disable-ai / agent-enabled
         // branches so it overrides the `show_namespace("assistant")` call
         // above without affecting the rest of that namespace's actions.
+        filter.hide_action_types(&manage_skills_action);
         if !disable_ai {
-            filter.hide_action_types(&manage_skills_action);
             filter.show_action_types(skill_creator_actions.iter());
         } else {
-            filter.show_action_types(manage_skills_action.iter());
             filter.hide_action_types(&skill_creator_actions);
         }
     });
