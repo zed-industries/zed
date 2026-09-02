@@ -4,8 +4,8 @@ use crate::{
 };
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Role,
-    Size, Subscription, TaskExt, anchored, canvas, prelude::*, px, relative,
+    Focusable, Global, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    Role, Size, Subscription, TaskExt, anchored, canvas, prelude::*, px, relative,
 };
 use menu::{SelectChild, SelectFirst, SelectLast, SelectNext, SelectParent, SelectPrevious};
 use std::{
@@ -209,6 +209,10 @@ impl From<ContextMenuEntry> for ContextMenuItem {
     }
 }
 
+struct ContextMenuKeybindingLabelVisibility(bool);
+
+impl Global for ContextMenuKeybindingLabelVisibility {}
+
 pub struct ContextMenu {
     builder: Option<Rc<dyn Fn(Self, &mut Window, &mut Context<Self>) -> Self>>,
     items: Vec<ContextMenuItem>,
@@ -270,6 +274,20 @@ impl EventEmitter<DismissEvent> for ContextMenu {}
 impl FluentBuilder for ContextMenu {}
 
 impl ContextMenu {
+    /// Sets whether context menus render visible keybinding labels.
+    ///
+    /// Registered keybindings and their accessibility metadata remain available
+    /// when labels are hidden.
+    pub fn set_keybinding_labels_visible(cx: &mut App, visible: bool) {
+        cx.set_global(ContextMenuKeybindingLabelVisibility(visible));
+        cx.refresh_windows();
+    }
+
+    fn keybinding_labels_visible(cx: &App) -> bool {
+        cx.try_global::<ContextMenuKeybindingLabelVisibility>()
+            .map_or(true, |visibility| visibility.0)
+    }
+
     pub fn new(
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1461,6 +1479,7 @@ impl ContextMenu {
         &self,
         ix: usize,
         item: &ContextMenuItem,
+        keybinding_labels_visible: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
@@ -1499,7 +1518,14 @@ impl ContextMenu {
                 .child(Label::new(label.clone()))
                 .into_any_element(),
             ContextMenuItem::Entry(entry) => self
-                .render_menu_entry(ix, entry, is_active_descendant(true), window, cx)
+                .render_menu_entry(
+                    ix,
+                    entry,
+                    is_active_descendant(true),
+                    keybinding_labels_visible,
+                    window,
+                    cx,
+                )
                 .into_any_element(),
             ContextMenuItem::CustomEntry {
                 entry_render,
@@ -1818,6 +1844,7 @@ impl ContextMenu {
         ix: usize,
         entry: &ContextMenuEntry,
         is_active_descendant: bool,
+        keybinding_labels_visible: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -2079,20 +2106,22 @@ impl ContextMenu {
                             .justify_between()
                             .child(label_element)
                             .debug_selector(|| format!("MENU_ITEM-{}", label))
-                            .children(action.as_ref().map(|action| {
-                                let binding = self
-                                    .action_context
-                                    .as_ref()
-                                    .map(|focus| KeyBinding::for_action_in(&**action, focus, cx))
-                                    .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
+                            .when(keybinding_labels_visible, |parent| {
+                                parent.children(action.as_ref().map(|action| {
+                                    let binding = self
+                                        .action_context
+                                        .as_ref()
+                                        .map(|focus| {
+                                            KeyBinding::for_action_in(&**action, focus, cx)
+                                        })
+                                        .unwrap_or_else(|| KeyBinding::for_action(&**action, cx));
 
-                                div()
-                                    .ml_4()
-                                    .child(binding.disabled(*disabled))
-                                    .when(*disabled && documentation_aside.is_some(), |parent| {
-                                        parent.invisible()
-                                    })
-                            }))
+                                    div().ml_4().child(binding.disabled(*disabled)).when(
+                                        *disabled && documentation_aside.is_some(),
+                                        |parent| parent.invisible(),
+                                    )
+                                }))
+                            })
                             .when(*disabled && documentation_aside.is_some(), |parent| {
                                 parent.child(
                                     Icon::new(IconName::Info)
@@ -2195,6 +2224,7 @@ impl Render for ContextMenu {
         let theme_settings = theme::theme_settings(cx);
         let ui_font_size = theme_settings.ui_font_size(cx);
         let ui_font_family = theme_settings.ui_font(cx).family.clone();
+        let keybinding_labels_visible = Self::keybinding_labels_visible(cx);
         // Menus can be deferred from inside elements that override the text
         // style (e.g. the editor with a custom `buffer_line_height`), so always
         // apply the default line height to render the same everywhere.
@@ -2360,14 +2390,17 @@ impl Render for ContextMenu {
                             }
                             el
                         })
-                        .child(
-                            List::new().children(
-                                self.items
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(ix, item)| self.render_menu_item(ix, item, window, cx)),
-                            ),
-                        ),
+                        .child(List::new().children(self.items.iter().enumerate().map(
+                            |(ix, item)| {
+                                self.render_menu_item(
+                                    ix,
+                                    item,
+                                    keybinding_labels_visible,
+                                    window,
+                                    cx,
+                                )
+                            },
+                        ))),
                 )
         };
 
@@ -2443,6 +2476,69 @@ mod tests {
     use gpui::TestAppContext;
 
     use super::*;
+
+    #[gpui::test]
+    fn can_hide_keybinding_labels_without_disabling_bindings(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = settings::SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+            cx.bind_keys([
+                gpui::KeyBinding::new("ctrl-r", RootAction, None),
+                gpui::KeyBinding::new("ctrl-n", NestedAction, None),
+            ]);
+        });
+
+        let (context_menu, cx) = cx.add_window_view(|window, cx| {
+            ContextMenu::new(window, cx, |menu, _, _| {
+                menu.action("Root action", Box::new(RootAction))
+                    .submenu("Submenu", |menu, _, _| {
+                        menu.action("Nested action", Box::new(NestedAction))
+                    })
+            })
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("KEY_BINDING-r").is_some(),
+            "context menus should show keybinding labels by default"
+        );
+
+        cx.update(|_, cx| ContextMenu::set_keybinding_labels_visible(cx, false));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("KEY_BINDING-r").is_none(),
+            "the context menu should omit its keybinding label"
+        );
+        assert!(
+            cx.update(|window, _| {
+                window
+                    .highest_precedence_binding_for_action(&RootAction)
+                    .is_some()
+            }),
+            "hiding labels should not unregister their keybindings"
+        );
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.selected_index = Some(1);
+            context_menu.confirm(&menu::Confirm, window, cx);
+        });
+        // One frame measures the trigger and menu bounds; the next positions the submenu.
+        for _ in 0..2 {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+
+        assert!(
+            cx.debug_bounds("MENU_ITEM-Nested action").is_some(),
+            "the submenu should be open"
+        );
+        assert!(
+            cx.debug_bounds("KEY_BINDING-n").is_none(),
+            "submenus should inherit the application label visibility"
+        );
+    }
 
     #[gpui::test]
     fn can_navigate_back_over_headers(cx: &mut TestAppContext) {
@@ -2531,4 +2627,6 @@ mod tests {
             );
         });
     }
+
+    gpui::actions!(context_menu_tests, [RootAction, NestedAction]);
 }
