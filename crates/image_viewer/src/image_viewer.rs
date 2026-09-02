@@ -10,12 +10,12 @@ use editor::{
 };
 use file_icons::FileIcons;
 use gpui::{
-    AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
-    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
-    Style, Styled, Subscription, Task, WeakEntity, Window, actions, checkerboard, div, img, point,
-    px, size,
+    AnyElement, App, Bounds, Context, DismissEvent, DispatchPhase, Element, ElementId, Entity,
+    EventEmitter, FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId,
+    InteractiveElement, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta,
+    ScrollWheelEvent, Style, Styled, Subscription, Task, WeakEntity, Window, actions, anchored,
+    checkerboard, deferred, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
@@ -24,7 +24,7 @@ use project::{
 };
 use settings::Settings;
 use theme_settings::ThemeSettings;
-use ui::{Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, Divider, Tooltip, prelude::*};
 use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
@@ -99,6 +99,7 @@ pub struct ImageView {
     text_editor: Option<Entity<Editor>>,
     pdf_selection: Option<PdfSelection>,
     pdf_mouse_down: bool,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 struct DisplayedImage {
@@ -214,6 +215,7 @@ impl ImageView {
             text_editor: None,
             pdf_selection: None,
             pdf_mouse_down: false,
+            context_menu: None,
         }
     }
 
@@ -340,20 +342,104 @@ impl ImageView {
         }
     }
 
+    fn select_all(&mut self, _: &SelectAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let pdf_info = self.image_item.read(cx).pdf_info.clone();
+        if let Some(pdf_info) = pdf_info {
+            let cur_page = self.image_item.read(cx).current_page();
+            let target_page = self
+                .pdf_selection
+                .as_ref()
+                .map(|s| s.page_index)
+                .unwrap_or(cur_page);
+            if let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == target_page) {
+                let total_segs = page.text_segments.len();
+                if total_segs > 0 {
+                    self.pdf_selection = Some(PdfSelection {
+                        page_index: target_page,
+                        start_seg: 0,
+                        end_seg: total_segs.saturating_sub(1),
+                        text: page.page_text.clone(),
+                    });
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn deploy_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let has_selection = self
+            .pdf_selection
+            .as_ref()
+            .is_some_and(|s| !s.text.is_empty());
+        let is_pdf = self.image_item.read(cx).is_pdf();
+        let has_doc_text = self
+            .image_item
+            .read(cx)
+            .extract_text()
+            .is_some_and(|t| !t.is_empty());
+        let can_copy = has_selection || has_doc_text;
+        let focus_handle = self.focus_handle.clone();
+
+        let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
+            menu.context(focus_handle).map(|menu| {
+                menu.action_disabled_when(!can_copy, "Copy", Box::new(CopyText))
+                    .when(is_pdf, |menu| {
+                        menu.action("Select All", Box::new(SelectAll))
+                            .separator()
+                            .action("Toggle Text Panel", Box::new(ToggleTextPanel))
+                    })
+                    .separator()
+                    .action("Zoom In", Box::new(ZoomIn))
+                    .action("Zoom Out", Box::new(ZoomOut))
+                    .action("Reset Zoom", Box::new(ResetZoom))
+                    .action("Fit to View", Box::new(FitToView))
+                    .separator()
+                    .action("Reveal in File Manager", Box::new(RevealInFileManager))
+            })
+        });
+
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        cx.notify();
+    }
+
     fn handle_pdf_segment_mouse_down(
         &mut self,
         page_index: usize,
         seg_index: usize,
         seg_text: String,
+        click_count: usize,
         cx: &mut Context<Self>,
     ) {
         self.pdf_mouse_down = true;
-        self.pdf_selection = Some(PdfSelection {
-            page_index,
-            start_seg: seg_index,
-            end_seg: seg_index,
-            text: seg_text,
-        });
+        if click_count >= 3 {
+            if let Some(pdf_info) = self.image_item.read(cx).pdf_info.as_ref() {
+                if let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) {
+                    self.pdf_selection = Some(PdfSelection {
+                        page_index,
+                        start_seg: 0,
+                        end_seg: page.text_segments.len().saturating_sub(1),
+                        text: page.page_text.clone(),
+                    });
+                }
+            }
+        } else {
+            self.pdf_selection = Some(PdfSelection {
+                page_index,
+                start_seg: seg_index,
+                end_seg: seg_index,
+                text: seg_text,
+            });
+        }
         cx.notify();
     }
 
@@ -391,22 +477,24 @@ impl ImageView {
         }
     }
 
-    fn handle_pdf_page_click(
+    fn handle_pdf_canvas_mouse_down(
         &mut self,
         page_index: usize,
-        page_text: String,
-        total_segments: usize,
         click_count: usize,
         cx: &mut Context<Self>,
     ) {
-        if click_count >= 2 && total_segments > 0 {
-            self.pdf_selection = Some(PdfSelection {
-                page_index,
-                start_seg: 0,
-                end_seg: total_segments.saturating_sub(1),
-                text: page_text,
-            });
-        } else if click_count == 1 {
+        if click_count >= 2 {
+            if let Some(pdf_info) = self.image_item.read(cx).pdf_info.as_ref() {
+                if let Some(page) = pdf_info.pages.iter().find(|p| p.page_index == page_index) {
+                    self.pdf_selection = Some(PdfSelection {
+                        page_index,
+                        start_seg: 0,
+                        end_seg: page.text_segments.len().saturating_sub(1),
+                        text: page.page_text.clone(),
+                    });
+                }
+            }
+        } else {
             self.pdf_selection = None;
         }
         self.pdf_mouse_down = false;
@@ -832,6 +920,7 @@ impl Item for ImageView {
             text_editor: None,
             pdf_selection: self.pdf_selection.clone(),
             pdf_mouse_down: false,
+            context_menu: None,
         })))
     }
 
@@ -956,6 +1045,7 @@ impl Render for ImageView {
             .on_action(cx.listener(Self::last_page))
             .on_action(cx.listener(Self::copy_text))
             .on_action(cx.listener(Self::toggle_text_panel))
+            .on_action(cx.listener(Self::select_all))
             .size_full()
             .relative()
             .bg(cx.theme().colors().editor_background)
@@ -982,7 +1072,6 @@ impl Render for ImageView {
                                     let page_w_val = page.width as f32 * zoom_level;
                                     let page_h_val = page.height as f32 * zoom_level;
                                     let page_idx = page.page_index;
-                                    let page_text = page.page_text.clone();
                                     let total_segs = page.text_segments.len();
                                     let segments_arc = Arc::new(page.text_segments);
                                     let links = page.links;
@@ -1002,11 +1091,15 @@ impl Render for ImageView {
                                                 .border_1()
                                                 .border_color(border_color)
                                                 .bg(gpui::white())
+                                                .cursor(gpui::CursorStyle::IBeam)
                                                 .on_mouse_down(MouseButton::Left, cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                                                    this.handle_pdf_page_click(page_idx, page_text.clone(), total_segs, event.click_count, cx);
+                                                    this.handle_pdf_canvas_mouse_down(page_idx, event.click_count, cx);
                                                 }))
                                                 .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
                                                     this.handle_pdf_mouse_up(cx);
+                                                }))
+                                                .on_mouse_down(MouseButton::Right, cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                                    this.deploy_context_menu(event.position, window, cx);
                                                 }))
                                                 .child(
                                                     img(page.image)
@@ -1028,6 +1121,7 @@ impl Render for ImageView {
                                                     let seg_w = px(seg.width * page_w_val);
                                                     let seg_h = px(seg.height * page_h_val);
                                                     let seg_text = seg.text.clone();
+                                                    let seg_text_clone = seg.text.clone();
                                                     let segs_ref = Arc::clone(&segments_arc);
 
                                                     div()
@@ -1040,12 +1134,12 @@ impl Render for ImageView {
                                                         .cursor(gpui::CursorStyle::IBeam)
                                                         .when(is_selected, |s| s.bg(gpui::rgba(0x3b82f644)).rounded_xs())
                                                         .when(!is_selected, |s| {
-                                                            s.hover(|h| h.bg(gpui::rgba(0x3b82f618)).rounded_xs())
+                                                             s.hover(|h| h.bg(gpui::rgba(0x3b82f618)).rounded_xs())
                                                         })
                                                         .on_mouse_down(
                                                             MouseButton::Left,
-                                                            cx.listener(move |this, _event: &MouseDownEvent, _window, cx| {
-                                                                this.handle_pdf_segment_mouse_down(page_idx, seg_idx, seg_text.clone(), cx);
+                                                            cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                                                                this.handle_pdf_segment_mouse_down(page_idx, seg_idx, seg_text.clone(), event.click_count, cx);
                                                                 cx.stop_propagation();
                                                             }),
                                                         )
@@ -1056,6 +1150,24 @@ impl Render for ImageView {
                                                             MouseButton::Left,
                                                             cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
                                                                 this.handle_pdf_mouse_up(cx);
+                                                                cx.stop_propagation();
+                                                            }),
+                                                        )
+                                                        .on_mouse_down(
+                                                            MouseButton::Right,
+                                                            cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                                                let need_select = this.pdf_selection.as_ref().map_or(true, |s| {
+                                                                    s.page_index != page_idx || (seg_idx < s.start_seg.min(s.end_seg) || seg_idx > s.start_seg.max(s.end_seg))
+                                                                });
+                                                                if need_select {
+                                                                    this.pdf_selection = Some(PdfSelection {
+                                                                        page_index: page_idx,
+                                                                        start_seg: seg_idx,
+                                                                        end_seg: seg_idx,
+                                                                        text: seg_text_clone.clone(),
+                                                                    });
+                                                                }
+                                                                this.deploy_context_menu(event.position, window, cx);
                                                                 cx.stop_propagation();
                                                             }),
                                                         )
@@ -1142,6 +1254,9 @@ impl Render for ImageView {
                         .on_pinch(cx.listener(Self::handle_pinch))
                         .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
                         .on_mouse_down(MouseButton::Middle, cx.listener(Self::handle_mouse_down))
+                        .on_mouse_down(MouseButton::Right, cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                            this.deploy_context_menu(event.position, window, cx);
+                        }))
                         .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
                         .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
                         .on_mouse_move(cx.listener(Self::handle_mouse_move))
@@ -1150,6 +1265,15 @@ impl Render for ImageView {
                     container.into_any_element()
                 }
             })
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 
