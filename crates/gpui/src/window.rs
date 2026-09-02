@@ -5182,6 +5182,10 @@ impl Window {
                 }
                 PlatformInput::LongPress(long_press)
             }
+            PlatformInput::TouchDrag(touch_drag) => {
+                self.mouse_position = touch_drag.start_position;
+                PlatformInput::TouchDrag(touch_drag)
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
@@ -5275,6 +5279,11 @@ impl Window {
         }
         let recognized_gestures = self.touch_gestures.handle_event(&event);
         if event.phase == crate::TouchPhase::Started
+            && let Some(touch_drag) = self.touch_gestures.offer_touch_drag(event.id)
+        {
+            self.dispatch_recognized_touch_gesture(touch_drag, cx);
+        }
+        if event.phase == crate::TouchPhase::Started
             && self.touch_gestures.pending_long_press().is_some()
         {
             self.long_press_capture = None;
@@ -5315,6 +5324,17 @@ impl Window {
                 self.dispatch_mouse_event(&down, cx);
                 cx.propagate_event = true;
                 self.dispatch_mouse_event(&up, cx);
+            }
+            RecognizedTouchGesture::TouchDrag(touch_drag) => {
+                self.mouse_position = touch_drag.start_position;
+                cx.propagate_event = true;
+                self.default_prevented = false;
+                let started = touch_drag.phase == crate::TouchPhase::Started;
+                self.dispatch_mouse_event(&touch_drag, cx);
+                if started {
+                    self.touch_gestures
+                        .resolve_touch_drag(self.default_prevented);
+                }
             }
             RecognizedTouchGesture::LongPress(long_press) => {
                 self.mouse_position = if long_press.phase == crate::TouchPhase::Started {
@@ -7111,8 +7131,8 @@ mod tests {
         ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent, FocusHandle,
         InputEvent as _, InteractiveElement as _, IntoElement, LongPressEvent, MouseButton,
         MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Render, RequestFrameOptions,
-        StatefulInteractiveElement as _, Styled, TestAppContext, TouchEvent, TouchId, TouchPhase,
-        Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
+        StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
+        TouchId, TouchPhase, Window, WindowAppearance, WindowOptions, canvas, div, point, px, size,
     };
 
     struct EmptyView;
@@ -7816,6 +7836,53 @@ mod tests {
     }
 
     #[gpui::test]
+    fn claimed_touch_drag_receives_movement_and_release(cx: &mut TestAppContext) {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.add_window({
+            let events = events.clone();
+            move |_, _| TouchDragListener { events }
+        });
+        let touch = TouchId(1);
+
+        dispatch_touch(window, cx, touch, TouchPhase::Started, 10.);
+        dispatch_touch(window, cx, touch, TouchPhase::Moved, 30.);
+        dispatch_touch(window, cx, touch, TouchPhase::Ended, 40.);
+
+        assert_eq!(
+            events.borrow().as_slice(),
+            [
+                (TouchPhase::Started, px(10.)),
+                (TouchPhase::Moved, px(30.)),
+                (TouchPhase::Ended, px(40.)),
+            ]
+        );
+    }
+
+    struct TouchDragListener {
+        events: Rc<RefCell<Vec<(TouchPhase, Pixels)>>>,
+    }
+
+    impl Render for TouchDragListener {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let events = self.events.clone();
+            canvas(
+                |_, _, _| {},
+                move |_, _, window, _| {
+                    window.on_mouse_event(move |event: &TouchDragEvent, phase, window, _cx| {
+                        if phase != DispatchPhase::Bubble {
+                            return;
+                        }
+                        events.borrow_mut().push((event.phase, event.position.x));
+                        if event.phase == TouchPhase::Started {
+                            window.prevent_default();
+                        }
+                    });
+                },
+            )
+        }
+    }
+
+    #[gpui::test]
     fn long_press_is_claimed_only_when_started_prevents_default(cx: &mut TestAppContext) {
         for response in [
             LongPressResponse::PreventDefault,
@@ -7970,8 +8037,8 @@ mod tests {
         }
     }
 
-    fn dispatch_touch(
-        window: crate::WindowHandle<LongPressListener>,
+    fn dispatch_touch<T: 'static>(
+        window: crate::WindowHandle<T>,
         cx: &mut TestAppContext,
         id: TouchId,
         phase: TouchPhase,
