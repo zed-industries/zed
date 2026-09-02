@@ -346,12 +346,20 @@ fn render_inline_body(
                 .w_full()
                 .min_w_0()
                 .max_w_1_2()
+                .debug_selector(|| "inline-provider-description".into())
                 .when_some(title, |this, title| this.child(Label::new(title)))
                 .when_some(description, |this, description| {
                     this.child(render_inline_description(provider_name, description))
                 }),
         )
-        .child(h_flex().flex_none().child(view))
+        .child(
+            h_flex()
+                .min_w_0()
+                .max_w_1_2()
+                .flex_1()
+                .justify_end()
+                .child(view),
+        )
         .into_any_element()
 }
 
@@ -1313,4 +1321,98 @@ fn parse_u64_field(value: &str, name: &str) -> Result<u64, SharedString> {
     value
         .parse::<u64>()
         .map_err(|_| format!("{name} must be a number").into())
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext, size};
+    use settings::SettingsStore;
+    use ui::{Banner, Button, Severity};
+
+    use super::*;
+
+    struct YoungAccountControls;
+
+    impl Render for YoungAccountControls {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            v_flex()
+                .gap_2()
+                .w_full()
+                .debug_selector(|| "young-account-controls".into())
+                .child(Banner::new().severity(Severity::Warning).child(
+                    div()
+                        .w_full()
+                        .text_sm()
+                        .text_color(cx.theme().colors().text_muted)
+                        .child(
+                            "To prevent abuse of our service, GitHub accounts created fewer than \
+                             30 days ago are not eligible for the Pro trial. You can request an \
+                             exception by reaching out to billing-support@zed.dev",
+                        ),
+                ))
+                .child(Button::new("upgrade", "Upgrade to Pro").full_width())
+        }
+    }
+
+    struct YoungAccountProviderRow {
+        controls: AnyView,
+    }
+
+    impl Render for YoungAccountProviderRow {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().p_4().child(
+                div()
+                    .w_full()
+                    .debug_selector(|| "provider-row".into())
+                    .child(render_inline_body(
+                        "Zed".into(),
+                        None,
+                        Some(InlineDescription::Text(
+                            "Subscribe for access to Zed's hosted models.".into(),
+                        )),
+                        self.controls.clone(),
+                    )),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn young_account_controls_stay_within_provider_row(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
+        });
+
+        for width in [500., 600., 800.] {
+            let window = cx.open_window(size(px(width), px(400.)), |_window, cx| {
+                let controls = cx.new(|_| YoungAccountControls);
+                YoungAccountProviderRow {
+                    controls: controls.into(),
+                }
+            });
+            cx.run_until_parked();
+
+            let mut visual_context = VisualTestContext::from_window(window.into(), cx);
+            let provider_row_bounds = visual_context
+                .debug_bounds("provider-row")
+                .expect("provider row should be rendered");
+            let description_bounds = visual_context
+                .debug_bounds("inline-provider-description")
+                .expect("provider description should be rendered");
+            let controls_bounds = visual_context
+                .debug_bounds("young-account-controls")
+                .expect("young account controls should be rendered");
+
+            assert!(
+                controls_bounds.right() <= provider_row_bounds.right(),
+                "young account controls extend past the provider row at {width}px"
+            );
+            assert!(
+                description_bounds.size.width >= px(width / 3.),
+                "provider description collapsed at {width}px"
+            );
+        }
+    }
 }
