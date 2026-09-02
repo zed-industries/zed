@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::{CommandInterceptItem, CommandInterceptResult};
 use editor::{
@@ -12,9 +12,8 @@ use gpui::{
     actions,
 };
 use itertools::Itertools;
-use language::Point;
+use language::{LocalFile, Point};
 use multi_buffer::MultiBufferRow;
-use project::ProjectPath;
 use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
@@ -33,11 +32,13 @@ use task::{HideStrategy, RevealStrategy, SaveStrategy, Shell, SpawnInTerminal, T
 use ui::ActiveTheme;
 use util::{
     ResultExt,
-    paths::PathStyle,
+    paths::{PathStyle, home_dir, normalize_lexically},
     rel_path::{RelPath, RelPathBuf},
 };
-use workspace::{Item, SaveIntent, Workspace, notifications::NotifyResultExt};
-use workspace::{SplitDirection, notifications::DetachAndPromptErr};
+use workspace::{
+    Item, OpenOptions, OpenVisible, SaveIntent, SplitDirection, Workspace,
+    notifications::{DetachAndPromptErr, NotifyResultExt},
+};
 use zed_actions::{OpenDocs, RevealTarget};
 
 use crate::{
@@ -284,6 +285,33 @@ impl Deref for WrappedAction {
     }
 }
 
+/// Resolve the path for a given filename.
+/// The paths are relative to the directory of active buffer
+fn resolve_command_path(
+    filename: &str,
+    active_buffer_dir: Option<&Path>,
+    worktree_root: &Path,
+    path_style: PathStyle,
+) -> PathBuf {
+    let path = if filename == "~" {
+        home_dir().to_path_buf()
+    } else if let Some(rest) = filename.strip_prefix("~/") {
+        home_dir().join(rest)
+    } else if path_style.is_absolute(filename) {
+        PathBuf::from(filename)
+    } else {
+        active_buffer_dir.unwrap_or(worktree_root).join(filename)
+    };
+    normalize_lexically(&path).unwrap_or(path)
+}
+
+/// Returns the directory containing the active buffer's file, if it has one.
+fn active_buffer_dir(editor: &Editor, cx: &App) -> Option<PathBuf> {
+    let buffer = editor.active_buffer(cx)?;
+    let file = project::File::from_dyn(buffer.read(cx).file())?;
+    file.abs_path(cx).parent().map(Path::to_path_buf)
+}
+
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &VimSet, _, cx| {
         for option in action.options.iter() {
@@ -421,46 +449,75 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                     });
                 };
 
-                editor.project().unwrap().update(cx, |project, cx| {
-                    let worktree = project.visible_worktrees(cx).next().unwrap();
+                let Some(project) = editor.project().cloned() else {
+                    return;
+                };
+                let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+                    return;
+                };
+                let path_style = worktree.read(cx).path_style();
+                let abs_path = resolve_command_path(
+                    &filename,
+                    active_buffer_dir(editor, cx).as_deref(),
+                    worktree.read(cx).abs_path().as_ref(),
+                    path_style,
+                );
 
-                    worktree.update(cx, |worktree, cx| {
-                        let path_style = worktree.path_style();
-                        let Some(path) = RelPath::new(Path::new(&filename), path_style).ok() else {
-                            return;
-                        };
-
-                        let rx = (worktree.entry_for_path(&path).is_some() && Some(SaveIntent::Overwrite) != action.save_intent).then(|| {
-                            window.prompt(
-                                gpui::PromptLevel::Warning,
-                                &format!("{path:?} already exists. Do you want to replace it?"),
-                                Some(
-                                    "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
-                                ),
-                                &["Replace", "Cancel"],
-                                cx
-                            )
-                        });
-                        let filename = filename.clone();
-                        cx.spawn_in(window, async move |this, cx| {
+                let project_path =
+Workspace::project_path_for_path(project.clone(), &abs_path, true, cx);
+                let save_intent = action.save_intent;
+                let project = project.downgrade();
+                cx.spawn_in(window, async move |_, cx| {
+                    let Some((_, project_path)) = project_path.await.log_err() else {
+                        return;
+                    };
+                    let _ = project.update_in(cx, |this, window, cx| {
+                        let path = project_path.path.clone();
+                        let rx = (this.entry_for_path(&project_path, cx).is_some()
+                            && Some(SaveIntent::Overwrite) != save_intent)
+                            .then(|| {
+                                window.prompt(
+                                    gpui::PromptLevel::Warning,
+                                    &format!("{path:?} already exists. Do you want to replace it?"),
+                                    Some(
+                                        "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
+                                    ),
+                                    &["Replace", "Cancel"],
+                                    cx,
+                                )
+                            });
+                        let text = text.clone();
+                        cx.spawn_in(window, async move |project, cx| {
                             if let Some(rx) = rx
                                 && Ok(0) != rx.await
                             {
                                 return;
                             }
 
-                            let _ = this.update_in(cx, |worktree, window, cx| {
-                                let Some(path) = RelPath::new(Path::new(&filename), path_style).ok() else {
+                            let _ = project.update_in(cx, |this, window, cx| {
+                                let Some(worktree) =
+                                    this.worktree_for_id(project_path.worktree_id, cx)
+                                else {
                                     return;
                                 };
                                 worktree
-                                    .write_file(path.into_arc(), text.clone(), line_ending, encoding, has_bom, cx)
+                                    .update(cx, |worktree, cx| {
+                                        worktree.write_file(
+                                            path,
+                                            text,
+                                            line_ending,
+                                            encoding,
+                                            has_bom,
+                                            cx,
+                                        )
+                                    })
                                     .detach_and_prompt_err("Failed to write lines", window, cx, |_, _, _| None);
                             });
                         })
                         .detach();
                     });
-                });
+                })
+                .detach();
             });
             return;
         }
@@ -486,58 +543,57 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             let path_style = worktree.read(cx).path_style();
-            let Ok(project_path) =
-                RelPath::new(Path::new(&action.filename), path_style).map(|path| ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: path.into_arc(),
-                })
-            else {
-                // TODO implement save_as with absolute path
-                Task::ready(Err::<(), _>(anyhow!(
-                    "Cannot save buffer with absolute path"
-                )))
-                .detach_and_prompt_err(
-                    "Failed to save",
-                    window,
-                    cx,
-                    |_, _, _| None,
-                );
-                return;
-            };
+            let abs_path = resolve_command_path(
+                &action.filename,
+                active_buffer_dir(editor, cx).as_deref(),
+                worktree.read(cx).abs_path().as_ref(),
+                path_style,
+            );
 
-            if project.read(cx).entry_for_path(&project_path, cx).is_some()
-                && action.save_intent != Some(SaveIntent::Overwrite)
-            {
-                let answer = window.prompt(
-                    gpui::PromptLevel::Critical,
-                    &format!(
-                        "{} already exists. Do you want to replace it?",
-                        project_path.path.display(path_style)
-                    ),
-                    Some(
-                        "A file or folder with the same name already exists. \
-                        Replacing it will overwrite its current contents.",
-                    ),
-                    &["Replace", "Cancel"],
-                    cx,
-                );
-                cx.spawn_in(window, async move |editor, cx| {
-                    if answer.await.ok() != Some(0) {
-                        return;
-                    }
+            let project_path = Workspace::project_path_for_path(project.clone(), &abs_path, true, cx);
+            let save_intent = action.save_intent;
+            let editor = cx.weak_entity();
+            cx.spawn_in(window, async move |_, cx| {
+                let Some((_, project_path)) = project_path.await.log_err() else {
+                    return;
+                };
+                let _ = editor.update_in(cx, |editor, window, cx| {
+                    if project.read(cx).entry_for_path(&project_path, cx).is_some()
+                        && save_intent != Some(SaveIntent::Overwrite)
+                    {
+                        let answer = window.prompt(
+                            gpui::PromptLevel::Critical,
+                            &format!(
+                                "{} already exists. Do you want to replace it?",
+                                project_path.path.display(path_style)
+                            ),
+                            Some(
+                                "A file or folder with the same name already exists. \
+                                Replacing it will overwrite its current contents.",
+                            ),
+                            &["Replace", "Cancel"],
+                            cx,
+                        );
+                        cx.spawn_in(window, async move |editor, cx| {
+                            if answer.await.ok() != Some(0) {
+                                return;
+                            }
 
-                    let _ = editor.update_in(cx, |editor, window, cx| {
+                            let _ = editor.update_in(cx, |editor, window, cx| {
+                                editor
+                                    .save_as(project, project_path, window, cx)
+                                    .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
+                            });
+                        })
+                        .detach();
+                    } else {
                         editor
                             .save_as(project, project_path, window, cx)
                             .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
-                    });
-                })
-                .detach();
-            } else {
-                editor
-                    .save_as(project, project_path, window, cx)
-                    .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
-            }
+                    }
+                });
+            })
+            .detach();
         });
     });
 
@@ -545,31 +601,62 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
+        let project = workspace.read(cx).project().clone();
+        let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+            return;
+        };
+        let path_style = worktree.read(cx).path_style();
+        let abs_path = resolve_command_path(
+            &action.filename,
+            vim.update_editor(cx, |_, editor, cx| active_buffer_dir(editor, cx))
+                .flatten()
+                .as_deref(),
+            worktree.read(cx).abs_path().as_ref(),
+            path_style,
+        );
 
-        workspace.update(cx, |workspace, cx| {
-            let project = workspace.project().clone();
-            let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
-                return;
-            };
-            let path_style = worktree.read(cx).path_style();
-            let Some(path) = RelPath::new(Path::new(&action.filename), path_style).log_err() else {
-                return;
-            };
-            let project_path = ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: path.into_arc(),
-            };
+        let direction = if action.vertical {
+            SplitDirection::vertical(cx)
+        } else {
+            SplitDirection::horizontal(cx)
+        };
 
-            let direction = if action.vertical {
-                SplitDirection::vertical(cx)
-            } else {
-                SplitDirection::horizontal(cx)
-            };
+        if let Some(project_path) = project.read(cx).project_path_for_absolute_path(&abs_path, cx) {
+            let _ = workspace.update(cx, |workspace, cx| {
+                workspace
+                    .split_path_preview(project_path, false, Some(direction), window, cx)
+                    .detach_and_log_err(cx);
+            });
+        } else {
+            let fs = project.read(cx).fs().clone();
+            let workspace = workspace.clone();
+            cx.spawn_in(window, async move |_, cx| {
+                let visible = fs.metadata(&abs_path).await.log_err().flatten().is_some();
+                let project_path = cx
+                    .update(|_, cx| {
+                        Workspace::project_path_for_path(project.clone(), &abs_path, visible, cx)
+                    })
+                    .ok();
+                let Some(project_path) = project_path else {
+                    return;
+                };
 
-            workspace
-                .split_path_preview(project_path, false, Some(direction), window, cx)
-                .detach_and_log_err(cx);
-        })
+                // Dropping the worktree handle immediately can destroy the worktree before the buffer loads.
+                // Keep the worktree alive until the split is opened.
+                let Some((worktree, project_path)) = project_path.await.log_err() else {
+                    return;
+                };
+
+                // Redundant, to get rid of unused variable warning.
+                let _worktree = worktree;
+                let _ = workspace.update_in(cx, |workspace, window, cx| {
+                    workspace
+                        .split_path_preview(project_path, false, Some(direction), window, cx)
+                        .detach_and_log_err(cx);
+                });
+            })
+            .detach();
+        }
     });
 
     Vim::action(editor, cx, |vim, action: &DeleteMarks, window, cx| {
@@ -650,19 +737,47 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             let path_style = worktree.read(cx).path_style();
-            let Some(path) = RelPath::new(Path::new(&action.filename), path_style).log_err() else {
-                return;
-            };
-            let project_path = ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: path.into_arc(),
-            };
+            let abs_path = resolve_command_path(
+                &action.filename,
+                active_buffer_dir(editor, cx).as_deref(),
+                worktree.read(cx).abs_path().as_ref(),
+                path_style,
+            );
 
-            let _ = workspace.update(cx, |workspace, cx| {
-                workspace
-                    .open_path(project_path, None, true, window, cx)
-                    .detach_and_log_err(cx);
-            });
+            if let Some(project_path) = project.read(cx).project_path_for_absolute_path(&abs_path, cx)
+            {
+                // The file is in a project
+                let _ = workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .open_path(project_path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                });
+            } else {
+                // The file is not in any projects.
+                // Use a hidden workspace if the file does not exist.
+                let fs = project.read(cx).fs().clone();
+                let workspace = workspace.clone();
+                cx.spawn_in(window, async move |_, cx| {
+                    let visible = fs.metadata(&abs_path).await.log_err().flatten().is_some();
+                    let options = if visible {
+                        OpenOptions {
+                            visible: Some(OpenVisible::OnlyFiles),
+                            ..Default::default()
+                        }
+                    } else {
+                        OpenOptions {
+                            visible: Some(OpenVisible::None),
+                            ..Default::default()
+                        }
+                    };
+                    let _ = workspace.update_in(cx, |workspace, window, cx| {
+                        workspace
+                            .open_abs_path(abs_path, options, window, cx)
+                            .detach_and_log_err(cx);
+                    });
+                })
+                .detach();
+            }
         });
     });
 
@@ -711,31 +826,43 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                         .unwrap_or_default(),
                 );
             } else {
-                if let Some(project) = editor.project().cloned() {
-                    project.update(cx, |project, cx| {
-                        let Some(worktree) = project.visible_worktrees(cx).next() else {
-                            return;
-                        };
-                        let path_style = worktree.read(cx).path_style();
-                        let Some(path) =
-                            RelPath::new(Path::new(&action.filename), path_style).log_err()
-                        else {
-                            return;
-                        };
-                        task =
-                            Some(worktree.update(cx, |worktree, cx| worktree.load_file(&path, cx)));
-                    });
-                } else {
+                let Some(project) = editor.project().cloned() else {
                     return;
-                }
+                };
+                let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
+                    return;
+                };
+                let path_style = worktree.read(cx).path_style();
+                let abs_path = resolve_command_path(
+                    &action.filename,
+                    active_buffer_dir(editor, cx).as_deref(),
+                    worktree.read(cx).abs_path().as_ref(),
+                    path_style,
+                );
+                task = project.update(cx, |project, cx| {
+                    if let Some(project_path) =
+                        project.project_path_for_absolute_path(&abs_path, cx)
+                    {
+                        let Some(worktree) =
+                            project.worktree_for_id(project_path.worktree_id, cx)
+                        else {
+                            return None;
+                        };
+                        let load_task = worktree.update(cx, |worktree, cx| {
+                            worktree.load_file(&project_path.path, cx)
+                        });
+                        Some(cx.spawn(async move |_, _cx| Ok(load_task.await?.text.to_string())))
+                    } else {
+                        let fs = project.fs().clone();
+                        Some(cx.spawn(async move |_, _cx| fs.load(&abs_path).await))
+                    }
+                });
             };
 
             cx.spawn_in(window, async move |editor, cx| {
                 if let Some(task) = task {
-                    if let Some(loaded_file) = task.await.log_err() {
-                        for chunk in loaded_file.text.chunks() {
-                            text.push_str(chunk);
-                        }
+                    if let Some(text_chunk) = task.await.log_err() {
+                        text.push_str(&text_chunk);
                     }
                 }
 
@@ -1083,12 +1210,30 @@ impl VimCommand {
         };
 
         let (task, args_path) = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project();
             let prefix = workspace
-                .project()
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .next()
+                .active_item(cx)
+                .and_then(|item| item.project_path(cx))
+                .and_then(|project_path| {
+                    project
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|worktree| (worktree, project_path.path))
+                })
+                .map(|(worktree, path)| {
+                    let abs_path = worktree.read(cx).absolutize(&path);
+                    abs_path
+                        .parent()
+                        .map(|parent| parent.to_path_buf())
+                        .unwrap_or(abs_path)
+                })
+                .or_else(|| {
+                    project
+                        .read(cx)
+                        .visible_worktrees(cx)
+                        .next()
+                        .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                })
                 .or_else(std::env::home_dir)
                 .unwrap_or_else(|| PathBuf::from(""));
 
@@ -2640,6 +2785,7 @@ mod test {
     use editor::{Editor, EditorSettings};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
+    use serde_json::json;
     use settings::Settings;
     use util::path;
     use workspace::{OpenOptions, Workspace};
@@ -2776,22 +2922,22 @@ mod test {
 
         // File without trailing newline
         cx.set_state("one\ntwo\nthreeˇ", Mode::Normal);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\ntwo\nthree\nˇ1\n2\n3", Mode::Normal);
 
         cx.set_state("oneˇ\ntwo\nthree", Mode::Normal);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\nˇ1\n2\n3\ntwo\nthree", Mode::Normal);
 
         cx.set_state("one\nˇtwo\nthree", Mode::Normal);
-        cx.simulate_keystrokes(": 0 r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": 0 r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("ˇ1\n2\n3\none\ntwo\nthree", Mode::Normal);
 
         cx.set_state("one\n«ˇtwo\nthree\nfour»\nfive", Mode::Visual);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         cx.assert_state("one\ntwo\nthree\nfour\nˇ1\n2\n3\nfive", Mode::Normal);
@@ -2805,29 +2951,29 @@ mod test {
         // File with trailing newline
         fs.as_fake().insert_file(path, "1\n2\n3\n".into()).await;
         cx.set_state("one\ntwo\nthreeˇ", Mode::Normal);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\ntwo\nthree\nˇ1\n2\n3\n", Mode::Normal);
 
         cx.set_state("oneˇ\ntwo\nthree", Mode::Normal);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\nˇ1\n2\n3\n\ntwo\nthree", Mode::Normal);
 
         cx.set_state("one\n«ˇtwo\nthree\nfour»\nfive", Mode::Visual);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\ntwo\nthree\nfour\nˇ1\n2\n3\n\nfive", Mode::Normal);
 
         cx.set_state("«one\ntwo\nthreeˇ»", Mode::Visual);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\ntwo\nthree\nˇ1\n2\n3\n", Mode::Normal);
 
         // Empty file
         fs.as_fake().insert_file(path, "".into()).await;
         cx.set_state("ˇone\ntwo\nthree", Mode::Normal);
-        cx.simulate_keystrokes(": r space d i r / o t h e r . r s");
+        cx.simulate_keystrokes(": r space o t h e r . r s");
         cx.simulate_keystrokes("enter");
         cx.assert_state("one\nˇtwo\nthree", Mode::Normal);
     }
@@ -2988,18 +3134,23 @@ mod test {
     async fn test_command_write_filename(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake().insert_tree(path!("/tmp"), json!({})).await;
+
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
         });
 
+        // Relative paths are resolved against the active buffer's directory.
         cx.simulate_keystrokes(": w space other.rs");
         cx.simulate_keystrokes("enter");
 
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, path!("/root/other.rs"), "", cx);
+            assert_active_item(workspace, path!("/root/dir/other.rs"), "", cx);
         });
 
-        cx.simulate_keystrokes(": w space dir/file.rs");
+        // Saving over an existing file prompts for confirmation.
+        cx.simulate_keystrokes(": w space file.rs");
         cx.simulate_keystrokes("enter");
 
         cx.simulate_prompt_answer("Replace");
@@ -3009,12 +3160,28 @@ mod test {
             assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
         });
 
+        // `:w!` overwrites an existing file without prompting.
         cx.simulate_keystrokes(": w ! space other.rs");
         cx.simulate_keystrokes("enter");
 
         cx.workspace(|workspace, _, cx| {
-            assert_active_item(workspace, path!("/root/other.rs"), "", cx);
+            assert_active_item(workspace, path!("/root/dir/other.rs"), "", cx);
         });
+
+        // Writing to a file outside the project creates it on disk.
+        cx.simulate_keystrokes(": w space / t m p / e x t e r n a l w r i t e . r s");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/tmp/externalwrite.rs"), "", cx);
+        });
+        assert!(
+            fs.metadata(Path::new(path!("/tmp/externalwrite.rs")))
+                .await
+                .unwrap()
+                .is_some(),
+            "writing to a non-existent external file should create it"
+        );
     }
 
     #[gpui::test]
@@ -3035,7 +3202,7 @@ mod test {
             Mode::Visual,
         );
 
-        cx.simulate_keystrokes(": w space dir/other.rs");
+        cx.simulate_keystrokes(": w space other.rs");
         cx.simulate_keystrokes("enter");
 
         let other = path!("/root/dir/other.rs");
@@ -3056,6 +3223,62 @@ mod test {
                     "},
                 cx,
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_command_edit(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path!("/root/dir/other.rs"), "other".as_bytes().to_vec())
+            .await;
+        fs.as_fake()
+            .insert_file(path!("/root/outside.rs"), "outside".as_bytes().to_vec())
+            .await;
+        fs.as_fake()
+            .insert_tree(path!("/tmp"), json!({ "external.rs": "external" }))
+            .await;
+
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file.rs"), "", cx);
+        });
+
+        // Relative paths resolve against the active buffer's directory.
+        cx.simulate_keystrokes(": e space other.rs");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/other.rs"), "other", cx);
+        });
+
+        // `..` in the path resolves against the parent directory.
+        cx.simulate_keystrokes(": e space . . / o u t s i d e . r s");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/outside.rs"), "outside", cx);
+        });
+
+        // Absolute paths are opened directly.
+        cx.simulate_keystrokes(": e space / r o o t / d i r / o t h e r . r s");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/other.rs"), "other", cx);
+        });
+
+        // Existing files outside the project are opened in a single-file worktree.
+        cx.simulate_keystrokes(": e space / t m p / e x t e r n a l . r s");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/tmp/external.rs"), "external", cx);
+        });
+
+        // Files that don't exist yet are still opened file-backed at their path,
+        // without creating the file on disk.
+        cx.simulate_keystrokes(": e space / t m p / n e w f i l e . r s");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/tmp/newfile.rs"), "", cx);
         });
     }
 
@@ -3321,7 +3544,7 @@ mod test {
         // file that doesn't yet exist, it should still associate the buffer
         // with that file path, so that when the buffer contents are saved, the
         // file is created.
-        cx.simulate_keystrokes(": tabnew space dir/file_3.rs");
+        cx.simulate_keystrokes(": tabnew space file_3.rs");
         cx.simulate_keystrokes("enter");
 
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
@@ -3374,7 +3597,7 @@ mod test {
         // file that doesn't yet exist, it should still associate the buffer
         // with that file path, so that when the buffer contents are saved, the
         // file is created.
-        cx.simulate_keystrokes(": tabedit space dir/file_3.rs");
+        cx.simulate_keystrokes(": tabedit space file_3.rs");
         cx.simulate_keystrokes("enter");
 
         cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
@@ -3620,6 +3843,59 @@ mod test {
                 ˇ0123 4567 0123 4567
             "},
             Mode::VisualLine,
+        );
+    }
+
+    #[test]
+    fn test_resolve_command_path() {
+        use super::resolve_command_path;
+        use util::paths::{PathStyle, home_dir};
+
+        let project_root = Path::new("/project");
+        let buffer_dir = Some(Path::new("/project/src"));
+
+        // Absolute paths are used as-is.
+        assert_eq!(
+            resolve_command_path("/etc/hosts", None, project_root, PathStyle::Unix),
+            PathBuf::from("/etc/hosts")
+        );
+
+        // `~` expands to the home directory.
+        assert_eq!(
+            resolve_command_path("~", None, project_root, PathStyle::Unix),
+            home_dir().to_path_buf()
+        );
+        assert_eq!(
+            resolve_command_path("~/notes.txt", None, project_root, PathStyle::Unix),
+            home_dir().join("notes.txt")
+        );
+
+        // Relative paths resolve against the active buffer's directory.
+        assert_eq!(
+            resolve_command_path("main.rs", buffer_dir, project_root, PathStyle::Unix),
+            PathBuf::from("/project/src/main.rs")
+        );
+
+        // `..` in the path resolves against the parent directory.
+        assert_eq!(
+            resolve_command_path("../lib.rs", buffer_dir, project_root, PathStyle::Unix),
+            PathBuf::from("/project/lib.rs")
+        );
+        assert_eq!(
+            resolve_command_path("../../outside.rs", buffer_dir, project_root, PathStyle::Unix),
+            PathBuf::from("/outside.rs")
+        );
+
+        // Without a buffer directory, relative paths resolve against the worktree root.
+        assert_eq!(
+            resolve_command_path("main.rs", None, project_root, PathStyle::Unix),
+            PathBuf::from("/project/main.rs")
+        );
+
+        // Empty filenames resolve to the base directory.
+        assert_eq!(
+            resolve_command_path("", buffer_dir, project_root, PathStyle::Unix),
+            PathBuf::from("/project/src")
         );
     }
 }
