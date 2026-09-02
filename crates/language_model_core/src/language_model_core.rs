@@ -1,3 +1,4 @@
+pub mod chat_completion;
 mod provider;
 mod rate_limiter;
 mod request;

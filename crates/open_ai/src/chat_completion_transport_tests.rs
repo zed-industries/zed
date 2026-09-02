@@ -62,13 +62,13 @@ fn streaming_transport_serializes_custom_requests_and_reports_done() {
         .expect("stream events")
     });
 
-    assert_eq!(
-        events,
-        vec![
-            ChatCompletionStreamEvent::Data(json!({"chunk": 1})),
+    match events.as_slice() {
+        [
+            ChatCompletionStreamEvent::Data(data),
             ChatCompletionStreamEvent::Done,
-        ]
-    );
+        ] => assert_eq!(data.get(), r#"{"chunk":1}"#),
+        events => panic!("unexpected events: {events:?}"),
+    }
     assert_eq!(
         captured_request
             .lock()
@@ -109,10 +109,10 @@ fn streaming_transport_does_not_synthesize_done_at_eof() {
         .expect("stream events")
     });
 
-    assert_eq!(
-        events,
-        vec![ChatCompletionStreamEvent::Data(json!({"chunk": 1}))]
-    );
+    match events.as_slice() {
+        [ChatCompletionStreamEvent::Data(data)] => assert_eq!(data.get(), r#"{"chunk":1}"#),
+        events => panic!("unexpected events: {events:?}"),
+    }
 }
 
 #[test]
