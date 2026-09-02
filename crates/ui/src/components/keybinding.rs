@@ -47,6 +47,7 @@ pub struct KeyBinding {
     source: Source,
     size: Option<AbsoluteLength>,
     style: KeyBindingStyle,
+    color: Option<Color>,
     /// The [`PlatformStyle`] to use when displaying this keybinding.
     platform_style: PlatformStyle,
     /// Determines whether the keybinding is meant for vim mode.
@@ -127,6 +128,7 @@ impl KeyBinding {
             },
             size: None,
             style: KeyBindingStyle::Default,
+            color: None,
             vim_mode: KeyBinding::is_vim_mode(cx),
             platform_style: PlatformStyle::platform(),
             disabled: false,
@@ -138,6 +140,7 @@ impl KeyBinding {
             source: Source::Keystrokes { keystrokes },
             size: None,
             style: KeyBindingStyle::Default,
+            color: None,
             vim_mode,
             platform_style: PlatformStyle::platform(),
             disabled: false,
@@ -159,6 +162,12 @@ impl KeyBinding {
     /// Sets how this keybinding is presented.
     pub fn style(mut self, style: KeyBindingStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Sets the color used to render the keybinding.
+    pub fn color(mut self, color: Color) -> Self {
+        self.color = Some(color);
         self
     }
 
@@ -249,10 +258,10 @@ impl RenderOnce for KeyBinding {
             let color = if self.disabled {
                 Some(Color::Disabled)
             } else {
-                match self.style {
+                self.color.or(match self.style {
                     KeyBindingStyle::Default => None,
                     KeyBindingStyle::Label => Some(Color::Default),
-                }
+                })
             };
 
             h_flex()

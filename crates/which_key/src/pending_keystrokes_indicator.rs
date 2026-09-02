@@ -297,10 +297,13 @@ impl Render for PendingKeystrokesIndicator {
                                         .child(
                                             h_flex()
                                                 .gap_1()
-                                                .child(KeyBinding::from_keystrokes(
-                                                    popover_render_state.keystrokes.clone(),
-                                                    false,
-                                                ))
+                                                .child(
+                                                    KeyBinding::from_keystrokes(
+                                                        popover_render_state.keystrokes.clone(),
+                                                        false,
+                                                    )
+                                                    .color(Color::Accent),
+                                                )
                                                 .child(
                                                     Label::new("is waiting for more keys")
                                                         .color(Color::Muted),
@@ -314,10 +317,13 @@ impl Render for PendingKeystrokesIndicator {
                                                 .map(|(keystrokes, action)| {
                                                     h_flex()
                                                         .gap_2()
-                                                        .child(KeyBinding::from_keystrokes(
-                                                            keystrokes.clone(),
-                                                            false,
-                                                        ))
+                                                        .child(
+                                                            KeyBinding::from_keystrokes(
+                                                                keystrokes.clone(),
+                                                                false,
+                                                            )
+                                                            .color(Color::Accent),
+                                                        )
                                                         .child(
                                                             Label::new(action.clone())
                                                                 .size(LabelSize::Small),
