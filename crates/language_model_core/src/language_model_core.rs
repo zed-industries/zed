@@ -1,3 +1,4 @@
+pub mod chat_completion;
 mod provider;
 mod rate_limiter;
 mod request;
@@ -148,9 +149,18 @@ impl ProviderErrorCategory {
             StatusCode::BAD_REQUEST if is_invalid_encrypted_content_message(message) => {
                 Self::InvalidEncryptedContent
             }
-            StatusCode::BAD_REQUEST if is_context_window_exceeded_message(message) => {
-                Self::PromptTooLarge { tokens: None }
-            }
+            // Anthropic reports a context-window overflow as HTTP 400 with a
+            // "prompt is too long" message rather than HTTP 413, so a
+            // bad request must be sniffed for both providers' phrasings.
+            StatusCode::BAD_REQUEST => match parse_prompt_too_long(message) {
+                Some(tokens) => Self::PromptTooLarge {
+                    tokens: Some(tokens),
+                },
+                None if is_context_window_exceeded_message(message) => {
+                    Self::PromptTooLarge { tokens: None }
+                }
+                None => Self::InvalidRequest,
+            },
             StatusCode::UNAUTHORIZED => Self::Authentication,
             StatusCode::FORBIDDEN => Self::Permission,
             StatusCode::NOT_FOUND => Self::EndpointNotFound,
@@ -158,7 +168,6 @@ impl ProviderErrorCategory {
             StatusCode::PAYLOAD_TOO_LARGE => Self::PromptTooLarge {
                 tokens: parse_prompt_too_long(message),
             },
-            StatusCode::BAD_REQUEST => Self::InvalidRequest,
             StatusCode::CONFLICT => Self::Conflict,
             StatusCode::REQUEST_TIMEOUT | StatusCode::GATEWAY_TIMEOUT => Self::Timeout,
             StatusCode::TOO_MANY_REQUESTS => Self::RateLimit,

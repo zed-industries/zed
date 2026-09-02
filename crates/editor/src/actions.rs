@@ -938,6 +938,8 @@ actions!(
         UnwrapSyntaxNode,
         /// Wraps selections in tag specified by language.
         WrapSelectionsInTag,
+        /// Wraps selections in an expanded Emmet abbreviation.
+        WrapWithAbbreviation,
         /// Aligns selections from different rows into the same column
         AlignSelections,
         /// Saves the current location to navigation history.
