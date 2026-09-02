@@ -57,6 +57,15 @@ pub struct KeyBinding {
 struct VimStyle(bool);
 impl Global for VimStyle {}
 
+struct KeyBindingVisibility(bool);
+impl Global for KeyBindingVisibility {}
+
+impl Default for KeyBindingVisibility {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
 impl KeyBinding {
     /// Returns the highest precedence keybinding for an action. This is the last binding added to
     /// the keymap. User bindings are added after built-in bindings so that they take precedence.
@@ -87,6 +96,16 @@ impl KeyBinding {
 
     fn is_vim_mode(cx: &App) -> bool {
         cx.try_global::<VimStyle>().is_some_and(|g| g.0)
+    }
+
+    /// Sets the application-wide visibility of keybindings.
+    pub fn set_default_visibility(cx: &mut App, visible: bool) {
+        cx.set_global(KeyBindingVisibility(visible));
+        cx.refresh_windows();
+    }
+
+    fn default_visibility(cx: &mut App) -> bool {
+        cx.default_global::<KeyBindingVisibility>().0
     }
 
     pub fn new(action: &dyn Action, focus_handle: Option<FocusHandle>, cx: &App) -> Self {
@@ -199,6 +218,10 @@ fn render_key(
 
 impl RenderOnce for KeyBinding {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        if !Self::default_visibility(cx) {
+            return gpui::Empty.into_any_element();
+        }
+
         let render_keybinding = |keystrokes: &[KeybindingKeystroke]| {
             let color = self.disabled.then_some(Color::Disabled);
 
