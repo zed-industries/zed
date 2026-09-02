@@ -124,16 +124,29 @@ pub struct ResponseMessageDelta {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    /// Some providers omit the index; treating it as 0 merges the chunks into
-    /// a single tool call, which is correct for the common single-call case.
-    #[serde(default, deserialize_with = "null_as_default")]
-    pub index: usize,
+    /// `None` when the provider omits the index, sends `null`, or sends a
+    /// negative sentinel such as `-1` (#42584).
+    #[serde(
+        default,
+        deserialize_with = "lenient_index",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub index: Option<usize>,
     pub id: Option<String>,
 
     // There is also an optional `type` field that would determine if a
     // function is there. Sometimes this streams in with the `function` before
     // it streams in the `type`
     pub function: Option<FunctionChunk>,
+}
+
+/// Treats an explicit `null` and negative sentinels like `-1` (#42584) as an
+/// absent index rather than a malformed chunk.
+fn lenient_index<'de, D>(deserializer: D) -> Result<Option<usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<i64>::deserialize(deserializer)?.and_then(|index| usize::try_from(index).ok()))
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -287,6 +300,97 @@ struct RawToolCall {
     thought_signature: Option<String>,
 }
 
+/// Accumulates streamed tool calls, matching chunks by call ID first and
+/// stream index second: the index alone is unreliable because some providers
+/// omit it (#42584) or reuse it across parallel calls (Ollama has sent two
+/// distinct IDs that both used `index: 0`).
+#[derive(Default)]
+struct ToolCallAccumulator {
+    calls: Vec<RawToolCall>,
+    calls_by_index: HashMap<usize, usize>,
+    calls_by_id: HashMap<String, usize>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "cannot attribute a tool call chunk without an id or index to one of the \
+     {calls_in_flight} tool calls in progress"
+)]
+struct AmbiguousToolCallChunk {
+    calls_in_flight: usize,
+}
+
+impl ToolCallAccumulator {
+    /// Returns the call `chunk` belongs to, creating it if the chunk starts
+    /// a new call. Fails rather than guessing (and corrupting arguments) when
+    /// a chunk has neither ID nor index while several calls are in flight.
+    fn entry(&mut self, chunk: &ToolCallChunk) -> Result<&mut RawToolCall, AmbiguousToolCallChunk> {
+        let id = chunk.id.as_deref().filter(|id| !id.is_empty());
+        let call = match (id, chunk.index) {
+            (Some(id), index) => self.call_for_id(id, index),
+            (None, Some(index)) => self.call_for_index(index),
+            (None, None) => match self.calls.len() {
+                0 => self.new_call(),
+                1 => 0,
+                calls_in_flight => return Err(AmbiguousToolCallChunk { calls_in_flight }),
+            },
+        };
+        Ok(&mut self.calls[call])
+    }
+
+    fn call_for_id(&mut self, id: &str, index: Option<usize>) -> usize {
+        let known_call = self
+            .calls_by_id
+            .get(id)
+            .copied()
+            .or_else(|| {
+                // A new ID continues the call at its index only while that
+                // call is anonymous; a different ID means the index was
+                // reused for another parallel call.
+                let call = self.calls_by_index.get(&index?).copied()?;
+                self.calls[call].id.is_empty().then_some(call)
+            })
+            .or_else(|| {
+                // Some providers send the ID only partway through a call; an
+                // ID without an index adopts the only anonymous call in flight.
+                (index.is_none() && self.calls.len() == 1 && self.calls[0].id.is_empty())
+                    .then_some(0)
+            });
+        let call = known_call.unwrap_or_else(|| self.new_call());
+        if self.calls[call].id.is_empty() {
+            self.calls[call].id = id.to_string();
+        }
+        self.calls_by_id.insert(id.to_string(), call);
+        if let Some(index) = index {
+            self.calls_by_index.insert(index, call);
+        }
+        call
+    }
+
+    fn call_for_index(&mut self, index: usize) -> usize {
+        match self.calls_by_index.get(&index) {
+            Some(&call) => call,
+            None => {
+                let call = self.new_call();
+                self.calls_by_index.insert(index, call);
+                call
+            }
+        }
+    }
+
+    fn new_call(&mut self) -> usize {
+        self.calls.push(RawToolCall::default());
+        self.calls.len() - 1
+    }
+
+    /// Removes and returns every call, in the order they appeared in the stream.
+    fn drain(&mut self) -> impl Iterator<Item = RawToolCall> + '_ {
+        self.calls_by_index.clear();
+        self.calls_by_id.clear();
+        self.calls.drain(..)
+    }
+}
+
 /// Maps a stream of Chat Completions chunks to [`LanguageModelCompletionEvent`]s.
 ///
 /// This is shared by every provider that speaks an OpenAI-compatible Chat
@@ -295,14 +399,14 @@ struct RawToolCall {
 /// stay provider-neutral: any provider-specific interpretation belongs in the
 /// provider's own adapter before or after this mapping.
 pub struct ChatCompletionEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
+    tool_calls: ToolCallAccumulator,
     reasoning_details: ReasoningDetailsAccumulator,
 }
 
 impl ChatCompletionEventMapper {
     pub fn new() -> Self {
         Self {
-            tool_calls_by_index: HashMap::default(),
+            tool_calls: ToolCallAccumulator::default(),
             reasoning_details: ReasoningDetailsAccumulator::default(),
         }
     }
@@ -357,13 +461,13 @@ impl ChatCompletionEventMapper {
 
             if let Some(tool_calls) = delta.tool_calls.as_ref() {
                 for tool_call in tool_calls {
-                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
-
-                    if let Some(tool_id) = tool_call.id.clone()
-                        && !tool_id.is_empty()
-                    {
-                        entry.id = tool_id;
-                    }
+                    let entry = match self.tool_calls.entry(tool_call) {
+                        Ok(entry) => entry,
+                        Err(error) => {
+                            events.push(Err(anyhow::Error::new(error).into()));
+                            continue;
+                        }
+                    };
 
                     if let Some(function) = tool_call.function.as_ref() {
                         if let Some(name) = function.name.clone()
@@ -406,26 +510,28 @@ impl ChatCompletionEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
             }
             Some("tool_calls") => {
-                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
-                    match parse_tool_arguments(&tool_call.arguments) {
-                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
-                            LanguageModelToolUse {
-                                id: tool_call.id.clone().into(),
-                                name: tool_call.name.as_str().into(),
-                                is_input_complete: true,
-                                input: LanguageModelToolUseInput::Json(input),
-                                raw_input: tool_call.arguments.clone(),
-                                thought_signature: tool_call.thought_signature.clone(),
-                            },
-                        )),
-                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
-                            id: tool_call.id.into(),
-                            tool_name: tool_call.name.into(),
-                            raw_input: tool_call.arguments.clone().into(),
-                            json_parse_error: error.to_string(),
-                        }),
-                    }
-                }));
+                events.extend(
+                    self.tool_calls.drain().map(|tool_call| {
+                        match parse_tool_arguments(&tool_call.arguments) {
+                            Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id: tool_call.id.clone().into(),
+                                    name: tool_call.name.as_str().into(),
+                                    is_input_complete: true,
+                                    input: LanguageModelToolUseInput::Json(input),
+                                    raw_input: tool_call.arguments.clone(),
+                                    thought_signature: tool_call.thought_signature.clone(),
+                                },
+                            )),
+                            Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: tool_call.id.into(),
+                                tool_name: tool_call.name.into(),
+                                raw_input: tool_call.arguments.clone().into(),
+                                json_parse_error: error.to_string(),
+                            }),
+                        }
+                    }),
+                );
 
                 events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
             }
@@ -500,7 +606,7 @@ mod tests {
         let choice = &event.choices[0];
         assert_eq!(choice.index, 0);
         let tool_call = &choice.delta.as_ref().unwrap().tool_calls.as_ref().unwrap()[0];
-        assert_eq!(tool_call.index, 0);
+        assert_eq!(tool_call.index, None);
         assert_eq!(tool_call.id.as_deref(), Some("call_1"));
 
         let event = expect_event(r#"{"choices":null,"usage":{"total_tokens":8}}"#);
@@ -524,12 +630,29 @@ mod tests {
         let mut choices = event.choices;
         let delta = choices.remove(0).delta.unwrap();
         let tool_call = delta.tool_calls.unwrap().remove(0);
-        assert_eq!(tool_call.index, 0);
+        assert_eq!(tool_call.index, None);
         assert_eq!(tool_call.id.as_deref(), Some("call_1"));
         assert_eq!(
             tool_call.function.unwrap().name.as_deref(),
             Some("edit_file")
         );
+    }
+
+    // MiniMax has sent `index: -1` on every tool call chunk (#42584).
+    #[test]
+    fn parses_negative_tool_call_index_as_absent() {
+        let event = expect_event(
+            r#"{"choices":[{"index":0,"delta":{"tool_calls":[{"index":-1,"id":"call_1","function":{"name":"edit_file","arguments":"{}"}}]}}]}"#,
+        );
+        let tool_call = &event.choices[0]
+            .delta
+            .as_ref()
+            .unwrap()
+            .tool_calls
+            .as_ref()
+            .unwrap()[0];
+        assert_eq!(tool_call.index, None);
+        assert_eq!(tool_call.id.as_deref(), Some("call_1"));
     }
 
     #[test]
@@ -738,7 +861,7 @@ mod tests {
                 index: 0,
                 delta: Some(ResponseMessageDelta {
                     tool_calls: Some(vec![ToolCallChunk {
-                        index: 0,
+                        index: Some(0),
                         id: Some("tool-call-id".to_string()),
                         function: Some(FunctionChunk {
                             name: Some("test_tool".to_string()),
@@ -929,7 +1052,7 @@ mod tests {
                         content: None,
                         reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
+                            index: Some(0),
                             id: Some("call_dashscope_test".into()),
                             function: Some(FunctionChunk {
                                 name: Some("list_directory".into()),
@@ -952,7 +1075,7 @@ mod tests {
                         content: None,
                         reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
+                            index: Some(0),
                             id: Some("".into()),
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
@@ -974,7 +1097,7 @@ mod tests {
                         content: None,
                         reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
-                            index: 0,
+                            index: Some(0),
                             id: Some("".into()),
                             function: Some(FunctionChunk {
                                 name: Some("".into()),
@@ -1046,5 +1169,309 @@ mod tests {
                 LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
             )
         }));
+    }
+
+    fn tool_call_chunk_event(tool_calls: Vec<ToolCallChunk>) -> ResponseStreamEvent {
+        ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    tool_calls: Some(tool_calls),
+                    ..Default::default()
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }
+    }
+
+    fn finish_tool_calls_event() -> ResponseStreamEvent {
+        ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: None,
+                finish_reason: Some("tool_calls".into()),
+            }],
+            usage: None,
+        }
+    }
+
+    fn completed_tool_calls(events: &[LanguageModelCompletionEvent]) -> Vec<&LanguageModelToolUse> {
+        events
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ToolUse(tool_use) if tool_use.is_input_complete => {
+                    Some(tool_use)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    // Ollama has emitted parallel calls with distinct IDs that both use `index: 0`.
+    #[test]
+    fn separates_parallel_tool_calls_sharing_an_index() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some(r#"{"city":"Berlin"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_b".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some(r#"{"city":"Tokyo"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0].id.to_string(), "call_a");
+        assert_eq!(tool_uses[0].raw_input, r#"{"city":"Berlin"}"#);
+        assert_eq!(tool_uses[1].id.to_string(), "call_b");
+        assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
+    }
+
+    #[test]
+    fn continues_the_latest_call_at_a_reused_index() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some(r#"{"city":"Berlin"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_b".into()),
+                function: Some(FunctionChunk {
+                    name: Some("get_weather".into()),
+                    arguments: Some(r#"{"city":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: None,
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""Tokyo"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0].raw_input, r#"{"city":"Berlin"}"#);
+        assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
+    }
+
+    // MiniMax identifies calls by ID alone, without usable indices (#42584).
+    #[test]
+    fn accumulates_tool_calls_without_indices_by_id() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some(r#"{"path":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""src"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].id.to_string(), "call_a");
+        assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+    }
+
+    #[test]
+    fn continues_the_only_call_for_chunks_without_id_or_index() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some(r#"{"path":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: None,
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""src"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+    }
+
+    #[test]
+    fn adopts_a_late_id_for_the_call_at_the_same_index() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: None,
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some(r#"{"path":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: Some(0),
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""src"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].id.to_string(), "call_a");
+        assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+    }
+
+    #[test]
+    fn adopts_a_late_id_for_the_only_anonymous_call_without_an_index() {
+        let mapped = map_completion_events(vec![
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: None,
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some(r#"{"path":"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some("call_a".into()),
+                function: Some(FunctionChunk {
+                    name: None,
+                    arguments: Some(r#""src"}"#.into()),
+                    thought_signature: None,
+                }),
+            }]),
+            finish_tool_calls_event(),
+        ]);
+
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 1);
+        assert_eq!(tool_uses[0].id.to_string(), "call_a");
+        assert_eq!(tool_uses[0].raw_input, r#"{"path":"src"}"#);
+    }
+
+    #[test]
+    fn rejects_unattributable_tool_call_chunks() {
+        let mut mapper = ChatCompletionEventMapper::new();
+        for id in ["call_a", "call_b"] {
+            mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+                index: None,
+                id: Some(id.into()),
+                function: Some(FunctionChunk {
+                    name: Some("list_directory".into()),
+                    arguments: Some("{".into()),
+                    thought_signature: None,
+                }),
+            }]));
+        }
+
+        let events = mapper.map_event(tool_call_chunk_event(vec![ToolCallChunk {
+            index: None,
+            id: None,
+            function: Some(FunctionChunk {
+                name: None,
+                arguments: Some(r#""path":"src"}"#.into()),
+                thought_signature: None,
+            }),
+        }]));
+
+        match events.as_slice() {
+            [Err(error)] => {
+                let message = error.to_string();
+                assert!(
+                    message.contains("2 tool calls in progress"),
+                    "expected an attribution error, got: {message}"
+                );
+            }
+            events => panic!("expected a single error event, got: {events:?}"),
+        }
+    }
+
+    // The `index: -1` stream shape from #42584, end to end.
+    #[test]
+    fn maps_parallel_tool_calls_with_negative_indices() {
+        let response_events = serde_json::from_value(json!([
+            {
+                "choices": [{
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": -1,
+                                "id": "call_a",
+                                "type": "function",
+                                "function": {"name": "get_weather", "arguments": "{\"city\":\"Berlin\"}"}
+                            },
+                            {
+                                "index": -1,
+                                "id": "call_b",
+                                "type": "function",
+                                "function": {"name": "get_weather", "arguments": "{\"city\":\"Tokyo\"}"}
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }
+        ]))
+        .expect("valid compatible Chat Completions events");
+
+        let mapped = map_completion_events(response_events);
+        let tool_uses = completed_tool_calls(&mapped);
+        assert_eq!(tool_uses.len(), 2);
+        assert_eq!(tool_uses[0].id.to_string(), "call_a");
+        assert_eq!(tool_uses[0].raw_input, r#"{"city":"Berlin"}"#);
+        assert_eq!(tool_uses[1].id.to_string(), "call_b");
+        assert_eq!(tool_uses[1].raw_input, r#"{"city":"Tokyo"}"#);
     }
 }
