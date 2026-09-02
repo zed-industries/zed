@@ -23,6 +23,7 @@ mod document_links;
 mod document_symbols;
 mod editor_settings;
 mod element;
+mod emmet_ext;
 mod fold;
 mod folding_ranges;
 mod git;
@@ -31,6 +32,7 @@ pub mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlays;
+mod inline_input;
 pub mod items;
 mod jsx_tag_auto_close;
 mod linked_editing_ranges;
@@ -116,6 +118,8 @@ use git::{DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover};
 pub(crate) use git::{DisplayDiffHunk, PhantomDiffReviewIndicator};
 pub use hover_popover::hover_markdown_style;
 pub use inlays::Inlay;
+pub use inline_input::InlineInputState;
+pub(crate) use inline_input::{InlineInputHistoryDirection, InlineInputPreview};
 pub use items::MAX_TAB_TITLE_LEN;
 pub use linked_editing_ranges::LinkedEdits;
 pub use lsp::CompletionContext;
@@ -1045,6 +1049,7 @@ pub struct Editor {
     linked_editing_range_task: Option<Task<Option<()>>>,
     linked_edit_ranges: linked_editing_ranges::LinkedEditingRanges,
     pending_rename: Option<RenameState>,
+    pending_inline_input: Option<InlineInputState>,
     searchable: bool,
     cursor_shape: CursorShape,
     /// Whether the cursor is offset one character to the left when something is
@@ -2385,6 +2390,7 @@ impl Editor {
             document_highlights_task: None,
             linked_editing_range_task: None,
             pending_rename: None,
+            pending_inline_input: None,
             searchable: !is_minimap,
             cursor_shape: EditorSettings::get_global(cx)
                 .cursor_shape
@@ -2733,6 +2739,9 @@ impl Editor {
         key_context.set("mode", mode);
         if self.pending_rename.is_some() {
             key_context.add("renaming");
+        }
+        if self.pending_inline_input.is_some() {
+            key_context.add("inline_input");
         }
 
         if let Some(snippet_stack) = self.snippet_stack.last() {
@@ -3496,6 +3505,7 @@ impl Editor {
         let mut dismissed = false;
 
         dismissed |= self.take_rename(false, window, cx).is_some();
+        dismissed |= self.take_inline_input(window, cx).is_some();
         dismissed |= self.hide_blame_popover(true, cx);
         dismissed |= hide_hover(self, cx);
         dismissed |= self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
@@ -4901,6 +4911,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        self.insert_snippet_with_autoindent(
+            insertion_ranges,
+            snippet,
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            window,
+            cx,
+        )
+    }
+
+    pub(crate) fn insert_snippet_with_autoindent(
+        &mut self,
+        insertion_ranges: &[Range<MultiBufferOffset>],
+        snippet: Snippet,
+        autoindent_mode: Option<AutoindentMode>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         struct Tabstop<T> {
             is_end_tabstop: bool,
             ranges: Vec<Range<T>>,
@@ -4913,10 +4942,7 @@ impl Editor {
                 .iter()
                 .cloned()
                 .map(|range| (range, snippet_text.clone()));
-            let autoindent_mode = AutoindentMode::Block {
-                original_indent_columns: Vec::new(),
-            };
-            buffer.edit(edits, Some(autoindent_mode), cx);
+            buffer.edit(edits, autoindent_mode, cx);
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;

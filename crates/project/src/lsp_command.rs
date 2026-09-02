@@ -6,7 +6,7 @@ use crate::{
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
     LocationLink, LspAction, LspPullDiagnostics, MarkupContent, PrepareRenameResponse, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState,
-    lsp_store::{LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
+    lsp_store::{LanguageServerToQuery, LocalLspStore, LspDocumentLink, LspFoldingRange, LspStore},
 };
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -97,6 +97,10 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
 
     fn status(&self) -> Option<String> {
         None
+    }
+
+    fn language_server_to_query(&self) -> LanguageServerToQuery {
+        LanguageServerToQuery::FirstCapable
     }
 
     fn to_lsp_params_or_response(

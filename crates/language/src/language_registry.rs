@@ -894,6 +894,20 @@ impl LanguageRegistry {
             .unwrap_or_default()
     }
 
+    pub fn lsp_adapter(
+        &self,
+        language_name: &LanguageName,
+        server_name: &LanguageServerName,
+    ) -> Option<Arc<CachedLspAdapter>> {
+        self.state
+            .read()
+            .lsp_adapters
+            .get(language_name)?
+            .iter()
+            .find(|adapter| adapter.name() == *server_name)
+            .cloned()
+    }
+
     pub fn all_lsp_adapters(&self) -> Vec<Arc<CachedLspAdapter>> {
         self.state
             .read()

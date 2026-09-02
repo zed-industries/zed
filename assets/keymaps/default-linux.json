@@ -835,6 +835,12 @@
     },
   },
   {
+    "context": "Editor && inline_input",
+    "bindings": {
+      "enter": "menu::Confirm",
+    },
+  },
+  {
     "context": "Editor && showing_completions",
     "bindings": {
       "enter": "editor::ConfirmCompletion",
