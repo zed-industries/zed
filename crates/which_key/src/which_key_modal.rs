@@ -14,7 +14,7 @@ use ui::{
 };
 use workspace::{ModalView, Workspace};
 
-use crate::{bindings_for_pending_input, map_pending_keystrokes};
+use crate::{bindings_for_which_key, map_pending_keystrokes};
 
 pub struct WhichKeyModal {
     _workspace: WeakEntity<Workspace>,
@@ -65,7 +65,7 @@ impl WhichKeyModal {
             cx.emit(DismissEvent);
             return;
         };
-        let mut binding_data = bindings_for_pending_input(window, pending_keys)
+        let mut binding_data = bindings_for_which_key(window, pending_keys)
             .into_iter()
             .map(|binding| (binding.remaining_keystrokes, binding.action_name))
             .collect();

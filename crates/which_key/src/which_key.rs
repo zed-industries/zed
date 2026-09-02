@@ -33,19 +33,34 @@ pub(crate) fn bindings_for_pending_input(
     window: &Window,
     pending_keystrokes: &[Keystroke],
 ) -> Vec<PendingBinding> {
+    collect_bindings_for_pending_input(window, pending_keystrokes, |_| true)
+}
+
+pub(crate) fn bindings_for_which_key(
+    window: &Window,
+    pending_keystrokes: &[Keystroke],
+) -> Vec<PendingBinding> {
+    collect_bindings_for_pending_input(window, pending_keystrokes, |binding| {
+        let binding_keystrokes = binding.keystrokes();
+        !FILTERED_KEYSTROKES.iter().any(|filtered| {
+            binding_keystrokes.len() >= filtered.len()
+                && binding_keystrokes[..filtered.len()]
+                    .iter()
+                    .map(|keystroke| keystroke.inner())
+                    .eq(filtered.iter())
+        })
+    })
+}
+
+fn collect_bindings_for_pending_input(
+    window: &Window,
+    pending_keystrokes: &[Keystroke],
+    mut include_binding: impl FnMut(&gpui::KeyBinding) -> bool,
+) -> Vec<PendingBinding> {
     window
         .possible_bindings_for_input(pending_keystrokes)
         .into_iter()
-        .filter(|binding| {
-            let binding_keystrokes = binding.keystrokes();
-            !FILTERED_KEYSTROKES.iter().any(|filtered| {
-                binding_keystrokes.len() >= filtered.len()
-                    && binding_keystrokes[..filtered.len()]
-                        .iter()
-                        .map(|keystroke| keystroke.inner())
-                        .eq(filtered.iter())
-            })
-        })
+        .filter(|binding| include_binding(binding))
         .filter_map(|binding| {
             let remaining_keystrokes = binding.keystrokes().get(pending_keystrokes.len()..)?;
             if remaining_keystrokes.is_empty() {

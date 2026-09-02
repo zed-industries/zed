@@ -576,6 +576,38 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_indicator_does_not_apply_which_key_binding_filter(cx: &mut TestAppContext) {
+        let (indicator, cx) = setup_indicator_test(
+            cx,
+            [
+                KeyBinding::new("g", ShorterBinding, Some("PendingKeystrokesIndicatorTest")),
+                KeyBinding::new("g j", LongerBinding, Some("PendingKeystrokesIndicatorTest")),
+            ],
+        );
+
+        cx.simulate_keystrokes("g");
+        cx.run_until_parked();
+
+        cx.update(|window, _| {
+            let pending_keystrokes = window
+                .pending_input_keystrokes()
+                .expect("pending input keystrokes");
+            assert!(crate::bindings_for_which_key(window, pending_keystrokes).is_empty());
+        });
+
+        let render_state = indicator
+            .read_with(cx, |indicator, _| indicator_snapshot(indicator))
+            .expect("pending input snapshot");
+        assert_eq!(
+            render_state.bindings,
+            vec![(
+                vec!["j".to_string()],
+                humanize_action_name(LongerBinding.name()),
+            )]
+        );
+    }
+
+    #[gpui::test]
     fn test_hovering_indicator_opens_popover_and_pauses_timeout(cx: &mut TestAppContext) {
         let (indicator, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
