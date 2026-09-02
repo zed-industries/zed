@@ -9701,6 +9701,8 @@ dependencies = [
  "settings",
  "sha2",
  "strum 0.28.0",
+ "theme",
+ "theme_settings",
  "tokio",
  "ui",
  "ui_input",

@@ -1344,6 +1344,7 @@ mod tests {
                         .w_full()
                         .text_sm()
                         .text_color(cx.theme().colors().text_muted)
+                        .debug_selector(|| "young-account-warning".into())
                         .child(
                             "To prevent abuse of our service, GitHub accounts created fewer than \
                              30 days ago are not eligible for the Pro trial. You can request an \
@@ -1404,10 +1405,22 @@ mod tests {
             let controls_bounds = visual_context
                 .debug_bounds("young-account-controls")
                 .expect("young account controls should be rendered");
+            let warning_bounds = visual_context
+                .debug_bounds("young-account-warning")
+                .expect("young account warning should be rendered");
 
             assert!(
                 controls_bounds.right() <= provider_row_bounds.right(),
                 "young account controls extend past the provider row at {width}px"
+            );
+            assert!(
+                warning_bounds.left() >= controls_bounds.left()
+                    && warning_bounds.right() <= controls_bounds.right(),
+                "young account warning extends past its controls at {width}px"
+            );
+            assert!(
+                warning_bounds.size.height >= px(40.),
+                "young account warning does not wrap at {width}px"
             );
             assert!(
                 description_bounds.size.width >= px(width / 3.),
