@@ -1821,7 +1821,15 @@ impl GitPanel {
         }
         if let Some(work_directory_abs_path) = active_work_directory_abs_path {
             let text = self.commit_message_buffer(cx).read(cx).text();
-            let message = (!text.trim().is_empty()).then_some(text);
+            let is_just_template = self
+                .commit_template
+                .as_ref()
+                .is_some_and(|template| template.template == text);
+            let message = if is_just_template || text.trim().is_empty() {
+                None
+            } else {
+                Some(text)
+            };
             let original_message = self.original_commit_message.clone();
             let amend_pending = self.amend_pending;
             if message.is_some() || original_message.is_some() || amend_pending {
@@ -12142,6 +12150,198 @@ mod tests {
             // does not match the active repository, so it cannot leak across
             // repositories.
             assert_eq!(panel.commit_message_buffer(cx).read(cx).text(), "");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_template_applied_fresh_after_template_file_change(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template1\n".to_string(),
+            })
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .next()
+                .unwrap()
+                .clone()
+        });
+        repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Template1\n",
+                "template should be applied initially"
+            );
+        });
+
+        // Update the commit template returned by the fake git repository and
+        // simulate restart: empty the active commit buffer and reload the panel
+        // from the same serialized state the previous session would have written.
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template2\n".to_string(),
+            })
+        })
+        .unwrap();
+        let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
+            signoff_enabled: false,
+            commit_messages: panel.serialized_commit_messages(cx),
+        });
+        let buffer = repository.read_with(cx, |repository, _| {
+            repository.commit_message_buffer().unwrap().clone()
+        });
+        buffer.update(cx, |buffer, cx| {
+            let start = buffer.anchor_before(0);
+            let end = buffer.anchor_after(buffer.len());
+            buffer.edit([(start..end, "")], None, cx);
+        });
+
+        let restored_panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized_panel), window, cx)
+        });
+        cx.run_until_parked();
+
+        restored_panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                "Template2\n",
+                "updated commit template should be re-applied across restarts"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_user_draft_preserved_when_template_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": { "main.rs": "fn main() {}" }
+                }
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[("src/main.rs", StatusCode::Modified.worktree())],
+        );
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template1\n".to_string(),
+            })
+        })
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .git_store()
+                .read(cx)
+                .repositories()
+                .values()
+                .next()
+                .unwrap()
+                .clone()
+        });
+        repository.update(cx, |repository, cx| repository.set_as_active_repository(cx));
+
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        register_git_commit_language(&project, cx);
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        cx.run_until_parked();
+
+        // User edits the buffer after the template was applied.
+        let user_message = "fix: my actual commit\n";
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, user_message)], None, cx);
+            });
+        });
+
+        // The commit template returned by the fake git repository changes
+        // after the user has already started typing. We must not clobber the
+        // user's draft.
+        fs.with_git_state(Path::new(path!("/root/project/.git")), false, |state| {
+            state.commit_template = Some(GitCommitTemplate {
+                template: "Template2\n".to_string(),
+            })
+        })
+        .unwrap();
+        let serialized_panel = panel.update(cx, |panel, cx| SerializedGitPanel {
+            signoff_enabled: false,
+            commit_messages: panel.serialized_commit_messages(cx),
+        });
+
+        // Simulate a restart and restore from the serialized state.
+        let buffer = repository.read_with(cx, |repository, _| {
+            repository.commit_message_buffer().unwrap().clone()
+        });
+        buffer.update(cx, |buffer, cx| {
+            let start = buffer.anchor_before(0);
+            let end = buffer.anchor_after(buffer.len());
+            buffer.edit([(start..end, "")], None, cx);
+        });
+
+        let restored_panel = workspace.update_in(cx, |workspace, window, cx| {
+            GitPanel::new_with_serialized_panel(workspace, Some(serialized_panel), window, cx)
+        });
+        cx.run_until_parked();
+
+        restored_panel.read_with(cx, |panel, cx| {
+            assert_eq!(
+                panel.commit_message_buffer(cx).read(cx).text(),
+                user_message,
+                "user-typed draft must be restored verbatim, never overwritten by a later template"
+            );
         });
     }
 
