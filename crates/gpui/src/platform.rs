@@ -939,6 +939,27 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn set_client_inset(&self, _inset: Pixels) {}
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
+    /// Returns the GPU context for this window's renderer.
+    /// The returned `Box` contains `(Arc<wgpu::Device>, Arc<wgpu::Queue>)`.
+    ///
+    /// Ported from gpui-ce
+    /// ([#39](https://github.com/gpui-ce/gpui-ce/commit/6d043b22e477)).
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        None
+    }
+
+    /// Whether this window's GPU device has been lost (the platform renderer
+    /// recovers it on a subsequent draw). `None` when the backend cannot
+    /// know. Safe to call mid-recovery, unlike `gpu_context`.
+    ///
+    /// Ported from gpui-ce
+    /// ([#78](https://github.com/gpui-ce/gpui-ce/pull/78)).
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn gpu_device_lost(&self) -> Option<bool> {
+        None
+    }
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
 
     // Mobile platform methods.

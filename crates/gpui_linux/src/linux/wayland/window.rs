@@ -2101,6 +2101,15 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().renderer.gpu_specs().into()
     }
 
+    fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        let (device, queue) = self.borrow().renderer.gpu_context();
+        Some(Box::new((device, queue)))
+    }
+
+    fn gpu_device_lost(&self) -> Option<bool> {
+        Some(self.borrow().renderer.device_lost())
+    }
+
     fn play_system_bell(&self) {
         let state = self.borrow();
         let surface = if state.surface_state.toplevel().is_some() {

@@ -1938,6 +1938,15 @@ impl PlatformWindow for X11Window {
         self.0.state.borrow().renderer.gpu_specs().into()
     }
 
+    fn gpu_context(&self) -> Option<Box<dyn std::any::Any>> {
+        let (device, queue) = self.0.state.borrow().renderer.gpu_context();
+        Some(Box::new((device, queue)))
+    }
+
+    fn gpu_device_lost(&self) -> Option<bool> {
+        Some(self.0.state.borrow().renderer.device_lost())
+    }
+
     fn play_system_bell(&self) {
         // Volume 0% means don't increase or decrease from system volume
         let _ = self.0.xcb.bell(0);

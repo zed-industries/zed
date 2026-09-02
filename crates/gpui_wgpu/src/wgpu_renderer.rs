@@ -184,6 +184,10 @@ struct WgpuResources {
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
     atlas_sampler: wgpu::Sampler,
+    #[allow(dead_code)]
+    surface_sampler: wgpu::Sampler,
+    #[allow(dead_code)]
+    surface_uniform_buffer: wgpu::Buffer,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
@@ -451,6 +455,20 @@ impl WgpuRenderer {
             ..Default::default()
         });
 
+        let surface_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("surface_sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+        let surface_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("surface_uniform_buffer"),
+            size: std::mem::size_of::<SurfaceParams>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let uniform_alignment = device.limits().min_uniform_buffer_offset_alignment as u64;
         let globals_size = std::mem::size_of::<GlobalParams>() as u64;
         let gamma_size = std::mem::size_of::<GammaParams>() as u64;
@@ -568,6 +586,8 @@ impl WgpuRenderer {
             pipelines,
             bind_group_layouts,
             atlas_sampler,
+            surface_sampler,
+            surface_uniform_buffer,
             globals_buffer,
             globals_bind_group,
             path_globals_bind_group,
@@ -715,16 +735,6 @@ impl WgpuRenderer {
                 },
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -1258,6 +1268,11 @@ impl WgpuRenderer {
         }
     }
 
+    pub fn gpu_context(&self) -> (Arc<wgpu::Device>, Arc<wgpu::Queue>) {
+        let resources = self.resources();
+        (resources.device.clone(), resources.queue.clone())
+    }
+
     pub fn max_texture_size(&self) -> u32 {
         self.max_texture_size
     }
@@ -1526,9 +1541,9 @@ impl WgpuRenderer {
                         instance_range(range),
                         &mut pass,
                     ),
-                    // Surfaces are macOS-only for video playback and are not
-                    // implemented by the WGPU renderer.
-                    PrimitiveBatch::Surfaces(_surfaces) => {}
+                    PrimitiveBatch::Surfaces(range) => {
+                        self.draw_surfaces(&scene.surfaces[range], &mut pass)
+                    }
                 }
             }
         }
@@ -1538,6 +1553,59 @@ impl WgpuRenderer {
             .submit(std::iter::once(encoder.finish()));
         Ok(())
     }
+
+    // Ported from gpui-ce #39 / #121: sample an RGBA wgpu texture in the scene.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn draw_surfaces(&self, surfaces: &[gpui::PaintSurface], pass: &mut wgpu::RenderPass<'_>) {
+        let resources = self.resources();
+        for surface in surfaces {
+            let Some(wgpu_texture) = surface.texture.downcast_ref::<wgpu::Texture>() else {
+                continue;
+            };
+
+            let texture_view = wgpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+            let params = SurfaceParams {
+                bounds: surface.bounds.into(),
+                content_mask: surface.content_mask.bounds.into(),
+            };
+
+            resources.queue.write_buffer(
+                &resources.surface_uniform_buffer,
+                0,
+                bytemuck::bytes_of(&params),
+            );
+
+            let bind_group = resources
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("surface_bind_group"),
+                    layout: &resources.bind_group_layouts.surfaces,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: resources.surface_uniform_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&texture_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&resources.surface_sampler),
+                        },
+                    ],
+                });
+
+            pass.set_pipeline(&resources.pipelines.surfaces);
+            pass.set_bind_group(0, &resources.globals_bind_group, &[]);
+            pass.set_bind_group(1, &bind_group, &[]);
+            pass.draw(0..4, 0..1);
+        }
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    fn draw_surfaces(&self, _surfaces: &[gpui::PaintSurface], _pass: &mut wgpu::RenderPass<'_>) {}
 
     fn write_instances(
         &mut self,
@@ -2239,5 +2307,15 @@ mod tests {
         assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
         assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+    }
+
+    // gpui-ce samples an RGBA wgpu texture, not YCbCr video planes.
+    // https://github.com/gpui-ce/gpui-ce/commit/6d043b22e477
+    #[test]
+    fn surface_shader_samples_a_single_rgba_texture() {
+        assert!(STORAGE_BUFFER_SHADERS.contains("@group(1) @binding(1) var t_surface: texture_2d<f32>"));
+        assert!(!STORAGE_BUFFER_SHADERS.contains("var t_y: texture_2d<f32>"));
+        assert!(!STORAGE_BUFFER_SHADERS.contains("var t_cb_cr: texture_2d<f32>"));
+        assert!(WEBGL_SHADERS.contains("@group(1) @binding(1) var t_surface: texture_2d<f32>"));
     }
 }
