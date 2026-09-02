@@ -5502,7 +5502,7 @@ impl Window {
 
         let match_result = self.rendered_frame.dispatch_tree.dispatch_key(
             currently_pending.keystrokes,
-            keystroke,
+            keystroke.clone(),
             &dispatch_path,
         );
 
@@ -5512,6 +5512,19 @@ impl Window {
         }
 
         if !match_result.pending.is_empty() {
+            if event.downcast_ref::<KeyDownEvent>().is_some()
+                && let Some(mut input_handler) = self.platform_window.take_input_handler()
+            {
+                input_handler.intercept_keystroke(
+                    &keystroke,
+                    &match_result.bindings,
+                    true,
+                    self,
+                    cx,
+                );
+                self.platform_window.set_input_handler(input_handler);
+            }
+
             currently_pending.timer.take();
             currently_pending.keystrokes = match_result.pending;
             currently_pending.focus = self.focus;
@@ -5579,6 +5592,23 @@ impl Window {
                     })
             })
             .unwrap_or(false);
+
+        if !skip_bindings && event.downcast_ref::<KeyDownEvent>().is_some() {
+            if let Some(mut input_handler) = self.platform_window.take_input_handler() {
+                let intercepted = input_handler.intercept_keystroke(
+                    &keystroke,
+                    &match_result.bindings,
+                    false,
+                    self,
+                    cx,
+                );
+                self.platform_window.set_input_handler(input_handler);
+                if intercepted {
+                    self.pending_input_changed(cx);
+                    return;
+                }
+            }
+        }
 
         if !skip_bindings {
             for binding in match_result.bindings {

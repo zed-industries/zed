@@ -10,9 +10,9 @@ use editor::{
 };
 use gpui::{
     Action, AnyElement, App, ClipboardEntry, DismissEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Font, KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent,
-    Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription, Task, TaskExt,
-    WeakEntity, actions, anchored, deferred, div,
+    FocusHandle, Focusable, Font, KeyBinding, KeyContext, KeyDownEvent, Keystroke, MouseButton,
+    MouseDownEvent, Pixels, Point as GpuiPoint, Render, ScrollWheelEvent, Styled, Subscription,
+    Task, TaskExt, WeakEntity, actions, anchored, deferred, div,
 };
 use menu;
 use persistence::TerminalDb;
@@ -1324,6 +1324,13 @@ impl TerminalView {
     }
 }
 
+pub(crate) fn terminal_input_can_preempt_bindings(bindings: &[KeyBinding], pending: bool) -> bool {
+    !pending
+        && !bindings.iter().any(|binding| {
+            binding.predicate().is_some() || binding.meta().map_or(true, |meta| meta.0 == 0)
+        })
+}
+
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // TODO: this should be moved out of render
@@ -2170,7 +2177,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{KeyBindingMetaIndex, TestAppContext, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2178,6 +2185,26 @@ mod tests {
     use util::rel_path::RelPath;
     use workspace::item::test::{TestItem, TestProjectItem};
     use workspace::{AppState, MultiWorkspace, SelectedEntry};
+
+    actions!(test_only, [TerminalInputTestAction]);
+
+    #[test]
+    fn terminal_input_only_preempts_unqualified_builtins() {
+        let builtin = KeyBinding::new("ctrl-t", TerminalInputTestAction, None)
+            .with_meta(KeyBindingMetaIndex(3));
+        assert!(terminal_input_can_preempt_bindings(&[builtin], false));
+
+        let contextual = KeyBinding::new("ctrl-t", TerminalInputTestAction, Some("Terminal"))
+            .with_meta(KeyBindingMetaIndex(3));
+        assert!(!terminal_input_can_preempt_bindings(&[contextual], false));
+
+        let user = KeyBinding::new("ctrl-t", TerminalInputTestAction, None);
+        assert!(!terminal_input_can_preempt_bindings(&[user], false));
+
+        let builtin = KeyBinding::new("ctrl-t", TerminalInputTestAction, None)
+            .with_meta(KeyBindingMetaIndex(3));
+        assert!(!terminal_input_can_preempt_bindings(&[builtin], true));
+    }
 
     fn expected_drop_text(paths: &[PathBuf]) -> String {
         let mut text = String::new();

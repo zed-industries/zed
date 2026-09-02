@@ -3,10 +3,10 @@ use gpui::{
     AbsoluteLength, AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Length, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels,
-    Point as GpuiPoint, StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle,
-    UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window, div, fill, point, px, relative,
-    size,
+    IntoElement, KeyBinding, Keystroke, LayoutId, Length, ModifiersChangedEvent, MouseButton,
+    MouseMoveEvent, Pixels, Point as GpuiPoint, StatefulInteractiveElement, StrikethroughStyle,
+    Styled, TextRun, TextStyle, UTF16Selection, UnderlineStyle, WeakEntity, WhiteSpace, Window,
+    div, fill, point, px, relative, size,
 };
 use itertools::Itertools;
 use language::CursorShape as EditorCursorShape;
@@ -1797,6 +1797,22 @@ struct TerminalInputHandler {
 }
 
 impl InputHandler for TerminalInputHandler {
+    fn intercept_keystroke(
+        &mut self,
+        keystroke: &Keystroke,
+        bindings: &[KeyBinding],
+        pending: bool,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> bool {
+        if !crate::terminal_input_can_preempt_bindings(bindings, pending) {
+            return false;
+        }
+
+        self.terminal_view
+            .update(cx, |view, cx| view.process_keystroke(keystroke, cx))
+    }
+
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
