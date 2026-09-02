@@ -4664,7 +4664,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
-        let diff_hunk_delegate = editor.read(cx).diff_hunk_delegate();
+        let diff_hunk_renderer = editor.read(cx).diff_hunk_renderer();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
@@ -4736,7 +4736,7 @@ impl EditorElement {
                         sticky_top.min(max_y)
                     };
 
-                    let mut element = diff_hunk_delegate.render_hunk_controls(
+                    let mut element = diff_hunk_renderer.render_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
@@ -6609,7 +6609,7 @@ impl EditorElement {
         let unstaged = !self
             .editor
             .read(cx)
-            .diff_hunk_delegate()
+            .diff_hunk_renderer()
             .render_hunk_as_staged(&status, cx);
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
@@ -9398,7 +9398,7 @@ impl Element for EditorElement {
                     };
 
                     let (diff_hunk_controls, diff_hunk_control_bounds) =
-                        if is_read_only && self.editor.read(cx).diff_hunk_delegate.is_none() {
+                        if is_read_only && self.editor.read(cx).diff_hunk_renderer.is_none() {
                             (vec![], vec![])
                         } else {
                             self.layout_diff_hunk_controls(
