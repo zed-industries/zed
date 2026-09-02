@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_open_popover_updates_with_pending_input(cx: &mut TestAppContext) {
+    fn test_open_popover_tracks_pending_input_lifecycle(cx: &mut TestAppContext) {
         let (indicator, _, cx) = setup_indicator_test(cx, nested_timed_bindings());
         start_pending_input_and_hover_indicator(cx);
         let initial_render_state = indicator
@@ -791,6 +791,13 @@ mod tests {
         assert!(updated_render_state.timeout_paused);
         assert!(updated_render_state.popover_visible);
         assert!(cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_some());
+
+        cx.simulate_keystrokes("j");
+        cx.run_until_parked();
+
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert!(indicator.read_with(cx, |indicator, _| indicator.render_state().is_none()));
+        assert!(cx.debug_bounds("PENDING_KEYSTROKES_POPOVER").is_none());
     }
 
     #[gpui::test]
@@ -851,6 +858,7 @@ mod tests {
 
         cx.simulate_keystrokes("h");
         cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
     }
 
     #[gpui::test]
