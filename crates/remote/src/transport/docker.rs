@@ -638,16 +638,14 @@ impl DockerExecConnection {
 
 }
 
-/// Deregisters a proxy process when the task driving it completes or is
-/// dropped, so that `kill()` only ever signals live processes.
-struct ProxyProcessGuard {
-    pid: u32,
-    proxy_processes: Arc<Mutex<Vec<u32>>>,
-}
-
-impl Drop for ProxyProcessGuard {
-    fn drop(&mut self) {
-        self.proxy_processes.lock().retain(|pid| *pid != self.pid);
+/// Deregisters a proxy process once the task driving it completes or is
+/// dropped, so that `kill()` only ever signals live processes. Removes a
+/// single occurrence: if the OS reused the pid for another proxy registered
+/// concurrently, that proxy's entry must stay tracked.
+fn deregister_proxy_process(proxy_processes: &Mutex<Vec<u32>>, pid: u32) {
+    let mut proxy_processes = proxy_processes.lock();
+    if let Some(index) = proxy_processes.iter().position(|p| *p == pid) {
+        proxy_processes.remove(index);
     }
 }
 
@@ -719,13 +717,14 @@ impl RemoteConnection for DockerExecConnection {
         };
 
         self.proxy_processes.lock().push(child.id());
-        let guard = ProxyProcessGuard {
-            pid: child.id(),
-            proxy_processes: self.proxy_processes.clone(),
-        };
+        let deregister_proxy = util::defer({
+            let pid = child.id();
+            let proxy_processes = self.proxy_processes.clone();
+            move || deregister_proxy_process(&proxy_processes, pid)
+        });
 
         cx.spawn(async move |cx| {
-            let _guard = guard;
+            let _deregister_proxy = deregister_proxy;
             super::handle_rpc_messages_over_child_process_stdio(
                 child,
                 incoming_tx,
@@ -771,6 +770,8 @@ impl RemoteConnection for DockerExecConnection {
                 .arg(pid.to_string())
                 .spawn()
             {
+                // Keep the pid tracked so a later `kill()` can retry it.
+                self.proxy_processes.lock().push(pid);
                 errors.push(format!("{pid}: {error}"));
             }
         }
@@ -925,6 +926,16 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn spawn_stand_in_proxy() -> util::command::Child {
+        util::command::new_command("sleep")
+            .arg("600")
+            // Panic-safe cleanup: a failed assertion must not leak the process.
+            .kill_on_drop(true)
+            .spawn()
+            .expect("failed to spawn stand-in proxy process")
+    }
+
+    #[cfg(unix)]
     #[test]
     fn test_kill_terminates_all_registered_proxies() {
         let connection = test_connection();
@@ -934,19 +945,20 @@ mod tests {
              or the pool would refuse to share it"
         );
 
-        let mut child = util::command::new_command("sleep")
-            .arg("600")
-            .spawn()
-            .expect("failed to spawn stand-in proxy process");
-        connection.proxy_processes.lock().push(child.id());
+        let mut first_proxy = spawn_stand_in_proxy();
+        let mut second_proxy = spawn_stand_in_proxy();
+        connection.proxy_processes.lock().push(first_proxy.id());
+        connection.proxy_processes.lock().push(second_proxy.id());
 
         smol::block_on(async {
             connection.kill().await.expect("kill failed");
-            let status = child
-                .status()
-                .await
-                .expect("failed to await stand-in proxy process");
-            assert!(!status.success(), "process should have been signalled");
+            for child in [&mut first_proxy, &mut second_proxy] {
+                let status = child
+                    .status()
+                    .await
+                    .expect("failed to await stand-in proxy process");
+                assert!(!status.success(), "process should have been signalled");
+            }
         });
 
         assert!(connection.has_been_killed());
@@ -957,10 +969,7 @@ mod tests {
     #[gpui::test]
     async fn test_start_proxy_does_not_kill_existing_proxies(cx: &mut gpui::TestAppContext) {
         let connection = test_connection();
-        let mut existing_proxy = util::command::new_command("sleep")
-            .arg("600")
-            .spawn()
-            .expect("failed to spawn stand-in proxy process");
+        let mut existing_proxy = spawn_stand_in_proxy();
         let existing_pid = existing_proxy.id();
         connection.proxy_processes.lock().push(existing_pid);
 
@@ -995,18 +1004,14 @@ mod tests {
                 .is_none(),
             "existing proxy process should not have been signalled"
         );
-        existing_proxy
-            .kill()
-            .expect("failed to clean up stand-in proxy process");
     }
 
     #[test]
-    fn test_proxy_process_guard_deregisters_only_its_pid() {
-        let proxy_processes = Arc::new(Mutex::new(vec![1, 2, 3]));
-        drop(ProxyProcessGuard {
-            pid: 2,
-            proxy_processes: proxy_processes.clone(),
-        });
-        assert_eq!(*proxy_processes.lock(), vec![1, 3]);
+    fn test_deregister_proxy_process_removes_a_single_occurrence() {
+        let proxy_processes = Mutex::new(vec![1, 2, 2, 3]);
+        deregister_proxy_process(&proxy_processes, 2);
+        assert_eq!(*proxy_processes.lock(), vec![1, 2, 3]);
+        deregister_proxy_process(&proxy_processes, 4);
+        assert_eq!(*proxy_processes.lock(), vec![1, 2, 3]);
     }
 }
