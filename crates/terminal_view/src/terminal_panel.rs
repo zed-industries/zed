@@ -125,6 +125,8 @@ impl TerminalPanel {
         cx: &mut Context<Self>,
     ) {
         let assistant_enabled = self.assistant_enabled;
+        let terminal_panel = cx.weak_entity();
+        let terminal_pane_id = terminal_pane.entity_id();
         terminal_pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
@@ -135,7 +137,13 @@ impl TerminalPanel {
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
                     .is_some_and(|view| view.read(cx).rename_editor_is_focused(window, cx));
-                if !pane.has_focus(window, cx)
+                let is_active_pane = terminal_panel
+                    .read_with(cx, |terminal_panel, _| {
+                        terminal_panel.active_pane.entity_id() == terminal_pane_id
+                    })
+                    .unwrap_or(false);
+                if !is_active_pane
+                    && !pane.has_focus(window, cx)
                     && !pane.context_menu_focused(window, cx)
                     && !has_focused_rename_editor
                 {
@@ -1904,6 +1912,51 @@ mod tests {
         assert_eq!(
             result.command_label, expected_shell,
             "We show the shell launch for empty commands"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_tab_bar_buttons_stay_visible_when_panel_loses_focus(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let workspace = window_handle
+            .update(cx, |multi_workspace, _, _| {
+                multi_workspace.workspace().clone()
+            })
+            .expect("Failed to read workspace");
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        terminal_panel
+            .update_in(cx, |terminal_panel, window, cx| {
+                terminal_panel.add_terminal_shell(false, None, RevealStrategy::Always, window, cx)
+            })
+            .await
+            .expect("Failed to spawn a panel terminal");
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("terminal-pane-split").is_some(),
+            "terminal tab bar actions should be visible while the terminal pane is focused"
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            window.focus(&workspace.active_pane().focus_handle(cx), cx);
+        });
+        cx.run_until_parked();
+
+        terminal_panel.update_in(cx, |terminal_panel, window, cx| {
+            assert!(
+                !terminal_panel.active_pane.read(cx).has_focus(window, cx),
+                "the test must move focus out of the terminal pane"
+            );
+        });
+        assert!(
+            cx.debug_bounds("terminal-pane-split").is_some(),
+            "terminal tab bar actions should stay visible when focus moves back to the editor"
         );
     }
 
