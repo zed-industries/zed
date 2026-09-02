@@ -37,6 +37,11 @@ pub const TASK_POLL_FLOOR: Duration = Duration::from_micros(100);
 /// indefinitely. Expiry only unblocks: the open interval still seals at a
 /// real presentation or idle boundary, keeping a starving hang and the frame
 /// it starved in one interval.
+///
+/// The deadline also classifies the eventual frame (see
+/// [`ForegroundJournalWriter::begin_draw`]): a frame that crossed it while
+/// the foreground was idle was withheld by the platform, not starved by the
+/// foreground.
 pub const FRAME_DEADLINE: Duration = Duration::from_secs(1);
 
 // Backstop against pathological event storms within a single interval. At the
@@ -163,12 +168,24 @@ pub struct PresentedFrame {
 }
 
 impl PresentedFrame {
-    /// Time from the frame's first invalidation through platform submission.
+    /// Time from the frame becoming dirty while presentable through platform
+    /// submission (see [`FrameTiming::dirty_at`]).
     pub fn dirty_to_present_duration(&self) -> Option<Duration> {
         self.frame
             .dirty_at
             .map(|dirty_at| self.presentation.present_end.duration_since(dirty_at))
     }
+}
+
+/// How a window's dirty frame is attributed when it is finally drawn.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ResolvedFrameDirty {
+    /// When the frame became dirty while the platform was presenting: the
+    /// first invalidation, or the draw start when the frame was withheld.
+    pub dirty_at: Option<Instant>,
+    /// How long the platform withheld presentation of this frame, from its
+    /// first invalidation to the draw. `None` when the frame was not withheld.
+    pub withheld_for: Option<Duration>,
 }
 
 /// The semantic event that completed a foreground activity interval.
@@ -379,11 +396,25 @@ impl ForegroundRunnableCounter {
     }
 }
 
+/// One window's dirty frame as tracked by the writer.
+#[derive(Debug, Copy, Clone)]
+struct PendingFrame {
+    dirty_at: Instant,
+    /// Set once the frame crossed [`FRAME_DEADLINE`] at an idle turn end.
+    /// Expired frames no longer block idle boundaries.
+    expired: bool,
+    /// For expired frames: whether the deadline passed while the foreground
+    /// was idle (the platform withheld presentation) rather than during a
+    /// turn (the foreground starved the frame).
+    withheld: bool,
+}
+
 struct ForegroundJournalWriter {
     foreground_runnables: ForegroundRunnableCounter,
     publisher: JournalPublisher,
     turn_depth: usize,
-    pending_frames: HashMap<WindowId, Instant>,
+    outermost_turn_started_at: Option<Instant>,
+    pending_frames: HashMap<WindowId, PendingFrame>,
     retained_since_boundary: bool,
     small_polls: Option<SmallPollFlush>,
 }
@@ -394,6 +425,7 @@ impl ForegroundJournalWriter {
             foreground_runnables,
             publisher,
             turn_depth: 0,
+            outermost_turn_started_at: None,
             pending_frames: HashMap::new(),
             retained_since_boundary: false,
             small_polls: None,
@@ -401,6 +433,17 @@ impl ForegroundJournalWriter {
     }
 
     fn begin_turn(&mut self) {
+        if self.turn_depth == 0 {
+            self.begin_turn_at(Instant::now());
+        } else {
+            self.turn_depth += 1;
+        }
+    }
+
+    fn begin_turn_at(&mut self, started_at: Instant) {
+        if self.turn_depth == 0 {
+            self.outermost_turn_started_at = Some(started_at);
+        }
         self.turn_depth += 1;
     }
 
@@ -433,13 +476,79 @@ impl ForegroundJournalWriter {
         }));
     }
 
+    // Called only when the foreground is otherwise idle at the end of the
+    // outermost turn, so a frame crossing the deadline here is classified by
+    // when that turn began: after the deadline means the deadline passed with
+    // the foreground idle and nothing requesting a frame (the platform is
+    // withholding presentation, e.g. the display is asleep or the window is
+    // occluded); before it means the turn itself outlived the deadline (a
+    // hang starved the frame).
     fn has_unexpired_pending_frame(&mut self, now: Instant) -> bool {
-        if self.pending_frames.is_empty() {
-            return false;
+        let outermost_turn_started_at = self.outermost_turn_started_at;
+        let mut unexpired = false;
+        for frame in self.pending_frames.values_mut() {
+            if frame.expired {
+                continue;
+            }
+            if now.saturating_duration_since(frame.dirty_at) < FRAME_DEADLINE {
+                unexpired = true;
+                continue;
+            }
+            frame.expired = true;
+            frame.withheld =
+                Self::deadline_passed_while_idle(frame.dirty_at, outermost_turn_started_at);
         }
-        self.pending_frames
-            .retain(|_, dirty_at| now.saturating_duration_since(*dirty_at) < FRAME_DEADLINE);
-        !self.pending_frames.is_empty()
+        unexpired
+    }
+
+    fn deadline_passed_while_idle(
+        dirty_at: Instant,
+        outermost_turn_started_at: Option<Instant>,
+    ) -> bool {
+        outermost_turn_started_at.is_some_and(|started_at| {
+            started_at.saturating_duration_since(dirty_at) >= FRAME_DEADLINE
+        })
+    }
+
+    /// Resolves how the frame about to be drawn is attributed and marks the
+    /// window pending again from `draw_start`.
+    ///
+    /// `dirty_at` is the window's first invalidation. When the platform
+    /// withheld presentation of that invalidation — the frame crossed
+    /// [`FRAME_DEADLINE`] while the foreground was idle, either observed at an
+    /// idle turn end or implied by no turn having ended since the deadline —
+    /// presentability is taken to resume with this frame request, so the
+    /// resolved `dirty_at` is `draw_start` and the withheld stretch is
+    /// reported separately. Otherwise the first invalidation stands: the time
+    /// since it is foreground latency the user perceived.
+    fn begin_draw(
+        &mut self,
+        window_id: WindowId,
+        dirty_at: Option<Instant>,
+        draw_start: Instant,
+    ) -> ResolvedFrameDirty {
+        let withheld = match self.pending_frames.get(&window_id) {
+            Some(frame) if frame.expired => frame.withheld,
+            Some(frame) => {
+                draw_start.saturating_duration_since(frame.dirty_at) >= FRAME_DEADLINE
+                    && Self::deadline_passed_while_idle(
+                        frame.dirty_at,
+                        self.outermost_turn_started_at,
+                    )
+            }
+            None => false,
+        };
+        self.record_frame_pending(window_id, draw_start);
+        match (withheld, dirty_at) {
+            (true, Some(dirty_at)) => ResolvedFrameDirty {
+                dirty_at: Some(draw_start),
+                withheld_for: Some(draw_start.saturating_duration_since(dirty_at)),
+            },
+            _ => ResolvedFrameDirty {
+                dirty_at,
+                withheld_for: None,
+            },
+        }
     }
 
     fn fold_small_poll(&mut self, timing: TaskTiming) {
@@ -481,8 +590,8 @@ impl ForegroundJournalWriter {
 
     fn record_frame_pending(&mut self, window_id: WindowId, dirty_at: Instant) {
         let should_record = match self.pending_frames.get(&window_id) {
-            Some(previous_dirty_at) => {
-                dirty_at.saturating_duration_since(*previous_dirty_at) >= FRAME_DEADLINE
+            Some(previous) => {
+                dirty_at.saturating_duration_since(previous.dirty_at) >= FRAME_DEADLINE
             }
             None => true,
         };
@@ -490,7 +599,14 @@ impl ForegroundJournalWriter {
             return;
         }
 
-        self.pending_frames.insert(window_id, dirty_at);
+        self.pending_frames.insert(
+            window_id,
+            PendingFrame {
+                dirty_at,
+                expired: false,
+                withheld: false,
+            },
+        );
         self.record_frame_state(FrameStateChange::Pending {
             window_id,
             dirty_at,
@@ -663,6 +779,22 @@ pub(crate) fn record_present(timing: PresentTiming, frame: Option<FrameTiming>) 
 
 pub(crate) fn record_frame_pending(window_id: WindowId, dirty_at: Instant) {
     with_journal(|journal| journal.record_frame_pending(window_id, dirty_at));
+}
+
+/// Resolves the frame about to be drawn (see
+/// [`ForegroundJournalWriter::begin_draw`]). Without a journal on this thread
+/// the first invalidation stands as-is.
+pub(crate) fn begin_draw(
+    window_id: WindowId,
+    dirty_at: Option<Instant>,
+    draw_start: Instant,
+) -> ResolvedFrameDirty {
+    let mut resolved = ResolvedFrameDirty {
+        dirty_at,
+        withheld_for: None,
+    };
+    with_journal(|journal| resolved = journal.begin_draw(window_id, dirty_at, draw_start));
+    resolved
 }
 
 pub(crate) fn record_window_closed(window_id: WindowId) {
@@ -1112,6 +1244,7 @@ mod tests {
         let frame = FrameTiming {
             window_id: WindowId::from(1),
             dirty_at: Some(input.start),
+            withheld_for: None,
             invalidations: 1,
             draw_start: start + Duration::from_millis(3),
             draw_end: start + Duration::from_millis(4),
@@ -1414,6 +1547,126 @@ mod tests {
             &collector.collect_unseen().entries,
             event_end
         ));
+    }
+
+    /// A frame that crosses the deadline at an idle turn end was withheld by
+    /// the platform: nothing requested it while the foreground had nothing to
+    /// do. Its eventual draw is attributed from the draw itself, with the
+    /// withheld stretch reported separately.
+    #[test]
+    fn a_frame_expiring_while_the_foreground_is_idle_is_withheld() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xD1E1);
+        let (mut journal, _collector) = test_journal(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+
+        // A short timer wake-up after the deadline observes the expiry.
+        let wake_up = start + FRAME_DEADLINE + Duration::from_millis(200);
+        journal.begin_turn_at(wake_up);
+        journal.end_turn(wake_up + Duration::from_micros(50));
+
+        // The display comes back much later and the platform asks for a frame.
+        let draw_start = start + Duration::from_secs(2 * 60 * 60);
+        journal.begin_turn_at(draw_start);
+        let resolved = journal.begin_draw(window_id, Some(start), draw_start);
+        assert_eq!(
+            resolved,
+            ResolvedFrameDirty {
+                dirty_at: Some(draw_start),
+                withheld_for: Some(draw_start.duration_since(start)),
+            }
+        );
+    }
+
+    /// A frame that crosses the deadline during a turn was starved by the
+    /// foreground, and the turn that follows the hang (the frame request)
+    /// must not reclassify it: its first invalidation is real latency.
+    #[test]
+    fn a_frame_expiring_during_a_long_turn_is_not_withheld() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xD1E2);
+        let (mut journal, _collector) = test_journal(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+
+        let hang_start = start + Duration::from_millis(2);
+        let hang_end = start + FRAME_DEADLINE * 3;
+        journal.begin_turn_at(hang_start);
+        journal.end_turn(hang_end);
+
+        let draw_start = hang_end + Duration::from_millis(5);
+        journal.begin_turn_at(draw_start);
+        let resolved = journal.begin_draw(window_id, Some(start), draw_start);
+        assert_eq!(
+            resolved,
+            ResolvedFrameDirty {
+                dirty_at: Some(start),
+                withheld_for: None,
+            }
+        );
+    }
+
+    /// With no turn ending between the deadline and the draw, the frame
+    /// request's own turn decides: starting long after the deadline means the
+    /// foreground was idle throughout, so the frame was withheld.
+    #[test]
+    fn a_frame_pending_across_an_idle_stretch_without_turns_is_withheld() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xD1E3);
+        let (mut journal, _collector) = test_journal(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+
+        let draw_start = start + Duration::from_secs(30 * 60);
+        journal.begin_turn_at(draw_start);
+        let resolved = journal.begin_draw(window_id, Some(start), draw_start);
+        assert_eq!(
+            resolved,
+            ResolvedFrameDirty {
+                dirty_at: Some(draw_start),
+                withheld_for: Some(draw_start.duration_since(start)),
+            }
+        );
+    }
+
+    /// A draw nested in a turn that began before the deadline is the hang
+    /// case even when no turn ended in between.
+    #[test]
+    fn a_frame_drawn_inside_a_turn_that_outlived_the_deadline_is_not_withheld() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xD1E4);
+        let (mut journal, _collector) = test_journal(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+
+        journal.begin_turn_at(start + Duration::from_millis(1));
+        let draw_start = start + FRAME_DEADLINE * 2;
+        let resolved = journal.begin_draw(window_id, Some(start), draw_start);
+        assert_eq!(
+            resolved,
+            ResolvedFrameDirty {
+                dirty_at: Some(start),
+                withheld_for: None,
+            }
+        );
+    }
+
+    /// Ordinary frames are untouched: drawn before the deadline, the first
+    /// invalidation stands.
+    #[test]
+    fn a_frame_drawn_before_the_deadline_keeps_its_first_invalidation() {
+        let start = Instant::now();
+        let window_id = WindowId::from(0xD1E5);
+        let (mut journal, _collector) = test_journal(ForegroundRunnableCounter::new());
+        journal.record_frame_pending(window_id, start);
+
+        let draw_start = start + Duration::from_millis(12);
+        journal.begin_turn_at(draw_start);
+        let resolved = journal.begin_draw(window_id, Some(start), draw_start);
+        assert_eq!(
+            resolved,
+            ResolvedFrameDirty {
+                dirty_at: Some(start),
+                withheld_for: None,
+            }
+        );
     }
 
     /// One window presenting must not unblock idle boundaries while another
@@ -2687,7 +2940,17 @@ mod tests {
                 );
                 prop_assert_eq!(writer.turn_depth, model.turn_depth);
                 prop_assert_eq!(writer.retained_since_boundary, model.retained_since_boundary);
-                prop_assert_eq!(writer.pending_frames.len(), model.pending_frames.len());
+                // The writer retains expired frames (flagged) to classify their
+                // eventual draw; the model only tracks frames that still block
+                // idle boundaries.
+                prop_assert_eq!(
+                    writer
+                        .pending_frames
+                        .values()
+                        .filter(|frame| !frame.expired)
+                        .count(),
+                    model.pending_frames.len()
+                );
             }
         }
     }
@@ -2729,6 +2992,7 @@ mod tests {
         FrameTiming {
             window_id,
             dirty_at: Some(dirty_at),
+            withheld_for: None,
             invalidations: 1,
             draw_start: draw_end,
             draw_end,
