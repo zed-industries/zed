@@ -116,6 +116,9 @@ pub struct PdfPageEntry {
     pub width: u32,
     pub height: u32,
     pub image: Arc<gpui::Image>,
+    pub links: Vec<kkpdf_zed::PdfLinkAnnotation>,
+    pub text_segments: Vec<kkpdf_zed::PdfTextSegment>,
+    pub page_text: String,
 }
 
 #[derive(Clone)]
@@ -328,13 +331,18 @@ impl ImageItem {
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let content = local_file.load_bytes(cx);
+        let background = cx.background_executor().clone();
         self.reload_task = Some(cx.spawn(async move |this, cx| {
             if let Ok(bytes) = content.await.context("Failed to load image content") {
                 let is_pdf = bytes.starts_with(b"%PDF-");
                 let cur_page = this.read_with(cx, |this, _| this.current_page()).unwrap_or(0);
 
                 if is_pdf {
-                    if let Ok((pages, full_text)) = create_gpui_images_from_pdf(&bytes) {
+                    let bytes_clone = bytes.clone();
+                    let pdf_res = background.spawn(async move {
+                        create_gpui_images_from_pdf(&bytes_clone)
+                    }).await;
+                    if let Ok((pages, full_text)) = pdf_res {
                         let total_pages = pages.len();
                         let target_page = cur_page.min(total_pages.saturating_sub(1));
                         let first_image = pages
@@ -818,11 +826,16 @@ impl ImageStoreImpl for Entity<LocalImageStore> {
         let load_file = worktree.update(cx, |worktree, cx| {
             worktree.load_binary_file(path.as_ref(), cx)
         });
+        let background = cx.background_executor().clone();
         cx.spawn(async move |image_store, cx| {
             let LoadedBinaryFile { file, content } = load_file.await?;
             let is_pdf = content.starts_with(b"%PDF-");
             let (image, pdf_info) = if is_pdf {
-                if let Ok((pages, full_text)) = create_gpui_images_from_pdf(&content) {
+                let content_clone = content.clone();
+                let pdf_res = background.spawn(async move {
+                    create_gpui_images_from_pdf(&content_clone)
+                }).await;
+                if let Ok((pages, full_text)) = pdf_res {
                     let first_image = pages
                         .first()
                         .map(|p| p.image.clone())
@@ -1115,7 +1128,8 @@ impl LocalImageStore {
 pub fn create_gpui_images_from_pdf(
     pdf_bytes: &[u8],
 ) -> anyhow::Result<(Vec<PdfPageEntry>, Option<String>)> {
-    let engine = kkpdf_zed::pdfium::PdfiumEngine::new();
+    let engine = kkpdf_zed::PdfiumEngine::new();
+    let doc_details = engine.extract_document_details(pdf_bytes).unwrap_or_default();
     let doc = engine.load_document_from_bytes(pdf_bytes, None)?;
     let total_pages = doc.total_pages();
     let options = kkpdf_zed::rasterizer::RasterizerOptions {
@@ -1142,15 +1156,28 @@ pub fn create_gpui_images_from_pdf(
             gpui::ImageFormat::Png,
             png_bytes,
         ));
+
+        let page_detail = doc_details.pages.get(page_idx);
+        let links = page_detail.map(|d| d.links.clone()).unwrap_or_default();
+        let text_segments = page_detail.map(|d| d.text_segments.clone()).unwrap_or_default();
+        let page_text = page_detail.map(|d| d.text.clone()).unwrap_or_default();
+
         pages.push(PdfPageEntry {
             page_index: page_idx,
             width: page.width,
             height: page.height,
             image,
+            links,
+            text_segments,
+            page_text,
         });
     }
 
-    let full_text = engine.extract_text_from_bytes(pdf_bytes, None).ok();
+    let full_text = if !doc_details.full_text.is_empty() {
+        Some(doc_details.full_text)
+    } else {
+        engine.extract_text_from_bytes(pdf_bytes, None).ok()
+    };
 
     Ok((pages, full_text))
 }

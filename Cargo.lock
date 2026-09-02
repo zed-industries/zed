@@ -8759,6 +8759,7 @@ dependencies = [
  "file_icons",
  "fs",
  "gpui",
+ "kkpdf-zed",
  "language",
  "log",
  "menu",
